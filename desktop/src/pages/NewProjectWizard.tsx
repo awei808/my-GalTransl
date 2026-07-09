@@ -499,6 +499,10 @@ export function NewProjectWizard({ onOpenProject }: NewProjectWizardProps) {
       <div className="wizard-tip-card">
         <strong>导入提示</strong>
         <span>支持拖拽多个文件；若暂时跳过，可后续手动复制到 `gt_input` 目录。</span>
+        <span>
+          可额外导入名为 <code>PlotMetadata.json</code> 的剧情元数据文件（含「角色 / 服装 / 剧情 / 标签」字段），
+          它会被 <code>ForGal-json-multi-chat</code> 后端在首轮对话注入，不参与翻译、也不会被当作源文件。
+        </span>
       </div>
       {importedFiles.length > 0 && (
         <ul className="wizard-file-list">

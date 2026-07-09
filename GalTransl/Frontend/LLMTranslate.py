@@ -356,6 +356,9 @@ async def doLLMTranslate(
 
     # 获取待翻译文件列表
     file_list = get_file_list(projectConfig.getInputPath())
+    # 载入 gt_input 中的 PlotMetadata.json
+    from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
+    projectConfig.plot_metadata = load_plot_metadata(projectConfig)
     if not file_list:
         # dump-name / GenDic 等仅基于输入文件的短路流程，空目录不算致命错误，友好返回
         if "dump-name" in eng_type or eng_type == "GenDic":
@@ -680,6 +683,15 @@ async def doLLMTranslSingleChunk(
         if len(translist_unhit) > 0:
             _check_stop_requested(projectConfig)
             await ensure_model_available_if_needed(projectConfig)
+            # 注入剧情元数据（仅支持的后端拥有 set_plot_metadata，
+            # 如 ForGal-json-multi-chat；其余后端忽略）。同一份
+            # PlotMetadata.json 作为项目级元数据应用到每个文件的首轮对话。
+            plot_metadata = getattr(projectConfig, "plot_metadata", None)
+            if plot_metadata is not None and hasattr(gptapi, "set_plot_metadata"):
+                _batch_file_name = file_name + (
+                    f"_{file_index}" if total_splits > 1 else ""
+                )
+                gptapi.set_plot_metadata(plot_metadata, _batch_file_name)
             # 执行翻译
             await gptapi.batch_translate(
                 file_name + (f"_{file_index}" if total_splits > 1 else ""),
@@ -820,6 +832,9 @@ async def init_gptapi(
         case "ForGal-json":
             from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
             return ForGalJsonTranslate(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForGal-json-multi-chat":
+            from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+            return ForGalJsonMulitChat(projectConfig, eng_type, proxyPool, tokenPool)
         case "sakura-v1.0" | "galtransl-v3":
             from GalTransl.Backend.SakuraTranslate import CSakuraTranslate
             sakura_endpoint = await sakuraEndpointQueue.get()
