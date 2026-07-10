@@ -64,6 +64,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "(openai接口)翻译Gal时使用，json格式输入，兼容性好。",
         "en": "Customized template for Gal translation, json input. "
     },
+    "ForGal-json-multi-chat": {
+        "zh-cn": "(openai接口)翻译Gal时使用，json格式输入，多轮对话以保留上下文，可注入剧情元数据(PlotMetadata)。",
+        "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports PlotMetadata injection."
+    },
     "ForNovel": {
         "zh-cn": "(openai接口)翻译轻小说等其他文本时使用，区别是输入不带name字段。",
         "en": " Customized template for Novel translation. "
@@ -105,11 +109,12 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForGal-tsv": "deepseek-chat",
     "ForNovel": "deepseek-chat",
     "ForGal-json": "gpt-4.1",
+    "ForGal-json-multi-chat": "gpt-4.1",
     "sakura-v1.0": "sakura-7b-qwen2.5-v1.0",
     "galtransl-v3": "Sakura-GalTransl-7B-v3",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-json", "ForGal-tsv", "ForNovel", "GenDic"]
+NEED_OpenAITokenPool=["ForGal-json", "ForGal-json-multi-chat", "ForGal-tsv", "ForNovel", "GenDic"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

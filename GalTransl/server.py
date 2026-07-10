@@ -355,6 +355,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
         "system_prompt": FORGAL_JSON_SYSTEM_PROMPT,
         "user_prompt": FORGAL_JSON_TRANS_PROMPT,
     },
+    "ForGal-json-multi-chat": {
+        "system_prompt": FORGAL_JSON_SYSTEM_PROMPT,
+        "user_prompt": FORGAL_JSON_TRANS_PROMPT,
+    },
     "ForGal-tsv": {
         "system_prompt": FORGAL_TSV_SYSTEM,
         "user_prompt": FORGAL_TSV_TRANS_PROMPT_EN,

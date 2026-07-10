@@ -166,6 +166,107 @@ def load_plot_metadata(projectConfig: "CProjectConfig"):
     )
 
 
+def _find_plot_metadata_file(input_dir: str) -> Optional[str]:
+    """在翻译项目目录中查找 PlotMetadata.json。
+
+    GalTransl 的「新建翻译项目」会生成一个项目根目录，其中 ``gt_input`` 是
+    待翻译输入文件夹，``PlotMetadata.json`` 与该文件夹同级、位于**项目根目录**
+    （即 ``gt_input`` 的父目录）。因此按以下优先级查找：
+
+    1. ``<input_dir>/../PlotMetadata.json`` —— 项目根（标准位置，首选）
+    2. ``<input_dir>/PlotMetadata.json`` —— 直接放在 gt_input 内（兼容布局）
+    3. 向上再查找 2 级 —— 非标准布局的安全网（不推荐依赖）
+
+    Args:
+        input_dir: 输入目录（通常为 projectConfig.getInputPath()，即 gt_input）
+
+    Returns:
+        找到的 PlotMetadata.json 路径；均未找到则返回 None
+    """
+    # 1) 项目根目录（gt_input 的父目录）—— 标准位置
+    project_root = os.path.dirname(input_dir)
+    cand = os.path.join(project_root, "PlotMetadata.json")
+    if os.path.exists(cand):
+        return cand
+    # 2) gt_input 自身（兼容布局）
+    cand = os.path.join(input_dir, "PlotMetadata.json")
+    if os.path.exists(cand):
+        return cand
+    # 3) 向上再查 2 级（非标准布局兜底）
+    cur = project_root
+    for _ in range(2):
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cand = os.path.join(parent, "PlotMetadata.json")
+        if os.path.exists(cand):
+            return cand
+        cur = parent
+    return None
+
+
+def load_plot_metadata_map(projectConfig: "CProjectConfig") -> dict:
+    """从翻译项目的 PlotMetadata.json 载入「文件名 -> 剧情元数据」映射。
+
+    PlotMetadata.json 位于**翻译项目根目录**（即 gt_input 的父目录，与 gt_input
+    同级），由「新建翻译项目」生成。文件本身为 **JSON 数组**，每个元素形如
+    ``{"id": "文件名", "角色": [...], "服装": "...", "剧情": "...", "标签": [...]}``，
+    其中 ``id`` 对应 gt_input 中的一个待翻译文件名（如 ``02_kar_god01.txt.json``）。
+    本函数将其解析为 ``{文件名: PlotMetadata}`` 字典，供后端按文件注入对应剧情元数据。
+
+    兼容单对象格式（旧 schema）：此时以 ``id`` 或空串为键，得到只含一项的字典。
+    文件不存在、解析失败、或根元素既非对象也非数组时返回空字典。
+
+    注意：``id`` 可能带分批后缀干扰（如 ``file_0``），匹配时由调用方负责剥离，
+    本函数仅原样以 ``id`` 为键。
+    """
+    path = _find_plot_metadata_file(projectConfig.getInputPath())
+    if path is None:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        LOGGER.warning(f"读取 PlotMetadata.json 失败，已忽略剧情元数据：{e}")
+        return {}
+
+    def _to_list(value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(x) for x in value]
+        return [str(value)]
+
+    result: dict = {}
+    if isinstance(data, dict):
+        # 旧 schema：单对象，作为仅含一项的映射
+        fid = data.get("id") or ""
+        result[fid] = PlotMetadata(
+            id=fid,
+            character=_to_list(data.get("角色")),
+            costume=data.get("服装") or "",
+            plot=data.get("剧情") or "",
+            tags=_to_list(data.get("标签")),
+        )
+    elif isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            fid = item.get("id") or ""
+            if not fid:  # 无 id 无法与文件对应，跳过
+                continue
+            result[fid] = PlotMetadata(
+                id=fid,
+                character=_to_list(item.get("角色")),
+                costume=item.get("服装") or "",
+                plot=item.get("剧情") or "",
+                tags=_to_list(item.get("标签")),
+            )
+    else:
+        LOGGER.warning("PlotMetadata.json 根元素既非对象也非数组，已忽略剧情元数据")
+    return result
+
+
 """
 ForGalJsonMulitChat - 基于 JSON-line 格式的多轮对话视觉小说脚本翻译后端
 
@@ -389,7 +490,9 @@ class ForGalJsonMulitChat(BaseTranslate):
             # 多轮模式下历史由对话本身携带，[history_result] 置为 None
             prompt_req = self._apply_history_result(prompt_req, filename)
             user_content = prompt_req
-            metadata = self.plot_metadata_map.get(filename)
+            # 解析该文件的剧情元数据：优先显式注入，否则从 gt_input 的
+            # PlotMetadata.json 自动载入对应条目（按文件名匹配 id）。
+            metadata = self._resolve_plot_metadata(filename)
             if metadata is not None:
                 user_content = user_content + self._format_plot_metadata_block(metadata)
         else:
@@ -841,8 +944,17 @@ class ForGalJsonMulitChat(BaseTranslate):
         # 批次以完整提示词 + 剧情元数据重启多轮对话，恢复被打断的连续性。
         self._force_first_round_files: set[str] = set()
 
-        # 文件名 -> 剧情元数据，由上层在翻译前通过 set_plot_metadata 注入
+        # 文件名 -> 剧情元数据：由上层在翻译前通过 set_plot_metadata 注入（显式覆盖，
+        # 优先级高于从 gt_input 自动载入的 PlotMetadata.json）。
         self.plot_metadata_map: dict[str, PlotMetadata] = {}
+
+        # 从 gt_input（及其上层目录）的 PlotMetadata.json 自动载入的「文件名 -> 剧情元数据」映射。
+        # 该文件为 JSON 数组，每项 id 对应一个待翻译文件名。仅在该文件存在时填充，
+        # 供 _resolve_plot_metadata 在缺少显式注入时为对应文件提供剧情元数据。
+        self._plot_metadata_by_file: dict[str, PlotMetadata] = {}
+        self._plot_metadata_loaded: bool = False
+        # 保存项目配置以便惰性定位 gt_input 中的 PlotMetadata.json
+        self.project_config = config
 
         # 多轮历史保留的最大轮次数（每轮 = 1 个 user + 1 个 assistant）。
         # 0 表示不裁剪（保留完整历史）；裁剪时始终保留 system 与第一轮 user（含元数据）。
@@ -876,6 +988,43 @@ class ForGalJsonMulitChat(BaseTranslate):
             filename: 关联的文件名；为空字符串时作为默认元数据
         """
         self.plot_metadata_map[filename] = plot_metadata
+
+    def _ensure_plot_metadata_loaded(self) -> None:
+        """惰性载入 gt_input 中的 PlotMetadata.json（仅执行一次）。"""
+        if self._plot_metadata_loaded:
+            return
+        self._plot_metadata_loaded = True  # 先置位，避免后续异常导致反复重试
+        if getattr(self, "project_config", None) is None:
+            return
+        try:
+            self._plot_metadata_by_file = load_plot_metadata_map(self.project_config)
+        except Exception as e:  # 载入失败不应中断翻译
+            LOGGER.warning(f"载入 PlotMetadata.json 失败，已跳过剧情元数据：{e}")
+            self._plot_metadata_by_file = {}
+
+    def _resolve_plot_metadata(self, filename: str) -> Optional[PlotMetadata]:
+        """解析指定文件应使用的剧情元数据。
+
+        优先级：
+            1. 显式注入：上层通过 set_plot_metadata 为该文件（或空串默认）设置的元数据；
+            2. 自动载入：gt_input 的 PlotMetadata.json 中 ``id`` 与该文件匹配的项。
+
+        文件名可能带分批后缀（如 ``file_0``），自动载入阶段会尝试剥离末尾 ``_<数字>``
+        再与 ``id`` 匹配（例如 ``02_kar_god01.txt.json_0`` -> ``02_kar_god01.txt.json``）。
+        两者皆无则返回 None。
+        """
+        explicit = self.plot_metadata_map.get(filename)
+        if explicit is not None:
+            return explicit
+        self._ensure_plot_metadata_loaded()
+        md = self._plot_metadata_by_file.get(filename)
+        if md is not None:
+            return md
+        # 处理分批后缀：file_0 -> file
+        m = re.match(r"^(.*)_\d+$", filename)
+        if m:
+            return self._plot_metadata_by_file.get(m.group(1))
+        return None
 
     def _ensure_conversation(self, filename: str) -> list:
         """
@@ -1158,8 +1307,16 @@ class ForGalJsonMulitChat(BaseTranslate):
             )
             return translator
 
-并在调用 batch_translate 前，通过 translator.set_plot_metadata(metadata, filename)
-为该文件注入 PlotMetadata（元数据仅在第一轮对话中出现）。
+剧情元数据（PlotMetadata）的注入有两路来源，均由「第一轮对话」写入提示词：
+
+1. 显式注入：上层在调用 batch_translate 前，通过
+   ``translator.set_plot_metadata(metadata, filename)`` 为该文件设置元数据；
+2. 自动载入：后端在首次需要时为该文件惰性读取 gt_input（及其上层目录）中的
+   ``PlotMetadata.json``（JSON 数组，每项 ``id`` 对应一个待翻译文件名），
+   按文件名（含分批后缀 ``_N`` 的剥离）匹配对应条目。
+
+显式注入优先级高于自动载入；两路皆无对应条目时该文件首轮不附带剧情元数据。
+（元数据仅在第一轮对话中出现，后续轮次不再重复发送。）
 """
 
 
