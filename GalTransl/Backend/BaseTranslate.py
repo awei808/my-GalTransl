@@ -455,9 +455,19 @@ class BaseTranslate:
             line_dst = line_dst + "」"
 
         line_dst = line_dst.replace("[t]", "\t")
+        # 先把 LLM 可能输出的各类换行标记统一收口为 <br>（交换格式的标准占位符）：
+        #   <BR>            -> <br>   （大小写兼容）
+        #   真实 \r\n / \n  -> <br>   （模型常把 <br> 还原成实际换行）
+        # 无论源是「真实/字面换行约定」还是「<br> 约定」(n_symbol 为空)，
+        # 都先规范到 <br>，再在下方整体还原。这样「非 <br>/<BR>/n_symbol 的
+        # 换行符统一换成源约定」这一要求对所有源类型都成立。
+        line_dst = line_dst.replace("<BR>", "<br>")
+        line_dst = line_dst.replace("\r\n", "<br>").replace("\n", "<br>")
         if n_symbol:
+            # 源使用真实/字面换行约定：把 <br> 还原为对应的 n_symbol
             line_dst = line_dst.replace("<br>", n_symbol)
-            line_dst = line_dst.replace("<BR>", n_symbol)
+        # 否则（n_symbol 为空，源以 <br> 为换行约定或不含换行）：
+        # 保持 <br> 不变，与源约定一致。
 
         if "……" in current_tran.post_src and "..." in line_dst:
             line_dst = line_dst.replace("......", "……")

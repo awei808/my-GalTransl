@@ -53,6 +53,31 @@ def detect_line_break_symbol(src_text: str) -> str:
     return ""
 
 
+def detect_batch_line_break_symbol(post_src_list: List[str]) -> str:
+    """
+    对整批评句**仅判定一次**换行符类型，返回用于后处理还原的换行符标记。
+
+    采用「逐句检测取首命中」，而**不是**把句子用 "\\n" 拼接后再检测：
+    拼接分隔符 "\\n" 会混入检测串，使「字面 <br> 约定」的源（句子内容里是
+    <br> 而非真实换行）被误判成 "\\n"，进而在解码阶段把 <br> 错误还原成真实
+    换行，破坏源换行约定。
+
+    逐句取首命中既保留了「整批统一单一 n_symbol」的语义，又不会引入拼接
+    产生的伪换行符。
+
+    Args:
+        post_src_list: 当前批次所有句子的原文列表
+
+    Returns:
+        检测到的换行符标记；整批均无换行符则返回 ""
+    """
+    for src in post_src_list:
+        s = detect_line_break_symbol(src)
+        if s:
+            return s
+    return ""
+
+
 class PlotMetadata:
     """剧情元数据类
 
@@ -230,10 +255,14 @@ class ForGalJsonMulitChat(BaseTranslate):
         input_list: List[str] = []
         sig_list: List[str] = []
 
-        # 整批评句上仅判定一次换行符，避免逐句判定时后续句子不含换行符
-        # 而覆盖已确定的标记（详见模块级 detect_line_break_symbol 说明）
-        combined_src = "\n".join(trans.post_src for trans in trans_list)
-        n_symbol = detect_line_break_symbol(combined_src)
+        # 整批评句上仅判定一次换行符（避免逐句判定时后续句子不含换行符
+        # 而覆盖已确定的标记，详见模块级 detect_*_symbol 说明）。
+        # 采用「逐句检测取首命中」，不能用 "\n".join(...) 拼接后再检测——
+        # join 分隔符 "\n" 会混入检测串，使「字面 <br> 约定」的源被误判成 "\n"，
+        # 进而在解码阶段把 <br> 错误还原成真实换行，破坏源换行约定。
+        n_symbol = detect_batch_line_break_symbol(
+            [trans.post_src for trans in trans_list]
+        )
 
         for trans in trans_list:
             # 获取说话人名称，去除换行和制表符，避免破坏 jsonline 格式
