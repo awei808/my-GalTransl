@@ -1,0 +1,42 @@
+# 统一所有文本文件使用 LF 换行符
+# 目的：消除 Windows 上 core.autocrlf=true 导致的 CRLF/LF 反复变动。
+#       典型受害者：Tauri 构建重生成的 desktop/src-tauri/gen/schemas/*.json、
+#       被 cargo/构建工具改写的 desktop/src-tauri/Cargo.toml 等。
+# 说明：git 在仓库内始终以 LF 存储；此文件让 checkout 时也统一输出 LF，
+#       与生成器（Rust/Tauri）写出的 LF 一致，从而不再被标记为 modified。
+* text=auto eol=lf
+
+# 显式声明常见源码类型使用 LF（冗余但清晰，便于协作）
+*.json text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.py   text eol=lf
+*.rs   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.jsx  text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.csv  text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.sh   text eol=lf
+
+# 二进制文件保持原样，避免被 text=auto 误判为文本而破坏
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.so   binary
+*.dylib binary
+*.zip  binary
+*.7z   binary
+*.gz   binary
+*.ttf  binary
+*.woff binary
+*.woff2 binary

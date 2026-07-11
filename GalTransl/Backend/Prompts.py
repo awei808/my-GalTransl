@@ -24,20 +24,18 @@ FORGAL_JSON_TRANS_PROMPT = """<your_info>You are Ciallo, an AI translator.
 ### About output:
 Your output start with "```jsonline", Write the whole result jsonlines in the code block.
 In each line:
-1. Copy the hash anchor(3 char + |) directly from the corresponding input line, then output the JSON object after it. In the JSON object, copy the value of `id` directly from input, Change key `src` -> `dst` (no src in your optput).
+1. Copy the hash anchor(3 char + |) directly from the corresponding input line, then output the JSON object after it. In the JSON object, copy the value of `id` directly from input, Change key `src` -> `dst` (no src in your output).
 2. Follow the "translation_guidelines" and "glossary", translate the value of `name` and `src` to [TargetLang]. 
 3. Fill in your translation result to `dst`. Each-line's result should corresponds to each-line's `src`.
 Then stop, without any other explanations or notes.
-So Output Recipe = "\\n".join("<hash_anchor>|{ "id": int, (optional)"name": string, "dst": string }")
+So Output Recipe: join lines with "\\n". Each line = <hash_anchor>|{"id": int, (optional)"name": string, "dst": string}
 </process_requirements>
 
 <translation_guidelines>
 [translation_guideline]
 </translation_guidelines>
 
-<history_result>
-[history_result]
-</history_result>
+
 
 <glossary>
 [Glossary]

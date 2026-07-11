@@ -501,6 +501,9 @@ class ForGalJsonMulitChat(BaseTranslate):
                 user_content = gptdict + "\n以下是本批次待翻译内容：\n" + input_src
             else:
                 user_content = input_src
+        LOGGER.debug(
+            f"[{filename}] 本轮 user 提示词（{'首轮' if is_first_round else '续轮'}）:\n{user_content}"
+        )
         return user_content
 
     # ======================================================================
