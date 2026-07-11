@@ -14,7 +14,7 @@
 
 from typing import List, Dict, Any, Optional, Union, Tuple
 from os import makedirs, cpu_count, sep as os_sep,listdir
-from os.path import join as joinpath, exists as isPathExists, dirname
+from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename
 from venv import logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import time
@@ -361,7 +361,7 @@ async def doLLMTranslate(
     projectConfig.plot_metadata = load_plot_metadata(projectConfig)
     if not file_list:
         # dump-name / GenDic 等仅基于输入文件的短路流程，空目录不算致命错误，友好返回
-        if "dump-name" in eng_type or eng_type == "GenDic":
+        if "dump-name" in eng_type or eng_type == "GenDic" or eng_type == "ForPlotMetaData":
             LOGGER.warning(
                 f"{projectConfig.getInputPath()} 中没有待翻译的文件，已跳过。"
             )
@@ -380,6 +380,8 @@ async def doLLMTranslate(
     file_list.sort(key=natural_sort_key)
 
     all_jsons = []
+    # 按文件收集 json_list，供 ForPlotMetaData 等"逐文件生成"引擎使用
+    file_json_lists: Dict[str, list] = {}
     # ---- 2. 读取所有文件并切分为 chunk ----
     # 使用线程池并发读文件（IO 密集型），同时通过 fPlugins 解析为 json_list
     file_loader_workers = max(1, min(cpu_count() or 1, 8))
@@ -395,6 +397,7 @@ async def doLLMTranslate(
                 json_list, save_func = future.result()
                 projectConfig.file_save_funcs[file_path] = save_func
                 total_chunks.extend(input_splitter.split(json_list, file_path))
+                file_json_lists[file_path] = json_list
                 if eng_type == "GenDic":
                     all_jsons.extend(json_list)
             except Exception as exc:
@@ -411,6 +414,15 @@ async def doLLMTranslate(
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
         await gptapi.batch_translate(all_jsons)
+        return True
+
+    if eng_type == "ForPlotMetaData":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+        gptapi = await init_gptapi(projectConfig)
+        for file_path, jsons in file_json_lists.items():
+            await gptapi.batch_translate(jsons, filename=os_basename(file_path))
+        LOGGER.info("剧情元数据生成完成，已写入 gt_input/PlotMetadata.json")
         return True
 
     # ---- 3. 根据 sortBy 决定 chunk 处理顺序 ----
@@ -847,6 +859,9 @@ async def init_gptapi(
         case "GenDic":
             from GalTransl.Backend.GenDic import GenDic
             return GenDic(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForPlotMetaData":
+            from GalTransl.Backend.ForPlotMetaData import ForPlotMetaData
+            return ForPlotMetaData(projectConfig, eng_type, proxyPool, tokenPool)
         case _:
             raise ValueError(f"不支持的翻译引擎类型 {eng_type}")
 

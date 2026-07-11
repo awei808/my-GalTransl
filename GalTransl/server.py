@@ -29,6 +29,7 @@ from GalTransl.Backend.Prompts import (
     GalTransl_TRANS_PROMPT_V3,
     Sakura_SYSTEM_PROMPT010,
     Sakura_TRANS_PROMPT010,
+    FORPLOTMETA_PROMPT,
 )
 
 
@@ -374,6 +375,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "galtransl-v3": {
         "system_prompt": GalTransl_SYSTEM_PROMPT,
         "user_prompt": GalTransl_TRANS_PROMPT_V3,
+    },
+    "ForPlotMetaData": {
+        "system_prompt": "",
+        "user_prompt": FORPLOTMETA_PROMPT,
     },
 }
 

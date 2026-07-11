@@ -57,7 +57,9 @@ class _ServerStatusFilter(logging.Filter):
         if record.levelno >= logging.WARNING:
             return True
         if record.levelno < logging.INFO:
-            return False
+            # 调试模式（全局 LOGGER 级别为 DEBUG）下，把 DEBUG 记录（含
+            # 每轮提示词 dump 等）也放行到服务端控制台，便于实时观察。
+            return LOGGER.getEffectiveLevel() <= logging.DEBUG
         msg = record.getMessage()
         return any(msg.startswith(p) for p in self._ALLOWED_INFO_PREFIXES)
 
