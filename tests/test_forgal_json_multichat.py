@@ -292,6 +292,66 @@ class BuildRoundUserContentTests(unittest.TestCase):
         self.assertIn("<history_result>", content)
         self.assertIn("历史译文", content)
 
+    def test_history_section_removal_keeps_other_blocks_intact(self):
+        # 回归：无历史时移除「### 历史上下文」小节，但【不得】贪婪跨块误删
+        # <process_requirements> 的其余小节、<translation_guidelines> 区块（含其内多个 ### 标题）
+        # 与闭合/开放标签。
+        #
+        # 此前的贪婪正则 (?:\n(?:.*$))*` 会一路吃到整段提示词末尾【最后一个】 ### 标题
+        # （即被 [translation_guideline] 替换进来的翻译规范里的 "### 5. 氛围保留规则"），
+        # 从而把 </process_requirements>、<history_result>、<translation_guidelines> 开放标签
+        # 以及翻译规范 1~4 节全部删除，导致首轮提示词被截断、标签错位
+        # （开标签 process_requirements / 闭标签 translation_guidelines）。
+        #
+        # 要在测试中触发该 bug，必须注入含多个 ### 标题的翻译规范——
+        # make_translator 默认的空 translation_guideline 不会产生第二个 ### 标题，
+        # 因此旧用例未覆盖此路径。
+        t = make_translator()
+        t.trans_prompt = FORGAL_JSON_TRANS_PROMPT
+        # 模拟被 [translation_guideline] 替换进来的翻译规范，含多个 ### 标题
+        t.pj_config.translation_guideline = (
+            "### 1. 专有名词\n严格遵循术语表。\n"
+            "### 2. 口吻\n符合角色人设。\n"
+            "### 3. 翻译腔\n避免生硬直译。\n"
+            "### 4. 控制码\n原样保留系统符号。\n"
+            "### 5. 氛围保留规则\n当原文句式具有张力时可保留日文句式。\n"
+            "## 翻译检查清单\n输出前逐项确认。"
+        )
+        t.last_translations = {}  # 无历史
+        trans = CSentense("原文", index=0)
+        _, _, _, input_src = t._build_input_jsonlines([trans], False, "f.json")
+        t.conversations["f.json"] = [{"role": "system", "content": t.system_prompt}]
+        content = t._build_round_user_content(
+            t.conversations["f.json"], input_src, "", "f.json", is_first_round=True
+        )
+        # process_requirements 的其余小节应保留（不得被误删）
+        for sec in [
+            "### 输入格式",
+            "### src 字段判定",
+            "### 符号与格式保留",
+            "### 输出格式",
+            "### 完整示例",
+        ]:
+            self.assertIn(sec, content, f"process_requirements 小节被误删: {sec}")
+        # 历史上下文小节应被移除
+        self.assertNotIn("### 历史上下文", content)
+        # translation_guidelines 区块应完整保留（开放/闭合标签 + 全部 1~5 节 + 检查清单）
+        self.assertIn("<translation_guidelines>", content)
+        self.assertIn("</translation_guidelines>", content)
+        for sec in [
+            "### 1. 专有名词",
+            "### 2. 口吻",
+            "### 3. 翻译腔",
+            "### 4. 控制码",
+            "### 5. 氛围保留规则",
+            "## 翻译检查清单",
+        ]:
+            self.assertIn(sec, content, f"翻译规范小节被误删: {sec}")
+        # 标签不应错位：<process_requirements> 闭合前不应出现 </translation_guidelines>
+        pr_body = content.split("<process_requirements>", 1)[1]
+        pr_body_before_close = pr_body.split("</process_requirements>", 1)[0]
+        self.assertNotIn("</translation_guidelines>", pr_body_before_close)
+
     def test_subsequent_round_is_jsonline_only(self):
         t = make_translator()
         trans = CSentense("原文", index=0)

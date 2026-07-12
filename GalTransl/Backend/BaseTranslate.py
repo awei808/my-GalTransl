@@ -425,13 +425,33 @@ class BaseTranslate:
             "\n",
             prompt_req,
         )
-        # 同时移除 process_requirements 中「### 历史上下文 / ### About historical plot」说明小节
-        # （到下一个 ### 标题或 </process_requirements> 为止）。使用行锚定（re.M）避免 re.S 引发的回溯爆炸。
+        # 仅移除 <process_requirements> 区块「内部」的「### 历史上下文 / ### About historical plot」
+        # 说明小节。
+        #
+        # 关键修复（此前 bug）：旧实现用
+        #   r"^###\s*.*?(?:history|历史).*$(?:\n(?:.*$))*(?=\n### |\n</process_requirements>)"
+        # 其中 (?:\n(?:.*$))*` 是【贪婪】的，而前瞻 \n###  在整段提示词（含已被
+        # [translation_guideline] 替换进来的翻译规范）里会一路匹配到【最后一个】 ### 标题
+        # （即翻译规范里的 "### 5. 氛围保留规则"）。结果把从 "### 历史上下文" 到该 ### 5 之间
+        # 的所有内容——</process_requirements> 闭合标签、<history_result> 块、
+        # <translation_guidelines> 开放标签、以及翻译规范第 1~4 节——一刀切删掉，
+        # 导致首轮提示词被截断、标签错位（开标签 process_requirements / 闭标签 translation_guidelines）。
+        #
+        # 新实现：外层用 re.S 把匹配范围【限定在 <process_requirements>...</process_requirements>
+        # 内部】，内层对该区块做历史小节移除，且一律使用【非贪婪】匹配（*?），在首个
+        # ### 标题或区块结束符处即停。这样无论翻译规范内容里有多少 ### 标题，都不会跨块误删。
         prompt_req = re.sub(
-            r"^###\s*.*?(?:history|历史).*$(?:\n(?:.*$))*(?=\n### |\n</process_requirements>)",
-            "",
+            r"(<process_requirements>)(.*?)(</process_requirements>)",
+            lambda m: m.group(1)
+            + re.sub(
+                r"###\s*.*?(?:history|历史).*$(?:\n(?:.*$))*?(?=\n### |\Z)",
+                "",
+                m.group(2),
+                flags=re.M | re.I,
+            )
+            + m.group(3),
             prompt_req,
-            flags=re.M | re.I,
+            flags=re.S,
         )
         return prompt_req
 
