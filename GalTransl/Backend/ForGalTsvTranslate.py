@@ -278,6 +278,9 @@ class ForGalTsvTranslate(BaseTranslate):
         emit_runtime_success: bool = False,
         emitted_success_indices: Optional[Set[int]] = None,
     ):
+        # 先校验返回值非空/有效，再解析
+        if not line or not isinstance(line, str):
+            return False, f"待解析行为空或类型异常：{type(line).__name__}"
         line_sp = line.split("\t")
         if len(line_sp) != 3:
             return False, f"无法解析行：{line}"

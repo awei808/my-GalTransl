@@ -325,6 +325,28 @@ class TestForBatchMetaData(unittest.TestCase):
         out2 = self.backend._normalize_meta({"批次": "not_a_list"}, "f.json", 10)
         self.assertEqual(out2["批次"], [])
 
+    def test_normalize_meta_overlap_fix(self):
+        """重叠区间应被自动修复：后一个的起始推到前一个结束+1。"""
+        raw = {"批次": [
+            {"区间": [1, 30], "视角": "A", "氛围": "x", "h": False, "用词色彩": "a"},
+            {"区间": [20, 50], "视角": "B", "氛围": "y", "h": True, "用词色彩": "b"},
+        ]}
+        out = self.backend._normalize_meta(raw, "f.json", max_index=100)
+        self.assertEqual(len(out["批次"]), 2)
+        self.assertEqual(out["批次"][0]["区间"], [1, 30])
+        self.assertEqual(out["批次"][1]["区间"], [31, 50])
+
+    def test_normalize_meta_overlap_total_cover_discard(self):
+        """后一个区间被前一个完全覆盖，收缩后为空，应丢弃。"""
+        raw = {"批次": [
+            {"区间": [10, 50], "视角": "A", "氛围": "x", "h": False, "用词色彩": "a"},
+            {"区间": [20, 30], "视角": "B", "氛围": "y", "h": True, "用词色彩": "b"},
+        ]}
+        out = self.backend._normalize_meta(raw, "f.json", max_index=60)
+        # [20,30] 与 [10,50] 重叠 → 推到 [51,30]，51>30 → 丢弃
+        self.assertEqual(len(out["批次"]), 1)
+        self.assertEqual(out["批次"][0]["区间"], [10, 50])
+
     # ----------------------------------------------------------------
     # 4. _save_metadata
     # ----------------------------------------------------------------

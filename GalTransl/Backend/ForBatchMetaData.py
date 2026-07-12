@@ -234,6 +234,8 @@ class ForBatchMetaData(BaseTranslate):
         """规整批次数组：清洗字段类型、裁剪并排序区间，强制 id == 文件名。
 
         - 区间起止裁剪到 [1, max_index]，丢弃非法/空区间；
+        - **检测重叠区间**：后一个区间若与前一个重叠，则收缩其起始行号
+          到前一个区间结束 + 1；收缩后变为空区间的被丢弃；
         - 按起始行号升序排序；
         - h 规整为布尔值；视角/氛围/用词色彩规整为字符串。
         """
@@ -282,7 +284,34 @@ class ForBatchMetaData(BaseTranslate):
             )
 
         batches.sort(key=lambda x: (x["区间"][0], x["区间"][1]))
-        return {"id": filename, "批次": batches}
+
+        # ── 重叠检测与自动修复 ──
+        # 排序后遍历，若后一个区间的起始 ≤ 前一个区间的结束，则重叠。
+        # 将后一个区间的起始推到前一个区间结束 + 1；空则丢弃。
+        cleaned: List[dict] = []
+        for b in batches:
+            if not cleaned:
+                cleaned.append(b)
+                continue
+            prev = cleaned[-1]
+            cur_lo, cur_hi = b["区间"]
+            prev_lo, prev_hi = prev["区间"]
+            if cur_lo <= prev_hi:
+                new_lo = prev_hi + 1
+                if new_lo > cur_hi:
+                    LOGGER.warning(
+                        f"[BatchMetaData] {filename} 区间 [{prev_lo},{prev_hi}] "
+                        f"与 [{cur_lo},{cur_hi}] 重叠，收缩后为空，已丢弃"
+                    )
+                    continue
+                LOGGER.debug(
+                    f"[BatchMetaData] {filename} 区间 [{cur_lo},{cur_hi}] "
+                    f"与 [{prev_lo},{prev_hi}] 重叠，收缩为 [{new_lo},{cur_hi}]"
+                )
+                b["区间"] = [new_lo, cur_hi]
+            cleaned.append(b)
+
+        return {"id": filename, "批次": cleaned}
 
     # ------------------------------------------------------------------
     # 4. 合并写入 BatchMetadata.json（gt_input 下，按 id 合并）
