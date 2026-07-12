@@ -144,6 +144,12 @@ class TestForBatchMetaData(unittest.TestCase):
         with open(os.path.join(dst, "config.yaml"), "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
 
+        # 创建 translation_guidelines 目录（配置中引用了 Basic.md）
+        os.makedirs(os.path.join(dst, "translation_guidelines"), exist_ok=True)
+        with open(os.path.join(dst, "translation_guidelines", "Basic.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("")  # 空的翻译规范，测试中由 _build_prompt_request 接管
+
         # 两个小剧本文件
         scripts = {
             "scene_a.txt.json": [
@@ -351,16 +357,19 @@ class TestForBatchMetaData(unittest.TestCase):
     # 4. _save_metadata
     # ----------------------------------------------------------------
     def test_save_metadata_overwrite_and_append(self):
+        from GalTransl import PASS2_CACHE_DIR
         sub = tempfile.mkdtemp()
         try:
-            with patch.object(self.backend.pj_config, "getInputPath",
+            cache_sub = os.path.join(sub, PASS2_CACHE_DIR)
+            with patch.object(self.backend.pj_config, "getCachePath",
                               return_value=sub):
+                os.makedirs(cache_sub, exist_ok=True)
                 # 初始写入 A
                 self.backend._save_metadata(
                     {"id": "A", "批次": [{"区间": [1, 10], "视角": "A",
                                           "氛围": "x", "h": False, "用词色彩": "y"}]}
                 )
-                path = os.path.join(sub, "BatchMetadata.json")
+                path = os.path.join(cache_sub, "BatchMetadata.json")
                 with open(path, encoding="utf-8") as f:
                     self.assertEqual(len(json.load(f)), 1)
 
@@ -460,7 +469,8 @@ class TestForBatchMetaData(unittest.TestCase):
             ok = asyncio.run(self.backend.batch_translate(data, filename=fname))
             self.assertTrue(ok, f"batch_translate 失败：{fname}")
 
-        bm_path = os.path.join(gt_input, "BatchMetadata.json")
+        from GalTransl import PASS2_CACHE_DIR
+        bm_path = os.path.join(self.tmp, "transl_cache", PASS2_CACHE_DIR, "BatchMetadata.json")
         self.assertTrue(os.path.exists(bm_path), "未生成 BatchMetadata.json")
 
         with open(bm_path, encoding="utf-8") as f:
@@ -499,8 +509,9 @@ class TestForBatchMetaData(unittest.TestCase):
         with open(os.path.join(gt_input, one), encoding="utf-8") as f:
             data = json.load(f)
 
+        from GalTransl import PASS2_CACHE_DIR
         # 确保前一个测试没有留下 BatchMetadata.json
-        bm_path = os.path.join(gt_input, "BatchMetadata.json")
+        bm_path = os.path.join(self.tmp, "transl_cache", PASS2_CACHE_DIR, "BatchMetadata.json")
         if os.path.exists(bm_path):
             os.remove(bm_path)
 

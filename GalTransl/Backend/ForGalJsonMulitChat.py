@@ -128,14 +128,19 @@ class FileMetaData:
 
 
 def load_file_metadata(projectConfig: "CProjectConfig"):
-    """从 gt_input/FileMetaData.json 载入文件级元数据。
+    """从缓存或输入目录载入文件级元数据。
 
     FileMetaData.json 由 ForFileMetaData 后端生成，格式为 JSON 数组，
-    每项 ``id`` 对应一个待翻译文件名。本函数兼容两种格式：
+    每项 ``id`` 对应一个待翻译文件名。查找优先级：
 
-    - **新格式（推荐）**：JSON 数组 → 返回首项作为全局默认元数据
+    1. ``transl_cache/pass1_cache/FileMetaData.json``（标准缓存位置）
+    2. ``gt_input/FileMetaData.json``（旧版/兼容位置）
+
+    本函数兼容数组和单对象两种格式：
+
+    - **数组格式（推荐）**：JSON 数组 → 返回首项作为全局默认元数据
       （完整多文件映射由 :func:`load_file_metadata_map` 提供）
-    - **旧格式（兼容）**：JSON 对象 → 直接解析为单条元数据
+    - **单对象格式（兼容）**：JSON 对象 → 直接解析为单条元数据
 
     文件不存在或解析失败时返回 None；缺失字段按空值处理。
     「角色」「标签」允许是字符串或字符串列表，「服装」「剧情」「id」为字符串（可空）。
@@ -144,9 +149,19 @@ def load_file_metadata(projectConfig: "CProjectConfig"):
     精确元数据由 ``load_file_metadata_map()`` 提供按文件名的映射，
     该函数在 ForGalJsonMulitChat._ensure_file_metadata_loaded 中惰性调用。
     """
-    input_dir = projectConfig.getInputPath()
-    path = os.path.join(input_dir, "FileMetaData.json")
-    if not os.path.exists(path):
+    from GalTransl import PASS1_CACHE_DIR
+
+    # 优先从缓存读取，其次兼容旧版 gt_input 位置
+    candidate_paths = [
+        os.path.join(projectConfig.getCachePath(), PASS1_CACHE_DIR, "FileMetaData.json"),
+        os.path.join(projectConfig.getInputPath(), "FileMetaData.json"),
+    ]
+    path = None
+    for p in candidate_paths:
+        if os.path.exists(p):
+            path = p
+            break
+    if path is None:
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -191,15 +206,18 @@ def load_file_metadata(projectConfig: "CProjectConfig"):
 
 
 def _find_metadata_file(input_dir: str, name: str) -> Optional[str]:
-    """在翻译项目目录中查找指定名称的元数据文件（如 FileMetaData.json / BatchMetadata.json）。
+    """在翻译项目目录或缓存目录中查找指定名称的元数据文件。
 
     GalTransl 的「新建翻译项目」会生成一个项目根目录，其中 ``gt_input`` 是
-    待翻译输入文件夹，元数据文件与该文件夹同级、位于**项目根目录**
-    （即 ``gt_input`` 的父目录）。因此按以下优先级查找：
+    待翻译输入文件夹。元数据文件的查找优先顺序如下：
 
-    1. ``<input_dir>/../<name>`` —— 项目根（标准位置，首选）
-    2. ``<input_dir>/<name>`` —— 直接放在 gt_input 内（兼容布局）
-    3. 向上再查找 2 级 —— 非标准布局的安全网（不推荐依赖）
+    1. 缓存目录（transl_cache/pass1_cache 或 pass2_cache）
+    2. 项目根目录（gt_input 的父目录，标准位置）
+    3. gt_input 目录（兼容布局）
+    4. 向上再查找 2 级（非标准布局的不推荐兜底）
+
+    其中缓存目录用于存储各 Pass 的中间产物，而项目根目录 / gt_input
+    用于兼容旧版本或手动放置的元数据文件。
 
     Args:
         input_dir: 输入目录（通常为 projectConfig.getInputPath()，即 gt_input）
@@ -208,6 +226,15 @@ def _find_metadata_file(input_dir: str, name: str) -> Optional[str]:
     Returns:
         找到的文件路径；均未找到则返回 None
     """
+    from GalTransl import PASS1_CACHE_DIR, PASS2_CACHE_DIR
+
+    # 0) 缓存子目录（优先）：pass1_cache / pass2_cache 都查一遍
+    cache_base = os.path.join(os.path.dirname(input_dir), "transl_cache")
+    for sub in (PASS1_CACHE_DIR, PASS2_CACHE_DIR):
+        cand = os.path.join(cache_base, sub, name)
+        if os.path.exists(cand):
+            return cand
+
     # 1) 项目根目录（gt_input 的父目录）—— 标准位置
     project_root = os.path.dirname(input_dir)
     cand = os.path.join(project_root, name)
@@ -397,7 +424,7 @@ def load_batch_metadata_map(projectConfig: "CProjectConfig") -> dict:
 """
 ForGalJsonMulitChat - 基于 JSON-line 格式的多轮对话视觉小说脚本翻译后端
 
-与 ForGalJsonTranslate 的核心差异：
+与单轮对话翻译后端的核心差异：
 本后端采用「多轮对话（multi-round chat）」模式对接 API
 每次 API 调用都会把完整的 messages 历史（system + 之前各轮 user/assistant）一并发出，由模型自行维持上下文。
 

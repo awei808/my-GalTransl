@@ -186,10 +186,11 @@ class ForFileMetaData(BaseTranslate):
         }
 
     # ------------------------------------------------------------------
-    # 3. 合并写入 FileMetaData.json（gt_input 下，按 id 合并）
+    # 3. 合并写入 FileMetaData.json（pass1_cache 下，按 id 合并）
     # ------------------------------------------------------------------
     def _save_metadata(self, meta: dict) -> None:
-        out_dir = self.pj_config.getInputPath()  # gt_input
+        from GalTransl import PASS1_CACHE_DIR
+        out_dir = os.path.join(self.pj_config.getCachePath(), PASS1_CACHE_DIR)
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, "FileMetaData.json")
         with self._fm_lock:

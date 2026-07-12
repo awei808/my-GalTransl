@@ -57,6 +57,13 @@ def _update_runtime(projectConfig: CProjectConfig, **kwargs):
         return
 
 
+def _pass3_cache_dir(projectConfig: CProjectConfig) -> str:
+    """返回 Pass 3 翻译缓存目录（transl_cache/pass3_cache）。"""
+    from GalTransl import PASS3_CACHE_DIR
+    from os.path import join as joinpath
+    return joinpath(projectConfig.getCachePath(), PASS3_CACHE_DIR)
+
+
 async def ensure_model_available_if_needed(projectConfig: CProjectConfig):
     """在真正需要调用模型前，按需执行一次可用性检查。"""
     translator = getattr(projectConfig, "select_translator", "")
@@ -257,7 +264,9 @@ def preprocess_trans_list(trans_list, projectConfig, pre_dic, tPlugins=None):
             "file_galtransl_json",
             "file_mtbench_aio",
         ]:
-            if projectConfig.select_translator not in ["ForNovel"]:
+            if eng_type.startswith("dump") or eng_type == "GenDic":
+                pass  # 这些模式不需要分析对话
+            else:
                 tran.analyse_dialogue()
 
         tran.post_src = pre_dic.do_replace(tran.post_src, tran)
@@ -315,7 +324,7 @@ async def doLLMTranslate(
     project_dir = projectConfig.getProjectDir()
     input_dir = projectConfig.getInputPath()
     output_dir = projectConfig.getOutputPath()
-    cache_dir = projectConfig.getCachePath()
+    cache_dir = _pass3_cache_dir(projectConfig)
     pre_dic_list = projectConfig.getDictCfgSection()["preDict"]
     post_dic_list = projectConfig.getDictCfgSection()["postDict"]
     gpt_dic_list = projectConfig.getDictCfgSection()["gpt.dict"]
@@ -660,7 +669,7 @@ async def doLLMTranslSingleChunk(
         proj_dir = projectConfig.getProjectDir()
         input_dir = projectConfig.getInputPath()
         output_dir = projectConfig.getOutputPath()
-        cache_dir = projectConfig.getCachePath()
+        cache_dir = _pass3_cache_dir(projectConfig)
         pre_dic = projectConfig.pre_dic
         post_dic = projectConfig.post_dic
         gpt_dic = projectConfig.gpt_dic
@@ -788,7 +797,7 @@ async def postprocess_results(
     proj_dir = projectConfig.getProjectDir()
     input_dir = projectConfig.getInputPath()
     output_dir = projectConfig.getOutputPath()
-    cache_dir = projectConfig.getCachePath()
+    cache_dir = _pass3_cache_dir(projectConfig)
     eng_type = projectConfig.select_translator
     gpt_dic = projectConfig.gpt_dic
     name_replaceDict = projectConfig.name_replaceDict
@@ -803,16 +812,15 @@ async def postprocess_results(
             + (f"_{chunk.chunk_index}" if chunk.total_chunks > 1 else ""),
         )
 
-        # rebuildr 是"只重建输出文件"模式，不应修改缓存；其余引擎正常刷新
-        if eng_type != "rebuildr":
-            find_problems(trans_list, projectConfig, gpt_dic)
-            # post_save=True → 写完整快照并删除对应 .append 日志（即合并 jsonl）
-            await save_transCache_to_json(
-                trans_list,
-                cache_file_path,
-                post_save=True,
-                project_dir=_runtime_project_dir(projectConfig),
-            )
+        # 刷新 problem 字段（仅翻译模式；GenDic/dump-name 等不刷新）
+        find_problems(trans_list, projectConfig, gpt_dic)
+        # post_save=True → 写完整快照并删除对应 .append 日志（即合并 jsonl）
+        await save_transCache_to_json(
+            trans_list,
+            cache_file_path,
+            post_save=True,
+            project_dir=_runtime_project_dir(projectConfig),
+        )
 
     # 使用output_combiner合并结果，即使只有一个结果
     all_trans_list, all_json_list = DictionaryCombiner.combine(resultChunks)
@@ -848,31 +856,12 @@ async def init_gptapi(
     """
     proxyPool = projectConfig.proxyPool
     tokenPool = projectConfig.tokenPool
-    sakuraEndpointQueue = projectConfig.endpointQueue
     eng_type = projectConfig.select_translator
 
     match eng_type:
-        case "ForGal-tsv":
-            from GalTransl.Backend.ForGalTsvTranslate import ForGalTsvTranslate
-            return ForGalTsvTranslate(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForNovel":
-            from GalTransl.Backend.ForNovelTranslate import ForNovelTranslate
-            return ForNovelTranslate(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForGal-json":
-            from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
-            return ForGalJsonTranslate(projectConfig, eng_type, proxyPool, tokenPool)
         case "ForGal-json-multi-chat":
             from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
             return ForGalJsonMulitChat(projectConfig, eng_type, proxyPool, tokenPool)
-        case "sakura-v1.0" | "galtransl-v3":
-            from GalTransl.Backend.SakuraTranslate import CSakuraTranslate
-            sakura_endpoint = await sakuraEndpointQueue.get()
-            if sakuraEndpointQueue is None:
-                raise ValueError(f"Endpoint is required for engine type {eng_type}")
-            return CSakuraTranslate(projectConfig, eng_type, sakura_endpoint, proxyPool)
-        case "rebuildr" | "rebuilda" | "dump-name":
-            from GalTransl.Backend.RebuildTranslate import CRebuildTranslate
-            return CRebuildTranslate(projectConfig, eng_type)
         case "GenDic":
             from GalTransl.Backend.GenDic import GenDic
             return GenDic(projectConfig, eng_type, proxyPool, tokenPool)

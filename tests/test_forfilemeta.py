@@ -143,11 +143,14 @@ class TestForFileMetaData(unittest.TestCase):
     def test_save_metadata_merge_and_corruption(self):
         sub = tempfile.mkdtemp()
         try:
+            # _save_metadata 写入 projectConfig.getCachePath() + "/pass1_cache/"
+            cache_sub = os.path.join(sub, "pass1_cache")
             with patch.object(
-                self.backend.pj_config, "getInputPath", return_value=sub
+                self.backend.pj_config, "getCachePath", return_value=sub
             ):
+                os.makedirs(cache_sub, exist_ok=True)
                 # 预置一条 id=A 的旧数据
-                with open(os.path.join(sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
+                with open(os.path.join(cache_sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
                     json.dump(
                         [{"id": "A", "角色": [], "服装": "", "剧情": "old", "标签": []}],
                         f, ensure_ascii=False,
@@ -156,7 +159,7 @@ class TestForFileMetaData(unittest.TestCase):
                 self.backend._save_metadata(
                     {"id": "A", "角色": ["創"], "服装": "", "剧情": "new", "标签": ["t"]}
                 )
-                with open(os.path.join(sub, "FileMetaData.json"), encoding="utf-8") as f:
+                with open(os.path.join(cache_sub, "FileMetaData.json"), encoding="utf-8") as f:
                     arr = json.load(f)
                 self.assertEqual(len(arr), 1)
                 self.assertEqual(arr[0]["剧情"], "new")
@@ -165,18 +168,18 @@ class TestForFileMetaData(unittest.TestCase):
                 self.backend._save_metadata(
                     {"id": "B", "角色": [], "服装": "", "剧情": "b", "标签": []}
                 )
-                with open(os.path.join(sub, "FileMetaData.json"), encoding="utf-8") as f:
+                with open(os.path.join(cache_sub, "FileMetaData.json"), encoding="utf-8") as f:
                     arr = json.load(f)
                 self.assertEqual(len(arr), 2)
                 self.assertIn("B", [e["id"] for e in arr])
 
                 # 损坏文件：应安全重置为 [meta]，不崩溃
-                with open(os.path.join(sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
+                with open(os.path.join(cache_sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
                     f.write("{ this is not valid json ")
                 self.backend._save_metadata(
                     {"id": "C", "角色": [], "服装": "", "剧情": "c", "标签": []}
                 )
-                with open(os.path.join(sub, "FileMetaData.json"), encoding="utf-8") as f:
+                with open(os.path.join(cache_sub, "FileMetaData.json"), encoding="utf-8") as f:
                     arr = json.load(f)
                 self.assertEqual(len(arr), 1)
                 self.assertEqual(arr[0]["id"], "C")
@@ -211,7 +214,8 @@ class TestForFileMetaData(unittest.TestCase):
             ok = asyncio.run(self.backend.batch_translate(data, filename=base))
             self.assertTrue(ok, f"batch_translate 失败：{base}")
 
-        pm_path = os.path.join(self.gt_input, "FileMetaData.json")
+        from GalTransl import PASS1_CACHE_DIR
+        pm_path = os.path.join(self.tmp, "transl_cache", PASS1_CACHE_DIR, "FileMetaData.json")
         self.assertTrue(os.path.exists(pm_path), "未生成 FileMetaData.json")
         with open(pm_path, encoding="utf-8") as f:
             arr = json.load(f)

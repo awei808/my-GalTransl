@@ -22,14 +22,8 @@ from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_SYSTEM_PROMPT,
     FORGAL_JSON_TRANS_PROMPT,
-    FORGAL_TSV_SYSTEM,
-    FORGAL_TSV_TRANS_PROMPT_EN,
-    FORNOVEL_TRANS_PROMPT_EN,
-    GalTransl_SYSTEM_PROMPT,
-    GalTransl_TRANS_PROMPT_V3,
-    Sakura_SYSTEM_PROMPT010,
-    Sakura_TRANS_PROMPT010,
     FORFILEMETA_PROMPT,
+    FORBATCHMETA_PROMPT,
 )
 
 
@@ -352,33 +346,17 @@ def _collect_common_dict_payload() -> dict[str, Any]:
 
 
 _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
-    "ForGal-json": {
-        "system_prompt": FORGAL_JSON_SYSTEM_PROMPT,
-        "user_prompt": FORGAL_JSON_TRANS_PROMPT,
-    },
     "ForGal-json-multi-chat": {
         "system_prompt": FORGAL_JSON_SYSTEM_PROMPT,
         "user_prompt": FORGAL_JSON_TRANS_PROMPT,
     },
-    "ForGal-tsv": {
-        "system_prompt": FORGAL_TSV_SYSTEM,
-        "user_prompt": FORGAL_TSV_TRANS_PROMPT_EN,
-    },
-    "ForNovel": {
-        "system_prompt": FORGAL_TSV_SYSTEM,
-        "user_prompt": FORNOVEL_TRANS_PROMPT_EN,
-    },
-    "sakura-v1.0": {
-        "system_prompt": Sakura_SYSTEM_PROMPT010,
-        "user_prompt": Sakura_TRANS_PROMPT010,
-    },
-    "galtransl-v3": {
-        "system_prompt": GalTransl_SYSTEM_PROMPT,
-        "user_prompt": GalTransl_TRANS_PROMPT_V3,
-    },
     "ForFileMetaData": {
         "system_prompt": "",
         "user_prompt": FORFILEMETA_PROMPT,
+    },
+    "ForBatchMetaData": {
+        "system_prompt": "",
+        "user_prompt": FORBATCHMETA_PROMPT,
     },
 }
 
@@ -2111,7 +2089,7 @@ def build_handler(registry: JobRegistry):
                 )
                 return
             if path == "/api/translators":
-                _hidden_translators = {"show-plugs", "dump-name", "rebuildr", "rebuilda"}
+                _hidden_translators = {"show-plugs", "dump-name"}
                 translators = [
                     {
                         "name": name,
