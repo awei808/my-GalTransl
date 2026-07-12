@@ -397,7 +397,7 @@ def load_batch_metadata_map(projectConfig: "CProjectConfig") -> dict:
 """
 ForGalJsonMulitChat - 基于 JSON-line 格式的多轮对话视觉小说脚本翻译后端
 
-与 ForGalJsonTranslate 的核心差异：
+与单轮对话翻译后端的核心差异：
 本后端采用「多轮对话（multi-round chat）」模式对接 API
 每次 API 调用都会把完整的 messages 历史（system + 之前各轮 user/assistant）一并发出，由模型自行维持上下文。
 
