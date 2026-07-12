@@ -9,6 +9,7 @@ from collections import Counter
 from re import compile
 import requests
 import re
+import json
 
 PATTERN_CODE_BLOCK = compile(r"```([\w]*)\n([\s\S]*?)\n```")
 whitespace = " \t\n\r\v\f"
@@ -290,20 +291,53 @@ def process_escape(text: str) -> str:
     return codecs.escape_decode(bytes(text, "utf-8"))[0].decode("utf-8")
 
 
-pattern_fix_quotes = compile(r'"dst": *"(.+?)"}')
+# 收紧：要求 dst 值闭合引号后紧跟对象结束符 }（非逗号引导的后续字段），
+# 降低跨字段误吞风险；可选空白更宽松。
+pattern_fix_quotes = compile(r'"dst"\s*:\s*"(.+?)"\s*}')
 
 
 def fix_quotes(text):
-    results = pattern_fix_quotes.findall(text)
-    for match in results:
-        new_match = match
-        for i in range(match.count('"')):
-            if i % 2 == 0:
-                new_match = new_match.replace('"', "“", 1).replace(r"\“", "“", 1)
-            else:
-                new_match = new_match.replace('"', "”", 1).replace(r"\”", "”", 1)
-        text = text.replace(match, new_match)
-    return text
+    """修复模型回包中 dst 值内含未转义直引号导致 JSON 解析失败的问题。
+
+    仅对「本身无法被 json.loads 解析」的行做引号修正；已合法的 jsonline
+    （含模型在 dst 关闭后又重复追加 name 等字段的畸形行，其本身仍是合法
+    JSON）**原样返回**，不做任何改写，从而彻底避免破坏 JSON 结构。
+
+    旧实现对整段响应做无条件修正：当行形如
+        ...,"dst":"译文", "name": "創"}
+    正则 `"dst": *"(.+?)"}` 会贪婪到第一个 "}"（即冗余 name 的末尾），把
+    `, "name": "創` 一并吞入 dst 捕获组并转成弯引号，使 json.loads 虽能通过
+    但译文被污染（即 22 处 "name" 污染 bug）。本实现以「先解析、仅修失败行」
+    规避，且解析成功后的弯引号归一仍由 BaseTranslate._normalize_parsed_
+    translation_text 中的 fix_quotes2 负责，此处不做重复处理。
+    """
+    out_lines = []
+    for raw_line in text.split("\n"):
+        line = raw_line
+        # 取出 jsonline 的 JSON 主体（去掉 sig| 前缀），判断是否已经合法
+        body = line.split("|", 1)[1] if "|" in line else line
+        try:
+            json.loads(body)
+            out_lines.append(raw_line)  # 已合法，不做任何修改
+            continue
+        except json.JSONDecodeError:
+            pass
+        # 仅当整行 JSON 解析失败时，才尝试修复 dst 值内未转义的直引号
+        results = pattern_fix_quotes.findall(line)
+        if not results:
+            out_lines.append(raw_line)
+            continue
+        new_line = line
+        for match in results:
+            new_match = match
+            for i in range(match.count('"')):
+                if i % 2 == 0:
+                    new_match = new_match.replace('"', "“", 1).replace(r"\“", "“", 1)
+                else:
+                    new_match = new_match.replace('"', "”", 1).replace(r"\”", "”", 1)
+            new_line = new_line.replace(match, new_match)
+        out_lines.append(new_line)
+    return "\n".join(out_lines)
 
 
 def fix_quotes2(text):

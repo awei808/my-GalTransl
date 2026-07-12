@@ -52,7 +52,7 @@ def make_translator(proofread_target_lang="English"):
     t.eng_type = "ForGal-json-multi-chat"
     t.enhance_jailbreak = False
     t.system_prompt = "SYSTEM_PROMPT"
-    t.trans_prompt = "[translation_guideline]\n[Input]\n[Glossary]"
+    t.trans_prompt = "[translation_guideline]\n[Glossary]\n[plot_metadata]\n[Input]"
     t.source_lang = "Japanese"
     t.target_lang = proofread_target_lang  # 非中文，跳过 opencc
     t.conversations = {}
@@ -256,6 +256,10 @@ class BuildRoundUserContentTests(unittest.TestCase):
         self.assertIn(input_src, content)
         self.assertIn("剧情", content)
         self.assertIn("角色", content)
+        # 顺序断言：剧情元数据（[plot_metadata] 占位符）必须位于待译内容（[Input]）之前，
+        # 即「翻译规范之后、input 之前」的注入顺序。
+        self.assertLess(content.index("角色"), content.index(input_src))
+        self.assertLess(content.index("剧情"), content.index(input_src))
 
     def test_subsequent_round_is_jsonline_only(self):
         t = make_translator()
@@ -1050,6 +1054,138 @@ class PlotMetadataFileIntegrationTests(unittest.TestCase):
         self.assertIs(t._resolve_plot_metadata("a.txt.json_0"), explicit)
         # 无匹配返回 None
         self.assertIsNone(t._resolve_plot_metadata("nope.txt.json"))
+
+
+class RedundantNameFieldRegressionTests(unittest.TestCase):
+    """回归：模型在 dst 后重复追加 name 等字段（畸形但本身合法的 jsonline）
+    不应再污染译文（原 22 处 "name" 污染 bug，根因在 Utils.fix_quotes）。
+
+    端到端跑后端解析链路（_handle_parse_result -> fix_quotes -> 逐行解析），
+    验证 pre_dst 干净、成功计数正确。对应真实缓存文件 03_kar_hatu01.txt.json。
+    """
+
+    def setUp(self):
+        self.t = make_translator()
+        self.trans_list = [CSentense(f"原文{i}", index=i) for i in range(5)]
+        _, self.sig_list, _, _ = self.t._build_input_jsonlines(
+            self.trans_list, False, "f.json"
+        )
+
+    def _run(self, raw):
+        cnt, res, real = self.t._handle_parse_result(
+            raw_resp=raw, token=make_token(), trans_list=self.trans_list,
+            n_symbol="", sig_list=self.sig_list, is_stream=False,
+            stream_error_msg="", stream_cursor={"i": -1},
+            stream_parsed_list=[], idx_tip="0~4", filename="f.json",
+            proofread=False, call_messages=[], prefill_used=False,
+        )
+        return cnt, res, real
+
+    def test_redundant_name_field_not_polluted(self):
+        # 复刻真实 bug：index=3 的畸形行，dst 后重复 name 字段
+        malformed = (
+            self.sig_list[3]
+            + '|{"id":3,"name":"創","src":"S","dst":"（偶尔像这样，也挺不错的……）", "name": "創"}'
+        )
+        lines = [
+            self.sig_list[0] + '|{"id":0,"dst":"译0"}',
+            self.sig_list[1] + '|{"id":1,"dst":"译1"}',
+            self.sig_list[2] + '|{"id":2,"dst":"译2"}',
+            malformed,
+            self.sig_list[4] + '|{"id":4,"dst":"译4"}',
+        ]
+        cnt, res, real = self._run("\n".join(lines))
+        self.assertEqual(cnt, 5)
+        self.assertEqual(real, 5)
+        self.assertEqual(len(res), 5)
+        # 关键断言：dst 未被吞入后续字段，译文保持干净
+        self.assertEqual(res[3].pre_dst, "（偶尔像这样，也挺不错的……）")
+        self.assertNotIn("name", res[3].pre_dst)
+        self.assertNotIn("創", res[3].pre_dst)
+        # 旧 bug 的污染形态（弯引号 + 拼接的 name 片段）绝不可出现
+        self.assertNotIn("“", res[3].pre_dst)
+        self.assertNotIn("”", res[3].pre_dst)
+
+    def test_multiple_redundant_name_fields_all_clean(self):
+        # 模拟「22 处」同类错误：多行都带冗余 name 字段，全部应干净解析
+        malformed_indices = [1, 3, 4]
+        lines = []
+        for i in range(5):
+            if i in malformed_indices:
+                lines.append(
+                    self.sig_list[i]
+                    + f'|{{"id":{i},"name":"X","src":"S","dst":"译{i}", "name": "X"}}'
+                )
+            else:
+                lines.append(self.sig_list[i] + f'|{{"id":{i},"dst":"译{i}"}}')
+        cnt, res, real = self._run("\n".join(lines))
+        self.assertEqual(cnt, 5)
+        self.assertEqual(real, 5)
+        self.assertEqual(len(res), 5)
+        for i in malformed_indices:
+            self.assertEqual(res[i].pre_dst, f"译{i}")
+            self.assertNotIn("name", res[i].pre_dst)
+
+    def test_unescaped_quotes_in_dst_still_repaired_end_to_end(self):
+        # ② 的端到端验证：dst 内未转义引号（真正解析失败）仍被修复为弯引号，
+        # 而不是被错误吞字段或静默污染。
+        broken = self.sig_list[0] + '|{"id":0,"dst":"他说"你好"然后离开了"}'
+        cnt, res, real = self._run(broken)
+        self.assertEqual(cnt, 1)
+        self.assertEqual(real, 1)
+        self.assertIn("“你好”", res[0].pre_dst)
+        self.assertNotIn('"你好"', res[0].pre_dst)
+
+
+class TranslationPromptTemplateTests(unittest.TestCase):
+    """回归：多轮对话模式提示词已按 Ciallo 格式改造
+    （中文 process_requirements、完整示例、控制码/注音规则、<history_result> 占位、占位符顺序）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from GalTransl.Backend.Prompts import FORGAL_JSON_TRANS_PROMPT
+        cls.T = FORGAL_JSON_TRANS_PROMPT
+
+    def test_process_requirements_in_chinese(self):
+        self.assertIn("输入格式", self.T)
+        self.assertIn("src 字段判定", self.T)
+        self.assertIn("符号与格式保留", self.T)
+        self.assertIn("输出格式", self.T)
+
+    def test_contains_complete_example(self):
+        self.assertIn("完整示例", self.T)
+        self.assertIn("#01|", self.T)
+        self.assertIn("%p-1;", self.T)
+        self.assertIn("%fuser;", self.T)
+
+    def test_control_code_and_phonetic_rules(self):
+        # 控制码原样保留
+        self.assertIn("%p-1;", self.T)
+        self.assertIn("%p;", self.T)
+        self.assertIn("%fＭＳ ゴシック;", self.T)
+        self.assertIn("%fuser;", self.T)
+        # [] 内注音可直接删除
+        self.assertIn("注音", self.T)
+
+    def test_history_result_placeholder_present(self):
+        self.assertIn("<history_result>", self.T)
+        self.assertIn("[history_result]", self.T)
+
+    def test_placeholder_ordering(self):
+        # 翻译规范 -> 术语表 -> 剧情元数据 -> 输入
+        gi = self.T.index("[translation_guideline]")
+        gl = self.T.index("[Glossary]")
+        pm = self.T.index("[plot_metadata]")
+        ip = self.T.index("[Input]")
+        self.assertLess(gi, gl)
+        self.assertLess(gl, pm)
+        self.assertLess(pm, ip)
+        # 历史上下文位于输入之前
+        self.assertLess(self.T.index("[history_result]"), ip)
+
+    def test_recipe_line_present(self):
+        self.assertIn("输出配方", self.T)
+        self.assertIn('"dst": string', self.T)
 
 
 if __name__ == "__main__":

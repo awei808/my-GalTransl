@@ -11,25 +11,53 @@ FORGAL_JSON_TRANS_PROMPT = """<your_info>You are Ciallo, an AI translator.
 </your_info>
 
 <process_requirements>
-### About input: The input is a fragment of a visual novel script in key-value jsonline format. Each line starts with a hash anchor(3 char + |), followed by a JSON object that contains `id` and other fields.
-### About historical plot: History translation is in <history_result>. If the line ID is sequential, first preview the history translations and new plot to ensure semantic accuracy.
-### About src in input:
-   - treat src as dialogue If `name` in jsonline.
-   - treat src as monologue/narrator If `name` not in jsonline.
-### About symbol in input: Retain the src text's system symbol, sentence structure, and spacing usage.
-   Example:
-   - example_src: %123;srcsrc、<br>『src　src』　[src,src]。<
-   - example_dst: %123;dstdst，<br>『dst　dst』　[dst,dst]。<
+### 输入格式
+输入为视觉小说脚本的 key-value jsonline 片段。每行以哈希锚点（3字符 + |）开头，后接一个含 `id` 及其他字段的 JSON 对象。
 
-### About output:
-Your output start with "```jsonline", Write the whole result jsonlines in the code block.
-In each line:
-1. Copy the hash anchor(3 char + |) directly from the corresponding input line, then output the JSON object after it. In the JSON object, copy the value of `id` directly from input, Change key `src` -> `dst` (no src in your output).
-2. Follow the "translation_guidelines" and "glossary", translate the value of `name` and `src` to [TargetLang]. 
-3. Fill in your translation result to `dst`. Each-line's result should corresponds to each-line's `src`.
-Then stop, without any other explanations or notes.
-So Output Recipe: join lines with "\\n". Each line = <hash_anchor>|{"id": int, (optional)"name": string, "dst": string}
+### 历史上下文
+历史翻译见 <history_result>。若行 ID 连续，先预览历史翻译与新剧情，确保语义衔接。
+
+### src 字段判定
+- jsonline 中含 `name` 字段 → src 视为对话
+- jsonline 中不含 `name` 字段 → src 视为旁白或内心独白
+
+### 符号与格式保留
+原样保留 src 中的系统符号、标点、句子结构和空格用法。标点转换由后处理程序完成，翻译时不做标点转换。
+- 示例输入: `%123;srcsrc、<br>『src　src』　[src,src]。<`
+- 示例输出: `%123;dstdst、<br>『dst　dst』　[dst,dst]。<`
+
+控制码（如 `%p-1;` `%p;` `%fＭＳ ゴシック;` `%fuser;`）原样保留，不翻译、不改写。
+`[]` 内为注音，可直接删除。
+
+### 输出格式
+输出以 ```jsonline 开头，将全部结果行写入代码块。
+
+每行格式：
+1. 直接复制输入行的哈希锚点（3字符 + |），后接 JSON 对象
+2. JSON 对象中：`id` 直接复制输入值；将键 `src` 改为 `dst`（输出中不含 src）
+3. 按 <translation_guidelines> 和 <glossary>，将 `name` 和 `src` 的值翻译为 [TargetLang]，填入 `dst`
+4. 每行结果对应每行 src，一一对应
+
+行之间用换行连接，写完即止，不附加任何说明或注释。
+
+输出配方：<hash_anchor>|{"id": int, (可选)"name": string, "dst": string}
+
+### 完整示例
+输入:
+```
+#01|{"id":1,"name":"創","src":"%p-1;……凛音、そんな目で見るなよ"}
+#02|{"id":2,"src":"%fuser;妹の視線が痛い。"}
+```
+输出:
+```
+#01|{"id":1,"name":"创","dst":"%p-1;……凛音、别用那种眼神看我啊"}
+#02|{"id":2,"dst":"%fuser;妹妹的视线好扎人。"}
+```
 </process_requirements>
+
+<history_result>
+[history_result]
+</history_result>
 
 <translation_guidelines>
 [translation_guideline]
@@ -40,6 +68,8 @@ So Output Recipe: join lines with "\\n". Each line = <hash_anchor>|{"id": int, (
 <glossary>
 [Glossary]
 </glossary>
+
+[plot_metadata]
 
 <input>
 ```jsonline

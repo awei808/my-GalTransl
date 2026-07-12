@@ -469,7 +469,8 @@ class ForGalJsonMulitChat(BaseTranslate):
         提示词拼接（流程第 2 步）。
 
         第一轮对话：构建完整翻译提示词（替换 [Input]/[Glossary]/[translation_guideline]），
-          并追加剧情元数据(PlotMetadata) 段；
+          剧情元数据(PlotMetadata) 段通过模板中的 [plot_metadata] 占位符注入，
+          位于 [translation_guideline]/[Glossary] 之后、[Input] 之前；
         后续轮次：返回待译 jsonline，并附上本批次按需生成的术语表(gptdict) 短块，
           复用多轮上下文的同时保证每批都能看到本批出现的专有名词/人设解释。
         多轮模式下历史由对话本身携带，[history_result] 置空。
@@ -486,15 +487,19 @@ class ForGalJsonMulitChat(BaseTranslate):
         """
         if is_first_round:
             # 第一轮：构建完整翻译提示词（含 [Input]/[Glossary]/[translation_guideline] 替换）
-            prompt_req = self._build_prompt_request(input_src, gptdict)
+            # 剧情元数据经模板 [plot_metadata] 占位符注入，位于翻译规范之后、[Input] 之前。
+            metadata = self._resolve_plot_metadata(filename)
+            metadata_block = (
+                self._format_plot_metadata_block(metadata)
+                if metadata is not None
+                else ""
+            )
+            prompt_req = self._build_prompt_request(
+                input_src, gptdict, plot_metadata=metadata_block
+            )
             # 多轮模式下历史由对话本身携带，[history_result] 置为 None
             prompt_req = self._apply_history_result(prompt_req, filename)
             user_content = prompt_req
-            # 解析该文件的剧情元数据：优先显式注入，否则从 gt_input 的
-            # PlotMetadata.json 自动载入对应条目（按文件名匹配 id）。
-            metadata = self._resolve_plot_metadata(filename)
-            if metadata is not None:
-                user_content = user_content + self._format_plot_metadata_block(metadata)
         else:
             # 后续轮次：主要只发送待翻译句子（带 sig 的 jsonline），复用多轮上下文。
             if gptdict:

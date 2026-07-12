@@ -394,13 +394,16 @@ class BaseTranslate:
             return f"{start_idx}~{end_idx}"
         return str(start_idx)
 
-    def _build_prompt_request(self, input_src: str, gptdict: str) -> str:
+    def _build_prompt_request(
+        self, input_src: str, gptdict: str, plot_metadata: str = ""
+    ) -> str:
         prompt_req = self.trans_prompt
         prompt_req = prompt_req.replace(
             "[translation_guideline]", self.pj_config.translation_guideline
         )
         prompt_req = prompt_req.replace("[Input]", input_src)
         prompt_req = prompt_req.replace("[Glossary]", gptdict)
+        prompt_req = prompt_req.replace("[plot_metadata]", plot_metadata)
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         return prompt_req

@@ -254,9 +254,15 @@ class TranslateRefactorRegressionTests(unittest.IsolatedAsyncioTestCase):
             save_steps = 999
 
             def __init__(self) -> None:
-                self.pj_config = SimpleNamespace(bar=DummyBar(), stop_event=None)
+                self.pj_config = SimpleNamespace(bar=DummyBar(), stop_event=None, getProjectDir=lambda: "")
 
             def _check_stop_requested(self) -> None:
+                return None
+
+            def _get_effective_num_per_request(self, configured_value: int, proofread: bool = False) -> int:
+                return configured_value
+
+            def _update_dynamic_num_per_request(self, requested_count: int, completed_count: int, trans_result, filename: str, proofread: bool = False) -> None:
                 return None
 
             def _record_runtime_success(self, filename: str, trans: CSentense) -> None:
