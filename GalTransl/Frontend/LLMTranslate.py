@@ -356,12 +356,17 @@ async def doLLMTranslate(
 
     # 获取待翻译文件列表
     file_list = get_file_list(projectConfig.getInputPath())
-    # 载入 gt_input 中的 PlotMetadata.json
-    from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
-    projectConfig.plot_metadata = load_plot_metadata(projectConfig)
+    # 载入 gt_input 中的 FileMetaData.json
+    from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata
+    projectConfig.file_metadata = load_file_metadata(projectConfig)
     if not file_list:
         # dump-name / GenDic 等仅基于输入文件的短路流程，空目录不算致命错误，友好返回
-        if "dump-name" in eng_type or eng_type == "GenDic" or eng_type == "ForPlotMetaData":
+        if (
+            "dump-name" in eng_type
+            or eng_type == "GenDic"
+            or eng_type == "ForFileMetaData"
+            or eng_type == "ForBatchMetaData"
+        ):
             LOGGER.warning(
                 f"{projectConfig.getInputPath()} 中没有待翻译的文件，已跳过。"
             )
@@ -380,7 +385,7 @@ async def doLLMTranslate(
     file_list.sort(key=natural_sort_key)
 
     all_jsons = []
-    # 按文件收集 json_list，供 ForPlotMetaData 等"逐文件生成"引擎使用
+    # 按文件收集 json_list，供 ForFileMetaData 等"逐文件生成"引擎使用
     file_json_lists: Dict[str, list] = {}
     # ---- 2. 读取所有文件并切分为 chunk ----
     # 使用线程池并发读文件（IO 密集型），同时通过 fPlugins 解析为 json_list
@@ -416,13 +421,25 @@ async def doLLMTranslate(
         await gptapi.batch_translate(all_jsons)
         return True
 
-    if eng_type == "ForPlotMetaData":
+    if eng_type == "ForFileMetaData":
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
         for file_path, jsons in file_json_lists.items():
             await gptapi.batch_translate(jsons, filename=os_basename(file_path))
-        LOGGER.info("剧情元数据生成完成，已写入 gt_input/PlotMetadata.json")
+        LOGGER.info("文件级元数据生成完成，已写入 gt_input/FileMetaData.json")
+        return True
+
+    if eng_type == "ForBatchMetaData":
+        # 第二次启动后端：依据文件级剧情元数据(PlotMetadata) 将全文划分为翻译区间
+        # (批次)，标注视角/氛围/H/用词色彩，写入 gt_input/BatchMetadata.json。
+        # 与 ForFileMetaData 一样逐文件生成，不进入翻译流程。
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+        gptapi = await init_gptapi(projectConfig)
+        for file_path, jsons in file_json_lists.items():
+            await gptapi.batch_translate(jsons, filename=os_basename(file_path))
+        LOGGER.info("批次级元数据生成完成，已写入 gt_input/BatchMetadata.json")
         return True
 
     # ---- 3. 根据 sortBy 决定 chunk 处理顺序 ----
@@ -695,15 +712,15 @@ async def doLLMTranslSingleChunk(
         if len(translist_unhit) > 0:
             _check_stop_requested(projectConfig)
             await ensure_model_available_if_needed(projectConfig)
-            # 注入剧情元数据（仅支持的后端拥有 set_plot_metadata，
+            # 注入文件级元数据（仅支持的后端拥有 set_file_metadata，
             # 如 ForGal-json-multi-chat；其余后端忽略）。同一份
-            # PlotMetadata.json 作为项目级元数据应用到每个文件的首轮对话。
-            plot_metadata = getattr(projectConfig, "plot_metadata", None)
-            if plot_metadata is not None and hasattr(gptapi, "set_plot_metadata"):
+            # FileMetaData.json 作为项目级元数据应用到每个文件的首轮对话。
+            file_metadata = getattr(projectConfig, "file_metadata", None)
+            if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
                 _batch_file_name = file_name + (
                     f"_{file_index}" if total_splits > 1 else ""
                 )
-                gptapi.set_plot_metadata(plot_metadata, _batch_file_name)
+                gptapi.set_file_metadata(file_metadata, _batch_file_name)
             # 执行翻译
             await gptapi.batch_translate(
                 file_name + (f"_{file_index}" if total_splits > 1 else ""),
@@ -859,9 +876,12 @@ async def init_gptapi(
         case "GenDic":
             from GalTransl.Backend.GenDic import GenDic
             return GenDic(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForPlotMetaData":
-            from GalTransl.Backend.ForPlotMetaData import ForPlotMetaData
-            return ForPlotMetaData(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForFileMetaData":
+            from GalTransl.Backend.ForFileMetaData import ForFileMetaData
+            return ForFileMetaData(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForBatchMetaData":
+            from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
+            return ForBatchMetaData(projectConfig, eng_type, proxyPool, tokenPool)
         case _:
             raise ValueError(f"不支持的翻译引擎类型 {eng_type}")
 

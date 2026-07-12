@@ -102,7 +102,7 @@ class BaseTranslate:
         else:
             guideline_file = "Basic.md"
         self.pj_config.translation_guideline=load_guideline_file(guideline_file)
-        
+
         # 保存间隔
         if val := config.getKey("save_steps"):
             self.save_steps = val
@@ -396,7 +396,11 @@ class BaseTranslate:
         return str(start_idx)
 
     def _build_prompt_request(
-        self, input_src: str, gptdict: str, plot_metadata: str = ""
+        self,
+        input_src: str,
+        gptdict: str,
+        plot_metadata: str = "",
+        batch_metadata: str = "",
     ) -> str:
         prompt_req = self.trans_prompt
         prompt_req = prompt_req.replace(
@@ -405,6 +409,9 @@ class BaseTranslate:
         prompt_req = prompt_req.replace("[Input]", input_src)
         prompt_req = prompt_req.replace("[Glossary]", gptdict)
         prompt_req = prompt_req.replace("[plot_metadata]", plot_metadata)
+        # 批次级元数据(BatchMetadata)：默认空串（占位符被清除），
+        # 仅多轮后端在首轮按需注入。其余后端不受影响。
+        prompt_req = prompt_req.replace("[batch_metadata]", batch_metadata)
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         return prompt_req

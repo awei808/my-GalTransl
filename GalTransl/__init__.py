@@ -65,12 +65,16 @@ TRANSLATOR_SUPPORTED = {
         "en": "Customized template for Gal translation, json input. "
     },
     "ForGal-json-multi-chat": {
-        "zh-cn": "(openai接口)翻译Gal时使用，json格式输入，多轮对话以保留上下文，可注入剧情元数据(PlotMetadata)。",
-        "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports PlotMetadata injection."
+        "zh-cn": "(openai接口)翻译Gal时使用，json格式输入，多轮对话以保留上下文，可注入文件级元数据(FileMetaData)。",
+        "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports FileMetaData injection."
     },
-    "ForPlotMetaData": {
-        "zh-cn": "(openai接口)由剧本文件生成剧情元数据(PlotMetadata)，不翻译、无多轮、无系统提示词，结果写入 gt_input/PlotMetadata.json。",
-        "en": "Generate PlotMetadata from script files. No translation, no multi-turn, no system prompt; writes gt_input/PlotMetadata.json."
+    "ForFileMetaData": {
+        "zh-cn": "(openai接口)由剧本文件生成文件级元数据(FileMetaData)，不翻译、无多轮、无系统提示词，结果写入 gt_input/FileMetaData.json。",
+        "en": "Generate FileMetaData from script files. No translation, no multi-turn, no system prompt; writes gt_input/FileMetaData.json."
+    },
+    "ForBatchMetaData": {
+        "zh-cn": "(openai接口)依据文件级剧情元数据将原文划分为翻译区间(批次)并标注视角/氛围/H/用词色彩，结果写入 gt_input/BatchMetadata.json，供多轮翻译注入。",
+        "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes gt_input/BatchMetadata.json for multi-turn translation."
     },
     "ForNovel": {
         "zh-cn": "(openai接口)翻译轻小说等其他文本时使用，区别是输入不带name字段。",
@@ -114,12 +118,13 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForNovel": "deepseek-chat",
     "ForGal-json": "gpt-4.1",
     "ForGal-json-multi-chat": "gpt-4.1",
-    "ForPlotMetaData": "deepseek-chat",
+    "ForFileMetaData": "deepseek-chat",
+    "ForBatchMetaData": "deepseek-chat",
     "sakura-v1.0": "sakura-7b-qwen2.5-v1.0",
     "galtransl-v3": "Sakura-GalTransl-7B-v3",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-json", "ForGal-json-multi-chat", "ForGal-tsv", "ForNovel", "GenDic", "ForPlotMetaData"]
+NEED_OpenAITokenPool=["ForGal-json", "ForGal-json-multi-chat", "ForGal-tsv", "ForNovel", "GenDic", "ForFileMetaData", "ForBatchMetaData"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

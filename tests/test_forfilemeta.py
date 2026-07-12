@@ -1,5 +1,5 @@
 """
-ForPlotMetaData 后端测试
+ForFileMetaData 后端测试
 
 覆盖：
   1. _parse_meta        —— 多种 LLM 输出形态（裸 JSON / 代码块 / <think> / 前后带散文）
@@ -8,7 +8,7 @@ ForPlotMetaData 后端测试
   4. _build_glossary_text —— gpt 专名译表注入（造临时字典验证）
   5. 全流程整合         —— 把真实 test 项目拷贝到临时目录，用桩 LLM 逐文件跑
                          batch_translate，断言 gt_input 下每个待译文件都在
-                         PlotMetadata.json 留有对应条目（含日文名、id 规整、替换不重复）
+                         FileMetaData.json 留有对应条目（含日文名、id 规整、替换不重复）
 
 运行方式（务必从项目根目录，使 load_guideline_file 能找到 translation_guidelines/）：
     cd D:/解包或汉化用/my-galtransl/my-GalTransl
@@ -31,10 +31,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from GalTransl.ConfigHelper import CProjectConfig
-from GalTransl.Backend.ForPlotMetaData import ForPlotMetaData
+# 必须在导入 ForFileMetaData 之前 patch OpenCC，避免 BaseTranslate 初始化失败
+from unittest.mock import patch, MagicMock
+_patcher = patch("GalTransl.Backend.BaseTranslate.OpenCC",
+                 return_value=MagicMock(convert=lambda s: s))
+_patcher.start()
 
-# 真实 test 翻译项目（仅用于拷贝，不会改动其 gt_input/PlotMetadata.json）
+from GalTransl.ConfigHelper import CProjectConfig
+from GalTransl.Backend.ForFileMetaData import ForFileMetaData
+
+# 真实 test 翻译项目（仅用于拷贝，不会改动其 gt_input/FileMetaData.json）
 TEST_PROJECT = r"D:/解包或汉化用/xp3专用汉化文件夹/gal翻译/test"
 
 
@@ -67,25 +73,25 @@ class _FakeLLM:
         return (rsp, None)
 
 
-class TestForPlotMetaData(unittest.TestCase):
+class TestForFileMetaData(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # load_guideline_file 以 CWD 相对路径查找 translation_guidelines/
         os.chdir(ROOT)
 
-        # 把真实 test 项目完整拷贝到临时目录，避免污染真实 PlotMetadata.json
+        # 把真实 test 项目完整拷贝到临时目录，避免污染真实 FileMetaData.json
         cls.tmp = tempfile.mkdtemp(prefix="pm_test_")
         shutil.copytree(TEST_PROJECT, cls.tmp, dirs_exist_ok=True)
-        pm = os.path.join(cls.tmp, "gt_input", "PlotMetadata.json")
+        pm = os.path.join(cls.tmp, "gt_input", "FileMetaData.json")
         if os.path.exists(pm):
             os.remove(pm)  # 从零开始，验证“全量生成”
 
         cls.cfg = CProjectConfig(cls.tmp)
 
         # 绕过网络/真实 OpenAI 客户端初始化
-        ForPlotMetaData.init_chatbot = lambda self, *a, **k: None
+        ForFileMetaData.init_chatbot = lambda self, *a, **k: None
 
-        cls.backend = ForPlotMetaData(cls.cfg, "ForPlotMetaData", None, None)
+        cls.backend = ForFileMetaData(cls.cfg, "ForFileMetaData", None, None)
         cls.fake = _FakeLLM()
         cls.backend.ask_chatbot = cls.fake
 
@@ -102,31 +108,31 @@ class TestForPlotMetaData(unittest.TestCase):
     # ---------------------------------------------------------------- 1
     def test_parse_meta_variants(self):
         plain = '{"id":"x","角色":["a"],"服装":"","剧情":"","标签":["t"]}'
-        self.assertEqual(ForPlotMetaData._parse_meta(plain)["id"], "x")
+        self.assertEqual(ForFileMetaData._parse_meta(plain)["id"], "x")
 
         fenced = "```json\n" + plain + "\n```"
-        self.assertEqual(ForPlotMetaData._parse_meta(fenced)["id"], "x")
+        self.assertEqual(ForFileMetaData._parse_meta(fenced)["id"], "x")
 
         think = "<thinking>ok</think>\n" + plain
-        self.assertEqual(ForPlotMetaData._parse_meta(think)["id"], "x")
+        self.assertEqual(ForFileMetaData._parse_meta(think)["id"], "x")
 
         prose = "结果如下：\n" + plain + "\n完毕"
-        self.assertEqual(ForPlotMetaData._parse_meta(prose)["id"], "x")
+        self.assertEqual(ForFileMetaData._parse_meta(prose)["id"], "x")
 
-        self.assertIsNone(ForPlotMetaData._parse_meta(""))
-        self.assertIsNone(ForPlotMetaData._parse_meta("no json here"))
-        self.assertIsNone(ForPlotMetaData._parse_meta("{not valid"))
+        self.assertIsNone(ForFileMetaData._parse_meta(""))
+        self.assertIsNone(ForFileMetaData._parse_meta("no json here"))
+        self.assertIsNone(ForFileMetaData._parse_meta("{not valid"))
 
     # ---------------------------------------------------------------- 2
     def test_normalize_meta(self):
         raw = {"角色": "創", "标签": "教学", "服装": "x", "剧情": "y"}
-        out = ForPlotMetaData._normalize_meta(raw, "file.txt.json")
+        out = ForFileMetaData._normalize_meta(raw, "file.txt.json")
         self.assertEqual(out["id"], "file.txt.json")
         self.assertEqual(out["角色"], ["創"])
         self.assertEqual(out["标签"], ["教学"])
         self.assertEqual(out["服装"], "x")
 
-        out2 = ForPlotMetaData._normalize_meta({}, "f2.txt.json")
+        out2 = ForFileMetaData._normalize_meta({}, "f2.txt.json")
         self.assertEqual(out2["id"], "f2.txt.json")
         self.assertEqual(out2["角色"], [])
         self.assertEqual(out2["标签"], [])
@@ -141,7 +147,7 @@ class TestForPlotMetaData(unittest.TestCase):
                 self.backend.pj_config, "getInputPath", return_value=sub
             ):
                 # 预置一条 id=A 的旧数据
-                with open(os.path.join(sub, "PlotMetadata.json"), "w", encoding="utf-8") as f:
+                with open(os.path.join(sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
                     json.dump(
                         [{"id": "A", "角色": [], "服装": "", "剧情": "old", "标签": []}],
                         f, ensure_ascii=False,
@@ -150,7 +156,7 @@ class TestForPlotMetaData(unittest.TestCase):
                 self.backend._save_metadata(
                     {"id": "A", "角色": ["創"], "服装": "", "剧情": "new", "标签": ["t"]}
                 )
-                with open(os.path.join(sub, "PlotMetadata.json"), encoding="utf-8") as f:
+                with open(os.path.join(sub, "FileMetaData.json"), encoding="utf-8") as f:
                     arr = json.load(f)
                 self.assertEqual(len(arr), 1)
                 self.assertEqual(arr[0]["剧情"], "new")
@@ -159,18 +165,18 @@ class TestForPlotMetaData(unittest.TestCase):
                 self.backend._save_metadata(
                     {"id": "B", "角色": [], "服装": "", "剧情": "b", "标签": []}
                 )
-                with open(os.path.join(sub, "PlotMetadata.json"), encoding="utf-8") as f:
+                with open(os.path.join(sub, "FileMetaData.json"), encoding="utf-8") as f:
                     arr = json.load(f)
                 self.assertEqual(len(arr), 2)
                 self.assertIn("B", [e["id"] for e in arr])
 
                 # 损坏文件：应安全重置为 [meta]，不崩溃
-                with open(os.path.join(sub, "PlotMetadata.json"), "w", encoding="utf-8") as f:
+                with open(os.path.join(sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
                     f.write("{ this is not valid json ")
                 self.backend._save_metadata(
                     {"id": "C", "角色": [], "服装": "", "剧情": "c", "标签": []}
                 )
-                with open(os.path.join(sub, "PlotMetadata.json"), encoding="utf-8") as f:
+                with open(os.path.join(sub, "FileMetaData.json"), encoding="utf-8") as f:
                     arr = json.load(f)
                 self.assertEqual(len(arr), 1)
                 self.assertEqual(arr[0]["id"], "C")
@@ -205,15 +211,15 @@ class TestForPlotMetaData(unittest.TestCase):
             ok = asyncio.run(self.backend.batch_translate(data, filename=base))
             self.assertTrue(ok, f"batch_translate 失败：{base}")
 
-        pm_path = os.path.join(self.gt_input, "PlotMetadata.json")
-        self.assertTrue(os.path.exists(pm_path), "未生成 PlotMetadata.json")
+        pm_path = os.path.join(self.gt_input, "FileMetaData.json")
+        self.assertTrue(os.path.exists(pm_path), "未生成 FileMetaData.json")
         with open(pm_path, encoding="utf-8") as f:
             arr = json.load(f)
         ids = [e.get("id") for e in arr]
 
         # 每条输入文件都有对应元数据
         self.assertEqual(
-            set(ids), set(self.input_names), "PlotMetadata 的 id 集合与待译文件不一致"
+            set(ids), set(self.input_names), "FileMetaData 的 id 集合与待译文件不一致"
         )
         # 无重复、无遗漏
         self.assertEqual(len(arr), len(self.input_names), "条目数与文件数不符（重复或缺失）")

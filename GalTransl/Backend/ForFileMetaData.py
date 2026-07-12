@@ -12,27 +12,27 @@ from GalTransl import LOGGER
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks, fix_quotes
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.Prompts import FORPLOTMETA_PROMPT
+from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT
 
 
 """
-ForPlotMetaData - 剧情元数据(PlotMetadata)生成后端
+ForFileMetaData - 文件级元数据(FileMetaData)生成后端
 
 该后端不翻译文本、不使用多轮对话、不使用系统提示词。
 它读取一个 Galgame 剧本文件（gt_input 下的 *.txt.json），把全文作为 user 消息
 发给 LLM，要求模型概括剧情并输出一个 JSON 对象（角色/服装/剧情/标签），
-解析后按文件名 id 合并写入 gt_input/PlotMetadata.json。
+解析后按文件名 id 合并写入 gt_input/FileMetaData.json。
 
 默认会把项目的 translation_guideline（翻译规范，即 gpt.translation_guideline
 指向的文件内容）注入提示词，供模型在命名角色/标签、把握剧情风格时遵循；
-用户可在 config 的 internals.forplotmeta.inject_guideline 设为 false/0/no 关闭。
+用户可在 config 的 internals.forfilemeta.inject_guideline 设为 false/0/no 关闭。
 
 设计参考 GenDic：通过覆盖 batch_translate 走独立的"生成"流程，
 完全绕开翻译模型的输入/输出契约（不写 gt_output）。
 """
 
 
-class ForPlotMetaData(BaseTranslate):
+class ForFileMetaData(BaseTranslate):
     def __init__(
         self,
         config: CProjectConfig,
@@ -41,23 +41,23 @@ class ForPlotMetaData(BaseTranslate):
         token_pool: COpenAITokenPool,
     ):
         """
-        初始化 ForPlotMetaData 后端。
+        初始化 ForFileMetaData 后端。
 
-        剧情元数据生成不依赖翻译规范文件的具体内容，但仍由基类正常载入
+        文件级元数据生成不依赖翻译规范文件的具体内容，但仍由基类正常载入
         项目自带的规范（如 自制提示词.md，现已归入项目程序、不会缺失）。
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
 
         # 不使用系统提示词：system 内容为空，且实际请求只发 user 消息
         self.system_prompt = ""
-        self.trans_prompt = FORPLOTMETA_PROMPT
+        self.trans_prompt = FORFILEMETA_PROMPT
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
 
         # 是否把项目翻译规范（translation_guideline）注入提示词，默认开启。
-        # 用户可在 config 的 internals.forplotmeta.inject_guideline 设为
+        # 用户可在 config 的 internals.forfilemeta.inject_guideline 设为
         # false / 0 / no 来关闭注入。
-        raw = self.pj_config.getKey("internals.forplotmeta.inject_guideline", True)
+        raw = self.pj_config.getKey("internals.forfilemeta.inject_guideline", True)
         if isinstance(raw, bool):
             self._inject_guideline = raw
         else:
@@ -65,8 +65,8 @@ class ForPlotMetaData(BaseTranslate):
                 str(raw).strip().lower() not in ("false", "0", "no", "")
             )
 
-        # 跨文件（可能的并发 worker）写 PlotMetadata.json 时的互斥锁
-        self._pm_lock = Lock()
+        # 跨文件（可能的并发 worker）写 FileMetaData.json 时的互斥锁
+        self._fm_lock = Lock()
 
     # ------------------------------------------------------------------
     # 0. 可控注入：把项目翻译规范（translation_guideline）拼入提示词
@@ -76,7 +76,7 @@ class ForPlotMetaData(BaseTranslate):
         在基类占位符替换的基础上，增加 translation_guideline 的可控注入：
 
         - 默认（_inject_guideline=True）把项目翻译规范整段注入提示词；
-        - 关闭（config 设 internals.forplotmeta.inject_guideline=false）或
+        - 关闭（config 设 internals.forfilemeta.inject_guideline=false）或
           规范为空时，占位段被替换为空，不会留下悬挂的标题。
 
         其余占位符（[Input]/[Glossary]/[SourceLang]/[TargetLang]）沿用基类行为。
@@ -130,7 +130,7 @@ class ForPlotMetaData(BaseTranslate):
             )
             gpt_dic = CGptDict(paths)
         except Exception as e:
-            LOGGER.warning(f"载入 GPT 字典失败，剧情元数据将不含专名译表：{e}")
+            LOGGER.warning(f"载入 GPT 字典失败，文件级元数据将不含专名译表：{e}")
             return ""
 
         lines = [
@@ -186,13 +186,13 @@ class ForPlotMetaData(BaseTranslate):
         }
 
     # ------------------------------------------------------------------
-    # 3. 合并写入 PlotMetadata.json（gt_input 下，按 id 合并）
+    # 3. 合并写入 FileMetaData.json（gt_input 下，按 id 合并）
     # ------------------------------------------------------------------
     def _save_metadata(self, meta: dict) -> None:
         out_dir = self.pj_config.getInputPath()  # gt_input
         os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, "PlotMetadata.json")
-        with self._pm_lock:
+        path = os.path.join(out_dir, "FileMetaData.json")
+        with self._fm_lock:
             existing: List[dict] = []
             if os.path.exists(path) and os.path.getsize(path) > 0:
                 try:
@@ -223,14 +223,14 @@ class ForPlotMetaData(BaseTranslate):
         gpt_dic=None,
     ) -> bool:
         if not filename:
-            LOGGER.warning("ForPlotMetaData: 未提供 filename，跳过该文件")
+            LOGGER.warning("ForFileMetaData: 未提供 filename，跳过该文件")
             return False
 
         script_text = self._build_script_text(json_list)
         glossary_text = self._build_glossary_text()
         prompt = self._build_prompt_request(script_text, glossary_text)
 
-        LOGGER.info(f"[PlotMetaData] 正在为 {filename} 生成剧情元数据…")
+        LOGGER.info(f"[FileMetaData] 正在为 {filename} 生成文件级元数据…")
         try:
             # 不使用系统提示词：直接以 user 消息发送，不附带任何 system 角色
             messages = [{"role": "user", "content": prompt}]
@@ -240,18 +240,18 @@ class ForPlotMetaData(BaseTranslate):
                 max_retry_count=3,
             )
         except Exception as e:
-            LOGGER.error(f"[PlotMetaData] {filename} LLM 请求失败：{e}")
+            LOGGER.error(f"[FileMetaData] {filename} LLM 请求失败：{e}")
             return False
 
         meta = self._parse_meta(rsp or "")
         if not meta:
-            LOGGER.warning(f"[PlotMetaData] {filename} 未解析到有效 JSON，跳过")
+            LOGGER.warning(f"[FileMetaData] {filename} 未解析到有效 JSON，跳过")
             return False
 
         meta = self._normalize_meta(meta, filename)
         self._save_metadata(meta)
         LOGGER.info(
-            f"[PlotMetaData] {filename} 已写入 PlotMetadata.json "
+            f"[FileMetaData] {filename} 已写入 FileMetaData.json "
             f"（角色={meta['角色']}，标签={meta['标签']}）"
         )
         return True

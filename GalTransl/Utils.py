@@ -279,9 +279,9 @@ def get_file_list(directory: str):
     file_list = []
     for dirpath, dirnames, filenames in os.walk(directory):
         for file in filenames:
-            # PlotMetadata.json 是剧情元数据控制文件（供 ForGal-json-multi-chat
+            # FileMetaData.json 是文件级元数据控制文件（供 ForGal-json-multi-chat
             # 后端注入首轮提示词），不是待翻译的源文件
-            if file.lower() == "plotmetadata.json":
+            if file.lower() == "filemetadata.json":
                 continue
             file_list.append(os.path.join(dirpath, file))
     return file_list
