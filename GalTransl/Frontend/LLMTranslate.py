@@ -264,7 +264,8 @@ def preprocess_trans_list(trans_list, projectConfig, pre_dic, tPlugins=None):
             "file_galtransl_json",
             "file_mtbench_aio",
         ]:
-            if eng_type.startswith("dump") or eng_type == "GenDic":
+            eng = getattr(projectConfig, "select_translator", "") or ""
+            if eng.startswith("dump") or eng == "GenDic":
                 pass  # 这些模式不需要分析对话
             else:
                 tran.analyse_dialogue()
@@ -434,21 +435,38 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
-        for file_path, jsons in file_json_lists.items():
-            await gptapi.batch_translate(jsons, filename=os_basename(file_path))
-        LOGGER.info("文件级元数据生成完成，已写入 gt_input/FileMetaData.json")
+        total = len(file_json_lists)
+        LOGGER.info(
+            f"[FileMetaData] 开始为 {total} 个文件生成文件级元数据"
+        )
+        _update_runtime(projectConfig, stage="生成文件级元数据")
+        for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
+            fname = os_basename(file_path)
+            _update_runtime(projectConfig, current_file=fname,
+                            stage=f"({i}/{total}) {fname}")
+            await gptapi.batch_translate(jsons, filename=fname)
+        LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
+        _update_runtime(projectConfig, stage="文件级元数据生成完毕")
         return True
 
     if eng_type == "ForBatchMetaData":
-        # 第二次启动后端：依据文件级剧情元数据(PlotMetadata) 将全文划分为翻译区间
-        # (批次)，标注视角/氛围/H/用词色彩，写入 gt_input/BatchMetadata.json。
-        # 与 ForFileMetaData 一样逐文件生成，不进入翻译流程。
+        # 第二次启动后端：依据文件级剧情元数据将全文划分为翻译区间
+        # (批次)，标注视角/氛围/H/用词色彩，写入 transl_cache/pass2_cache/BatchMetadata.json
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
-        for file_path, jsons in file_json_lists.items():
-            await gptapi.batch_translate(jsons, filename=os_basename(file_path))
-        LOGGER.info("批次级元数据生成完成，已写入 gt_input/BatchMetadata.json")
+        total = len(file_json_lists)
+        LOGGER.info(
+            f"[BatchMetaData] 开始为 {total} 个文件划分翻译区间"
+        )
+        _update_runtime(projectConfig, stage="划分翻译区间")
+        for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
+            fname = os_basename(file_path)
+            _update_runtime(projectConfig, current_file=fname,
+                            stage=f"({i}/{total}) {fname}")
+            await gptapi.batch_translate(jsons, filename=fname)
+        LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
+        _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 
     # ---- 3. 根据 sortBy 决定 chunk 处理顺序 ----

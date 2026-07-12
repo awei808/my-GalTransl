@@ -33,6 +33,7 @@ if ROOT not in sys.path:
 
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
+from GalTransl import LOGGER
 
 
 # ======================================================================
@@ -537,6 +538,31 @@ class TestForBatchMetaData(unittest.TestCase):
         """空 filename 应跳过并返回 False。"""
         result = asyncio.run(self.backend.batch_translate([], filename=""))
         self.assertFalse(result)
+
+    # ----------------------------------------------------------------
+    # 8. 日志输出
+    # ----------------------------------------------------------------
+    def test_parse_meta_logs_filename_on_failure(self):
+        """_parse_meta 接收 filename 参数且在无 JSON 时产生 debug 日志。"""
+        with self.assertLogs(LOGGER, level="DEBUG") as log:
+            result = ForBatchMetaData._parse_meta("bad data here", "test_batch.txt")
+            self.assertIsNone(result)
+            self.assertTrue(
+                any("test_batch.txt" in msg for msg in log.output),
+                f"日志应含文件名，实际: {log.output}"
+            )
+            self.assertTrue(
+                any("未找到 JSON" in msg for msg in log.output),
+                f"日志应含'未找到 JSON'，实际: {log.output}"
+            )
+
+    def test_ensure_file_metadata_loaded_logs(self):
+        """_ensure_file_metadata_loaded 有日志。"""
+        with self.assertLogs(LOGGER, level="INFO") as log:
+            self.backend._ensure_file_metadata_loaded()
+            # 已载入至少有一条日志（成功载入或为空）
+            self.assertGreater(len(log.output), 0,
+                               f"应有日志输出，实际: {log.output}")
 
 
 if __name__ == "__main__":

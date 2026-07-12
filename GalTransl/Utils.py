@@ -279,9 +279,8 @@ def get_file_list(directory: str):
     file_list = []
     for dirpath, dirnames, filenames in os.walk(directory):
         for file in filenames:
-            # FileMetaData.json 是文件级元数据控制文件（供 ForGal-json-multi-chat
-            # 后端注入首轮提示词），不是待翻译的源文件
-            if file.lower() == "filemetadata.json":
+            # FileMetaData.json / PlotMetadata.json / BatchMetadata.json 是元数据控制文件，不是待翻译源文件
+            if file.lower() in ("filemetadata.json", "plotmetadata.json", "batchmetadata.json"):
                 continue
             file_list.append(os.path.join(dirpath, file))
     return file_list

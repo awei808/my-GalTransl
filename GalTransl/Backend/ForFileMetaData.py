@@ -130,7 +130,7 @@ class ForFileMetaData(BaseTranslate):
             )
             gpt_dic = CGptDict(paths)
         except Exception as e:
-            LOGGER.warning(f"载入 GPT 字典失败，文件级元数据将不含专名译表：{e}")
+            LOGGER.warning(f"[FileMetaData] 载入 GPT 字典失败，文件级元数据将不含专名译表：{e}")
             return ""
 
         lines = [
@@ -141,14 +141,19 @@ class ForFileMetaData(BaseTranslate):
         for dic in getattr(gpt_dic, "_dic_list", []):
             note = getattr(dic, "note", "") or ""
             lines.append(f"| {dic.search_word} | {dic.replace_word} | {note} |")
+        LOGGER.debug(
+            f"[FileMetaData] 已载入 GPT 字典，共 {len(lines) - 3} 条"
+        )
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # 2. 解析与规整 LLM 返回的 JSON
     # ------------------------------------------------------------------
     @staticmethod
-    def _parse_meta(text: str) -> Optional[dict]:
+    def _parse_meta(text: str, filename: str = "") -> Optional[dict]:
         if not text or not text.strip():
+            if filename:
+                LOGGER.debug(f"[FileMetaData] {filename} LLM 返回为空，跳过")
             return None
         if "</think>" in text:
             text = text.split("</think>")[-1]
@@ -158,10 +163,20 @@ class ForFileMetaData(BaseTranslate):
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end == -1 or end <= start:
+            if filename:
+                LOGGER.debug(
+                    f"[FileMetaData] {filename} LLM 返回中未找到 JSON 对象，"
+                    f"原文前 200 字：{text[:200]}"
+                )
             return None
         try:
             return json.loads(text[start : end + 1])
-        except Exception:
+        except Exception as e:
+            if filename:
+                LOGGER.debug(
+                    f"[FileMetaData] {filename} JSON 解析失败：{e}，"
+                    f"原文前 200 字：{text[:200]}"
+                )
             return None
 
     @staticmethod
@@ -188,7 +203,7 @@ class ForFileMetaData(BaseTranslate):
     # ------------------------------------------------------------------
     # 3. 合并写入 FileMetaData.json（pass1_cache 下，按 id 合并）
     # ------------------------------------------------------------------
-    def _save_metadata(self, meta: dict) -> None:
+    def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS1_CACHE_DIR
         out_dir = os.path.join(self.pj_config.getCachePath(), PASS1_CACHE_DIR)
         os.makedirs(out_dir, exist_ok=True)
@@ -201,18 +216,40 @@ class ForFileMetaData(BaseTranslate):
                         data = json.load(f)
                     if isinstance(data, list):
                         existing = data
-                except Exception:
+                    LOGGER.debug(
+                        f"[FileMetaData] 读取已有 FileMetaData.json，"
+                        f"共 {len(existing)} 条记录"
+                    )
+                except Exception as e:
+                    LOGGER.warning(
+                        f"[FileMetaData] 读取 FileMetaData.json 失败，"
+                        f"将重置为仅包含当前文件：{e}"
+                    )
                     existing = []
+            else:
+                LOGGER.debug(
+                    f"[FileMetaData] 新建 FileMetaData.json"
+                )
             replaced = False
             for i, e in enumerate(existing):
                 if isinstance(e, dict) and e.get("id") == meta["id"]:
                     existing[i] = meta
                     replaced = True
+                    LOGGER.debug(
+                        f"[FileMetaData] {filename} 替换已有条目"
+                    )
                     break
             if not replaced:
                 existing.append(meta)
+                LOGGER.debug(
+                    f"[FileMetaData] {filename} 追加新条目，"
+                    f"总条目数：{len(existing)}"
+                )
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, ensure_ascii=False, indent=2)
+            LOGGER.debug(
+                f"[FileMetaData] 已保存 {path}（{len(existing)} 条记录）"
+            )
 
     # ------------------------------------------------------------------
     # 4. 入口：每文件调用一次，生成并写回一条元数据
@@ -232,6 +269,10 @@ class ForFileMetaData(BaseTranslate):
         prompt = self._build_prompt_request(script_text, glossary_text)
 
         LOGGER.info(f"[FileMetaData] 正在为 {filename} 生成文件级元数据…")
+        LOGGER.debug(
+            f"[FileMetaData] {filename} 提示词长度：{len(prompt)} 字符，"
+            f"脚本 {len(json_list)} 句"
+        )
         try:
             # 不使用系统提示词：直接以 user 消息发送，不附带任何 system 角色
             messages = [{"role": "user", "content": prompt}]
@@ -244,15 +285,16 @@ class ForFileMetaData(BaseTranslate):
             LOGGER.error(f"[FileMetaData] {filename} LLM 请求失败：{e}")
             return False
 
-        meta = self._parse_meta(rsp or "")
+        meta = self._parse_meta(rsp or "", filename)
         if not meta:
             LOGGER.warning(f"[FileMetaData] {filename} 未解析到有效 JSON，跳过")
             return False
 
         meta = self._normalize_meta(meta, filename)
-        self._save_metadata(meta)
+        self._save_metadata(meta, filename)
         LOGGER.info(
-            f"[FileMetaData] {filename} 已写入 FileMetaData.json "
+            f"[FileMetaData] {filename} 已写入 "
+            f"transl_cache/pass1_cache/FileMetaData.json "
             f"（角色={meta['角色']}，标签={meta['标签']}）"
         )
         return True

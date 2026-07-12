@@ -4,11 +4,12 @@ ForFileMetaData 后端测试
 覆盖：
   1. _parse_meta        —— 多种 LLM 输出形态（裸 JSON / 代码块 / <think> / 前后带散文）
   2. _normalize_meta    —— 字段数组化 / 缺失兜底 / id 强制等于文件名
-  3. _save_metadata     —— 同 id 替换、异 id 追加、损坏文件安全恢复
+  3. _save_metadata     —— 同 id 替换、异 id 追加、损坏文件安全恢复（含日志动作）
   4. _build_glossary_text —— gpt 专名译表注入（造临时字典验证）
   5. 全流程整合         —— 把真实 test 项目拷贝到临时目录，用桩 LLM 逐文件跑
-                         batch_translate，断言 gt_input 下每个待译文件都在
+                         batch_translate，断言 pass1_cache 下每个待译文件都在
                          FileMetaData.json 留有对应条目（含日文名、id 规整、替换不重复）
+  6. 日志输出           —— 验证关键节点有 LOGGER 输出
 
 运行方式（务必从项目根目录，使 load_guideline_file 能找到 translation_guidelines/）：
     cd D:/解包或汉化用/my-galtransl/my-GalTransl
@@ -39,6 +40,7 @@ _patcher.start()
 
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.ForFileMetaData import ForFileMetaData
+from GalTransl import LOGGER
 
 # 真实 test 翻译项目（仅用于拷贝，不会改动其 gt_input/FileMetaData.json）
 TEST_PROJECT = r"D:/解包或汉化用/xp3专用汉化文件夹/gal翻译/test"
@@ -293,6 +295,21 @@ class TestForFileMetaData(unittest.TestCase):
         finally:
             self.backend.pj_config.translation_guideline = saved
             self.backend._inject_guideline = True
+
+    # ---------------------------------------------------------------- 8
+    def test_parse_meta_logs_filename_on_failure(self):
+        """_parse_meta 接收 filename 参数且在无 JSON 时产生 debug 日志。"""
+        with self.assertLogs(LOGGER, level="DEBUG") as log:
+            result = ForFileMetaData._parse_meta("no json here", "test_file.txt")
+            self.assertIsNone(result)
+            self.assertTrue(
+                any("test_file.txt" in msg for msg in log.output),
+                f"日志应含文件名，实际: {log.output}"
+            )
+            self.assertTrue(
+                any("未找到 JSON" in msg for msg in log.output),
+                f"日志应含'未找到 JSON'，实际: {log.output}"
+            )
 
 
 if __name__ == "__main__":

@@ -85,11 +85,15 @@ class ForBatchMetaData(BaseTranslate):
         """惰性载入 FileMetaData.json（仅执行一次）。"""
         if self._file_metadata_loaded:
             return
-        self._file_metadata_loaded = True  # 先置位，避免异常导致反复重试
+        self._file_metadata_loaded = True
         try:
             self._file_metadata_by_file = load_file_metadata_map(self.pj_config)
+            LOGGER.info(
+                f"[BatchMetaData] 已载入 FileMetaData.json，"
+                f"共 {len(self._file_metadata_by_file)} 个文件有元数据"
+            )
         except Exception as e:
-            LOGGER.warning(f"载入 FileMetaData.json 失败，批次元数据将不含文件级背景：{e}")
+            LOGGER.warning(f"[BatchMetaData] 载入 FileMetaData.json 失败，批次元数据将不含文件级背景：{e}")
             self._file_metadata_by_file = {}
 
     def _build_file_metadata_block(self, filename: str) -> str:
@@ -101,6 +105,10 @@ class ForBatchMetaData(BaseTranslate):
         self._ensure_file_metadata_loaded()
         md = self._file_metadata_by_file.get(filename)
         if md is None:
+            LOGGER.debug(
+                f"[BatchMetaData] {filename} 在 FileMetaData.json 中无对应条目，"
+                f"该文件将不含文件级剧情背景"
+            )
             return ""
 
         def _join(value) -> str:
@@ -195,7 +203,7 @@ class ForBatchMetaData(BaseTranslate):
             )
             gpt_dic = CGptDict(paths)
         except Exception as e:
-            LOGGER.warning(f"载入 GPT 字典失败，批次元数据将不含专名译表：{e}")
+            LOGGER.warning(f"[BatchMetaData] 载入 GPT 字典失败，批次元数据将不含专名译表：{e}")
             return ""
 
         lines = [
@@ -206,14 +214,19 @@ class ForBatchMetaData(BaseTranslate):
         for dic in getattr(gpt_dic, "_dic_list", []):
             note = getattr(dic, "note", "") or ""
             lines.append(f"| {dic.search_word} | {dic.replace_word} | {note} |")
+        LOGGER.debug(
+            f"[BatchMetaData] 已载入 GPT 字典，共 {len(lines) - 3} 条"
+        )
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # 3. 解析与规整 LLM 返回的 JSON
     # ------------------------------------------------------------------
     @staticmethod
-    def _parse_meta(text: str) -> Optional[dict]:
+    def _parse_meta(text: str, filename: str = "") -> Optional[dict]:
         if not text or not text.strip():
+            if filename:
+                LOGGER.debug(f"[BatchMetaData] {filename} LLM 返回为空，跳过")
             return None
         if "</think>" in text:
             text = text.split("</think>")[-1]
@@ -223,10 +236,20 @@ class ForBatchMetaData(BaseTranslate):
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end == -1 or end <= start:
+            if filename:
+                LOGGER.debug(
+                    f"[BatchMetaData] {filename} LLM 返回中未找到 JSON 对象，"
+                    f"原文前 200 字：{text[:200]}"
+                )
             return None
         try:
             return json.loads(text[start : end + 1])
-        except Exception:
+        except Exception as e:
+            if filename:
+                LOGGER.debug(
+                    f"[BatchMetaData] {filename} JSON 解析失败：{e}，"
+                    f"原文前 200 字：{text[:200]}"
+                )
             return None
 
     @staticmethod
@@ -316,7 +339,7 @@ class ForBatchMetaData(BaseTranslate):
     # ------------------------------------------------------------------
     # 4. 合并写入 BatchMetadata.json（gt_input 下，按 id 合并）
     # ------------------------------------------------------------------
-    def _save_metadata(self, meta: dict) -> None:
+    def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS2_CACHE_DIR
         out_dir = os.path.join(self.pj_config.getCachePath(), PASS2_CACHE_DIR)
         os.makedirs(out_dir, exist_ok=True)
@@ -329,18 +352,41 @@ class ForBatchMetaData(BaseTranslate):
                         data = json.load(f)
                     if isinstance(data, list):
                         existing = data
-                except Exception:
+                    LOGGER.debug(
+                        f"[BatchMetaData] 读取已有 BatchMetadata.json，"
+                        f"共 {len(existing)} 条记录"
+                    )
+                except Exception as e:
+                    LOGGER.warning(
+                        f"[BatchMetaData] 读取 BatchMetadata.json 失败，"
+                        f"将重置为仅包含当前文件：{e}"
+                    )
                     existing = []
+            else:
+                LOGGER.debug(
+                    f"[BatchMetaData] 新建 BatchMetadata.json"
+                )
             replaced = False
             for i, e in enumerate(existing):
                 if isinstance(e, dict) and e.get("id") == meta["id"]:
                     existing[i] = meta
                     replaced = True
+                    if filename:
+                        LOGGER.debug(
+                            f"[BatchMetaData] {filename} 替换已有批次条目"
+                        )
                     break
             if not replaced:
                 existing.append(meta)
+                LOGGER.debug(
+                    f"[BatchMetaData] {filename} 追加新条目，"
+                    f"总条目数：{len(existing)}"
+                )
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, ensure_ascii=False, indent=2)
+            LOGGER.debug(
+                f"[BatchMetaData] 已保存 {path}（{len(existing)} 条记录）"
+            )
 
     # ------------------------------------------------------------------
     # 5. 入口：每文件调用一次，生成并写回一条批次元数据
@@ -363,6 +409,10 @@ class ForBatchMetaData(BaseTranslate):
         )
 
         LOGGER.info(f"[BatchMetaData] 正在为 {filename} 划分翻译区间…")
+        LOGGER.debug(
+            f"[BatchMetaData] {filename} 提示词长度：{len(prompt)} 字符，"
+            f"脚本 {len(json_list)} 句，最大行号 {max_index}"
+        )
         try:
             # 不使用系统提示词：直接以 user 消息发送
             messages = [{"role": "user", "content": prompt}]
@@ -375,7 +425,7 @@ class ForBatchMetaData(BaseTranslate):
             LOGGER.error(f"[BatchMetaData] {filename} LLM 请求失败：{e}")
             return False
 
-        meta = self._parse_meta(rsp or "")
+        meta = self._parse_meta(rsp or "", filename)
         if not meta:
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效 JSON，跳过")
             return False
@@ -384,9 +434,10 @@ class ForBatchMetaData(BaseTranslate):
         if not meta["批次"]:
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效区间，跳过")
             return False
-        self._save_metadata(meta)
+        self._save_metadata(meta, filename)
         LOGGER.info(
-            f"[BatchMetaData] {filename} 已写入 BatchMetadata.json "
+            f"[BatchMetaData] {filename} 已写入 "
+            f"transl_cache/pass2_cache/BatchMetadata.json "
             f"（共 {len(meta['批次'])} 个区间）"
         )
         return True
