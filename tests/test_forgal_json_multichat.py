@@ -30,6 +30,7 @@ from GalTransl.Backend.ForGalJsonMulitChat import (
     PlotMetadata,
     detect_line_break_symbol,
 )
+from GalTransl.Backend.Prompts import FORGAL_JSON_TRANS_PROMPT
 from GalTransl.CSentense import CSentense
 
 
@@ -260,6 +261,36 @@ class BuildRoundUserContentTests(unittest.TestCase):
         # 即「翻译规范之后、input 之前」的注入顺序。
         self.assertLess(content.index("角色"), content.index(input_src))
         self.assertLess(content.index("剧情"), content.index(input_src))
+
+    def test_first_round_has_no_history_block_when_empty(self):
+        # 回归：无历史翻译时，首轮提示词不应残留 <history_result>None</history_result> 这类
+        # 历史记录相关内容，整块应被移除。使用真实模板才能复现该块。
+        t = make_translator()
+        t.trans_prompt = FORGAL_JSON_TRANS_PROMPT
+        t.last_translations = {}  # 无历史
+        trans = CSentense("原文", index=0)
+        _, _, _, input_src = t._build_input_jsonlines([trans], False, "f.json")
+        t.conversations["f.json"] = [{"role": "system", "content": t.system_prompt}]
+        content = t._build_round_user_content(
+            t.conversations["f.json"], input_src, "", "f.json", is_first_round=True
+        )
+        self.assertNotIn("<history_result>", content)
+        self.assertNotIn("[history_result]", content)
+        self.assertNotIn("None", content)  # 不应残留占位 None
+
+    def test_history_block_kept_when_present(self):
+        # 反向守护：存在历史翻译时，<history_result> 块应保留且填充真实内容。
+        t = make_translator()
+        t.trans_prompt = FORGAL_JSON_TRANS_PROMPT
+        t.last_translations = {"f.json": "ahr|{\"id\":1,\"dst\":\"历史译文\"}"}
+        trans = CSentense("原文", index=0)
+        _, _, _, input_src = t._build_input_jsonlines([trans], False, "f.json")
+        t.conversations["f.json"] = [{"role": "system", "content": t.system_prompt}]
+        content = t._build_round_user_content(
+            t.conversations["f.json"], input_src, "", "f.json", is_first_round=True
+        )
+        self.assertIn("<history_result>", content)
+        self.assertIn("历史译文", content)
 
     def test_subsequent_round_is_jsonline_only(self):
         t = make_translator()

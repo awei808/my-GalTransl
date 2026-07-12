@@ -19,6 +19,7 @@ from openai import RateLimitError, AsyncOpenAI
 from openai import DefaultAioHttpClient
 from openai._types import NOT_GIVEN
 import random
+import re
 import time
 from contextlib import suppress
 from GalTransl.TerminalOutput import should_print_translation_logs
@@ -416,7 +417,23 @@ class BaseTranslate:
         ):
             history_result = self.last_translations[filename].replace("<br>", "")
             return prompt_req.replace("[history_result]", history_result)
-        return prompt_req.replace("[history_result]", "None")
+        # 无历史记录：移除所有历史相关内容，避免提示词残留
+        # "<history_result>None</history_result>" 或「历史上下文」说明小节。
+        # 仅当 [history_result] 占位符仍为字面量时才匹配块（有历史时已被替换，保留原块与说明）。
+        prompt_req = re.sub(
+            r"\s*<history_result>\s*\[history_result\]\s*</history_result>\s*",
+            "\n",
+            prompt_req,
+        )
+        # 同时移除 process_requirements 中「### 历史上下文 / ### About historical plot」说明小节
+        # （到下一个 ### 标题或 </process_requirements> 为止）。使用行锚定（re.M）避免 re.S 引发的回溯爆炸。
+        prompt_req = re.sub(
+            r"^###\s*.*?(?:history|历史).*$(?:\n(?:.*$))*(?=\n### |\n</process_requirements>)",
+            "",
+            prompt_req,
+            flags=re.M | re.I,
+        )
+        return prompt_req
 
     def _record_runtime_success(self, filename: str, trans: CSentense) -> None:
         try:
