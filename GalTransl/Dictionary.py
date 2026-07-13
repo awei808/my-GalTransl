@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import List, Optional
 from os import path
 from GalTransl.CSentense import CSentense, CTransList

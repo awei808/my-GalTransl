@@ -95,18 +95,49 @@ class ForFileMetaData(BaseTranslate):
         return prompt_req
 
     # 1. 准备输入
-    def _build_script_text(self, json_list: list) -> str:
-        """把 json_list（每行一个 {name, message} 对象）拼成可读剧本正文。"""
+    def _build_script_text(self, json_list: list, filename: str = "") -> str:
+        """把 json_list（每行一个 {name, message} 对象）拼成可读剧本正文。
+
+        同时检查字段完整性：统计无 message/name 的条目数。
+        """
+        if not isinstance(json_list, list):
+            LOGGER.warning(
+                f"[FileMetaData] {filename} _build_script_text 收到非 list 参数"
+            )
+            return ""
         out: List[str] = []
-        for item in json_list:
+        no_msg = 0
+        no_name = 0
+        for i, item in enumerate(json_list):
             if not isinstance(item, dict):
                 continue
             name = item.get("name", "") or ""
             msg = item.get("message", "") or ""
+            if not msg:
+                no_msg += 1
+            if not name:
+                no_name += 1
             if name:
                 out.append(f"{name}：{msg}")
             else:
                 out.append(msg)
+
+        # 字段完整性日志
+        total = len(json_list)
+        if no_msg > 0:
+            if no_msg == total:
+                LOGGER.warning(
+                    f"[FileMetaData] {filename} 全部 {total} 个条目均无 message 字段，"
+                    f"提示词将为空"
+                )
+                return ""
+            LOGGER.warning(
+                f"[FileMetaData] {filename} {no_msg}/{total} 个条目缺少 message 字段"
+            )
+        if no_name > 0 and no_name < total:
+            LOGGER.debug(
+                f"[FileMetaData] {filename} {no_name}/{total} 个条目无 name 字段（纯旁白行）"
+            )
         return "\n".join(out)
 
     def _build_glossary_text(self) -> str:
@@ -249,10 +280,26 @@ class ForFileMetaData(BaseTranslate):
         gpt_dic: Optional[CGptDict] = None,
     ) -> bool:
         if not filename:
-            LOGGER.warning("ForFileMetaData: 未提供 filename，跳过该文件")
+            LOGGER.warning("[FileMetaData] 未提供 filename，跳过该文件")
             return False
 
-        script_text = self._build_script_text(json_list)
+        # ── 入参校验 ──
+        if not isinstance(json_list, list):
+            LOGGER.error(
+                f"[FileMetaData] {filename} json_list 类型错误，"
+                f"期望 list，实际 {type(json_list).__name__}，跳过"
+            )
+            return False
+        if not json_list:
+            LOGGER.warning(f"[FileMetaData] {filename} json_list 为空，跳过")
+            return False
+
+        script_text = self._build_script_text(json_list, filename)
+        if not script_text:
+            LOGGER.warning(
+                f"[FileMetaData] {filename} 剧本正文为空，跳过"
+            )
+            return False
         glossary_text = self._build_glossary_text()
         prompt = self._build_prompt_request(script_text, glossary_text)
 

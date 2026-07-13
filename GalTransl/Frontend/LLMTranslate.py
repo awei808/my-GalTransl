@@ -437,7 +437,9 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
+        LOGGER.info(f"[GenDic] 开始为 {len(all_jsons)} 条文本生成 GPT 字典")
         await gptapi.batch_translate(all_jsons)
+        LOGGER.info("[GenDic] GPT 字典生成完成")
         return True
 
     if eng_type == "ForFileMetaData":
@@ -451,10 +453,35 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="生成文件级元数据")
         for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
             fname = os_basename(file_path)
+            LOGGER.debug(
+                f"[FileMetaData] ({i}/{total}) 开始处理 {fname}，"
+                f"共 {len(jsons)} 句"
+            )
             _update_runtime(projectConfig, current_file=fname,
                             stage=f"({i}/{total}) {fname}")
             await gptapi.batch_translate(jsons, filename=fname)
+            LOGGER.debug(f"[FileMetaData] ({i}/{total}) {fname} 处理完成")
         LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
+
+        # 交叉验证：检查 FileMetaData.json 条目数
+        from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+        try:
+            fm_map = load_file_metadata_map(projectConfig)
+            fm_count = len(fm_map)
+            if fm_count < total:
+                LOGGER.warning(
+                    f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件生成了元数据，"
+                    f"缺失 {total - fm_count} 个文件，请检查对应文件的 WARNING 日志"
+                )
+            else:
+                LOGGER.info(
+                    f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件全部生成元数据"
+                )
+        except Exception as e:
+            LOGGER.debug(
+                f"[FileMetaData] 交叉验证读取失败（不影响流程）：{e}"
+            )
+
         _update_runtime(projectConfig, stage="文件级元数据生成完毕")
         return True
 
@@ -471,10 +498,35 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="划分翻译区间")
         for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
             fname = os_basename(file_path)
+            LOGGER.debug(
+                f"[BatchMetaData] ({i}/{total}) 开始处理 {fname}，"
+                f"共 {len(jsons)} 句"
+            )
             _update_runtime(projectConfig, current_file=fname,
                             stage=f"({i}/{total}) {fname}")
             await gptapi.batch_translate(jsons, filename=fname)
+            LOGGER.debug(f"[BatchMetaData] ({i}/{total}) {fname} 处理完成")
         LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
+
+        # 交叉验证：检查 BatchMetadata.json 条目数
+        from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
+        try:
+            bm_map = load_batch_metadata_map(projectConfig)
+            bm_count = len(bm_map)
+            if bm_count < total:
+                LOGGER.warning(
+                    f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件划分了批次，"
+                    f"缺失 {total - bm_count} 个文件，请检查对应文件的 WARNING 日志"
+                )
+            else:
+                LOGGER.info(
+                    f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件全部划分批次"
+                )
+        except Exception as e:
+            LOGGER.debug(
+                f"[BatchMetaData] 交叉验证读取失败（不影响流程）：{e}"
+            )
+
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 

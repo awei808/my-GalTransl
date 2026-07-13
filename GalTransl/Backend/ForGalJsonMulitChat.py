@@ -1137,16 +1137,20 @@ class ForGalJsonMulitChat(BaseTranslate):
         self.file_metadata_map[filename] = file_metadata
 
     def _ensure_file_metadata_loaded(self) -> None:
-        """惰性载入 gt_input 中的 FileMetaData.json（仅执行一次）。"""
+        """惰性载入 FileMetaData.json（仅执行一次）。"""
         if self._file_metadata_loaded:
             return
-        self._file_metadata_loaded = True  # 先置位，避免后续异常导致反复重试
+        self._file_metadata_loaded = True
         if getattr(self, "project_config", None) is None:
             return
         try:
             self._file_metadata_by_file = load_file_metadata_map(self.project_config)
-        except Exception as e:  # 载入失败不应中断翻译
-            LOGGER.warning(f"载入 FileMetaData.json 失败，已跳过剧情元数据：{e}")
+            LOGGER.info(
+                f"[ForGalJsonMulitChat] 已载入 FileMetaData.json，"
+                f"共 {len(self._file_metadata_by_file)} 个文件有文件级元数据"
+            )
+        except Exception as e:
+            LOGGER.warning(f"[ForGalJsonMulitChat] 载入 FileMetaData.json 失败，已跳过剧情元数据：{e}")
             self._file_metadata_by_file = {}
 
     def _resolve_file_metadata(self, filename: str) -> Optional[FileMetaData]:
@@ -1183,13 +1187,17 @@ class ForGalJsonMulitChat(BaseTranslate):
         """惰性载入 BatchMetadata.json（仅执行一次）。"""
         if self._batch_metadata_loaded:
             return
-        self._batch_metadata_loaded = True  # 先置位，避免异常导致反复重试
+        self._batch_metadata_loaded = True
         if getattr(self, "project_config", None) is None:
             return
         try:
             self._batch_metadata_by_file = load_batch_metadata_map(self.project_config)
+            LOGGER.info(
+                f"[ForGalJsonMulitChat] 已载入 BatchMetadata.json，"
+                f"共 {len(self._batch_metadata_by_file)} 个文件有批次元数据"
+            )
         except Exception as e:
-            LOGGER.warning(f"载入 BatchMetadata.json 失败，已跳过批次元数据：{e}")
+            LOGGER.warning(f"[ForGalJsonMulitChat] 载入 BatchMetadata.json 失败，已跳过批次元数据：{e}")
             self._batch_metadata_by_file = {}
 
     def _resolve_batch_metadata(self, filename: str) -> Optional[BatchMetadata]:
