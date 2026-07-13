@@ -10,7 +10,9 @@ from re import compile
 import requests
 import re
 import json
-from GalTransl import LOGGER
+import logging
+
+LOGGER = logging.getLogger("GalTransl.Utils")
 
 PATTERN_CODE_BLOCK = compile(r"```([\w]*)\n([\s\S]*?)\n```")
 whitespace = " \t\n\r\v\f"

@@ -235,6 +235,8 @@ async def run_job_async(
         if spec.translator == "GenDic":
             current_state.gendic_added_entries = int(getattr(cfg, "gendic_added_count", 0) or 0)
             current_state.gendic_duplicated_entries = int(getattr(cfg, "gendic_duplicated_count", 0) or 0)
+        elif spec.translator == "ForGal-full-pipeline":
+            LOGGER.info("[Service] 完整流水线执行成功")
     except JobCancelledError:
         current_state.status = "cancelled"
         if spec.translator == "GenDic":

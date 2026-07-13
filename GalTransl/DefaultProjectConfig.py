@@ -74,6 +74,14 @@ common:
 
 # 内部流程参数
 internals:
+  # === 完整流水线配置 ===
+  pipeline:
+    maxInputChars: 80000          # 全局分析阶段发送给 LLM 的最大字符数（压缩后）[1000-200000]
+    forceRegenDic: false          # 是否强制重新生成术语表（即使已存在）[True/False]
+    abortOnDicFailure: false      # 是否在术语表生成失败时中止流水线 [True/False]
+  # ForGlobalPrompt 后端专用配置
+  forglobalprompt:
+    inject_guideline: true        # 是否将翻译规范注入全局分析提示词 [True/False]
   forbatchmeta:
     max_batches: 20 # 翻译区间（批次）最大数量，超过此数将自动合并相邻区间；设大模型输出不稳可调大。[1-200]
     inject_guideline: true # 是否将翻译规范注入批次划分提示词。[True/False]

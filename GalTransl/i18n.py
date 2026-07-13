@@ -205,6 +205,43 @@ UI_TEXT = {
         "zh-cn": "文件 {0} 无法加载",
         "en": "File {0} cannot be loaded"
     },
+    # Pipeline-related messages
+    "pipeline_start": {
+        "zh-cn": "启动全流程翻译管线",
+        "en": "Starting full translation pipeline"
+    },
+    "pipeline_stage": {
+        "zh-cn": "[流水线] 阶段 {0}/6：{1}",
+        "en": "[Pipeline] Stage {0}/6: {1}"
+    },
+    "pipeline_stage_complete": {
+        "zh-cn": "[流水线] 阶段 {0} 完成：{1}",
+        "en": "[Pipeline] Stage {0} complete: {1}"
+    },
+    "pipeline_all_complete": {
+        "zh-cn": "[流水线] 全部 6 个阶段完成！",
+        "en": "[Pipeline] All 6 stages complete!"
+    },
+    "pipeline_validation_failed": {
+        "zh-cn": "输入数据校验失败，流水线中止。请修复上述错误后重试。",
+        "en": "Input validation failed, pipeline aborted. Fix the errors and retry."
+    },
+    "pipeline_global_prompt_failed": {
+        "zh-cn": "全局游戏分析生成失败，流水线中止",
+        "en": "Global game analysis generation failed, pipeline aborted"
+    },
+    "pipeline_global_prompt_invalid": {
+        "zh-cn": "GlobalPrompt.json 校验失败，流水线中止",
+        "en": "GlobalPrompt.json validation failed, pipeline aborted"
+    },
+    "pipeline_compression_stats": {
+        "zh-cn": "文本压缩完毕，压缩后 {0} 字符（压缩率 {1:.1%}）",
+        "en": "Text compression complete, {0} chars after compression (ratio {1:.1%})"
+    },
+    "pipeline_stage_skip": {
+        "zh-cn": "[流水线] 阶段 {0} 跳过：{1}",
+        "en": "[Pipeline] Stage {0} skipped: {1}"
+    },
     "cache_incomplete": {
         "zh-cn": "{0} 缓存不完整，无法重构",
         "en": "{0} cache incomplete, cannot rebuild"

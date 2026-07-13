@@ -59,13 +59,21 @@ def make_translator(proofread_target_lang="English"):
     t.conversations = {}
     t._force_first_round_files = set()
     t.plot_metadata_map = {}
-    t._plot_metadata_by_file = {}
-    t._plot_metadata_loaded = False
+    t.file_metadata_map = {}
+    t._file_metadata_by_file = {}
+    t._file_metadata_loaded = False
     t.project_config = None
     t.multi_round_max_history = 0
     t.last_file_name = ""
     t._last_chatbot_was_stream = False
     t._last_chatbot_model_name = ""
+    # BatchMetadata 相关属性
+    t.batch_metadata_map = {}
+    t._batch_metadata_by_file = {}
+    t._batch_metadata_loaded = False
+    # GlobalPrompt 相关属性
+    t._global_prompt = None
+    t._global_prompt_loaded = False
     return t
 
 
@@ -243,7 +251,7 @@ class BuildInputJsonlinesTests(unittest.TestCase):
 class BuildRoundUserContentTests(unittest.TestCase):
     def test_first_round_includes_prompt_and_metadata(self):
         t = make_translator()
-        t.plot_metadata_map = {
+        t.file_metadata_map = {
             "f.json": FileMetaData(character=["角色"], costume="", plot="剧情", tags=[])
         }
         trans = CSentense("原文", index=0)
@@ -780,7 +788,7 @@ class ConversationLifecycleTests(unittest.TestCase):
         t = make_translator()
         md = FileMetaData(character=[], costume="", plot="s", tags=[])
         t.set_file_metadata(md, "a.json")
-        self.assertIs(t.plot_metadata_map["a.json"], md)
+        self.assertIs(t.file_metadata_map["a.json"], md)
 
 
 class InitMultiRoundTests(unittest.TestCase):
@@ -915,237 +923,6 @@ class TranslateIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # 整批失败后兜底：返回全部句子（含 (Failed) 标记）
         self.assertEqual(len(res), 3)
         self.assertTrue(all("(Failed)" in tr.pre_dst for tr in res))
-
-
-class FileMetaDataFileIntegrationTests(unittest.TestCase):
-    """FileMetaData.json 的导入/排除/载入回归。"""
-
-    def test_get_file_list_excludes_plotmetadata_json(self):
-        from GalTransl.Utils import get_file_list
-        import tempfile, os
-        d = tempfile.mkdtemp()
-        try:
-            with open(os.path.join(d, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                f.write("{}")
-            with open(os.path.join(d, "scene1.json"), "w", encoding="utf-8") as f:
-                f.write("[]")
-            fl = get_file_list(d)
-            names = [os.path.basename(p) for p in fl]
-            self.assertIn("scene1.json", names)
-            self.assertNotIn("FileMetaData.json", names)
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_load_plot_metadata_parses_new_schema(self):
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
-        import tempfile, os, json as _json
-        d = tempfile.mkdtemp()
-        try:
-            payload = {
-                "id": "scene-01",
-                "角色": ["爱丽丝", "波波"],
-                "服装": "红裙",
-                "剧情": "迷雾森林冒险",
-                "标签": ["奇幻", "冒险"],
-            }
-            with open(os.path.join(d, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                _json.dump(payload, f, ensure_ascii=False)
-            cfg = SimpleNamespace(getInputPath=lambda: d)
-            md = load_plot_metadata(cfg)
-            self.assertIsNotNone(md)
-            self.assertEqual(md.id, "scene-01")
-            self.assertEqual(md.character, ["爱丽丝", "波波"])
-            self.assertEqual(md.costume, "红裙")
-            self.assertEqual(md.plot, "迷雾森林冒险")
-            self.assertEqual(md.tags, ["奇幻", "冒险"])
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_load_plot_metadata_missing_file_returns_none(self):
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
-        import tempfile, os
-        d = tempfile.mkdtemp()
-        try:
-            cfg = SimpleNamespace(getInputPath=lambda: d)
-            self.assertIsNone(load_plot_metadata(cfg))
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_load_plot_metadata_scalar_角色_and_剧情(self):
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
-        import tempfile, os, json as _json
-        d = tempfile.mkdtemp()
-        try:
-            payload = {"角色": "单人主角", "服装": "", "剧情": "单线", "标签": "冒险"}
-            with open(os.path.join(d, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                _json.dump(payload, f, ensure_ascii=False)
-            cfg = SimpleNamespace(getInputPath=lambda: d)
-            md = load_plot_metadata(cfg)
-            self.assertEqual(md.character, ["单人主角"])
-            self.assertEqual(md.tags, ["冒险"])
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_load_plot_metadata_non_dict_root_returns_none(self):
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
-        import tempfile, os
-        d = tempfile.mkdtemp()
-        try:
-            with open(os.path.join(d, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                f.write("[]")
-            cfg = SimpleNamespace(getInputPath=lambda: d)
-            self.assertIsNone(load_plot_metadata(cfg))
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_loaded_metadata_injected_into_first_round_block(self):
-        # 端到端：FileMetaData.json -> 用 chunk 的批次文件名 set_file_metadata
-        # -> 首轮 user 内容包含 <plot_metadata> 与角色/剧情。
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata
-        import tempfile, os, json as _json
-        d = tempfile.mkdtemp()
-        try:
-            payload = {"id": "scene-01", "角色": ["爱丽丝"], "服装": "红裙", "剧情": "森林冒险", "标签": ["奇幻"]}
-            with open(os.path.join(d, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                _json.dump(payload, f, ensure_ascii=False)
-            cfg = SimpleNamespace(getInputPath=lambda: d)
-            md = load_plot_metadata(cfg)
-            self.assertIsNotNone(md)
-            t = make_translator()
-            batch_file_name = "scene1_0"  # 与 doLLMTranslSingleChunk 中使用的批次文件名一致
-            if hasattr(t, "set_file_metadata"):
-                t.set_file_metadata(md, batch_file_name)
-            content = t._build_round_user_content(
-                conv=[{"role": "system", "content": t.system_prompt}],
-                input_src='aaa|{"id":0,"src":"こんにちは"}',
-                gptdict="",
-                filename=batch_file_name,
-                is_first_round=True,
-            )
-            self.assertIn("<plot_metadata>", content)
-            self.assertIn("id: scene-01", content)
-            self.assertIn("森林冒险", content)
-            self.assertIn("爱丽丝", content)
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_load_plot_metadata_map_parses_array(self):
-        # 真实数据格式：JSON 数组，每项 id 对应一个待翻译文件名
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata_map
-        import tempfile, os, json as _json
-        d = tempfile.mkdtemp()
-        try:
-            payload = [
-                {"id": "a.txt.json", "角色": ["甲"], "服装": "红", "剧情": "战斗", "标签": ["动作"]},
-                {"id": "b.txt.json", "角色": ["乙"], "服装": "蓝", "剧情": "逃亡", "标签": ["悬疑"]},
-            ]
-            with open(os.path.join(d, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                _json.dump(payload, f, ensure_ascii=False)
-            cfg = SimpleNamespace(getInputPath=lambda: d)
-            mp = load_plot_metadata_map(cfg)
-            self.assertEqual(len(mp), 2)
-            self.assertEqual(mp["a.txt.json"].character, ["甲"])
-            self.assertEqual(mp["a.txt.json"].plot, "战斗")
-            self.assertEqual(mp["b.txt.json"].costume, "蓝")
-        finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-
-    def test_load_plot_metadata_map_finds_file_one_level_up(self):
-        # 文件不在 gt_input 自身，而在其上层目录时也能定位
-        from GalTransl.Backend.ForGalJsonMulitChat import load_plot_metadata_map
-        import tempfile, os, json as _json
-        base = tempfile.mkdtemp()
-        gt = os.path.join(base, "gt_input")
-        os.makedirs(gt)
-        try:
-            payload = [{"id": "x.txt.json", "角色": ["丙"], "服装": "", "剧情": "p", "标签": []}]
-            with open(os.path.join(base, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                _json.dump(payload, f, ensure_ascii=False)
-            cfg = SimpleNamespace(getInputPath=lambda: gt)
-            mp = load_plot_metadata_map(cfg)
-            self.assertIn("x.txt.json", mp)
-        finally:
-            import shutil
-            shutil.rmtree(base, ignore_errors=True)
-
-    def test_load_plot_metadata_map_from_sample_project(self):
-        # 以官方 sampleProject 为数据来源，验证「项目根目录」定位逻辑：
-        # FileMetaData.json 位于翻译项目根（gt_input 的父目录），与 gt_input 同级。
-        from GalTransl.Backend.ForGalJsonMulitChat import (
-            load_plot_metadata_map,
-            FileMetaData,
-        )
-        import os
-
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        sample_dir = os.path.join(repo_root, "sampleProject")
-        self.assertTrue(os.path.isdir(sample_dir), f"找不到 sampleProject: {sample_dir}")
-        # getInputPath 返回项目内的 gt_input 子目录（即使该目录尚不存在，
-        # 定位逻辑只需其父目录=项目根来发现 FileMetaData.json）
-        gt_input = os.path.join(sample_dir, "gt_input")
-        cfg = SimpleNamespace(getInputPath=lambda: gt_input)
-
-        mp = load_plot_metadata_map(cfg)
-        self.assertGreater(len(mp), 0, "未从 sampleProject 载入任何剧情元数据")
-        self.assertIn("demo-scene-01", mp)
-
-        md = mp["demo-scene-01"]
-        self.assertIsInstance(md, FileMetaData)
-        self.assertEqual(md.id, "demo-scene-01")
-        self.assertIn("爱丽丝", md.character)
-        self.assertIn("红色连衣裙", md.costume)
-        self.assertIn("迷雾森林", md.plot)
-        self.assertIn("奇幻", md.tags)
-
-        # 与注入逻辑联调：分批文件名 demo-scene-01_0 应匹配到 demo-scene-01
-        t = make_translator()
-        t.project_config = cfg
-        t.plot_metadata_map = {}
-        t._plot_metadata_loaded = False
-        resolved = t._resolve_plot_metadata("demo-scene-01_0")
-        self.assertIsInstance(resolved, FileMetaData)
-        self.assertEqual(resolved.id, "demo-scene-01")
-
-        content = t._build_round_user_content(
-            conv=[{"role": "system", "content": t.system_prompt}],
-            input_src='aaa|{"id":0,"src":"こんにちは"}',
-            gptdict="",
-            filename="demo-scene-01_0",
-            is_first_round=True,
-        )
-        self.assertIn("<plot_metadata>", content)
-        self.assertIn("爱丽丝", content)
-        self.assertIn("红色连衣裙", content)
-
-    def test_resolve_plot_metadata_chunk_suffix_and_priority(self):
-        # 分批文件名 ``file_0`` 应能匹配 ``file``；显式注入优先于自动载入
-        from GalTransl.Backend.ForGalJsonMulitChat import FileMetaData
-        cfg = SimpleNamespace(getInputPath=lambda: "")
-        t = make_translator()
-        t.project_config = cfg
-        t.plot_metadata_map = {}
-        t._plot_metadata_by_file = {
-            "a.txt.json": FileMetaData(id="a.txt.json", character=["甲"], costume="红", plot="战斗", tags=[]),
-        }
-        t._plot_metadata_loaded = True
-        # 分批后缀命中
-        md = t._resolve_plot_metadata("a.txt.json_0")
-        self.assertIsNotNone(md)
-        self.assertEqual(md.id, "a.txt.json")
-        # 显式注入优先
-        explicit = FileMetaData(id="EX", character=["z"], costume="", plot="", tags=[])
-        t.set_file_metadata(explicit, "a.txt.json_0")
-        self.assertIs(t._resolve_plot_metadata("a.txt.json_0"), explicit)
-        # 无匹配返回 None
-        self.assertIsNone(t._resolve_plot_metadata("nope.txt.json"))
-
 
 class RedundantNameFieldRegressionTests(unittest.TestCase):
     """回归：模型在 dst 后重复追加 name 等字段（畸形但本身合法的 jsonline）

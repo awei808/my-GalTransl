@@ -644,11 +644,17 @@ class ForGalJsonMulitChat(BaseTranslate):
                 if metadata is not None
                 else ""
             )
+            # 全局提示词（GlobalPrompt）：仅在首轮注入
+            global_prompt_block = self._format_global_prompt_block()
             prompt_req = self._build_prompt_request(
                 input_src,
                 gptdict,
                 plot_metadata=metadata_block,
                 batch_metadata=batch_metadata_block,
+            )
+            # 注入全局提示词
+            prompt_req = prompt_req.replace(
+                "[global_prompt]", global_prompt_block or ""
             )
             # 多轮模式下历史由对话本身携带，[history_result] 置为 None
             prompt_req = self._apply_history_result(prompt_req, filename)
@@ -1121,7 +1127,46 @@ class ForGalJsonMulitChat(BaseTranslate):
         self.init_chatbot(eng_type=eng_type, config=config)
         self._set_temp_type("precise")
 
-        pass
+        # 惰性载入的全局提示词（GlobalPrompt）
+        self._global_prompt: Optional[dict] = None
+        self._global_prompt_loaded: bool = False
+
+    # ── GlobalPrompt 上下文注入 ──
+
+    def _ensure_global_prompt_loaded(self) -> None:
+        """惰性载入 GlobalPrompt.json（仅执行一次）。"""
+        if self._global_prompt_loaded:
+            return
+        self._global_prompt_loaded = True
+        # 优先从 projectConfig 读取已注入的全局提示词
+        explicit = getattr(self.pj_config, "global_prompt", None)
+        if isinstance(explicit, dict):
+            self._global_prompt = explicit
+            LOGGER.debug(
+                "[ForGalJsonMulitChat] 使用已注入的 GlobalPrompt（来自流水线）"
+            )
+            return
+        # 否则尝试从缓存文件加载
+        try:
+            from GalTransl.Backend.ForGlobalPrompt import load_global_prompt
+            self._global_prompt = load_global_prompt(self.pj_config)
+            if self._global_prompt:
+                LOGGER.debug(
+                    "[ForGalJsonMulitChat] 已从 pass0_cache 载入 GlobalPrompt 上下文"
+                )
+        except Exception as e:
+            LOGGER.debug(
+                f"[ForGalJsonMulitChat] 载入 GlobalPrompt 失败：{e}"
+            )
+            self._global_prompt = None
+
+    def _format_global_prompt_block(self) -> str:
+        """格式化 GlobalPrompt 为提示词附加段落（仅首轮注入）。"""
+        self._ensure_global_prompt_loaded()
+        if not self._global_prompt:
+            return ""
+        from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
+        return _format_global_prompt_as_context(self._global_prompt)
 
     def set_file_metadata(self, file_metadata: FileMetaData, filename: str = "") -> None:
         """
@@ -1137,16 +1182,20 @@ class ForGalJsonMulitChat(BaseTranslate):
         self.file_metadata_map[filename] = file_metadata
 
     def _ensure_file_metadata_loaded(self) -> None:
-        """惰性载入 gt_input 中的 FileMetaData.json（仅执行一次）。"""
+        """惰性载入 FileMetaData.json（仅执行一次）。"""
         if self._file_metadata_loaded:
             return
-        self._file_metadata_loaded = True  # 先置位，避免后续异常导致反复重试
+        self._file_metadata_loaded = True
         if getattr(self, "project_config", None) is None:
             return
         try:
             self._file_metadata_by_file = load_file_metadata_map(self.project_config)
-        except Exception as e:  # 载入失败不应中断翻译
-            LOGGER.warning(f"载入 FileMetaData.json 失败，已跳过剧情元数据：{e}")
+            LOGGER.info(
+                f"[ForGalJsonMulitChat] 已载入 FileMetaData.json，"
+                f"共 {len(self._file_metadata_by_file)} 个文件有文件级元数据"
+            )
+        except Exception as e:
+            LOGGER.warning(f"[ForGalJsonMulitChat] 载入 FileMetaData.json 失败，已跳过剧情元数据：{e}")
             self._file_metadata_by_file = {}
 
     def _resolve_file_metadata(self, filename: str) -> Optional[FileMetaData]:
@@ -1183,13 +1232,17 @@ class ForGalJsonMulitChat(BaseTranslate):
         """惰性载入 BatchMetadata.json（仅执行一次）。"""
         if self._batch_metadata_loaded:
             return
-        self._batch_metadata_loaded = True  # 先置位，避免异常导致反复重试
+        self._batch_metadata_loaded = True
         if getattr(self, "project_config", None) is None:
             return
         try:
             self._batch_metadata_by_file = load_batch_metadata_map(self.project_config)
+            LOGGER.info(
+                f"[ForGalJsonMulitChat] 已载入 BatchMetadata.json，"
+                f"共 {len(self._batch_metadata_by_file)} 个文件有批次元数据"
+            )
         except Exception as e:
-            LOGGER.warning(f"载入 BatchMetadata.json 失败，已跳过批次元数据：{e}")
+            LOGGER.warning(f"[ForGalJsonMulitChat] 载入 BatchMetadata.json 失败，已跳过批次元数据：{e}")
             self._batch_metadata_by_file = {}
 
     def _resolve_batch_metadata(self, filename: str) -> Optional[BatchMetadata]:

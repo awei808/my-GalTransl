@@ -72,7 +72,7 @@ def main() -> int:
     print(f"Author: {AUTHOR}")
     print(f"Contributors: {CONTRIBUTORS}")
 
-    success = worker(args.project_dir, "config.yaml", args.translator)
+    success = worker(args.project_dir, "config.yaml", args.translator, show_banner=False)
     return 0 if success else 1
 
 

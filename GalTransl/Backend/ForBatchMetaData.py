@@ -86,6 +86,38 @@ class ForBatchMetaData(BaseTranslate):
         # 跨文件（可能的并发 worker）写 BatchMetadata.json 时的互斥锁
         self._bm_lock = Lock()
 
+        # 惰性载入的全局提示词（GlobalPrompt）
+        self._global_prompt: Optional[dict] = None
+        self._global_prompt_loaded: bool = False
+
+    # 0.0 全局提示词上下文
+    def _ensure_global_prompt_loaded(self) -> None:
+        """惰性载入 GlobalPrompt.json（仅执行一次）。"""
+        if self._global_prompt_loaded:
+            return
+        self._global_prompt_loaded = True
+        explicit = getattr(self.pj_config, "global_prompt", None)
+        if isinstance(explicit, dict):
+            self._global_prompt = explicit
+            LOGGER.debug("[BatchMetaData] 使用已注入的 GlobalPrompt（来自流水线）")
+            return
+        try:
+            from GalTransl.Backend.ForGlobalPrompt import load_global_prompt
+            self._global_prompt = load_global_prompt(self.pj_config)
+            if self._global_prompt:
+                LOGGER.debug("[BatchMetaData] 已从 pass0_cache 载入 GlobalPrompt 上下文")
+        except Exception as e:
+            LOGGER.debug(f"[BatchMetaData] 载入 GlobalPrompt 失败：{e}")
+            self._global_prompt = None
+
+    def _build_global_prompt_block(self) -> str:
+        """格式化 GlobalPrompt 为提示词附加段落。"""
+        self._ensure_global_prompt_loaded()
+        if not self._global_prompt:
+            return ""
+        from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
+        return _format_global_prompt_as_context(self._global_prompt)
+
     # 0. 文件级剧情元数据载入与格式化
     def _ensure_file_metadata_loaded(self) -> None:
         """惰性载入 FileMetaData.json（仅执行一次）。"""
@@ -149,6 +181,7 @@ class ForBatchMetaData(BaseTranslate):
         else:
             block = ""
         prompt_req = prompt_req.replace("[translation_guideline]", block)
+        prompt_req = prompt_req.replace("[global_prompt]", self._build_global_prompt_block())
         prompt_req = prompt_req.replace("[Input]", input_src)
         prompt_req = prompt_req.replace("[Glossary]", gptdict)
         prompt_req = prompt_req.replace("[plot_metadata]", file_metadata)
@@ -158,18 +191,26 @@ class ForBatchMetaData(BaseTranslate):
         return prompt_req
 
     # 2. 准备输入
-    def _build_script_text(self, json_list: list) -> tuple:
+    def _build_script_text(self, json_list: list, filename: str = "") -> tuple:
         """把 json_list 拼成带全局行号的可读剧本正文。
 
         行号规则与 Loader.load_transList / CSplitter 中 runtime_index 一致：
         优先取行内显式 index，否则用 1 起的位置序号（i+1）。这样生成的区间
         行号能与翻译阶段每个句子的 runtime_index 精确对应。
 
+        同时检查字段完整性：统计无 message/name 的条目数。
+
         Returns:
             (script_text, max_index)：拼接后的正文，以及最大行号（供裁剪区间用）
         """
+        if not isinstance(json_list, list):
+            LOGGER.warning(
+                f"[BatchMetaData] {filename} _build_script_text 收到非 list 参数"
+            )
+            return "", 0
         out: List[str] = []
         max_index = 0
+        no_msg = 0
         for i, item in enumerate(json_list):
             if not isinstance(item, dict):
                 continue
@@ -183,12 +224,27 @@ class ForBatchMetaData(BaseTranslate):
             max_index = max(max_index, idx)
             name = item.get("name", item.get("names", "")) or ""
             msg = item.get("message", "") or ""
+            if not msg:
+                no_msg += 1
             # 压平换行/制表符，避免破坏逐行结构
             msg = str(msg).replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
             if name:
                 out.append(f"[{idx}] {name}：{msg}")
             else:
                 out.append(f"[{idx}] {msg}")
+
+        # 字段完整性日志
+        total = len(json_list)
+        if no_msg > 0:
+            if no_msg == total:
+                LOGGER.warning(
+                    f"[BatchMetaData] {filename} 全部 {total} 个条目均无 message 字段，"
+                    f"提示词将为空"
+                )
+                return "", max_index
+            LOGGER.warning(
+                f"[BatchMetaData] {filename} {no_msg}/{total} 个条目缺少 message 字段"
+            )
         return "\n".join(out), max_index
 
     def _build_glossary_text(self) -> str:
@@ -411,10 +467,26 @@ class ForBatchMetaData(BaseTranslate):
         gpt_dic: Optional[CGptDict] = None,
     ) -> bool:
         if not filename:
-            LOGGER.warning("ForBatchMetaData: 未提供 filename，跳过该文件")
+            LOGGER.warning("[BatchMetaData] 未提供 filename，跳过该文件")
             return False
 
-        script_text, max_index = self._build_script_text(json_list)
+        # ── 入参校验 ──
+        if not isinstance(json_list, list):
+            LOGGER.error(
+                f"[BatchMetaData] {filename} json_list 类型错误，"
+                f"期望 list，实际 {type(json_list).__name__}，跳过"
+            )
+            return False
+        if not json_list:
+            LOGGER.warning(f"[BatchMetaData] {filename} json_list 为空，跳过")
+            return False
+
+        script_text, max_index = self._build_script_text(json_list, filename)
+        if not script_text:
+            LOGGER.warning(
+                f"[BatchMetaData] {filename} 剧本正文为空，跳过"
+            )
+            return False
         glossary_text = self._build_glossary_text()
         file_meta_block = self._build_file_metadata_block(filename)
         prompt = self._build_prompt_request(
