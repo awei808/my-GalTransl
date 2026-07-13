@@ -560,9 +560,62 @@ class TestForBatchMetaData(unittest.TestCase):
         """_ensure_file_metadata_loaded 有日志。"""
         with self.assertLogs(LOGGER, level="INFO") as log:
             self.backend._ensure_file_metadata_loaded()
-            # 已载入至少有一条日志（成功载入或为空）
             self.assertGreater(len(log.output), 0,
                                f"应有日志输出，实际: {log.output}")
+
+    # ----------------------------------------------------------------
+    # 9. 最大批次数限制
+    # ----------------------------------------------------------------
+    def test_max_batches_config_default(self):
+        """默认最大批次数为 20。"""
+        self.assertEqual(self.backend.max_batches, 20)
+
+    def test_normalize_meta_merges_excess_batches(self):
+        """超过 max_batches 个区间时应合并相邻区间。"""
+        raw = {"批次": []}
+        # 造 25 个微小区间 [1,2],[3,4],...,[49,50]
+        for i in range(25):
+            lo = i * 2 + 1
+            hi = lo + 1
+            raw["批次"].append({
+                "区间": [lo, hi],
+                "视角": f"P{i}", "氛围": "x", "h": False, "用词色彩": "y"
+            })
+        out = ForBatchMetaData._normalize_meta(raw, "f.json", max_index=50,
+                                                max_batches=20)
+        self.assertLessEqual(len(out["批次"]), 20,
+                             f"合并后应有 ≤20 个区间，实际: {len(out['批次'])}")
+        # 覆盖全部行号
+        all_lines = set()
+        for b in out["批次"]:
+            lo, hi = b["区间"]
+            all_lines.update(range(lo, hi + 1))
+        self.assertEqual(all_lines, set(range(1, 51)),
+                         "合并后应完整覆盖 1~50")
+
+    def test_normalize_meta_below_limit_unchanged(self):
+        """不超过 max_batches 时无需合并。"""
+        raw = {"批次": [
+            {"区间": [1, 10], "视角": "A", "氛围": "x", "h": False, "用词色彩": "a"},
+            {"区间": [11, 20], "视角": "B", "氛围": "y", "h": True, "用词色彩": "b"},
+        ]}
+        out = ForBatchMetaData._normalize_meta(raw, "f.json", max_index=20,
+                                                max_batches=20)
+        self.assertEqual(len(out["批次"]), 2)
+
+    def test_prompt_contains_max_batches(self):
+        """提示词中应含 [max_batches] 占位符并被数字替换。"""
+        from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT
+        self.assertIn("[max_batches]", FORBATCHMETA_PROMPT,
+                      "提示词模板应含有 [max_batches] 占位符")
+        # 验证 _build_prompt_request 替换了占位符
+        prompt = self.backend._build_prompt_request(
+            "dummy input", "dummy dict", file_metadata="dummy meta"
+        )
+        self.assertNotIn("[max_batches]", prompt,
+                         "占位符应被替换为数字")
+        self.assertIn(str(self.backend.max_batches), prompt,
+                      "提示词中应含有具体的最大批次数")
 
 
 if __name__ == "__main__":

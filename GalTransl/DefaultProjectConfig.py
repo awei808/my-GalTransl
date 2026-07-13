@@ -72,6 +72,14 @@ common:
   loggingLevel: info # 日志输出级别：debug详细，info常规，warning仅警告。[debug/info/warning]
   saveLog: false # 是否将日志写入文件。[True/False]
 
+# 内部流程参数
+internals:
+  forbatchmeta:
+    max_batches: 20 # 翻译区间（批次）最大数量，超过此数将自动合并相邻区间；设大模型输出不稳可调大。[1-200]
+    inject_guideline: true # 是否将翻译规范注入批次划分提示词。[True/False]
+  forfilemeta:
+    inject_guideline: true # 是否将翻译规范注入文件元数据生成提示词。[True/False]
+
 
 
 # 代理设置，使用中转供应商时一般不用开代理

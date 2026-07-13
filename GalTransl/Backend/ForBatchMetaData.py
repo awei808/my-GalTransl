@@ -71,6 +71,16 @@ class ForBatchMetaData(BaseTranslate):
                 str(raw).strip().lower() not in ("false", "0", "no", "")
             )
 
+        # 最大批次数限制，默认 20；可在 config 的 internals.forbatchmeta.max_batches 设置
+        self.max_batches = self.pj_config.getKey("internals.forbatchmeta.max_batches", 20)
+        try:
+            self.max_batches = max(1, int(self.max_batches))
+        except (TypeError, ValueError):
+            self.max_batches = 20
+        LOGGER.debug(
+            f"[BatchMetaData] 最大批次数限制：{self.max_batches}"
+        )
+
         # 文件级剧情元数据映射（{文件名: FileMetaData}），惰性载入一次
         self._file_metadata_by_file: dict = {}
         self._file_metadata_loaded: bool = False
@@ -133,7 +143,7 @@ class ForBatchMetaData(BaseTranslate):
     def _build_prompt_request(
         self, input_src: str, gptdict: str, file_metadata: str = ""
     ) -> str:
-        """在基类占位符替换基础上，增加 translation_guideline 的可控注入。"""
+        """在基类占位符替换基础上，增加 translation_guideline 的可控注入和最大批次限制。"""
         prompt_req = self.trans_prompt
         if self._inject_guideline:
             guideline = getattr(self.pj_config, "translation_guideline", "") or ""
@@ -150,6 +160,7 @@ class ForBatchMetaData(BaseTranslate):
         prompt_req = prompt_req.replace("[plot_metadata]", file_metadata)
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
+        prompt_req = prompt_req.replace("[max_batches]", str(self.max_batches))
         return prompt_req
 
     # ------------------------------------------------------------------
@@ -253,12 +264,15 @@ class ForBatchMetaData(BaseTranslate):
             return None
 
     @staticmethod
-    def _normalize_meta(obj: dict, filename: str, max_index: int) -> dict:
+    def _normalize_meta(obj: dict, filename: str, max_index: int,
+                        max_batches: int = 20) -> dict:
         """规整批次数组：清洗字段类型、裁剪并排序区间，强制 id == 文件名。
 
         - 区间起止裁剪到 [1, max_index]，丢弃非法/空区间；
         - **检测重叠区间**：后一个区间若与前一个重叠，则收缩其起始行号
           到前一个区间结束 + 1；收缩后变为空区间的被丢弃；
+        - **最大批次数限制**：若区间数超过 max_batches，则反复合并
+          相邻区间中最小的两个，直到不超过 max_batches；
         - 按起始行号升序排序；
         - h 规整为布尔值；视角/氛围/用词色彩规整为字符串。
         """
@@ -333,6 +347,32 @@ class ForBatchMetaData(BaseTranslate):
                 )
                 b["区间"] = [new_lo, cur_hi]
             cleaned.append(b)
+
+        # ── 最大批次数限制：相邻区间合并 ──
+        # 当 LLM 产出的区间数超过 max_batches 时，反复合并相邻区间中
+        # 行数最少的两个，直到不超过上限。合并后取前一个区间的元信息。
+        while len(cleaned) > max_batches:
+            # 找相邻行数差最小的两个区间
+            min_gap = float("inf")
+            merge_idx = 0
+            for i in range(len(cleaned) - 1):
+                cur_lo, cur_hi = cleaned[i]["区间"]
+                nxt_lo, nxt_hi = cleaned[i + 1]["区间"]
+                gap = nxt_lo - cur_hi  # 区间之间的间距
+                if gap < min_gap:
+                    min_gap = gap
+                    merge_idx = i
+            # 合并 cleaned[merge_idx] 和 cleaned[merge_idx + 1]
+            merged = dict(cleaned[merge_idx])  # 取前一个区间的元信息
+            merged["区间"] = [merged["区间"][0], cleaned[merge_idx + 1]["区间"][1]]
+            LOGGER.debug(
+                f"[BatchMetaData] {filename} 合并区间 "
+                f"[{cleaned[merge_idx]['区间'][0]},{cleaned[merge_idx]['区间'][1]}] + "
+                f"[{cleaned[merge_idx + 1]['区间'][0]},{cleaned[merge_idx + 1]['区间'][1]}] "
+                f"→ [{merged['区间'][0]},{merged['区间'][1]}]"
+            )
+            cleaned[merge_idx] = merged
+            del cleaned[merge_idx + 1]
 
         return {"id": filename, "批次": cleaned}
 
@@ -430,7 +470,7 @@ class ForBatchMetaData(BaseTranslate):
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效 JSON，跳过")
             return False
 
-        meta = self._normalize_meta(meta, filename, max_index)
+        meta = self._normalize_meta(meta, filename, max_index, self.max_batches)
         if not meta["批次"]:
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效区间，跳过")
             return False
