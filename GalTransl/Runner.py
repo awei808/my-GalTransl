@@ -23,7 +23,7 @@ class _JobThreadFilter(logging.Filter):
     every log record, causing N× duplication when N jobs run in parallel.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._thread_ident = threading.current_thread().ident
 
@@ -64,7 +64,7 @@ class _ServerStatusFilter(logging.Filter):
         return any(msg.startswith(p) for p in self._ALLOWED_INFO_PREFIXES)
 
 
-def _raise_if_stop_requested(stop_event):
+def _raise_if_stop_requested(stop_event: threading.Event | None) -> None:
     if stop_event is not None and stop_event.is_set():
         from GalTransl.Service import JobCancelledError
 
@@ -87,19 +87,19 @@ File_FORMAT = logging.Formatter(
 )
 
 
-async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event=None):
+async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: threading.Event | None = None) -> None:
     PROJECT_DIR = cfg.getProjectDir()
     cfg.select_translator = translator
     cfg.stop_event = stop_event
 
-    def get_pluginInfo_path(name):
+    def get_pluginInfo_path(name: str) -> str:
         if "(project_dir)" in name:
             name = name.replace("(project_dir)", "")
             return os.path.join(PROJECT_DIR, "plugins", name, f"{name}.yaml")
         else:
             return os.path.join(os.path.abspath("plugins"), name, f"{name}.yaml")
 
-    def print_plugin_list(plugin_manager: PluginManager):
+    def print_plugin_list(plugin_manager: PluginManager) -> None:
         LOGGER.info("插件列表:")
         for candidate in plugin_manager.getPluginCandidates():
             plug_path = os.path.dirname(candidate[1])

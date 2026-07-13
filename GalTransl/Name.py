@@ -116,7 +116,7 @@ def _load_existing_dst_names(proj_dir: str) -> Dict[str, str]:
     csv_path = joinpath(proj_dir, "name替换表.csv")
     xlsx_path = joinpath(proj_dir, "name替换表.xlsx")
 
-    def _find_col(header, new_name, old_name):
+    def _find_col(header: list[str], new_name: str, old_name: str) -> int:
         if new_name in header:
             return header.index(new_name)
         if old_name in header:
@@ -349,7 +349,7 @@ def load_name_table(
 
 async def dump_name_table_from_chunks(
     chunks: List[SplitChunkMetadata], proj_config: CProjectConfig
-):
+) -> None:
     name_dict = {}
     proj_dir = proj_config.getProjectDir()
     gpt_dic = proj_config.gpt_dic

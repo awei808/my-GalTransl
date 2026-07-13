@@ -2,9 +2,10 @@
 缓存机制
 """
 
-from GalTransl.CSentense import CTransList
+from typing import Any, Optional, Union
+
+from GalTransl.CSentense import CSentense, CTransList
 from GalTransl import LOGGER
-from typing import List
 import orjson
 import os,shutil
 import asyncio
@@ -20,7 +21,7 @@ _CACHE_KEY_COMPAT = {
     "post_dst_preview": "post_zh_preview",
 }
 
-def _cache_get(cache_obj: dict, key: str, default=None):
+def _cache_get(cache_obj: dict, key: str, default: Any = None) -> Any:
     """从缓存对象中读取值，优先使用新key名，回退到旧key名（兼容旧缓存）"""
     if key in cache_obj:
         return cache_obj[key]
@@ -95,7 +96,7 @@ async def _write_append_entries_with_retry(append_file_path: str, append_entries
     raise last_error
 
 
-def _build_cache_key_for_tran(tran) -> str:
+def _build_cache_key_for_tran(tran: CSentense) -> str:
     line_now, line_priv, line_next = "", "None", "None"
     line_now = f"{tran.speaker}{tran.pre_src}"
 
@@ -116,7 +117,7 @@ def _build_cache_key_for_tran(tran) -> str:
     return line_priv + line_now + line_next
 
 
-def _build_cache_obj(tran, post_save: bool = False):
+def _build_cache_obj(tran: CSentense, post_save: bool = False) -> Optional[dict]:
     if tran.post_src == "":
         return None
     if tran.pre_dst == "":
@@ -195,10 +196,7 @@ async def _compact_cache_from_append(cache_file_path: str, append_file_path: str
                 cache_order.append(cache_key)
                 cache_dict[cache_key] = cache_obj
             else:
-                # 以快照为基合并：append 提供的键覆盖快照，
-                # append 未提供的键（如 problem 等派生字段）保留。
-                # 这样中途被打断后再启动 compaction 不会把 problem 字段抹掉，
-                # 避免 retranslKey-by-problem 失效。
+                # 以快照为基合并：append 键覆盖快照，保留派生字段（如 problem）避免 retranslKey-by-problem 失效
                 merged_obj = dict(cache_dict[cache_key])
                 merged_obj.update(cache_obj)
                 cache_dict[cache_key] = merged_obj
@@ -234,7 +232,7 @@ async def compact_cache_append_logs(cache_dir: str) -> int:
     return compacted_count
 
 
-async def save_transCache_to_json(trans_list: CTransList, cache_file_path, post_save=False, project_dir: str = ""):
+async def save_transCache_to_json(trans_list: CTransList, cache_file_path: str, post_save: bool = False, project_dir: str = "") -> None:
     """
     此函数将翻译缓存保存到 JSON 文件中。
     使用原子写入机制，避免程序异常关闭时写入不完整的问题。
@@ -311,23 +309,23 @@ async def save_transCache_to_json(trans_list: CTransList, cache_file_path, post_
         if os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
-            except:
+            except Exception:
                 pass
-        
+
         # 重新抛出异常
         raise e
 
 
 async def get_transCache_from_json(
     trans_list: CTransList,
-    cache_file_path,
-    retry_failed=False,
-    proofread=False,
-    retran_key="",
-    load_post_src=False,
-    ignr_post_src=False,
-    eng_type="",
-):
+    cache_file_path: str,
+    retry_failed: bool = False,
+    proofread: bool = False,
+    retran_key: Union[str, list[str]] = "",
+    load_post_src: bool = False,
+    ignr_post_src: bool = False,
+    eng_type: str = "",
+) -> tuple[CTransList, CTransList]:
     """
     此函数从 JSON 文件中检索翻译缓存，并相应地更新翻译列表。
 
@@ -386,10 +384,7 @@ async def get_transCache_from_json(
                 if not cache_key:
                     continue
                 if cache_key in cache_dict:
-                    # 与 _compact_cache_from_append 保持一致的合并策略：
-                    # 保留快照中 append 未提供的派生字段（如 problem），
-                    # 这样 retranslKey-by-problem 检测仍能基于最近一次
-                    # 完整 post_save 记录的 problem 正确触发。
+                    # 与 _compact_cache_from_append 一致的合并策略：保留派生字段使 retranslKey-by-problem 正确触发
                     merged_obj = dict(cache_dict[cache_key])
                     merged_obj.update(cache_obj)
                     cache_dict[cache_key] = merged_obj
@@ -521,7 +516,7 @@ async def get_transCache_from_json(
     return translist_hit, translist_unhit
 
 
-def check_retran_key(retran_key, target):
+def check_retran_key(retran_key: Union[str, list[str]], target: str) -> bool:
     """
     检查 retran_key 是否存在于目标字符串中。
 

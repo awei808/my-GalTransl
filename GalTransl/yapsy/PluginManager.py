@@ -424,7 +424,7 @@ class PluginManager(object):
 				try:
 					if attrValue in pluginValue:
 						continue
-				except:
+				except Exception:
 					break
 			else:
 				selectedPLugins.add(plugin)

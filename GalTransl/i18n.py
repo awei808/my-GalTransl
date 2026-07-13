@@ -1,4 +1,6 @@
 import os
+from typing import Any
+
 # Language support for GalTransl
 # This file contains all the text strings used in the UI and backend
 
@@ -210,7 +212,7 @@ UI_TEXT = {
 }
 
 # Function to get text in the current language
-def get_text(key, lang=GT_LANG, *args):
+def get_text(key: str, lang: str = GT_LANG, *args: Any) -> str:
     """
     Get text in the specified language
     
@@ -237,7 +239,7 @@ def get_text(key, lang=GT_LANG, *args):
     if args:
         try:
             return text.format(*args)
-        except:
+        except Exception:
             return text
     
     return text

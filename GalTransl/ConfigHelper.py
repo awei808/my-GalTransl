@@ -112,7 +112,7 @@ class CProblemType(Enum):
 
 
 class CProjectConfig:
-    def __init__(self, projectPath: str, config_name=CONFIG_FILENAME) -> None:
+    def __init__(self, projectPath: str, config_name: str = CONFIG_FILENAME) -> None:
         self.projectConfig = loadConfigFile(path.join(projectPath, config_name))
         self.projectDir: str = projectPath
         input_dir = path.abspath(path.join(projectPath, INPUT_FOLDERNAME))
@@ -262,7 +262,7 @@ class CProxyPool:
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     async def _availablityChecker(
-        self, proxy: CProxy, test_address="http://www.gstatic.com/generate_204"
+        self, proxy: CProxy, test_address: str = "http://www.gstatic.com/generate_204"
     ) -> tuple[bool, CProxy]:
         try:
             st = time()
@@ -279,7 +279,7 @@ class CProxyPool:
         except TimeoutException:
             LOGGER.debug("we got exception in testing proxy %s", proxy.addr)
             return False, proxy
-        except:
+        except Exception:
             LOGGER.error("代理 %s 无法连接", proxy.addr)
             return False, proxy
         finally:

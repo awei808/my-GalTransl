@@ -95,7 +95,7 @@ class AutoInstallPluginManager(PluginManagerDecorator):
 								os.path.join(self.install_dir,os.path.basename(plugin_info.path)))
 				shutil.copy(os.path.join(directory, plugin_info_filename),
 							self.install_dir)
-			except:
+			except Exception:
 				log.error("Could not install plugin: %s." % plugin_info.name)
 				return False
 			else:
@@ -106,7 +106,7 @@ class AutoInstallPluginManager(PluginManagerDecorator):
 							self.install_dir)
 				shutil.copy(os.path.join(directory, plugin_info_filename),
 						   self.install_dir)
-			except:
+			except Exception:
 				log.error("Could not install plugin: %s." % plugin_info.name)
 				return False
 			else:

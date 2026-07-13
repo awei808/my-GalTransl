@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 from opencc import OpenCC
-from typing import Optional, List
+from typing import Any, Optional, List
 from collections import deque
 from threading import Lock
 from GalTransl.COpenAI import COpenAITokenPool, COpenAIToken
@@ -80,7 +80,7 @@ class BaseTranslate:
         eng_type: str,
         proxy_pool: Optional[CProxyPool] = None,
         token_pool: COpenAITokenPool = None,
-    ):
+    ) -> None:
         """
         根据提供的类型、配置、API 密钥和代理设置初始化 Chatbot 对象。
 
@@ -92,9 +92,9 @@ class BaseTranslate:
         Returns:
             None
         """
-        self.pj_config = config
-        self.eng_type = eng_type
-        self.last_file_name = ""
+        self.pj_config: CProjectConfig = config
+        self.eng_type: str = eng_type
+        self.last_file_name: str = ""
         self.restore_context_mode = config.getKey("gpt.restoreContextMode", True)
         # 翻译规范
         if val := config.getKey("gpt.translation_guideline"):
@@ -204,7 +204,7 @@ class BaseTranslate:
         return bool(value)
 
     @staticmethod
-    def _coerce_positive_int(value, default: int) -> int:
+    def _coerce_positive_int(value: Any, default: int) -> int:
         try:
             result = int(value)
         except (TypeError, ValueError):
@@ -278,7 +278,7 @@ class BaseTranslate:
         if isinstance(user_prompt_override, str):
             self.trans_prompt = user_prompt_override
 
-    def init_chatbot(self, eng_type, config: CProjectConfig):
+    def init_chatbot(self, eng_type: str, config: CProjectConfig) -> None:
         section_name = "OpenAI-Compatible"
 
         self.api_timeout = config.getBackendConfigSection(section_name).get(
@@ -308,10 +308,7 @@ class BaseTranslate:
         if change_prompt == "OverwritePrompt" and prompt_content != "":
             self.trans_prompt = prompt_content
 
-        # 规范化 apiErrorWait：
-        # - "auto" / 非法值 -> -1（走指数退避）
-        # - 数字字符串如 "120" -> int(120)
-        # 避免后续 `self.apiErrorWait >= 0` 出现 str 与 int 比较的 TypeError。
+        # 规范化 apiErrorWait："auto"/非法值->-1，数字字符串->int，避免后续比较的 TypeError
         if isinstance(self.apiErrorWait, bool):
             # bool 是 int 的子类，显式拒绝，避免 True/False 被当作 1/0
             self.apiErrorWait = -1
@@ -377,7 +374,7 @@ class BaseTranslate:
         pass
 
     @staticmethod
-    def _is_stop_requested(pj_config) -> bool:
+    def _is_stop_requested(pj_config: CProjectConfig) -> bool:
         stop_event = getattr(pj_config, "stop_event", None)
         return stop_event is not None and stop_event.is_set()
 
@@ -424,29 +421,13 @@ class BaseTranslate:
         ):
             history_result = self.last_translations[filename].replace("<br>", "")
             return prompt_req.replace("[history_result]", history_result)
-        # 无历史记录：移除所有历史相关内容，避免提示词残留
-        # "<history_result>None</history_result>" 或「历史上下文」说明小节。
-        # 仅当 [history_result] 占位符仍为字面量时才匹配块（有历史时已被替换，保留原块与说明）。
+        # 无历史记录时移除历史相关内容，避免提示词残留
         prompt_req = re.sub(
             r"\s*<history_result>\s*\[history_result\]\s*</history_result>\s*",
             "\n",
             prompt_req,
         )
-        # 仅移除 <process_requirements> 区块「内部」的「### 历史上下文 / ### About historical plot」
-        # 说明小节。
-        #
-        # 关键修复（此前 bug）：旧实现用
-        #   r"^###\s*.*?(?:history|历史).*$(?:\n(?:.*$))*(?=\n### |\n</process_requirements>)"
-        # 其中 (?:\n(?:.*$))*` 是【贪婪】的，而前瞻 \n###  在整段提示词（含已被
-        # [translation_guideline] 替换进来的翻译规范）里会一路匹配到【最后一个】 ### 标题
-        # （即翻译规范里的 "### 5. 氛围保留规则"）。结果把从 "### 历史上下文" 到该 ### 5 之间
-        # 的所有内容——</process_requirements> 闭合标签、<history_result> 块、
-        # <translation_guidelines> 开放标签、以及翻译规范第 1~4 节——一刀切删掉，
-        # 导致首轮提示词被截断、标签错位（开标签 process_requirements / 闭标签 translation_guidelines）。
-        #
-        # 新实现：外层用 re.S 把匹配范围【限定在 <process_requirements>...</process_requirements>
-        # 内部】，内层对该区块做历史小节移除，且一律使用【非贪婪】匹配（*?），在首个
-        # ### 标题或区块结束符处即停。这样无论翻译规范内容里有多少 ### 标题，都不会跨块误删。
+        # 移除 <process_requirements> 内的历史小节（非贪婪匹配避免跨块误删翻译规范中的 ### 标题）
         prompt_req = re.sub(
             r"(<process_requirements>)(.*?)(</process_requirements>)",
             lambda m: m.group(1)
@@ -502,12 +483,7 @@ class BaseTranslate:
             line_dst = line_dst + "」"
 
         line_dst = line_dst.replace("[t]", "\t")
-        # 先把 LLM 可能输出的各类换行标记统一收口为 <br>（交换格式的标准占位符）：
-        #   <BR>            -> <br>   （大小写兼容）
-        #   真实 \r\n / \n  -> <br>   （模型常把 <br> 还原成实际换行）
-        # 无论源是「真实/字面换行约定」还是「<br> 约定」(n_symbol 为空)，
-        # 都先规范到 <br>，再在下方整体还原。这样「非 <br>/<BR>/n_symbol 的
-        # 换行符统一换成源约定」这一要求对所有源类型都成立。
+        # 统一各类换行标记为 <br>（兼容大小写/真实换行），再整体还原为源约定
         line_dst = line_dst.replace("<BR>", "<br>")
         line_dst = line_dst.replace("\r\n", "<br>").replace("\n", "<br>")
         if n_symbol:
@@ -531,7 +507,7 @@ class BaseTranslate:
         result_trans_list: list,
         filename: str = "",
         emit_runtime_success: bool = False,
-        emitted_success_indices=None,
+        emitted_success_indices: Optional[set] = None,
         result_index: Optional[int] = None,
     ) -> tuple[bool, str]:
         current_tran.pre_dst = line_dst
@@ -603,8 +579,8 @@ class BaseTranslate:
 
     async def _batch_translate_common(
         self,
-        filename,
-        cache_file_path,
+        filename: str,
+        cache_file_path: str,
         translist_unhit: CTransList,
         num_pre_request: int,
         gpt_dic: CGptDict = None,
@@ -780,20 +756,20 @@ class BaseTranslate:
 
     async def ask_chatbot(
         self,
-        prompt="",
-        system="",
-        messages=None,
-        temperature=NOT_GIVEN,
-        frequency_penalty=NOT_GIVEN,
-        top_p=NOT_GIVEN,
-        stream=NOT_GIVEN,
-        max_tokens=NOT_GIVEN,
-        reasoning_effort=NOT_GIVEN,
-        file_name="",
-        base_try_count=0,
-        stream_line_callback=None,
+        prompt: str = "",
+        system: str = "",
+        messages: Optional[list[dict]] = None,
+        temperature: Any = NOT_GIVEN,
+        frequency_penalty: Any = NOT_GIVEN,
+        top_p: Any = NOT_GIVEN,
+        stream: Any = NOT_GIVEN,
+        max_tokens: Any = NOT_GIVEN,
+        reasoning_effort: Any = NOT_GIVEN,
+        file_name: str = "",
+        base_try_count: int = 0,
+        stream_line_callback: Optional[Any] = None,
         max_retry_count: Optional[int] = None,
-    ):
+    ) -> tuple[str, COpenAIToken]:
         api_try_count = base_try_count
         client: AsyncOpenAI
         token: COpenAIToken
@@ -808,9 +784,7 @@ class BaseTranslate:
             temperature = NOT_GIVEN
 
         while True:
-            # Check stop_event before each API attempt so that cancelling
-            # the job actually works even when we are stuck in an API-error
-            # retry loop with long backoff sleeps.
+            # Check stop_event before each API attempt to make cancellation work during retry backoffs
             if self._is_stop_requested(self.pj_config):
                 from GalTransl.Service import JobCancelledError
                 raise JobCancelledError()
@@ -849,9 +823,7 @@ class BaseTranslate:
                     )
                 )
 
-                # Poll stop_event while waiting for the API response.
-                # This ensures that a stop request is detected within 0.5s
-                # even when the LLM endpoint is slow or unresponsive.
+                # Poll stop_event while waiting; detect stop within 0.5s even when endpoint is slow
                 while not api_task.done():
                     if self._is_stop_requested(self.pj_config):
                         api_task.cancel()
@@ -933,7 +905,7 @@ class BaseTranslate:
                 else:
                     try:
                         result = response.choices[0].message.content
-                    except:
+                    except Exception:
                         raise ValueError(
                             "response.choices[0].message.content is None, no_candidates"
                         )
@@ -1034,10 +1006,10 @@ class BaseTranslate:
 
                 await self._interruptible_sleep(sleep_time)
 
-    def clean_up(self):
+    def clean_up(self) -> None:
         pass
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         if self._shutdown_done:
             return
         self._shutdown_done = True
@@ -1071,13 +1043,13 @@ class BaseTranslate:
                 except Exception:
                     pass
 
-    def translate(self, trans_list: CTransList, gptdict=""):
+    def translate(self, trans_list: CTransList, gptdict: str = "") -> None:
         pass
 
     async def batch_translate(
         self,
-        filename,
-        cache_file_path,
+        filename: str,
+        cache_file_path: str,
         trans_list: CTransList,
         num_pre_request: int,
         retry_failed: bool = False,
@@ -1185,8 +1157,8 @@ class BaseTranslate:
         return context_items
 
     def restore_context(
-        self, translist_unhit: CTransList, num_pre_request: int, filename=""
-    ):
+        self, translist_unhit: CTransList, num_pre_request: int, filename: str = ""
+    ) -> None:
         if not hasattr(self, "last_translations"):
             return
 
@@ -1205,7 +1177,7 @@ class BaseTranslate:
             context_lines
         )
 
-    def _set_temp_type(self, style_name: str):
+    def _set_temp_type(self, style_name: str) -> None:
         if self._current_temp_type == style_name:
             return
         self._current_temp_type = style_name

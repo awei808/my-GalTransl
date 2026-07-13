@@ -161,9 +161,7 @@ NULL	NULL	NULL
 日文原词	中文翻译	备注
 """
 
-######################################
-# ForFileMetaData Prompt             #
-# 文件级元数据(FileMetaData)生成专用提示词（不使用系统提示词，全部内容置于 user 消息）
+# ForFileMetaData Prompt
 
 FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 Galgame 剧本文件（JSON-line 格式，每行一个 JSON 对象，含 name 与 message 字段）。请阅读全文，概括总结该文件的剧情，并将「剧情」字段压缩至 200 字以内的中文。
 
@@ -202,11 +200,7 @@ FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 G
 [Input]
 """
 
-######################################
-# ForBatchMetaData Prompt            #
-# 批次级元数据(BatchMetadata)生成专用提示词（不使用系统提示词，全部内容置于 user 消息）
-# 依据文件级剧情元数据(PlotMetadata) + 全文，将原文划分为若干"翻译区间(批次)"，
-# 并为每个区间标注 视角/氛围/h/用词色彩，作为第三次翻译时的批次级提示词。
+# ForBatchMetaData Prompt
 
 FORBATCHMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 Galgame 剧本文件（每行以 [行号] 开头，后接说话人（可空）与台词/旁白）。请通读全文，依据剧情的自然节奏，将全文划分为若干**连续、不重叠、且并集完整覆盖全部行号**的翻译区间（即"批次"），并为每个区间标注翻译所需的元信息。
 

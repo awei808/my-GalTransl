@@ -12,7 +12,7 @@ from GalTransl import (
 )
 
 
-def worker(project_dir: str, config_file_name: str, translator: str, show_banner=True):
+def worker(project_dir: str, config_file_name: str, translator: str, show_banner: bool = True) -> bool:
     if not project_dir or not isinstance(project_dir, str):
         LOGGER.error(get_text("error_project_path_empty", GT_LANG))
         return False

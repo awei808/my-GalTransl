@@ -4,7 +4,7 @@ from GalTransl.CSentense import CSentense
 
 
 class GTextPlugin(IPlugin):
-    def gtp_init(self, plugin_conf: dict, project_conf: dict):
+    def gtp_init(self, plugin_conf: dict, project_conf: dict) -> None:
         """
         This method is called when the plugin is loaded.在插件加载时被调用。
         :param plugin_conf: The settings for the plugin.插件yaml中所有设置的dict。
@@ -47,7 +47,7 @@ class GTextPlugin(IPlugin):
         """
         return tran
 
-    def gtp_final(self):
+    def gtp_final(self) -> None:
         """
         This method is called after all translations are done.
         在所有文件翻译完成之后的动作，例如输出提示信息。
@@ -56,7 +56,7 @@ class GTextPlugin(IPlugin):
 
 
 class GFilePlugin(IPlugin):
-    def gtp_init(self, plugin_conf: dict, project_conf: dict):
+    def gtp_init(self, plugin_conf: dict, project_conf: dict) -> None:
         """
         This method is called when the plugin is loaded.在插件加载时被调用。
         :param plugin_conf: The settings for the plugin.插件yaml中所有设置的dict。
@@ -73,7 +73,7 @@ class GFilePlugin(IPlugin):
         """
         raise NotImplementedError("This method must be implemented by the plugin.")
 
-    def save_file(self, file_path: str, transl_json: list):
+    def save_file(self, file_path: str, transl_json: list) -> None:
         """
         This method is called to save a file.
         保存文件时被调用。
@@ -83,7 +83,7 @@ class GFilePlugin(IPlugin):
         """
         raise NotImplementedError("This method must be implemented by the plugin.")
 
-    def gtp_final(self):
+    def gtp_final(self) -> None:
         """
         This method is called after all translations are done.
         在所有文件翻译完成之后的动作，例如输出提示信息。

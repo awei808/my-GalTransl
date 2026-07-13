@@ -25,6 +25,7 @@ from GalTransl import LOGGER, NEED_OpenAITokenPool
 from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.Cache import get_transCache_from_json
 from GalTransl.ConfigHelper import initDictList, CProjectConfig
+from GalTransl.CSentense import CTransList
 from GalTransl.Dictionary import CGptDict, CNormalDic
 from GalTransl.Problem import find_problems
 from GalTransl.Cache import save_transCache_to_json
@@ -45,7 +46,7 @@ def _runtime_project_dir(projectConfig: CProjectConfig) -> str:
     return getattr(projectConfig, "runtime_project_dir", projectConfig.getProjectDir())
 
 
-def _update_runtime(projectConfig: CProjectConfig, **kwargs):
+def _update_runtime(projectConfig: CProjectConfig, **kwargs: Any) -> None:
     """向 server 运行时状态上报进度信息（桌面端订阅用）。
 
     服务端未启动时静默失败，不影响 CLI 运行。
@@ -64,7 +65,7 @@ def _pass3_cache_dir(projectConfig: CProjectConfig) -> str:
     return joinpath(projectConfig.getCachePath(), PASS3_CACHE_DIR)
 
 
-async def ensure_model_available_if_needed(projectConfig: CProjectConfig):
+async def ensure_model_available_if_needed(projectConfig: CProjectConfig) -> None:
     """在真正需要调用模型前，按需执行一次可用性检查。"""
     translator = getattr(projectConfig, "select_translator", "")
     if not any(x in translator for x in NEED_OpenAITokenPool):
@@ -120,8 +121,8 @@ class AdaptiveWorkerState:
 async def auto_tune_workers(
     projectConfig: CProjectConfig,
     adaptive_state: AdaptiveWorkerState,
-    apply_limit,
-):
+    apply_limit: Any,
+) -> None:
     """后台自适应并发调节任务。
 
     基于最近 30s 的请求健康度（429 比例 / 平均延迟）上下调 effective_workers：
@@ -155,7 +156,7 @@ async def auto_tune_workers(
             await apply_limit(target)
 
 
-def _check_stop_requested(projectConfig: CProjectConfig):
+def _check_stop_requested(projectConfig: CProjectConfig) -> None:
     """协作式取消检查点：若桌面端/服务端触发 stop_event，则抛出 JobCancelledError 中止当前任务。
 
     在各关键步骤（IO 前、进入循环、chunk 处理前等）调用，避免写到一半被硬中断。
@@ -202,16 +203,14 @@ def _build_runtime_file_maps(ordered_chunks: list[SplitChunkMetadata], input_dir
 
 
 async def update_progress_title(
-    bar, semaphore, workersPerProject: int, projectConfig: CProjectConfig
-):
+    bar: Any, semaphore: asyncio.Semaphore, workersPerProject: int, projectConfig: CProjectConfig
+) -> None:
     """异步任务，用于动态更新 alive_bar 的标题以显示活动工作线程数。"""
     base_title = "翻译进度"
     is_interactive = should_print_translation_logs(projectConfig)
     while True:
         try:
-            # 计算当前活动的任务数
-            # semaphore.acquire() 会减少 _value，semaphore.release() 会增加 _value
-            # 因此，活动任务数 = 总容量 - 当前可用容量
+            # 计算当前活动任务数（_value 变化：acquire 减少，release 增加）
             reserved_workers = int(getattr(projectConfig, "runtime_workers_reserved", 0))
             active_workers = workersPerProject - semaphore._value - reserved_workers
             # 确保 active_workers 不会是负数（以防万一）
@@ -248,7 +247,12 @@ async def update_progress_title(
             break
 
 
-def preprocess_trans_list(trans_list, projectConfig, pre_dic, tPlugins=None):
+def preprocess_trans_list(
+    trans_list: CTransList,
+    projectConfig: CProjectConfig,
+    pre_dic: CNormalDic,
+    tPlugins: Optional[list] = None,
+) -> None:
     """翻译前处理：插件before_src → 对话分析 → 预处理字典替换源文 → 预处理字典替换说话人 → 插件after_src"""
     for tran in trans_list:
         if tPlugins:
@@ -286,7 +290,12 @@ def preprocess_trans_list(trans_list, projectConfig, pre_dic, tPlugins=None):
                     )
 
 
-def postprocess_trans_list(trans_list, projectConfig, post_dic, tPlugins=None):
+def postprocess_trans_list(
+    trans_list: CTransList,
+    projectConfig: CProjectConfig,
+    post_dic: CNormalDic,
+    tPlugins: Optional[list] = None,
+) -> None:
     """翻译后处理：插件before_dst → 恢复对话符号 → 后处理字典替换译文 → 插件after_dst"""
     for tran in trans_list:
         if tPlugins:
@@ -386,7 +395,7 @@ async def doLLMTranslate(
     # 按文件名自然排序（处理数字部分）
     import re
 
-    def natural_sort_key(s):
+    def natural_sort_key(s: str) -> list:
         return [
             int(text) if text.isdigit() else text.lower()
             for text in re.split(r"(\d+)", s)
@@ -469,9 +478,7 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 
-    # ---- 3. 根据 sortBy 决定 chunk 处理顺序 ----
-    # name: 按文件名自然序，文件内按 chunk_index 顺序（方便观察进度）
-    # size: 按 chunk 大小倒序（让大 chunk 先进入队列，平滑尾部长尾）
+    # 3. 根据 sortBy 决定 chunk 顺序：name（文件名自然序）或 size（大 chunk 优先）
     soryBy = projectConfig.getKey("sortBy", "name")
     if soryBy == "name":
         # 按文件分组chunks，保持文件内部的顺序
@@ -739,9 +746,7 @@ async def doLLMTranslSingleChunk(
         if len(translist_unhit) > 0:
             _check_stop_requested(projectConfig)
             await ensure_model_available_if_needed(projectConfig)
-            # 注入文件级元数据（仅支持的后端拥有 set_file_metadata，
-            # 如 ForGal-json-multi-chat；其余后端忽略）。同一份
-            # FileMetaData.json 作为项目级元数据应用到每个文件的首轮对话。
+            # 注入文件级元数据（仅支持 set_file_metadata 的后端，如 ForGal-json-multi-chat）
             file_metadata = getattr(projectConfig, "file_metadata", None)
             if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
                 _batch_file_name = file_name + (
@@ -804,7 +809,7 @@ async def doLLMTranslSingleChunk(
 async def postprocess_results(
     resultChunks: List[SplitChunkMetadata],
     projectConfig: CProjectConfig,
-):
+) -> None:
     """单个文件翻译完成后的收尾工作。
 
     对每个 chunk 逐一：find_problems 标注问题 → save_transCache_to_json(post_save=True)
@@ -858,7 +863,7 @@ async def postprocess_results(
 
 async def init_gptapi(
     projectConfig: CProjectConfig,
-):
+) -> None:
     """
     根据引擎类型获取相应的API实例（延迟导入后端模块以避免不必要依赖）。
 

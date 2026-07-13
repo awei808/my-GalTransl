@@ -1,8 +1,12 @@
 import orjson
+from typing import Optional
+
 from GalTransl.CSentense import CTransList
 
 
-def save_transList_to_json_cn(trans_list: CTransList, save_path: str, name_dict={}):
+def save_transList_to_json_cn(trans_list: CTransList, save_path: str, name_dict: Optional[dict] = None) -> None:
+    if name_dict is None:
+        name_dict = {}
     result_list = []
     for tran in trans_list:
         if tran._speaker != "":
@@ -25,8 +29,10 @@ def save_transList_to_json_cn(trans_list: CTransList, save_path: str, name_dict=
 
 
 def update_json_with_transList(
-    trans_list: CTransList, old_json_list: list, name_dict={}
+    trans_list: CTransList, old_json_list: list, name_dict: Optional[dict] = None
 ) -> list:
+    if name_dict is None:
+        name_dict = {}
     result_json_list = old_json_list.copy()
     # Iterate over the old JSON data and the trans_list simultaneously
     for old_item, tran in zip(result_json_list, trans_list):
@@ -53,6 +59,6 @@ def update_json_with_transList(
     return result_json_list
 
 
-def save_json(file_path: str, result_json: list):
+def save_json(file_path: str, result_json: list) -> None:
     with open(file_path, "wb") as f:
         f.write(orjson.dumps(result_json, option=orjson.OPT_INDENT_2))

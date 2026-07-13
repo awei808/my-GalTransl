@@ -6,7 +6,7 @@ class CSentense:
     每个CSentense储存一句待翻译文本
     """
 
-    def __init__(self, pre_src: str = "", speaker: str = "", index=0, **kwargs) -> None:
+    def __init__(self, pre_src: str = "", speaker: str = "", index: int = 0, **kwargs) -> None:
         """每个CSentense储存一句待翻译文本
 
         Args:
@@ -47,48 +47,48 @@ class CSentense:
         self.next_tran: CSentense = None  # 指向下一个tran
 
     @property
-    def pre_src(self):
+    def pre_src(self) -> str:
         return self._pre_src
 
     @pre_src.setter
-    def pre_src(self, value):
+    def pre_src(self, value: str) -> None:
         if hasattr(self, "_pre_src"):
             raise AttributeError("Can't modify pre_src")
         self._pre_src = value
 
     @property
-    def pre_jp(self):
+    def pre_jp(self) -> str:
         return self.pre_src
 
     @pre_jp.setter
-    def pre_jp(self, value):
+    def pre_jp(self, value: str) -> None:
         self.pre_src = value
 
     @property
-    def post_jp(self):
+    def post_jp(self) -> str:
         return self.post_src
 
     @post_jp.setter
-    def post_jp(self, value):
+    def post_jp(self, value: str) -> None:
         self.post_src = value
 
     @property
-    def pre_zh(self):
+    def pre_zh(self) -> str:
         return self.pre_dst
 
     @pre_zh.setter
-    def pre_zh(self, value):
+    def pre_zh(self, value: str) -> None:
         self.pre_dst = value
 
     @property
-    def post_zh(self):
+    def post_zh(self) -> str:
         return self.post_dst
 
     @post_zh.setter
-    def post_zh(self, value):
+    def post_zh(self, value: str) -> None:
         self.post_dst = value
     
-    def get_speaker_name(self):
+    def get_speaker_name(self) -> str:
         if isinstance(self.speaker, str):
             return self.speaker
         if isinstance(self.speaker, list):
@@ -107,7 +107,7 @@ class CSentense:
         char_n = "\n"
         return f"{char_n}v--{self.index}{name}{char_n}> Src: {tmp_post_src}{char_n}> Dst: {tmp_post_dst if self.proofread_zh == '' else tmp_proofread_zh}"
 
-    def analyse_dialogue(self, dia_format: str = "#句子", mono_format: str = "#句子"):
+    def analyse_dialogue(self, dia_format: str = "#句子", mono_format: str = "#句子") -> None:
         """对话分析，根据对话框判断是否为对话，暂时隐藏对话框，分别格式化diag与mono到不同的format
 
         Args:
@@ -188,7 +188,7 @@ class CSentense:
             "#句子", self.post_src
         )
 
-    def recover_dialogue_symbol(self):
+    def recover_dialogue_symbol(self) -> None:
         """
         译后用，对post_dst恢复对话符号，应该放在最后
         """

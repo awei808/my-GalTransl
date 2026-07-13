@@ -4,6 +4,7 @@ from asyncio import CancelledError, run
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import os
+import threading
 import traceback
 from typing import Any
 
@@ -145,7 +146,7 @@ def create_job_state(spec: JobSpec) -> JobState:
 async def run_job_async(
     spec: JobSpec,
     state: JobState | None = None,
-    stop_event=None,
+    stop_event: threading.Event | None = None,
 ) -> JobState:
     from GalTransl.server import reset_runtime_project, update_runtime_status
 
@@ -297,5 +298,5 @@ async def run_job_async(
     return current_state
 
 
-def run_job(spec: JobSpec, state: JobState | None = None, stop_event=None) -> JobState:
+def run_job(spec: JobSpec, state: JobState | None = None, stop_event: threading.Event | None = None) -> JobState:
     return run(run_job_async(spec, state, stop_event=stop_event))

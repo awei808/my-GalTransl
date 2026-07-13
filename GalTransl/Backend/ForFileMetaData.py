@@ -39,7 +39,7 @@ class ForFileMetaData(BaseTranslate):
         eng_type: str,
         proxy_pool: Optional[CProxyPool],
         token_pool: COpenAITokenPool,
-    ):
+    ) -> None:
         """
         初始化 ForFileMetaData 后端。
 
@@ -54,9 +54,7 @@ class ForFileMetaData(BaseTranslate):
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
 
-        # 是否把项目翻译规范（translation_guideline）注入提示词，默认开启。
-        # 用户可在 config 的 internals.forfilemeta.inject_guideline 设为
-        # false / 0 / no 来关闭注入。
+        # 是否把项目翻译规范注入提示词（默认开启，可在 internals.forfilemeta.inject_guideline 关闭）
         raw = self.pj_config.getKey("internals.forfilemeta.inject_guideline", True)
         if isinstance(raw, bool):
             self._inject_guideline = raw
@@ -68,9 +66,7 @@ class ForFileMetaData(BaseTranslate):
         # 跨文件（可能的并发 worker）写 FileMetaData.json 时的互斥锁
         self._fm_lock = Lock()
 
-    # ------------------------------------------------------------------
-    # 0. 可控注入：把项目翻译规范（translation_guideline）拼入提示词
-    # ------------------------------------------------------------------
+    # 0. 可控注入翻译规范
     def _build_prompt_request(self, input_src: str, gptdict: str) -> str:
         """
         在基类占位符替换的基础上，增加 translation_guideline 的可控注入：
@@ -98,10 +94,8 @@ class ForFileMetaData(BaseTranslate):
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         return prompt_req
 
-    # ------------------------------------------------------------------
-    # 1. 准备输入：剧本正文 + gpt 字典（专名译表）
-    # ------------------------------------------------------------------
-    def _build_script_text(self, json_list) -> str:
+    # 1. 准备输入
+    def _build_script_text(self, json_list: list) -> str:
         """把 json_list（每行一个 {name, message} 对象）拼成可读剧本正文。"""
         out: List[str] = []
         for item in json_list:
@@ -146,9 +140,7 @@ class ForFileMetaData(BaseTranslate):
         )
         return "\n".join(lines)
 
-    # ------------------------------------------------------------------
     # 2. 解析与规整 LLM 返回的 JSON
-    # ------------------------------------------------------------------
     @staticmethod
     def _parse_meta(text: str, filename: str = "") -> Optional[dict]:
         if not text or not text.strip():
@@ -200,9 +192,7 @@ class ForFileMetaData(BaseTranslate):
             "标签": tags,
         }
 
-    # ------------------------------------------------------------------
-    # 3. 合并写入 FileMetaData.json（pass1_cache 下，按 id 合并）
-    # ------------------------------------------------------------------
+    # 3. 合并写入 FileMetaData.json
     def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS1_CACHE_DIR
         out_dir = os.path.join(self.pj_config.getCachePath(), PASS1_CACHE_DIR)
@@ -251,14 +241,12 @@ class ForFileMetaData(BaseTranslate):
                 f"[FileMetaData] 已保存 {path}（{len(existing)} 条记录）"
             )
 
-    # ------------------------------------------------------------------
-    # 4. 入口：每文件调用一次，生成并写回一条元数据
-    # ------------------------------------------------------------------
+    # 4. 入口
     async def batch_translate(
         self,
         json_list: list,
         filename: str = "",
-        gpt_dic=None,
+        gpt_dic: Optional[CGptDict] = None,
     ) -> bool:
         if not filename:
             LOGGER.warning("ForFileMetaData: 未提供 filename，跳过该文件")

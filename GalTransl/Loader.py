@@ -1,5 +1,5 @@
 from GalTransl import LOGGER
-from GalTransl.CSentense import *
+from GalTransl.CSentense import CSentense, CTransList
 from os import path
 from json import loads
 from typing import Union, Tuple, List

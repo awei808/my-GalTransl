@@ -44,7 +44,7 @@ class ForBatchMetaData(BaseTranslate):
         eng_type: str,
         proxy_pool: Optional[CProxyPool],
         token_pool: COpenAITokenPool,
-    ):
+    ) -> None:
         """
         初始化 ForBatchMetaData 后端。
 
@@ -60,9 +60,7 @@ class ForBatchMetaData(BaseTranslate):
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
 
-        # 是否把项目翻译规范（translation_guideline）注入提示词，默认开启。
-        # 用户可在 config 的 internals.forbatchmeta.inject_guideline 设为
-        # false / 0 / no 来关闭注入。
+        # 是否把项目翻译规范注入提示词（默认开启，可在 internals.forbatchmeta.inject_guideline 关闭）
         raw = self.pj_config.getKey("internals.forbatchmeta.inject_guideline", True)
         if isinstance(raw, bool):
             self._inject_guideline = raw
@@ -88,9 +86,7 @@ class ForBatchMetaData(BaseTranslate):
         # 跨文件（可能的并发 worker）写 BatchMetadata.json 时的互斥锁
         self._bm_lock = Lock()
 
-    # ------------------------------------------------------------------
-    # 0. 文件级剧情元数据（FileMetaData）载入与格式化
-    # ------------------------------------------------------------------
+    # 0. 文件级剧情元数据载入与格式化
     def _ensure_file_metadata_loaded(self) -> None:
         """惰性载入 FileMetaData.json（仅执行一次）。"""
         if self._file_metadata_loaded:
@@ -137,9 +133,7 @@ class ForBatchMetaData(BaseTranslate):
             f"标签: {_join(md.tags)}\n"
         )
 
-    # ------------------------------------------------------------------
-    # 1. 组装提示词：可控注入 translation_guideline + 文件级剧情元数据
-    # ------------------------------------------------------------------
+    # 1. 组装提示词
     def _build_prompt_request(
         self, input_src: str, gptdict: str, file_metadata: str = ""
     ) -> str:
@@ -163,10 +157,8 @@ class ForBatchMetaData(BaseTranslate):
         prompt_req = prompt_req.replace("[max_batches]", str(self.max_batches))
         return prompt_req
 
-    # ------------------------------------------------------------------
-    # 2. 准备输入：带全局行号的剧本正文 + gpt 字典（专名译表）
-    # ------------------------------------------------------------------
-    def _build_script_text(self, json_list) -> tuple:
+    # 2. 准备输入
+    def _build_script_text(self, json_list: list) -> tuple:
         """把 json_list 拼成带全局行号的可读剧本正文。
 
         行号规则与 Loader.load_transList / CSplitter 中 runtime_index 一致：
@@ -230,9 +222,7 @@ class ForBatchMetaData(BaseTranslate):
         )
         return "\n".join(lines)
 
-    # ------------------------------------------------------------------
     # 3. 解析与规整 LLM 返回的 JSON
-    # ------------------------------------------------------------------
     @staticmethod
     def _parse_meta(text: str, filename: str = "") -> Optional[dict]:
         if not text or not text.strip():
@@ -266,16 +256,7 @@ class ForBatchMetaData(BaseTranslate):
     @staticmethod
     def _normalize_meta(obj: dict, filename: str, max_index: int,
                         max_batches: int = 20) -> dict:
-        """规整批次数组：清洗字段类型、裁剪并排序区间，强制 id == 文件名。
-
-        - 区间起止裁剪到 [1, max_index]，丢弃非法/空区间；
-        - **检测重叠区间**：后一个区间若与前一个重叠，则收缩其起始行号
-          到前一个区间结束 + 1；收缩后变为空区间的被丢弃；
-        - **最大批次数限制**：若区间数超过 max_batches，则反复合并
-          相邻区间中最小的两个，直到不超过 max_batches；
-        - 按起始行号升序排序；
-        - h 规整为布尔值；视角/氛围/用词色彩规整为字符串。
-        """
+        """规整批次数组：清洗字段类型、裁剪并排序区间，强制 id == 文件名。"""
 
         def _to_bool(v) -> bool:
             if isinstance(v, bool):
@@ -323,8 +304,6 @@ class ForBatchMetaData(BaseTranslate):
         batches.sort(key=lambda x: (x["区间"][0], x["区间"][1]))
 
         # ── 重叠检测与自动修复 ──
-        # 排序后遍历，若后一个区间的起始 ≤ 前一个区间的结束，则重叠。
-        # 将后一个区间的起始推到前一个区间结束 + 1；空则丢弃。
         cleaned: List[dict] = []
         for b in batches:
             if not cleaned:
@@ -349,8 +328,6 @@ class ForBatchMetaData(BaseTranslate):
             cleaned.append(b)
 
         # ── 最大批次数限制：相邻区间合并 ──
-        # 当 LLM 产出的区间数超过 max_batches 时，反复合并相邻区间中
-        # 行数最少的两个，直到不超过上限。合并后取前一个区间的元信息。
         while len(cleaned) > max_batches:
             # 找相邻行数差最小的两个区间
             min_gap = float("inf")
@@ -376,9 +353,7 @@ class ForBatchMetaData(BaseTranslate):
 
         return {"id": filename, "批次": cleaned}
 
-    # ------------------------------------------------------------------
-    # 4. 合并写入 BatchMetadata.json（gt_input 下，按 id 合并）
-    # ------------------------------------------------------------------
+    # 4. 合并写入 BatchMetadata.json
     def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS2_CACHE_DIR
         out_dir = os.path.join(self.pj_config.getCachePath(), PASS2_CACHE_DIR)
@@ -428,14 +403,12 @@ class ForBatchMetaData(BaseTranslate):
                 f"[BatchMetaData] 已保存 {path}（{len(existing)} 条记录）"
             )
 
-    # ------------------------------------------------------------------
-    # 5. 入口：每文件调用一次，生成并写回一条批次元数据
-    # ------------------------------------------------------------------
+    # 5. 入口
     async def batch_translate(
         self,
         json_list: list,
         filename: str = "",
-        gpt_dic=None,
+        gpt_dic: Optional[CGptDict] = None,
     ) -> bool:
         if not filename:
             LOGGER.warning("ForBatchMetaData: 未提供 filename，跳过该文件")

@@ -1,7 +1,7 @@
 import json, time, asyncio, os, traceback, re
 from turtle import title
 from opencc import OpenCC
-from typing import Optional
+from typing import List, Set, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from alive_progress import alive_bar
@@ -16,7 +16,6 @@ from GalTransl.Utils import contains_katakana, is_all_chinese, decompress_file_l
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.Prompts import GENDIC_PROMPT, GENDIC_SYSTEM, H_WORDS_LIST
 import collections
-from typing import List, Set, Dict, Optional, Tuple
 from threading import Lock
 from GalTransl.TerminalOutput import should_print_translation_logs, terminal_progress
 
@@ -54,7 +53,7 @@ class GenDic(BaseTranslate):
         eng_type: str,
         proxy_pool: Optional[CProxyPool],
         token_pool: COpenAITokenPool,
-    ):
+    ) -> None:
         super().__init__(config, eng_type, proxy_pool, token_pool)
         self.dic_counter = collections.Counter()
         self.dic_list = []
@@ -95,7 +94,7 @@ class GenDic(BaseTranslate):
                     existing_terms[dic.search_word] = (dic.replace_word, getattr(dic, "note", "") or "")
         return existing_terms
 
-    def _raise_if_stop_requested(self):
+    def _raise_if_stop_requested(self) -> None:
         if self._is_stop_requested(self.pj_config):
             from GalTransl.Service import JobCancelledError
 
@@ -104,7 +103,7 @@ class GenDic(BaseTranslate):
     def _runtime_project_dir(self) -> str:
         return getattr(self.pj_config, "runtime_project_dir", self.pj_config.getProjectDir())
 
-    def _update_runtime(self, **kwargs):
+    def _update_runtime(self, **kwargs: Any) -> None:
         try:
             from GalTransl.server import update_runtime_status
 
@@ -121,6 +120,7 @@ class GenDic(BaseTranslate):
         retry_count: int | None = None,
         model: str = "",
         level: str = "error",
+    ) -> None:
     ):
         try:
             from GalTransl.server import record_runtime_error
@@ -221,7 +221,7 @@ class GenDic(BaseTranslate):
                 f.write(item[0] + "\t" + item[1] + "\t" + item[2] + "\n")
         return path
 
-    def _prepare_runtime_progress(self, total_tasks: int):
+    def _prepare_runtime_progress(self, total_tasks: int) -> None:
         cache_dir = self.pj_config.getCachePath()
         os.makedirs(cache_dir, exist_ok=True)
         self.progress_append_path = os.path.join(
@@ -242,7 +242,7 @@ class GenDic(BaseTranslate):
             cache_file_display_map={self.progress_cache_key: self.progress_display_name},
         )
 
-    def _append_runtime_progress(self, task_index: int, success: bool, message: str = ""):
+    def _append_runtime_progress(self, task_index: int, success: bool, message: str = "") -> None:
         if not self.progress_append_path:
             return
         entry = {
@@ -256,7 +256,7 @@ class GenDic(BaseTranslate):
                 fp.write(line)
                 fp.write("\n")
 
-    def _cleanup_runtime_progress(self):
+    def _cleanup_runtime_progress(self) -> None:
         if not self.progress_append_path:
             return
         try:
@@ -267,7 +267,7 @@ class GenDic(BaseTranslate):
         finally:
             self.progress_append_path = ""
 
-    def _record_runtime_success(self, index: int, source_preview: str, translation_preview: str):
+    def _record_runtime_success(self, index: int, source_preview: str, translation_preview: str) -> None:
         try:
             from GalTransl.server import record_runtime_success
 
@@ -283,7 +283,7 @@ class GenDic(BaseTranslate):
         except Exception:
             return
 
-    async def llm_gen_dic(self, text: str, name_list=[], task_index: int = 0) -> bool:
+    async def llm_gen_dic(self, text: str, name_list: list[str] = [], task_index: int = 0) -> bool:
         self._raise_if_stop_requested()
         hint = "无"
         name_hit = []
@@ -588,7 +588,7 @@ class GenDic(BaseTranslate):
         return True
 
 
-def solve_sentence_selection(sentences, max_select=128, name_set=None):
+def solve_sentence_selection(sentences: list[list[str]], max_select: int = 128, name_set: Optional[set] = None) -> list[list[str]]:
     """
     加权贪心集合覆盖 + 逆向精简。
 
@@ -613,7 +613,7 @@ def solve_sentence_selection(sentences, max_select=128, name_set=None):
             doc_freq[w] += 1
 
     # 2) 词权重函数
-    def _weight(word):
+    def _weight(word: str) -> float:
         w = 1.0 / doc_freq[word]
         if word in name_set:
             w *= 5.0

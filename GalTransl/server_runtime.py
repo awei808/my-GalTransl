@@ -79,11 +79,8 @@ class RuntimeErrorEvent:
 
 RUNTIME_RECENT_EVENT_LIMIT = 80
 RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
-# Upper bound on the flat list of success events returned per snapshot. Each
-# translating file keeps its own 100-slot deque, but returning all of them every
-# poll would quickly explode the HTTP payload. 500 is enough to satisfy the
-# UI's 100-card render budget plus any per-file filter on a small number of
-# concurrently active files.
+# Upper bound on success events per snapshot (500): each file keeps a 100-slot deque,
+# returning all would explode HTTP payload; 500 covers UI budget + per-file filter
 RUNTIME_SNAPSHOT_SUCCESS_LIMIT = 500
 
 
@@ -97,10 +94,7 @@ class RuntimeState:
     updated_at: str = field(default_factory=_utcnow_text)
     file_totals: dict[str, int] = field(default_factory=dict)
     cache_file_display_map: dict[str, str] = field(default_factory=dict)
-    # Per-file deque of recent success events. Each file keeps up to
-    # RUNTIME_PER_FILE_SUCCESS_LIMIT events independently so that concurrent
-    # translations of multiple files do not evict each other's cards.
-    # Each deque stores newest-first (appendleft) for O(1) merging.
+    # Per-file deque of recent success events (newest-first, appendleft for O(1) merging)
     recent_successes_by_file: dict[str, deque[RuntimeSentenceEvent]] = field(default_factory=dict)
     recent_errors: deque[RuntimeErrorEvent] = field(default_factory=lambda: deque(maxlen=RUNTIME_RECENT_EVENT_LIMIT))
     success_timestamps: deque[float] = field(default_factory=deque)
@@ -299,9 +293,7 @@ class RuntimeRegistry:
             now = datetime.utcnow().timestamp()
             self._trim_speed_window_locked(state, now)
             speed = round((len(state.success_timestamps) / 60) * 60, 1) if state.success_timestamps else 0
-            # Flatten per-file success deques (each newest-first) and re-order
-            # globally by timestamp desc so the snapshot list remains newest-first
-            # for existing clients.
+            # Flatten per-file success deques and re-order globally by timestamp desc
             merged_successes: list[RuntimeSentenceEvent] = []
             for file_deque in state.recent_successes_by_file.values():
                 merged_successes.extend(file_deque)
@@ -540,10 +532,7 @@ class RuntimeProgressCache:
                                 break
                             j += 1
 
-                        # 在 context key 前拼接 entry 的 index，使相同上下文三元组但位于
-                        # 不同位置的条目（如重复短句）生成不同 key，避免 set 去重导致
-                        # 进度少计。index 前缀同时保证 .json 与 .append.jsonl 对同一
-                        # 位置条目仍能正确去重（二者 index 相同 → key 相同）。
+                        # 在 context key 前拼接 index，使不同位置的相同上下文生成不同 key，避免进度少计
                         context_key = f"{line_prev}{line_now}{line_next}"
                         if row_index:
                             return f"{row_index}:{context_key}"
@@ -595,10 +584,7 @@ class RuntimeProgressCache:
 
                         no_proofread = str(item.get("proofread_dst", "") or "") == ""
 
-                        # retran_hit_keys 的统计不应受 retran_key 过滤影响：
-                        # 无论当前是否处于重翻 job 中，命中重翻词条的缓存条目
-                        # 都应被一致地计入 retransl_stats，避免新旧文件统计口径不一致
-                        # 导致前端句数在翻译过程中逐渐增加。
+                        # retran_hit_keys 统计不受 retran_key 过滤影响，确保新旧文件统计口径一致
                         if (
                             not entry.name.endswith(_CACHE_APPEND_SUFFIX)
                             and retran_hit_keys
@@ -803,9 +789,7 @@ def record_runtime_error(
     )
 
 
-# ---------------------------------------------------------------------------
-# Project path helpers - encode/decode directory paths for use in URLs
-# ---------------------------------------------------------------------------
+# Project path helpers
 
 def encode_project_dir(project_dir: str) -> str:
     """Encode a filesystem path to a URL-safe token."""

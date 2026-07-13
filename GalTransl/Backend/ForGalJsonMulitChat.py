@@ -5,7 +5,7 @@ import os
 import asyncio
 import re
 from random import choice
-from typing import Optional, List, Set
+from typing import Any, Optional, List, Set
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
@@ -101,7 +101,7 @@ class FileMetaData:
         costume: object = "",
         plot: object = "",
         tags: object = None,
-    ):
+    ) -> None:
         """
         初始化文件级元数据
 
@@ -127,7 +127,7 @@ class FileMetaData:
         )
 
 
-def load_file_metadata(projectConfig: "CProjectConfig"):
+def load_file_metadata(projectConfig: "CProjectConfig") -> Optional[FileMetaData]:
     """从缓存或输入目录载入文件级元数据。
 
     FileMetaData.json 由 ForFileMetaData 后端生成，格式为 JSON 数组，
@@ -339,7 +339,7 @@ class BatchMetadata:
                  runtime_index 对应）。
     """
 
-    def __init__(self, id: object = "", batches: object = None):
+    def __init__(self, id: object = "", batches: object = None) -> None:
         self.id = id if id is not None else ""
         self.batches = batches if isinstance(batches, list) else []
 
@@ -457,9 +457,7 @@ class ForGalJsonMulitChat(BaseTranslate):
     # 用于生成 jsonline 签名的字符集，每个句子分配 3 位随机签名用于防串行校验
     _SIGCHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-    # ======================================================================
     # 1. 输入内容处理、拼接
-    # ======================================================================
 
     def _encode_sig_jsonline(self, sig: str, obj: dict) -> str:
         """
@@ -510,11 +508,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         input_list: List[str] = []
         sig_list: List[str] = []
 
-        # 整批评句上仅判定一次换行符（避免逐句判定时后续句子不含换行符
-        # 而覆盖已确定的标记，详见模块级 detect_*_symbol 说明）。
-        # 采用「逐句检测取首命中」，不能用 "\n".join(...) 拼接后再检测——
-        # join 分隔符 "\n" 会混入检测串，使「字面 <br> 约定」的源被误判成 "\n"，
-        # 进而在解码阶段把 <br> 错误还原成真实换行，破坏源换行约定。
+        # 整批仅判定一次换行符，逐句取首命中（不能用 join——分隔符会混入检测串）
         n_symbol = detect_batch_line_break_symbol(
             [trans.post_src for trans in trans_list]
         )
@@ -569,9 +563,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         input_src = "\n".join(input_list)
         return input_list, sig_list, n_symbol, input_src
 
-    # ======================================================================
     # 2. 提示词拼接
-    # ======================================================================
 
     def _format_file_metadata_block(self, metadata: FileMetaData) -> str:
         """
@@ -672,16 +664,14 @@ class ForGalJsonMulitChat(BaseTranslate):
         )
         return user_content
 
-    # ======================================================================
-    # 3. 传递提示词和输入内容至 API
-    # ======================================================================
+    # 3. 调 API
 
     async def _call_llm(
         self,
         call_messages: list,
         filename: str,
         idx_tip: str,
-        stream_line_callback,
+        stream_line_callback: Optional[Any],
     ) -> tuple:
         """
         传递提示词和输入内容至 API（流程第 3 步）。
@@ -704,9 +694,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             stream_line_callback=stream_line_callback,
         )
 
-    # ======================================================================
     # 4. 返回结果解析和处理
-    # ======================================================================
 
     def _parse_stream_lines(
         self,
@@ -847,7 +835,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         emit_runtime_success: bool = False,
         emitted_success_indices: Optional[Set[int]] = None,
         sig_list: Optional[List[str]] = None,
-    ):
+    ) -> tuple[bool, str]:
         # 先校验返回值非空/有效，再解析
         if not line or not isinstance(line, str):
             return False, f"待解析行为空或类型异常：{type(line).__name__}"
@@ -904,8 +892,8 @@ class ForGalJsonMulitChat(BaseTranslate):
     def _handle_parse_result(
         self,
         *,
-        raw_resp,
-        token,
+        raw_resp: str,
+        token: COpenAIToken,
         trans_list: CTransList,
         n_symbol: str,
         sig_list: List[str],
@@ -986,14 +974,10 @@ class ForGalJsonMulitChat(BaseTranslate):
             if error_message:
                 error_flag = True
 
-        # 真实翻译成功句数（不含失败兜底填充），用于判断是否「整批解析失败」。
-        # 失败兜底路径会把 success_count 覆盖为填充的 (Failed) 句数（恒为正），
-        # 此处先快照当前真实的成功句数，供重试循环区分「整批失败」与「部分成功」。
+        # 快照真实翻译成功句数，用于区分「整批失败」与「部分成功」
         real_success_count = success_count
 
-        # 部分解析成功时清除错误标记（仅适用于流式模式：非流式用 error_message
-        # 区分「真实失败」，若不加以区分会导致中间句解析失败时后续未处理句被
-        # 静默丢弃，因此非流式不做清除，交由下方失败兜底逻辑统一处理）。
+        # 部分成功时清除错误标记（仅流式，非流式由失败兜底统一处理）
         if is_stream:
             if success_count > 0 and not stream_error_msg:
                 error_flag = False
@@ -1031,10 +1015,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             LOGGER.error(
                 f"[解析错误][{filename}:{idx_tip}]解析出错，跳过本轮翻译"
             )
-            # 失败兜底起点：
-            #   流式模式 i 为 cursor 已处理到的行位置（即失败句位置），直接使用；
-            #   非流式模式 i 为「最后一个成功句的下标」，失败句从 i+1 开始，
-            #   i<0 表示首句即失败，从 0 开始。避免把已成功的句子重复标记为失败。
+            # 失败兜底起点：流式用 cursor 位置，非流式从最后一个成功句之后开始
             fallback_start = (
                 i if is_stream else (0 if i < 0 else i + 1)
             )
@@ -1072,9 +1053,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         # 翻译完成
         return success_count, result_trans_list, success_count
 
-    # ======================================================================
     # 生命周期 / 状态管理
-    # ======================================================================
 
     def __init__(
         self,
@@ -1082,7 +1061,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         eng_type: str,
         proxy_pool: Optional[CProxyPool],
         token_pool: COpenAITokenPool,
-    ):
+    ) -> None:
         """
         初始化 ForGalJsonMulitChat 翻译器实例
 
@@ -1106,23 +1085,17 @@ class ForGalJsonMulitChat(BaseTranslate):
         else:
             self.enhance_jailbreak = False
 
-        # 多轮对话历史：按文件名隔离，值为完整的 messages 列表
-        # messages[0] 为 system 消息，messages[1] 为第一轮 user 消息
-        # （含翻译提示词 + 剧情元数据 + 首批评句），其后为各轮 user/assistant 交替
+        # 多轮对话历史：按文件名隔离，messages[0]=system，其后 user/assistant 交替
         self.conversations: dict[str, list] = {}
 
-        # 文件名 -> 标记：该文件的「下一个批次」须以首轮方式构建。
-        # 当某批次解析失败并重试耗尽（或放弃）后设置，使失败批次之后的第一个
-        # 批次以完整提示词 + 剧情元数据重启多轮对话，恢复被打断的连续性。
+        # 标记下一批次须以首轮方式构建（失败重试耗尽后设置，恢复多轮连续性）
         self._force_first_round_files: set[str] = set()
 
         # 文件名 -> 剧情元数据：由上层在翻译前通过 set_file_metadata 注入（显式覆盖，
         # 优先级高于从 gt_input 自动载入的 FileMetaData.json）。
         self.file_metadata_map: dict[str, FileMetaData] = {}
 
-        # 从 gt_input（及其上层目录）的 FileMetaData.json 自动载入的「文件名 -> 剧情元数据」映射。
-        # 该文件为 JSON 数组，每项 id 对应一个待翻译文件名。仅在该文件存在时填充，
-        # 供 _resolve_file_metadata 在缺少显式注入时为对应文件提供文件级元数据。
+        # 从 FileMetaData.json 自动载入的文件名->剧情元数据映射（惰性载入，供缺显式注入时使用）
         self._file_metadata_by_file: dict[str, FileMetaData] = {}
         self._file_metadata_loaded: bool = False
         # 保存项目配置以便惰性定位 gt_input 中的 FileMetaData.json
@@ -1134,11 +1107,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         self._batch_metadata_by_file: dict[str, BatchMetadata] = {}
         self._batch_metadata_loaded: bool = False
 
-        # 多轮历史保留的最大轮次数（每轮 = 1 个 user + 1 个 assistant）。
-        # 0 表示不裁剪（保留完整历史）；裁剪时始终保留 system 与第一轮 user（含元数据）。
-        # 注意：这里不能复用 _coerce_positive_int（其下限被强制为 1），否则 0 / 缺省 /
-        # 非法值都会被抬到 1，使「不裁剪」的预期行为永远无法触发。因此单独解析，
-        # 仅当值为合法整数（含 0）时采用，缺省或非法值回退为 0（不裁剪）。
+        # 多轮历史最大保留轮次数（0=不裁剪）；单独解析避免 _coerce_positive_int 把 0 抬为 1
         raw_multi_round = config.getKey("gpt.multiRoundMaxHistory")
         if raw_multi_round is None:
             self.multi_round_max_history = 0
@@ -1362,9 +1331,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             self.conversations.pop(filename, None)
             self._force_first_round_files.discard(filename)
 
-    # ======================================================================
     # 对外入口
-    # ======================================================================
 
     async def translate(
         self,
@@ -1373,11 +1340,8 @@ class ForGalJsonMulitChat(BaseTranslate):
         proofread: bool = False,
         filename: str = "",
         file_metadata: Optional[FileMetaData] = None,
-    ):
-        # ------------------------------------------------------------------
-        # 流程 1：输入内容处理、拼接
-        # 遍历每个待翻译句子，清洗说话人、统一换行符、生成签名，编码为 jsonline 并拼接
-        # ------------------------------------------------------------------
+    ) -> tuple[int, CTransList]:
+        # 流程 1：输入处理、编码 jsonline
         idx_tip = self._build_idx_tip(trans_list)
 
         # 若本次调用显式传入了元数据，记录到按文件隔离的元数据表中
@@ -1388,41 +1352,21 @@ class ForGalJsonMulitChat(BaseTranslate):
             trans_list, proofread, filename
         )
 
-        # 批次级元数据(BatchMetadata)：按本批句子的全局行号区间解析出相交的翻译
-        # 区间，格式化为首轮附加段（仅首轮注入，与剧情元数据一致）。无对应文件
-        # 或无相交区间时为空串。此处仅计算一次，供本批各次重试的首轮重用。
+        # 按全局行号区间解析 BatchMetadata，格式化为首轮附加段（仅首轮注入）
         batch_metadata_block = ""
         _bm = self._resolve_batch_metadata(filename)
         if _bm is not None:
             _lo, _hi = self._trans_global_range(trans_list)
             batch_metadata_block = self._format_batch_metadata_block(_bm, _lo, _hi)
 
-        # ==================================================================
-        # 简单重试机制（结果处理流程）
-        #   - 最多 3 轮重试；
-        #   - 失败后，上下文仅保留「完整翻译提示词 + 剧情元数据 + 失败翻译的批次」：
-        #     即把会话重置为仅 [system]，本轮以首轮方式重建 user 消息（含完整
-        #     提示词 + 剧情元数据 + 本批 jsonline），丢弃之前各轮累积的历史；
-        #   - 失败批次之后的第一个批次视为「首次对话」（由 _force_first_round_files
-        #     标记），以首轮提示词 + 剧情元数据开头，恢复被失败打断的多轮连续性。
-        # ==================================================================
+        # 简单重试机制：最多 3 轮，失败后重置会话为仅 [system] 并以首轮方式重建
         MAX_RETRIES = 3
         attempt = 0
-        # 本批是否应强制以首轮方式构建（上一失败批次的后续首批）。
-        # 仅在此处读取一次，避免在本批自身的重试循环中被重复消费，
-        # 从而错误地清除标记、影响真正需要首轮重建的后续批次。
+        # 本批是否强制首轮构建（仅读一次，避免在重试循环中重复消费标记）
         force_first_round = filename in self._force_first_round_files
 
         while True:
-            # ------------------------------------------------------------------
             # 流程 2：提示词拼接
-            # 第一轮：翻译提示词 + 剧情元数据；后续轮次：仅待译 jsonline
-            # ------------------------------------------------------------------
-            # 该文件是否仍处于「第一轮」：
-            # 对话历史仅含 system 消息（len<=1）说明第一轮尚未成功建立，仍需发送
-            # 完整的翻译提示词 + 剧情元数据；否则视为后续轮次，只发送待译 jsonline。
-            # 注：_ensure_conversation 会预先写入 [system]，故不能用
-            # 「filename 是否在 conversations 中」判断。
             conv = self._ensure_conversation(filename)
             if force_first_round:
                 # 失败后续首批：丢弃旧历史，从 [system] 起以首轮重建
@@ -1467,10 +1411,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 )
                 LOGGER.info("->输出：")
 
-            # ------------------------------------------------------------------
-            # 流程 3：传递提示词和输入内容至 API
-            # 将包含完整历史的 messages 一次性发给 API（多轮对话模式）
-            # ------------------------------------------------------------------
+            # 流程 3：调 API
             key_name = "dst" if not proofread else "newdst"
             stream_cursor = {"i": -1, "success_count": 0, "started": False}
             parsed_result_trans_list: List[str] = []
@@ -1493,10 +1434,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 call_messages, filename, idx_tip, stream_callback
             )
 
-            # ------------------------------------------------------------------
-            # 流程 4：返回结果解析和处理
-            # 流式边收边解析结果 + 非流式完整解析，统一判定成败并回写对话历史
-            # ------------------------------------------------------------------
+            # 流程 4：解析结果
             stream_error_msg = stream_cursor.get("error", "")
             success_count, result_trans_list, real_success = self._handle_parse_result(
                 raw_resp=raw_resp,
@@ -1515,11 +1453,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 prefill_used=prefill_used,
             )
 
-            # 解析到有效结果（含部分成功，real_success>0 表示本批确有真实译文）：
-            # 直接返回，剩余失败句以 (Failed) 兜底、交由上层后续 pass 处理。
-            # 注意：必须用 real_success（真实翻译句数）判断，不能用 success_count——
-            # 失败兜底会把它覆盖成填充的 (Failed) 句数（恒为正），否则会误判为成功、
-            # 导致下方重试逻辑永远不触发。
+            # 必须用 real_success（而非 success_count）判断，因失败兜底会将 success_count 覆盖为正数
             if real_success > 0:
                 # 本批（含内部重试）成功：清除可能由本批自身失败重试写入的强制首轮标记，
                 # 避免下一个批次被错误地强制首轮、破坏刚恢复的多轮对话连续性。
@@ -1536,9 +1470,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 self._force_first_round_files.add(filename)
                 return success_count, result_trans_list
 
-            # 重试：上下文仅保留「完整翻译提示词 + 剧情元数据 + 失败翻译的批次」
-            # 即把会话重置为仅 [system]，下一轮以首轮方式重建（含完整提示词+
-            # 剧情元数据+本批 jsonline），丢弃之前各轮累积的历史。
+            # 重试：重置会话为仅 [system]，以首轮方式重建
             LOGGER.warning(
                 f"[重试 {attempt}/{MAX_RETRIES}][{filename}:{idx_tip}]解析失败，"
                 f"重置上下文为本批首轮（仅含完整提示词+剧情元数据+本批）后重试"
@@ -1551,8 +1483,8 @@ class ForGalJsonMulitChat(BaseTranslate):
 
     async def batch_translate(
         self,
-        filename,
-        cache_file_path,
+        filename: str,
+        cache_file_path: str,
         trans_list: CTransList,
         num_pre_request: int,
         retry_failed: bool = False,

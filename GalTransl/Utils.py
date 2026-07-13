@@ -4,12 +4,13 @@
 
 import os
 import codecs
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 from collections import Counter
 from re import compile
 import requests
 import re
 import json
+from GalTransl import LOGGER
 
 PATTERN_CODE_BLOCK = compile(r"```([\w]*)\n([\s\S]*?)\n```")
 whitespace = " \t\n\r\v\f"
@@ -30,7 +31,7 @@ def load_guideline_file(file_path: str) -> str:
         with open(file_path, "r", encoding="utf-8") as file:
             return file.read()
     except Exception as e:
-        print(f"Error reading translation_guideline file {file_path}: {e}")
+        LOGGER.error(f"Error reading translation_guideline file {file_path}: {e}")
         raise e
     
 def extract_control_substrings(text: str) -> list[str]:
@@ -43,16 +44,10 @@ def extract_control_substrings(text: str) -> list[str]:
     Returns:
         一个包含所有匹配子串的列表。
     """
-    # 定义允许的字符集：英文字母、数字和标点符号
-    # string.punctuation 包含 !"#$%&'()*+,-./:;<=>?@[]^_`{|}~
-    # string.ascii_letters 包含 a-z 和 A-Z
-    # string.digits 包含 0-9
+    # 允许的字符集：英文字母、数字和标点符号
     allowed_chars = ascii_letters + digits + punctuation
     first_punctuation = r"""!#$%&()*+-./:;<=>?@[\]^_`{|}~"""
-    # 构建正则表达式：
-    # 1. [{re.escape(string.punctuation)}] - 匹配一个英文标点符号作为开头
-    # 2. [{re.escape(allowed_chars)}]* - 匹配零个或多个由允许字符组成的后续部分
-    # re.escape() 用于转义字符集中的特殊正则字符（如 `[` `]` `^` `-`）
+    # 正则：英文标点开头 + 零个或多个允许字符（re.escape 转义特殊字符）
     pattern = f"[{re.escape(first_punctuation)}][{re.escape(allowed_chars)}]*"
     
     # 使用 re.findall 查找所有匹配的子串
@@ -204,7 +199,7 @@ def is_all_chinese(text: str) -> bool:
     # 如果循环正常结束，说明所有字符都是中文字符
     return True
 
-def is_all_gbk(s):
+def is_all_gbk(s: str) -> str:
     if s == "":
         return ""
     
@@ -275,7 +270,7 @@ def get_file_name(file_path: str) -> str:
     return file_name
 
 
-def get_file_list(directory: str):
+def get_file_list(directory: str) -> list[str]:
     file_list = []
     for dirpath, dirnames, filenames in os.walk(directory):
         for file in filenames:
@@ -295,7 +290,7 @@ def process_escape(text: str) -> str:
 pattern_fix_quotes = compile(r'"dst"\s*:\s*"(.+?)"\s*}')
 
 
-def fix_quotes(text):
+def fix_quotes(text: str) -> str:
     """修复模型回包中 dst 值内含未转义直引号导致 JSON 解析失败的问题。
 
     仅对「本身无法被 json.loads 解析」的行做引号修正；已合法的 jsonline
@@ -339,7 +334,7 @@ def fix_quotes(text):
     return "\n".join(out_lines)
 
 
-def fix_quotes2(text):
+def fix_quotes2(text: str) -> str:
     if text.startswith('"') and text.endswith('"'):
         text = f"“{text[1:-1]}”"
     for i in range(text.count('"')):
@@ -350,7 +345,7 @@ def fix_quotes2(text):
     return text
 
 
-def get_n_symbol(src_text: str):
+def get_n_symbol(src_text: str) -> list[str]:
     n_symbols = []
     if "\r\n" in src_text:
         n_symbols.append("\r\n")
@@ -364,7 +359,7 @@ def get_n_symbol(src_text: str):
     return n_symbols
 
 
-def check_for_tool_updates(new_version):
+def check_for_tool_updates(new_version: list[str]) -> None:
     try:
         release_api = "https://api.github.com/repos/xd2333/GalTransl/releases/latest"
         response = requests.get(release_api, timeout=5).json()
@@ -374,7 +369,7 @@ def check_for_tool_updates(new_version):
         pass
 
 
-def find_most_repeated_substring(text):
+def find_most_repeated_substring(text: str) -> tuple[str, int]:
     max_count = 0
     max_substring = ""
     n = len(text)
@@ -400,7 +395,7 @@ def find_most_repeated_substring(text):
     return max_substring, max_count
 
 
-def decompress_file_lzma(input_filepath, output_filepath=None):
+def decompress_file_lzma(input_filepath: str, output_filepath: Optional[str] = None) -> None:
     """
     解压缩使用 LZMA 算法压缩的单个文件。
 
@@ -415,7 +410,7 @@ def decompress_file_lzma(input_filepath, output_filepath=None):
         if input_filepath.endswith(".xz"):
             output_filepath = input_filepath[:-3]
         else:
-            print(
+            LOGGER.error(
                 "错误: 输入文件名不以 '.xz' 结尾，无法自动确定输出文件名。请指定 output_filepath。"
             )
             return
@@ -431,9 +426,9 @@ def decompress_file_lzma(input_filepath, output_filepath=None):
                 f_out.write(chunk)
         # print(f"文件 '{input_filepath}' 已成功解压缩为 '{output_filepath}'")
     except FileNotFoundError:
-        print(f"错误: 文件 '{input_filepath}' 未找到。")
+        LOGGER.error(f"错误: 文件 '{input_filepath}' 未找到。")
     except Exception as e:
-        print(f"解压缩文件时发生错误: {e}")
+        LOGGER.error(f"解压缩文件时发生错误: {e}")
 
 
 if __name__ == "__main__":

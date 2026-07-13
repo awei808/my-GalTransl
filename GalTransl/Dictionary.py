@@ -1,14 +1,14 @@
-from typing import List
+from typing import List, Optional
 from os import path
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl import LOGGER
 from GalTransl.Utils import process_escape
 
 
-class ifWord:
+class IfWord:
     __slots__ = ["without_flag", "startswith_flag", "endswith_flag", "word"]
 
-    def __init__(self, if_word):
+    def __init__(self, if_word: str) -> None:
         if if_word.startswith(">"):
             startswith_flag, if_word = True, if_word[1:]
         else:
@@ -74,7 +74,7 @@ class CBasicDicElement:
         self.is_situationsDic: bool = False
 
         self.is_conditionaDic: bool = False
-        self.if_word_list: List[ifWord] = None  # 条件字典中的条件词列表
+        self.if_word_list: List[IfWord] = None  # 条件字典中的条件词列表
         self.spl_word: str = ""  # if_word_list的连接关键字
         self.note: str = ""  # For GPT
         self.dic_name: str = dic_name  # 字典名
@@ -82,7 +82,7 @@ class CBasicDicElement:
     def __repr__(self) -> str:
         return f"{self.search_word} -> {self.replace_word}"
 
-    def load_line(self, line: str, type="Normal"):
+    def load_line(self, line: str, type: str = "Normal") -> Optional[CBasicDicElement]:
         """
         :line: 一行
         """
@@ -103,7 +103,7 @@ class CBasicDicElement:
             spl_word = "[and]" if "[and]" in if_word else "[or]"  # 判断连接字符
             # 初始化ifWord的list
             self.special_key = sp[0]
-            self.if_word_list = [ifWord(w.strip()) for w in if_word.split(spl_word)]
+            self.if_word_list = [IfWord(w.strip()) for w in if_word.split(spl_word)]
             self.spl_word = spl_word
             self.search_word = sp[2]
 
@@ -127,19 +127,19 @@ class CNormalDic:
         for dic_path in dic_list:
             self.load_dic(dic_path)  # 加载字典
 
-    def sort_dic(self):
+    def sort_dic(self) -> None:
         """
         按字典search_word的长度重排序
         """
         self.dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
-    def get_dst(self,word):
+    def get_dst(self, word: str) -> str:
         for dic in self.dic_list:
             if dic.search_word == word:
                 return dic.replace_word
         return ""
 
-    def load_dic(self, dic_path: str):
+    def load_dic(self, dic_path: str) -> None:
         """加载一个字典txt到这个对象的内存"""
         if not path.exists(dic_path):
             LOGGER.warning(f"{dic_path}不存在，请检查路径。")
@@ -183,7 +183,7 @@ class CNormalDic:
                 if_word = sp[1]
                 spl_word = "[and]" if "[and]" in if_word else "[or]"  # 判断连接字符
                 # 初始化ifWord的list
-                if_word_list = [ifWord(w.strip()) for w in if_word.split(spl_word)]
+                if_word_list = [IfWord(w.strip()) for w in if_word.split(spl_word)]
                 con_dic = CBasicDicElement(sp[2], sp[3], sp[0], dic_name)
                 con_dic.is_conditionaDic = True
                 con_dic.if_word_list = if_word_list
@@ -323,20 +323,20 @@ class CGptDict:
         self._dic_list: List[CBasicDicElement] = []
         for dic_path in dic_list:
             self.load_dic(dic_path)  # 加载字典
-    
-    def get_dst(self,word):
+
+    def get_dst(self, word: str) -> str:
         for dic in self._dic_list:
             if dic.search_word == word:
                 return dic.replace_word
         return ""
 
-    def sort_dic(self):
+    def sort_dic(self) -> None:
         """
         按字典search_word的长度重排序
         """
         self._dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
-    def load_dic(self, dic_path: str):
+    def load_dic(self, dic_path: str) -> None:
         """加载一个字典txt到这个对象的内存"""
         if not path.exists(dic_path):
             LOGGER.warning(f"{dic_path}不存在，请检查路径。")
@@ -391,8 +391,8 @@ class CGptDict:
             f"载入 GPT字典: {path.basename(dic_path)} {normalDic_count}普通词条"
         )
 
-    def gen_prompt(self, trans_list: CTransList, type="gpt"):
-        def _should_add_dic(dic, input_text, input_text_copy, used_dic):
+    def gen_prompt(self, trans_list: CTransList, type: str = "gpt") -> str:
+        def _should_add_dic(dic: CBasicDicElement, input_text: str, input_text_copy: str, used_dic: list[str]) -> bool:
             """判断是否应该添加字典条目到提示中"""
             if dic.search_word in input_text:
                 return True
@@ -402,7 +402,7 @@ class CGptDict:
                         return True
             return False
 
-        def _format_dic_entry_gpt(dic:CBasicDicElement):
+        def _format_dic_entry_gpt(dic: CBasicDicElement) -> str:
             """格式化字典条目为提示所需的字符串"""
             entry = f"| {dic.search_word} | {dic.replace_word} |"
             if dic.note:
@@ -410,7 +410,7 @@ class CGptDict:
             entry += " |\n"
             return entry
         TITLE_GPT="# Glossary\n| Src | Dst(/Dst2/..) | Note |\n| --- | --- | --- |\n"
-        def _format_dic_entry_sakura(dic:CBasicDicElement):
+        def _format_dic_entry_sakura(dic: CBasicDicElement) -> str:
             """格式化字典条目为提示所需的字符串"""
             entry = f"{dic.search_word}->{dic.replace_word}"
             if dic.note:
@@ -418,7 +418,7 @@ class CGptDict:
             entry += "\n"
             return entry
         TITLE_SAKURA=""
-        def _format_dic_entry_tsv(dic:CBasicDicElement):
+        def _format_dic_entry_tsv(dic: CBasicDicElement) -> str:
             """格式化字典条目为提示所需的字符串"""
             entry = f"{dic.search_word}\t{dic.replace_word}"
             if dic.note:
@@ -456,7 +456,7 @@ class CGptDict:
 
         return promt
 
-    def check_dic_use(self, find_from_str: str, tran: CSentense):
+    def check_dic_use(self, find_from_str: str, tran: CSentense) -> list[str]:
         problem_list = []
         for dic in self._dic_list:
             if dic.search_word not in tran.post_src:

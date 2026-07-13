@@ -340,9 +340,7 @@ def _collect_common_dict_payload() -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
 # Global backend profiles helpers
-# ---------------------------------------------------------------------------
 
 
 _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
@@ -886,7 +884,7 @@ class JobRegistry:
             self.clear_project_stop(spec.project_dir)
 
 
-def build_handler(registry: JobRegistry):
+def build_handler(registry: JobRegistry) -> type:
     class RequestHandler(BaseHTTPRequestHandler):
         def end_headers(self) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -898,9 +896,7 @@ def build_handler(registry: JobRegistry):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.end_headers()
 
-        # -----------------------------------------------------------------
         # Routing helpers
-        # -----------------------------------------------------------------
 
         def _route_project_api(self, project_id: str, sub_path: str) -> None:
             """Handle /api/projects/:id/* routes."""
@@ -1752,9 +1748,7 @@ def build_handler(registry: JobRegistry):
                 if self.command != "POST":
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
                     return
-                # Generate name table by submitting a dump-name job.
-                # This reuses the full pipeline (frontend plugins, splitter, etc.)
-                # so speaker names are extracted correctly regardless of input format.
+                # Generate name table by reusing the full pipeline for correct speaker name extraction
                 try:
                     config_name = parse_qs(urlparse(self.path).query).get("config", ["config.yaml"])[0]
                     result = registry.submit({

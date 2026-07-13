@@ -6,9 +6,7 @@ import threading
 from GalTransl import LOGGER
 from GalTransl.Loader import load_transList
 
-# Thread-local storage for per-job chunk tracking.
-# Each thread (i.e. each translation job) gets its own tracker dict,
-# so concurrent jobs never interfere with each other.
+# Thread-local storage for per-job chunk tracking (isolated per thread, concurrent jobs never interfere)
 _local = threading.local()
 
 
@@ -50,7 +48,7 @@ class SplitChunkMetadata:
         cross_num: int,
         json_list: List[Dict],
         file_path: str,
-    ):
+    ) -> None:
         self.chunk_index = chunk_index  # 块索引
         self.start_index = start_index  # 块起始索引
         self.end_index = end_index  # 块结束索引
@@ -76,19 +74,19 @@ class SplitChunkMetadata:
         if self.file_path not in tracker:
             tracker[self.file_path] = []
 
-    def update_total_chunks(self, total_chunks: int):
+    def update_total_chunks(self, total_chunks: int) -> None:
         self.total_chunks = total_chunks
 
-    def update_file_finished_chunk(self):
+    def update_file_finished_chunk(self) -> None:
         _get_tracker()[self.file_path].append(self)
 
-    def is_file_finished(self):
+    def is_file_finished(self) -> bool:
         return (
             len(_get_tracker()[self.file_path])
             == self.total_chunks
         )
 
-    def get_file_finished_chunks(self):
+    def get_file_finished_chunks(self) -> list:
         return _get_tracker()[self.file_path]
 
     @staticmethod
@@ -121,7 +119,7 @@ class DictionaryCountSplitter(InputSplitter):
     基于字典计数的分割器，将输入内容按指定的字典数量进行分割。
     """
 
-    def __init__(self, dict_count: int, cross_num: int = 0):
+    def __init__(self, dict_count: int, cross_num: int = 0) -> None:
         """
         初始化分割器。
 
@@ -179,7 +177,7 @@ class EqualPartsSplitter(InputSplitter):
     将输入内容平均分割成指定数量的部分。
     """
 
-    def __init__(self, parts: int, cross_num: int = 0):
+    def __init__(self, parts: int, cross_num: int = 0) -> None:
         """
         初始化分割器。
 
