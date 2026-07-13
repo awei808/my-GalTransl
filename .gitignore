@@ -17,6 +17,11 @@ desktop/src-tauri/target/
 app_settings.json
 /release/
 /.venv-build/
+
+# Virtual environments
+venv/
+.venv/
+
 galtransl_backend.spec
 /build
 /dist

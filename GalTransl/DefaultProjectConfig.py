@@ -95,6 +95,8 @@ problemAnalyze:
     - 独白男他 # 独白（无name）里出现“他”，排除“其他/他们/他人/他乡/他国/他日/他山”
     #- 引入英文 # 本来没有英文，译文引入了英文
     #- 比日文长严格 # 比日文长1倍以上就提醒
+    #- 长句丢失换行 # 平均分句长度低于阈值（avgSentenceLengthThreshold），缺少应有换行
+  avgSentenceLengthThreshold: 10 # 长句丢失换行的分句长度阈值，默认10，一般8~15
 
 # 字典设置
 dictionary:
