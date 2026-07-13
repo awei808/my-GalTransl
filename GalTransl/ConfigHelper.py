@@ -243,9 +243,15 @@ class CProjectConfig:
         return self.projectConfig["problemAnalyze"]["arinashiDict"]
 
     def getAvgSentenceLengthThreshold(self) -> int:
-        return self.projectConfig.get("problemAnalyze", {}).get(
-            "avgSentenceLengthThreshold", 10
+        raw = self.projectConfig.get("problemAnalyze", {}).get(
+            "avgSentenceLengthThreshold", 17
         )
+        # 强制转为 int：用户手改 config.yaml 可能写成 "17"(字符串)
+        # 或 17.5(浮点)，直接返回会导致后端 compare 时抛 TypeError。
+        try:
+            return int(round(float(raw)))
+        except (TypeError, ValueError):
+            return 17
 
     def refreshProxyEnabledFlag(self) -> None:
         self.keyValues["internals.enableProxy"] = has_usable_proxy_config(

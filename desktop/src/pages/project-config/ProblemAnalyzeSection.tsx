@@ -5,6 +5,7 @@ import { fetchProblemTypes, type ProblemTypeInfo } from '../../lib/api';
 interface ProblemAnalyzeSectionProps {
   config: Record<string, unknown> | null;
   onProblemListChange: (lines: string[]) => void;
+  onThresholdChange: (value: number) => void;
   onDirty: () => void;
 }
 
@@ -20,7 +21,7 @@ function readProblemList(config: Record<string, unknown> | null): string[] {
   return [];
 }
 
-export function ProblemAnalyzeSection({ config, onProblemListChange, onDirty }: ProblemAnalyzeSectionProps) {
+export function ProblemAnalyzeSection({ config, onProblemListChange, onThresholdChange, onDirty }: ProblemAnalyzeSectionProps) {
   const [problemTypes, setProblemTypes] = useState<ProblemTypeInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -43,6 +44,41 @@ export function ProblemAnalyzeSection({ config, onProblemListChange, onDirty }: 
 
   const selected = useMemo(() => readProblemList(config), [config]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+
+  const threshold = useMemo(() => {
+    const pa = (config?.problemAnalyze as Record<string, unknown>) || {};
+    const raw = pa.avgSentenceLengthThreshold;
+    if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+    return 17;
+  }, [config]);
+
+  // 本地输入态：保留用户输入的原始字符串（含空串 / 非整数等中间态），
+  // 以便对阈值类型做实时检测与提示，而不是直接吞掉非法输入。
+  const [thresholdInput, setThresholdInput] = useState<string>(String(threshold));
+  const [thresholdError, setThresholdError] = useState<string | null>(null);
+
+  // 外部 config 变化（载入 / 重置）时同步本地输入态。
+  useEffect(() => {
+    setThresholdInput(String(threshold));
+    setThresholdError(null);
+  }, [threshold]);
+
+  const validateAndCommitThreshold = (raw: string) => {
+    setThresholdInput(raw);
+    const trimmed = raw.trim();
+    if (trimmed === '') {
+      setThresholdError('阈值不能为空，请输入大于 0 的整数');
+      return;
+    }
+    const v = Number(trimmed);
+    if (!Number.isInteger(v) || v <= 0) {
+      setThresholdError('阈值类型无效：请输入大于 0 的整数');
+      return;
+    }
+    setThresholdError(null);
+    onThresholdChange(v);
+    onDirty();
+  };
 
   // Keep entries the user already has in config even if backend doesn't list them
   // (e.g. future types or custom strings); render them at the bottom.
@@ -172,6 +208,29 @@ export function ProblemAnalyzeSection({ config, onProblemListChange, onDirty }: 
                 </li>
               ))}
             </ul>
+
+            <div className="problem-analyze-section__threshold">
+              <label className="problem-analyze-section__threshold-label">
+                <span>长句判定阈值（avgSentenceLengthThreshold）</span>
+                <input
+                  type="number"
+                  className={`problem-analyze-section__threshold-input${thresholdError ? ' problem-analyze-section__threshold-input--error' : ''}`}
+                  min={1}
+                  max={99}
+                  value={thresholdInput}
+                  onChange={(e) => validateAndCommitThreshold(e.target.value)}
+                  onBlur={(e) => validateAndCommitThreshold(e.target.value)}
+                />
+              </label>
+              <span className="problem-analyze-section__threshold-desc">
+                译文平均分句长度超过此值时标记为"长句丢失换行"。默认 17，建议范围 15~25。
+              </span>
+              {thresholdError && (
+                <span className="problem-analyze-section__threshold-error">
+                  {thresholdError}
+                </span>
+              )}
+            </div>
           </>
         )}
       </div>
