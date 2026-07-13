@@ -47,6 +47,9 @@ def find_problems(
         find_type = projectConfig.getProblemAnalyzeConfig("GPT35")  # 兼容旧版
 
     for tran in trans_list:
+        if getattr(tran, "skip_check", False):
+            continue
+
         pre_src = tran.pre_src
         post_src = tran.post_src
         pre_dst = tran.pre_dst
@@ -106,7 +109,12 @@ def find_problems(
             if pre_dst_jp_chars != "" and post_dst_jp_chars != "":
                 problem_list.append(f"残留日文：{post_dst_jp_chars}")
         if CProblemType.丢失换行 in find_type and n_symbol != "":
-            if pre_src.count(n_symbol) > post_dst.count(n_symbol):
+            # 当译文很短（<18字符）时，原文的换行符通常是因日文冗长而非语义需要，
+            # 译文无需保留这些换行，跳过检测。
+            # 当原文长度远超译文（>3倍）时同理，原文换行多因文本长而非结构需要。
+            if len(post_dst) < 18 or len(pre_src) > len(post_dst) * 3:
+                pass
+            elif pre_src.count(n_symbol) > post_dst.count(n_symbol):
                 problem_list.append("丢失换行")
         if CProblemType.多加换行 in find_type and n_symbol != "":
             if pre_src.count(n_symbol) < post_dst.count(n_symbol):
