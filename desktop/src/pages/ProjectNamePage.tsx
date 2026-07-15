@@ -23,6 +23,7 @@ import {
   fetchProjectDictionaryManager,
 } from '../lib/api';
 import { normalizeError } from '../lib/errors';
+import { NamePageAiPopover } from './names/NamePageAiPopover';
 
 const JOB_POLL_INTERVAL_MS = 1500;
 
@@ -636,44 +637,15 @@ export function ProjectNamePage({ ctx, active = true }: { ctx: ProjectPageContex
         >
           {aiTranslating ? '翻译中，点击取消' : 'AI翻译人名'}
         </Button>
-        {showAiPopover && (
-          <div className="name-page__ai-popover">
-            <div className="name-page__ai-popover-title">选择翻译后端</div>
-            {aiProfileNames.length === 0 ? (
-              <div className="name-page__ai-popover-empty">
-                未找到后端配置，请先在「后端配置」页添加 OpenAI 兼容接口
-              </div>
-            ) : (
-              <>
-                <CustomSelect
-                  className="name-page__ai-popover-select"
-                  value={aiSelectedProfile}
-                  onChange={(e) => setAiSelectedProfile(e.target.value)}
-                >
-                  {(() => {
-                    const def = getSelectedBackendProfile(projectDir);
-                    const sorted = def && aiProfileNames.includes(def)
-                      ? [def, ...aiProfileNames.filter((n) => n !== def)]
-                      : aiProfileNames;
-                    return sorted.map((name) => {
-                      const model = aiProfileModelMap[name];
-                      const suffix = name === def ? '（默认）' : '';
-                      const label = model ? `${name} - ${model}${suffix}` : `${name}${suffix}`;
-                      return <option key={name} value={name}>{label}</option>;
-                    });
-                  })()}
-                </CustomSelect>
-                <Button
-                  variant="primary"
-                  onClick={handleAiTranslate}
-                  disabled={!aiSelectedProfile}
-                >
-                  开始翻译
-                </Button>
-              </>
-            )}
-          </div>
-        )}
+        <NamePageAiPopover
+          show={showAiPopover}
+          profileNames={aiProfileNames}
+          selectedProfile={aiSelectedProfile}
+          modelMap={aiProfileModelMap}
+          projectDir={projectDir}
+          onProfileChange={setAiSelectedProfile}
+          onTranslate={handleAiTranslate}
+        />
       </div>
       <Button
         onClick={handleSave}
