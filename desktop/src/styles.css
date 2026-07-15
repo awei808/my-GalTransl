@@ -33,6 +33,7 @@
 @import './styles/components/page-state.css';
 @import './styles/components/page-header.css';
 @import './styles/components/stats-grid.css';
+@import './styles/components/confirm-dialog.css';
 
 /* ── 7. Page styles ── */
 @import './styles/pages/home.css';
