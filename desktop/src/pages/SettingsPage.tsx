@@ -17,10 +17,8 @@ import {
   fetchVersionCheck,
   getCacheBrowserFontSizePreference,
   getCustomBackgroundPreference,
-  getHideBackendConsolePreference,
   getHomeHistoryRetentionLimit,
   getHomeJobRetentionLimit,
-  getThemeModePreference,
   HOME_LIST_LIMIT_MAX,
   HOME_LIST_LIMIT_MIN,
   setCustomBackgroundPreference,
@@ -31,6 +29,7 @@ import {
   setThemeModePreference,
 } from '../lib/api';
 import { normalizeError } from '../lib/errors';
+import { useSettingsStore } from '../stores';
 import { PluginListSection } from './settings/PluginListSection';
 import { compressImageToDataUrl } from './settings/imageCompress';
 
@@ -50,9 +49,12 @@ export function SettingsPage() {
 
   const [homeHistoryLimitInput, setHomeHistoryLimitInput] = useState(() => String(getHomeHistoryRetentionLimit()));
   const [homeJobLimitInput, setHomeJobLimitInput] = useState(() => String(getHomeJobRetentionLimit()));
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getThemeModePreference());
+  // These 3 use Zustand store (already persisted):
+  const themeMode = useSettingsStore((s) => s.themeMode);
+  const cacheFontSize = useSettingsStore((s) => s.cacheFontSize);
+  const hideBackendConsole = useSettingsStore((s) => s.hideConsole);
+  // Input fields need string values — derive from store
   const [cacheBrowserFontSizeInput, setCacheBrowserFontSizeInput] = useState(() => String(getCacheBrowserFontSizePreference()));
-  const [hideBackendConsole, setHideBackendConsole] = useState(() => getHideBackendConsolePreference());
   const [customBackgroundImageDataUrl, setCustomBackgroundImageDataUrl] = useState(
     () => getCustomBackgroundPreference().imageDataUrl,
   );
@@ -123,18 +125,17 @@ export function SettingsPage() {
   }, []);
 
   const applyThemeMode = useCallback((mode: ThemeMode) => {
-    const next = setThemeModePreference(mode);
-    setThemeMode(next);
+    useSettingsStore.getState().setThemeMode(mode);
   }, []);
 
   const applyCacheBrowserFontSize = useCallback((rawValue: string) => {
     const next = setCacheBrowserFontSizePreference(rawValue.trim() === '' ? Number.NaN : Number(rawValue));
-    setCacheBrowserFontSizeInput(String(next));
+    useSettingsStore.getState().setCacheFontSize(next);
   }, []);
 
   const applyHideBackendConsole = useCallback((enabled: boolean) => {
-    const next = setHideBackendConsolePreference(enabled);
-    setHideBackendConsole(next);
+    setHideBackendConsolePreference(enabled);
+    useSettingsStore.getState().setHideConsole(enabled);
   }, []);
 
   const applyCustomBackgroundOpacity = useCallback((rawValue: string) => {
