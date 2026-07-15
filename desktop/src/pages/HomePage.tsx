@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '../components/Button';
 import { StatusBadge } from '../components/StatusBadge';
+import { Icon } from '../components/icons';
 import { InlineFeedback } from '../components/page-state';
 import {
   encodeProjectDir,
@@ -19,166 +20,24 @@ import {
 } from '../lib/api';
 import { formatTimestamp } from '../lib/format';
 import { normalizeError } from '../lib/errors';
-const HISTORY_KEY = 'galtransl-project-history';
-const JOB_MEMORY_KEY = 'galtransl-home-jobs-memory';
-const JOB_CLEARED_KEY = 'galtransl-home-jobs-cleared';
+import {
+  type ProjectHistoryEntry,
+  loadHistory,
+  addProjectToHistory,
+  removeProjectFromHistory,
+  loadRememberedJobs,
+  saveRememberedJobs,
+  loadClearedJobIds,
+  saveClearedJobIds,
+  mergeJobsWithMemory,
+  sortAndLimitJobs,
+  projectName,
+  formatDate,
+} from './home/homeUtils';
+
 const PROJECT_HOMEPAGE = 'https://github.com/GalTransl/GalTransl';
 const MIN_REFRESH_SPIN_MS = 420;
 const REFRESH_SPIN_CYCLE_MS = 500;
-
-export type ProjectHistoryEntry = {
-  projectDir: string;
-  configFileName: string;
-  lastOpened: string;
-};
-
-function loadHistory(limit = getHomeHistoryRetentionLimit()): ProjectHistoryEntry[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    const parsed = raw ? (JSON.parse(raw) as ProjectHistoryEntry[]) : [];
-    return parsed.slice(0, limit);
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(entries: ProjectHistoryEntry[]) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
-}
-
-function getJobSortTimestamp(job: Job): number {
-  const timestamp = Date.parse(job.finished_at || job.started_at || job.created_at || '');
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function isActiveJobStatus(status: Job['status']): boolean {
-  return status === 'pending' || status === 'running';
-}
-
-function isActiveJob(job: Job): boolean {
-  return isActiveJobStatus(job.status);
-}
-
-function normalizeRememberedJob(value: unknown): Job | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const raw = value as Partial<Record<keyof Job, unknown>>;
-  const status = raw.status;
-  if (status !== 'pending' && status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
-    return null;
-  }
-
-  if (typeof raw.job_id !== 'string' || typeof raw.project_dir !== 'string') {
-    return null;
-  }
-
-  return {
-    config_file_name: typeof raw.config_file_name === 'string' ? raw.config_file_name : '',
-    created_at: typeof raw.created_at === 'string' ? raw.created_at : '',
-    error: typeof raw.error === 'string' ? raw.error : '',
-    finished_at: typeof raw.finished_at === 'string' ? raw.finished_at : '',
-    job_id: raw.job_id,
-    project_dir: raw.project_dir,
-    started_at: typeof raw.started_at === 'string' ? raw.started_at : '',
-    status,
-    success: typeof raw.success === 'boolean' ? raw.success : false,
-    translator: typeof raw.translator === 'string' ? raw.translator : '',
-  };
-}
-
-function sortAndLimitJobs(jobs: Job[], limit: number): Job[] {
-  return jobs
-    .sort((a, b) => getJobSortTimestamp(b) - getJobSortTimestamp(a))
-    .slice(0, limit);
-}
-
-function loadRememberedJobs(limit = getHomeJobRetentionLimit()): Job[] {
-  try {
-    const raw = localStorage.getItem(JOB_MEMORY_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return sortAndLimitJobs(
-      parsed
-        .map(normalizeRememberedJob)
-        .filter((job): job is Job => job !== null)
-        .filter((job) => !isActiveJob(job)),
-      limit,
-    );
-  } catch {
-    return [];
-  }
-}
-
-function saveRememberedJobs(jobs: Job[], limit: number) {
-  try {
-    localStorage.setItem(JOB_MEMORY_KEY, JSON.stringify(sortAndLimitJobs([...jobs], limit)));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function loadClearedJobIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem(JOB_CLEARED_KEY);
-    if (!raw) return new Set();
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((id): id is string => typeof id === 'string'));
-  } catch {
-    return new Set();
-  }
-}
-
-function saveClearedJobIds(ids: Set<string>) {
-  try {
-    localStorage.setItem(JOB_CLEARED_KEY, JSON.stringify(Array.from(ids)));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function mergeJobsWithMemory(existing: Job[], incoming: Job[], limit: number, cleared: Set<string>): Job[] {
-  const merged = new Map<string, Job>();
-
-  incoming.forEach((job) => {
-    if (cleared.has(job.job_id)) return;
-    merged.set(job.job_id, job);
-  });
-
-  existing.forEach((job) => {
-    if (cleared.has(job.job_id)) return;
-    if (!merged.has(job.job_id) && !isActiveJob(job)) {
-      merged.set(job.job_id, job);
-    }
-  });
-
-  return sortAndLimitJobs(Array.from(merged.values()), limit);
-}
-
-export function addProjectToHistory(projectDir: string, configFileName: string) {
-  const entries = loadHistory();
-  const withoutDuplicate = entries.filter((e) => e.projectDir !== projectDir);
-  withoutDuplicate.unshift({
-    projectDir,
-    configFileName,
-    lastOpened: new Date().toISOString(),
-  });
-  saveHistory(withoutDuplicate.slice(0, getHomeHistoryRetentionLimit()));
-}
-
-export function removeProjectFromHistory(projectDir: string) {
-  const entries = loadHistory().filter((e) => e.projectDir !== projectDir);
-  saveHistory(entries);
-}
 
 type HomePageProps = {
   onOpenProject: (projectDir: string, configFileName: string) => void;
@@ -200,47 +59,25 @@ export function HomePage({ onOpenProject }: HomePageProps) {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const clearedJobIds = useRef<Set<string>>(loadClearedJobIds());
   const [jobProgressById, setJobProgressById] = useState<
-    Record<
-      string,
-      {
-        currentFile?: string;
-        percent: number;
-        total: number;
-        translated: number;
-      }
-    >
+    Record<string, { currentFile?: string; percent: number; total: number; translated: number }>
   >({});
 
   useEffect(() => {
     setHistory(loadHistory(historyLimit));
-    // Stagger entrance animation
     const t = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(t);
   }, [historyLimit]);
 
   useEffect(() => {
     let cancelled = false;
-
-    // 当前版本：立即请求，快速显示
-    fetchVersion()
-      .then((version) => {
-        if (!cancelled) setCoreVersion(version);
-      })
-      .catch(() => undefined);
-
-    // 更新检查：异步叠加，不阻塞版本号显示
-    fetchVersionCheck()
-      .then((result) => {
-        if (cancelled) return;
-        setCoreVersion(result.version);
-        setLatestVersion(result.latest_version);
-        setUpdateAvailable(result.update_available);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
+    fetchVersion().then((version) => { if (!cancelled) setCoreVersion(version); }).catch(() => undefined);
+    fetchVersionCheck().then((result) => {
+      if (cancelled) return;
+      setCoreVersion(result.version);
+      setLatestVersion(result.latest_version);
+      setUpdateAvailable(result.update_available);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -249,13 +86,11 @@ export function HomePage({ onOpenProject }: HomePageProps) {
       setHistoryLimit(nextLimit);
       setHistory(loadHistory(nextLimit));
     };
-
     const handleJobLimitChanged = () => {
       const nextLimit = getHomeJobRetentionLimit();
       setJobMemoryLimit(nextLimit);
       setJobs((currentJobs) => sortAndLimitJobs([...currentJobs], nextLimit));
     };
-
     window.addEventListener(HOME_HISTORY_LIMIT_CHANGE_EVENT, handleHistoryLimitChanged as EventListener);
     window.addEventListener(HOME_JOB_LIMIT_CHANGE_EVENT, handleJobLimitChanged as EventListener);
     return () => {
@@ -267,17 +102,9 @@ export function HomePage({ onOpenProject }: HomePageProps) {
   useEffect(() => {
     let delayTimer = 0;
     const frameId = window.requestAnimationFrame(() => {
-      delayTimer = window.setTimeout(() => {
-        setShouldLoadJobProgress(true);
-      }, 300);
+      delayTimer = window.setTimeout(() => { setShouldLoadJobProgress(true); }, 300);
     });
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      if (delayTimer) {
-        window.clearTimeout(delayTimer);
-      }
-    };
+    return () => { window.cancelAnimationFrame(frameId); if (delayTimer) window.clearTimeout(delayTimer); };
   }, []);
 
   useEffect(() => {
@@ -293,17 +120,11 @@ export function HomePage({ onOpenProject }: HomePageProps) {
       const backendJobIds = new Set(nextJobs.map((job) => job.job_id));
       nextJobs.forEach((job) => {
         if (job.status === 'running' || job.status === 'pending') {
-          if (clearedJobIds.current.delete(job.job_id)) {
-            clearedDirty = true;
-          }
+          if (clearedJobIds.current.delete(job.job_id)) clearedDirty = true;
         }
       });
-      // 回收：后端已不再返回的 id 无需继续保留在 cleared 集合里
       clearedJobIds.current.forEach((id) => {
-        if (!backendJobIds.has(id)) {
-          clearedJobIds.current.delete(id);
-          clearedDirty = true;
-        }
+        if (!backendJobIds.has(id)) { clearedJobIds.current.delete(id); clearedDirty = true; }
       });
       if (clearedDirty) saveClearedJobIds(clearedJobIds.current);
       setJobs((currentJobs) => mergeJobsWithMemory(currentJobs, nextJobs, jobMemoryLimit, clearedJobIds.current));
@@ -313,37 +134,23 @@ export function HomePage({ onOpenProject }: HomePageProps) {
         setJobProgressById({});
       } else {
         const activeJobs = nextJobs.filter((job) => job.status === 'pending' || job.status === 'running');
-        if (activeJobs.length === 0) {
-          setJobProgressById({});
-          return;
-        }
-
+        if (activeJobs.length === 0) { setJobProgressById({}); return; }
         const progressEntries = await Promise.all(
           activeJobs.map(async (job) => {
             try {
               const runtime = await fetchProjectRuntime(encodeProjectDir(job.project_dir));
-              return [
-                job.job_id,
-                {
-                  currentFile: runtime.current_file,
-                  percent: runtime.summary.percent,
-                  total: runtime.summary.total,
-                  translated: runtime.summary.translated,
-                },
-              ] as const;
-            } catch {
-              return null;
-            }
+              return [job.job_id, {
+                currentFile: runtime.current_file,
+                percent: runtime.summary.percent,
+                total: runtime.summary.total,
+                translated: runtime.summary.translated,
+              }] as const;
+            } catch { return null; }
           }),
         );
-
         setJobProgressById(
-          progressEntries.reduce<
-            Record<string, { currentFile?: string; percent: number; total: number; translated: number }>
-          >((acc, entry) => {
-            if (entry) {
-              acc[entry[0]] = entry[1];
-            }
+          progressEntries.reduce<Record<string, { currentFile?: string; percent: number; total: number; translated: number }>>((acc, entry) => {
+            if (entry) acc[entry[0]] = entry[1];
             return acc;
           }, {}),
         );
@@ -356,9 +163,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
         const minReachedMs = Math.max(elapsedMs, MIN_REFRESH_SPIN_MS);
         const remainToFullCycleMs = (REFRESH_SPIN_CYCLE_MS - (minReachedMs % REFRESH_SPIN_CYCLE_MS)) % REFRESH_SPIN_CYCLE_MS;
         const remainMs = Math.max(0, MIN_REFRESH_SPIN_MS - elapsedMs) + remainToFullCycleMs;
-        if (remainMs > 0) {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, remainMs));
-        }
+        if (remainMs > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, remainMs));
         setRefreshingJobs(false);
       }
     }
@@ -366,16 +171,12 @@ export function HomePage({ onOpenProject }: HomePageProps) {
 
   useEffect(() => {
     void refreshJobs();
-    const poller = window.setInterval(() => {
-      void refreshJobs(true);
-    }, 3000);
+    const poller = window.setInterval(() => { void refreshJobs(true); }, 3000);
     return () => window.clearInterval(poller);
   }, [refreshJobs]);
 
   useEffect(() => {
-    if (!shouldLoadJobProgress) {
-      return;
-    }
+    if (!shouldLoadJobProgress) return;
     void refreshJobs(true);
   }, [refreshJobs, shouldLoadJobProgress]);
 
@@ -393,17 +194,13 @@ export function HomePage({ onOpenProject }: HomePageProps) {
     const lastSlash = normalized.lastIndexOf('/');
     const dir = (lastSlash >= 0 ? normalized.substring(0, lastSlash) : '').replace(/\//g, '\\');
     const config = (lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized).trim() || 'config.yaml';
-
     if (!dir.trim()) return;
     onOpenProject(dir, config);
   }, [onOpenProject, navigate]);
 
-  const handleHistoryClick = useCallback(
-    (entry: ProjectHistoryEntry) => {
-      onOpenProject(entry.projectDir, entry.configFileName);
-    },
-    [onOpenProject, navigate],
-  );
+  const handleHistoryClick = useCallback((entry: ProjectHistoryEntry) => {
+    onOpenProject(entry.projectDir, entry.configFileName);
+  }, [onOpenProject, navigate]);
 
   const handleJobClick = useCallback((job: Job) => {
     onOpenProject(job.project_dir, job.config_file_name);
@@ -413,24 +210,16 @@ export function HomePage({ onOpenProject }: HomePageProps) {
     event.stopPropagation();
     if (stoppingJobId) return;
     if (job.status !== 'pending' && job.status !== 'running') return;
-
     setStoppingJobId(job.job_id);
     setJobsError(null);
-
     try {
       const projectId = encodeProjectDir(job.project_dir);
       const stoppedJob = await stopProjectTranslation(projectId);
-      setJobs((current) =>
-        current.map((currentJob) =>
-          currentJob.job_id === stoppedJob.job_id
-            ? {
-                ...currentJob,
-                status: stoppedJob.status,
-                success: stoppedJob.success,
-              }
-            : currentJob,
-        ),
-      );
+      setJobs((current) => current.map((currentJob) =>
+        currentJob.job_id === stoppedJob.job_id
+          ? { ...currentJob, status: stoppedJob.status, success: stoppedJob.success }
+          : currentJob,
+      ));
       await refreshJobs(true);
     } catch (error) {
       setJobsError(normalizeError(error, '停止任务失败'));
@@ -446,10 +235,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
       let changed = false;
       current.forEach((job) => {
         if (job.status !== 'running' && job.status !== 'pending') {
-          if (!clearedJobIds.current.has(job.job_id)) {
-            clearedJobIds.current.add(job.job_id);
-            changed = true;
-          }
+          if (!clearedJobIds.current.has(job.job_id)) { clearedJobIds.current.add(job.job_id); changed = true; }
         }
       });
       if (changed) saveClearedJobIds(clearedJobIds.current);
@@ -464,10 +250,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
     setHistory(loadHistory(historyLimit));
   }, [historyLimit]);
 
-  const activeJobsCount = useMemo(
-    () => jobs.filter((job) => job.status === 'pending' || job.status === 'running').length,
-    [jobs],
-  );
+  const activeJobsCount = useMemo(() => jobs.filter((job) => job.status === 'pending' || job.status === 'running').length, [jobs]);
   const completedJobsCount = useMemo(() => jobs.filter((job) => job.status === 'completed').length, [jobs]);
   const failedJobsCount = useMemo(() => jobs.filter((job) => job.status === 'failed').length, [jobs]);
 
@@ -484,12 +267,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
             <div className="home-hero__chips" aria-label="首页信息">
               <span className="home-hero__chip">版本 {coreVersion ? `v${coreVersion}` : '—'}</span>
               {updateAvailable && latestVersion ? (
-                <a
-                  className="home-hero__chip home-hero__chip--update"
-                  href={PROJECT_HOMEPAGE + '/releases/latest'}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
+                <a className="home-hero__chip home-hero__chip--update" href={PROJECT_HOMEPAGE + '/releases/latest'} target="_blank" rel="noreferrer noopener">
                   发现新版本 v{latestVersion}
                 </a>
               ) : null}
@@ -517,14 +295,11 @@ export function HomePage({ onOpenProject }: HomePageProps) {
           </div>
           <div className="home-hero__stat-divider" />
           <div className="home-hero__stat">
-            <span className={`home-hero__stat-value${failedJobsCount > 0 ? ' home-hero__stat-value--danger' : ''}`}>
-              {failedJobsCount}
-            </span>
+            <span className={`home-hero__stat-value${failedJobsCount > 0 ? ' home-hero__stat-value--danger' : ''}`}>{failedJobsCount}</span>
             <span className="home-hero__stat-label">失败</span>
           </div>
         </div>
 
-        {/* Decorative mesh gradient */}
         <div className="home-hero__glow" aria-hidden="true" />
       </div>
 
@@ -566,20 +341,9 @@ export function HomePage({ onOpenProject }: HomePageProps) {
             <div className="home-history__list">
               {history.map((entry) => (
                 <div key={entry.projectDir} className="home-history__item">
-                  <button
-                    type="button"
-                    className="home-history__item-button"
-                    onClick={() => handleHistoryClick(entry)}
-                  >
+                  <button type="button" className="home-history__item-button" onClick={() => handleHistoryClick(entry)}>
                     <div className="home-history__item-icon">
-                      <svg viewBox="0 0 16 16" width="16" height="16" fill="none">
-                        <path
-                          d="M2 3.5A1.5 1.5 0 013.5 2h3.586a1 1 0 01.707.293l1.914 1.914a1 1 0 00.707.293H12.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-8z"
-                          stroke="currentColor"
-                          strokeWidth="1.2"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
+                      <Icon name="folder" size={16} />
                     </div>
                     <div className="home-history__item-info">
                       <div className="home-history__item-path">{projectName(entry.projectDir)}</div>
@@ -594,9 +358,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
                     onClick={(e) => handleRemoveHistory(entry.projectDir, e)}
                     title="从历史中移除"
                   >
-                    <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
-                      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                    </svg>
+                    <Icon name="x" size={14} />
                   </button>
                 </div>
               ))}
@@ -619,9 +381,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
               title="清空已完成/失败的任务"
               aria-label="清空已完成/失败的任务"
             >
-              <svg viewBox="0 0 16 16" width="15" height="15" fill="none">
-                <path d="M2 4h12M5 4V2.5a.5.5 0 01.5-.5h5a.5.5 0 01.5.5V4M6 7v5M10 7v5M3 4l.8 9.1A1 1 0 004.8 14h6.4a1 1 0 001-.9L13 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Icon name="trash" size={15} />
             </button>
           </div>
           {jobsError ? <InlineFeedback tone="error" title="加载失败" description={jobsError} /> : null}
@@ -645,10 +405,7 @@ export function HomePage({ onOpenProject }: HomePageProps) {
                     onClick={() => handleJobClick(job)}
                     onKeyDown={(e) => {
                       if (e.target !== e.currentTarget) return;
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleJobClick(job);
-                      }
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJobClick(job); }
                     }}
                   >
                     <div className="home-job-row__top">
@@ -707,22 +464,4 @@ export function HomePage({ onOpenProject }: HomePageProps) {
       </div>
     </div>
   );
-}
-
-function projectName(projectDir: string): string {
-  return projectDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || projectDir;
-}
-
-function formatDate(isoString: string): string {
-  try {
-    const date = new Date(isoString);
-    return date.toLocaleDateString('zh-CN', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return isoString;
-  }
 }

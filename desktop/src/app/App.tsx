@@ -10,7 +10,8 @@ import {
 import { Sidebar } from '../components/Sidebar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ConnectionProvider } from '../features/connection/ConnectionContext';
-import { HomePage, addProjectToHistory } from '../pages/HomePage';
+import { HomePage } from '../pages/HomePage';
+import { addProjectToHistory } from '../pages/home/homeUtils';
 import { useProjectStore } from '../stores';
 
 const ProjectLayout = lazy(async () => {

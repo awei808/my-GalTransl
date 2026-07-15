@@ -23,7 +23,7 @@ import {
   fetchJob,
   encodeProjectDir,
 } from '../lib/api';
-import { addProjectToHistory } from './HomePage';
+import { addProjectToHistory } from './home/homeUtils';
 
 const STEPS = ['项目位置', '导入文件', '翻译后端', '常用设置', '提取人名'];
 const LAST_PARENT_DIR_KEY = 'galtransl-new-project-last-parent-dir';
