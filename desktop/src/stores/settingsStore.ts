@@ -62,7 +62,12 @@ function loadPersisted(): Partial<PersistedSettings> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // JSON.parse can return null, arrays, or primitives — only use objects
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return {};
   } catch {
     return {};
   }
