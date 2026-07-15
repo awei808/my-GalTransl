@@ -22,7 +22,8 @@ export { type ConfirmDialogOptions };
  * resolves with `false`).
  */
 export function ConfirmDialog() {
-  const { confirmDialog, resolveConfirm } = useUIStore();
+  const confirmDialog = useUIStore((s) => s.confirmDialog);
+  const resolveConfirm = useUIStore((s) => s.resolveConfirm);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
 
   // Auto-focus the confirm button when the dialog appears

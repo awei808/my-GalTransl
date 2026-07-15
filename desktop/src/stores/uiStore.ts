@@ -68,6 +68,12 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   confirm: (options) => {
     return new Promise<boolean>((resolve) => {
+      const current = get().confirmDialog;
+      // If a dialog is already visible, resolve the previous promise with false
+      // before replacing it — prevents orphaned promises.
+      if (current.visible && current.resolve) {
+        current.resolve(false);
+      }
       set({
         confirmDialog: {
           ...INITIAL_DIALOG,

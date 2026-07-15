@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useUIStore } from '../uiStore';
 
 describe('useUIStore', () => {
@@ -112,6 +112,36 @@ describe('useUIStore', () => {
         dismissible: false,
       });
       expect(useUIStore.getState().confirmDialog.dismissible).toBe(false);
+    });
+
+    it('calling confirm() while dialog is visible resolves previous promise with false', async () => {
+      const firstPromise = useUIStore.getState().confirm({
+        title: 'First',
+        message: 'First dialog',
+      });
+      const firstResolve = vi.fn();
+      firstPromise.then(firstResolve);
+
+      // Call confirm again while the first is still visible
+      const secondPromise = useUIStore.getState().confirm({
+        title: 'Second',
+        message: 'Second dialog',
+      });
+      const secondResolve = vi.fn();
+      secondPromise.then(secondResolve);
+
+      // First promise should resolve with false (dismissed)
+      await new Promise((r) => setTimeout(r, 0));
+      expect(firstResolve).toHaveBeenCalledWith(false);
+
+      // Second dialog should now be the visible one
+      expect(useUIStore.getState().confirmDialog.visible).toBe(true);
+      expect(useUIStore.getState().confirmDialog.title).toBe('Second');
+
+      // Clean up: resolve the second
+      useUIStore.getState().resolveConfirm(true);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(secondResolve).toHaveBeenCalledWith(true);
     });
   });
 });

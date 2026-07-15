@@ -133,7 +133,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const persisted = loadPersisted();
     set({
       themeMode: persisted.themeMode ?? DEFAULTS.themeMode,
-      customBackground: persisted.customBackground ?? DEFAULTS.customBackground,
+      customBackground: { ...DEFAULTS.customBackground, ...(persisted.customBackground ?? {}) },
       cacheFontSize: persisted.cacheFontSize ?? DEFAULTS.cacheFontSize,
       hideConsole: persisted.hideConsole ?? DEFAULTS.hideConsole,
       homeJobRetention: persisted.homeJobRetention ?? DEFAULTS.homeJobRetention,
