@@ -168,6 +168,7 @@ export function projectName(projectDir: string): string {
 export function formatDate(isoString: string): string {
   try {
     const date = new Date(isoString);
+    if (isNaN(date.getTime())) return isoString;
     return date.toLocaleDateString('zh-CN', {
       month: 'short',
       day: 'numeric',

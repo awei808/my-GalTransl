@@ -49,7 +49,7 @@ export function getBackendBaseUrl() {
 }
 
 export function setRuntimeBackendBaseUrl(url: string | null) {
-  runtimeBackendBaseUrl = url ? url.trim().replace(/\/$/, '') : null;
+  runtimeBackendBaseUrl = url ? url.trim().replace(/\/+$/, '') : null;
 }
 
 function shouldUseManagedDesktopBackend() {
@@ -79,16 +79,21 @@ export function encodeProjectDir(projectDir: string): string {
 }
 
 export function decodeProjectDir(token: string): string {
-  let base64 = token.replace(/-/g, '+').replace(/_/g, '/');
-  while (base64.length % 4 !== 0) {
-    base64 += '=';
+  if (!token) return '';
+  try {
+    let base64 = token.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+      base64 += '=';
+    }
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
   }
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new TextDecoder().decode(bytes);
 }
 
 // ---- Desktop backend management ----
