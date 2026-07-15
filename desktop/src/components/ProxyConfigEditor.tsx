@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { Icon } from './icons';
 import { CustomSelect } from './CustomSelect';
 
 type ProxyEntry = {

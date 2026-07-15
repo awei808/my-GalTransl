@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectPageContext } from '../components/ProjectLayout';
 import { Button } from '../components/Button';
+import { Icon } from '../components/icons';
 import { CustomSelect } from '../components/CustomSelect';
 import { PageHeader } from '../components/PageHeader';
 import { Panel } from '../components/Panel';

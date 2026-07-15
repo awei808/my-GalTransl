@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BackendConfigEditor } from '../components/BackendConfigEditor';
+import { Icon } from '../components/icons';
 import { Button } from '../components/Button';
 import { PageHeader } from '../components/PageHeader';
 import { Panel } from '../components/Panel';

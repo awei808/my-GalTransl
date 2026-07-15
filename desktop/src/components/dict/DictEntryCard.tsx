@@ -2,6 +2,7 @@
  * DictEntryGroupCard — grouped card-based dictionary entry editor.
  */
 import type { CSSProperties } from 'react';
+import { Icon } from '../icons';
 import { getTypeLabel, getFieldLabels, type DictRowGroup, type DictTab, type DictRowType } from './dictUtils';
 
 type DictEntryGroupCardProps = {

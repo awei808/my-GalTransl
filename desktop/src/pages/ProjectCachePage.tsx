@@ -30,6 +30,7 @@ import {
   updateProjectConfig } from '../lib/api';
 import { normalizeError } from '../lib/errors';
 import { src, dst, escapeControlChars, unescapeControlChars, HighlightText, CacheEntryCard, SearchResultCard } from './cache/cacheUtils';
+import { Icon } from '../components/icons';
 
 
 type SidebarTab = 'files' | 'search' | 'problems';
@@ -829,7 +830,7 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
         description="在这里可以浏览翻译问题、手动润色，或通过删除缓存句触发部分重翻。最终结果将基于这些缓存来构建。"
         actions={cacheDir ? (
           <Button variant="secondary" onClick={() => void invoke('open_folder', { path: cacheDir })} title={cacheDir}>
-            📂 打开缓存文件夹
+            <Icon name="folder-open" size={18} /> 打开缓存文件夹
           </Button>
         ) : null}
         status={
@@ -886,7 +887,7 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
                       disabled={savingAll}
                       title={`保存 ${dirtyFiles.size} 个有修改的文件`}
                     >
-                      {savingAll ? '⏳' : `💾 全部保存 (${dirtyFiles.size})`}
+                      {savingAll ? <><Icon name="loader" size={16} /> 保存中...</> : <><Icon name="download" size={16} /> 全部保存 ({dirtyFiles.size})</>}
                     </Button>
                   )}
                   <button
@@ -1330,7 +1331,7 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
               void handleRevealCacheFiles(filenames);
             }}
           >
-            <span className="cache-context-menu__icon" aria-hidden="true">📂</span>
+            <span className="cache-context-menu__icon" aria-hidden="true"><Icon name="folder-open" size={16} /></span>
             <span className="cache-context-menu__label">在文件管理器中浏览</span>
           </button>
           {contextMenu.showDelete && (
@@ -1343,7 +1344,7 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
                 void handleDeleteSelectedFiles(files);
               }}
             >
-              <span className="cache-context-menu__icon" aria-hidden="true">🗑</span>
+              <span className="cache-context-menu__icon" aria-hidden="true"><Icon name="trash" size={16} /></span>
               <span className="cache-context-menu__label">
                 删除{contextMenu.filenames.length > 1 ? ` (${contextMenu.filenames.length} 个文件)` : ''}
               </span>

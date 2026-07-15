@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { CacheEntry, CacheSearchResult } from '../../lib/api';
 import { speakerStyle, speakerHue } from '../../lib/speaker';
 import { resolveSpeakerName } from '../../lib/useNameDict';
+import { Icon } from '../../components/icons';
 
 /** Compatible cache field readers: prefer new key, fallback to old key */
 export function src(e: CacheEntry): string { return e.post_src || e.post_jp || ''; }
@@ -73,7 +74,7 @@ export function CacheEntryCard({
         <button type="button" className="cache-card__expand" onClick={() => setExpanded(!expanded)} title={expanded ? '收起' : '展开详情'}>
           {expanded ? '▾' : '▸'}
         </button>
-        <button type="button" className="cache-card__delete" onClick={() => onDelete(entry.index)} title="删除此条">✕</button>
+        <button type="button" className="cache-card__delete" onClick={() => onDelete(entry.index)} title="删除此条"><Icon name="x" size={16} /></button>
       </div>
 
       <div className="cache-card__fields">

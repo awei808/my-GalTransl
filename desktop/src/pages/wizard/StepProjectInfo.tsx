@@ -1,5 +1,6 @@
 import { Button } from '../../components/Button';
 import { Panel } from '../../components/Panel';
+import { Icon } from '../../components/icons';
 
 type StepProjectInfoProps = {
   parentDir: string;
@@ -53,7 +54,7 @@ export function StepProjectInfo({
       </div>
       <div className="wizard-actions">
         <Button disabled={projectCreated || !parentDir || !projectName} onClick={onCreateProject}>
-          {projectCreated ? '已创建 ✓' : '创建项目'}
+          {projectCreated ? '已创建 <Icon name="check" size={14} />' : '创建项目'}
         </Button>
       </div>
     </Panel>

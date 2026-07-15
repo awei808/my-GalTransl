@@ -17,6 +17,7 @@ import {
 } from './dict/dictUtils';
 import { DictEntryGroupCard } from './dict/DictEntryCard';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Icon } from '../components/icons';
 
 type DictionaryManagerData = {
   pre_dict_files: string[];
@@ -379,7 +380,7 @@ export function DictionaryManager(props: DictionaryManagerProps) {
       {contextMenu && createPortal(
         <div ref={contextMenuRef} className="cache-context-menu" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()}>
           <button type="button" className="cache-context-menu__item" onClick={() => { const f = contextMenu.file; setContextMenu(null); void handleRevealFile(f); }}>
-            <span className="cache-context-menu__icon" aria-hidden="true">📂</span>
+            <span className="cache-context-menu__icon" aria-hidden="true"><Icon name="folder-open" size={16} /></span>
             <span className="cache-context-menu__label">在文件管理器中浏览</span>
           </button>
         </div>,

@@ -2,6 +2,7 @@ import type { PluginInfo } from '../../lib/api';
 import { Button } from '../../components/Button';
 import { CustomSelect } from '../../components/CustomSelect';
 import { Panel } from '../../components/Panel';
+import { Icon } from '../../components/icons';
 
 type StepSettingsProps = {
   filePlugins: PluginInfo[];
@@ -89,7 +90,7 @@ export function StepSettings({
         </div>
       </div>
       <div className="wizard-actions">
-        <Button disabled={settingsSaved} onClick={onSaveSettings}>{settingsSaved ? '已保存 ✓' : '保存设置'}</Button>
+        <Button disabled={settingsSaved} onClick={onSaveSettings}>{settingsSaved ? '已保存 <Icon name="check" size={14} />' : '保存设置'}</Button>
       </div>
     </Panel>
   );

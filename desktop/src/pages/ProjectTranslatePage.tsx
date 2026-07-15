@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ProjectPageContext } from '../components/ProjectLayout';
 import { Button } from '../components/Button';
+import { Icon } from '../components/icons';
 import { CustomSelect } from '../components/CustomSelect';
 import { Panel } from '../components/Panel';
 import { StatusBadge } from '../components/StatusBadge';
@@ -796,10 +797,10 @@ export function ProjectTranslatePage({ ctx }: { ctx: ProjectPageContext }) {
                     </svg>
                   </button>
                   <div className="project-translate-page__folder-menu-dropdown" role="menu">
-                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(projectDir)} title={projectDir} variant="secondary">📂 项目文件夹</Button>
-                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(inputFolderPath)} title={inputFolderPath} variant="secondary">📥 输入文件夹</Button>
-                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(outputFolderPath)} title={outputFolderPath} variant="secondary">📤 输出文件夹</Button>
-                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(cacheFolderPath)} title={cacheFolderPath} variant="secondary">💾 缓存文件夹</Button>
+                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(projectDir)} title={projectDir} variant="secondary"><Icon name="folder-open" size={16} /> 项目文件夹</Button>
+                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(inputFolderPath)} title={inputFolderPath} variant="secondary"><Icon name="download" size={16} /> 输入文件夹</Button>
+                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(outputFolderPath)} title={outputFolderPath} variant="secondary"><Icon name="upload" size={16} /> 输出文件夹</Button>
+                    <Button className="project-translate-page__folder-menu-item" disabled={!projectDir} onClick={() => handleOpenFolder(cacheFolderPath)} title={cacheFolderPath} variant="secondary"><Icon name="download" size={16} /> 缓存文件夹</Button>
                   </div>
                 </div>
               ) : null}
@@ -877,7 +878,7 @@ export function ProjectTranslatePage({ ctx }: { ctx: ProjectPageContext }) {
                 disabled={primaryActionDisabled}
                 onClick={handlePrimaryAction}
               >
-                <span className="ptv2-launch-btn__glyph" aria-hidden="true">{isCurrentProjectActive ? '■' : '▶'}</span>
+                <span className="ptv2-launch-btn__glyph" aria-hidden="true">{isCurrentProjectActive ? <Icon name="square" size={14} /> : <Icon name="play" size={14} />}</span>
                 <span className="ptv2-launch-btn__label">{primaryActionLabel}</span>
               </Button>
             </div>

@@ -1,5 +1,6 @@
 import { Button } from '../../components/Button';
 import { Panel } from '../../components/Panel';
+import { Icon } from '../../components/icons';
 
 type StepImportFilesProps = {
   gtInputDir: string;
@@ -16,7 +17,7 @@ export function StepImportFiles({ gtInputDir, importedFiles, onFileDrop, onFileP
         onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('drop-zone--over'); }}
         onDragLeave={(e) => { e.currentTarget.classList.remove('drop-zone--over'); }}
         onDrop={(e) => void onFileDrop(e)}>
-        <div className="drop-zone__icon">📁</div>
+        <div className="drop-zone__icon"><Icon name="folder" size={48} /></div>
         <div className="drop-zone__text">拖放文件到此处导入</div>
       </div>
       <div className="wizard-actions">

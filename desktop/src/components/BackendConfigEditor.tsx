@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Icon } from './icons';
 import { CustomSelect } from './CustomSelect';
 import { fetchOpenAIModels } from '../lib/api';
 

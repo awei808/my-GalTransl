@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { Button } from '../components/Button';
+import { Icon } from '../components/icons';
 import { PageHeader } from '../components/PageHeader';
 import { InlineFeedback } from '../components/page-state';
 import {
@@ -192,7 +193,7 @@ export function NewProjectWizard({ onOpenProject }: NewProjectWizardProps) {
       <ul className="wizard-steps">
         {STEPS.map((label, i) => (
           <li key={i} className={`wizard-step${i === currentStep ? ' wizard-step--active' : ''}${i < currentStep ? ' wizard-step--completed' : ''}`}>
-            <span className="wizard-step__number">{i < currentStep ? '✓' : i + 1}</span>
+            <span className="wizard-step__number">{i < currentStep ? <Icon name="check" size={12} /> : i + 1}</span>
             <span className="wizard-step__label">{label}</span>
           </li>
         ))}
