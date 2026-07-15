@@ -175,7 +175,7 @@ export function ProjectDictionaryPage({
           translator: 'GenDic',
           ...getSelectedBackendProfileJobPayload(projectDir),
         });
-        navigate(`/project/${projectId}/translate`);
+        navigate('/project/translate');
       }}
     />
   );

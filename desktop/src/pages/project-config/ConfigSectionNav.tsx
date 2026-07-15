@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Icon } from '../../components/icons';
 
 export type ConfigSectionKey = 'common' | 'backendSpecific' | 'plugin' | 'dictionary' | 'problemAnalyze' | 'retranslKey';
 
@@ -9,12 +10,12 @@ export interface ConfigSectionDef {
 }
 
 export const CONFIG_SECTIONS: ConfigSectionDef[] = [
-  { key: 'common', label: '通用设置', icon: '⚙️' },
-  { key: 'backendSpecific', label: '翻译后端', icon: '🤖' },
-  { key: 'plugin', label: '插件设置', icon: '🧩' },
-  { key: 'dictionary', label: '字典设置', icon: '📖' },
-  { key: 'problemAnalyze', label: '问题分析', icon: '🔍' },
-  { key: 'retranslKey', label: '重翻关键字', icon: '🔁' },
+  { key: 'common', label: '通用设置', icon: 'settings' },
+  { key: 'backendSpecific', label: '翻译后端', icon: 'cpu' },
+  { key: 'plugin', label: '插件设置', icon: 'puzzle' },
+  { key: 'dictionary', label: '字典设置', icon: 'book' },
+  { key: 'problemAnalyze', label: '问题分析', icon: 'search' },
+  { key: 'retranslKey', label: '重翻关键字', icon: 'refresh' },
 ];
 
 interface ConfigSectionNavProps {
@@ -48,7 +49,7 @@ export function ConfigSectionNav({
           className={`project-config-page__section-btn ${activeSection === section.key ? 'project-config-page__section-btn--active' : ''}`}
           onClick={() => { onSectionChange(section.key); }}
         >
-          <span>{section.icon}</span>
+          <span className="project-config-page__section-icon"><Icon name={section.icon} size={18} /></span>
           <span>{section.label}</span>
         </button>
       ))}
@@ -58,7 +59,7 @@ export function ConfigSectionNav({
         onClick={onSave}
         disabled={saving || disabled}
       >
-        <span>💾</span>
+        <span className="project-config-page__section-icon"><Icon name="download" size={18} /></span>
         <span>{saving ? '保存中…' : '保存配置'}{dirty && !saving && <span style={{ color: '#e53e3e', marginLeft: 4 }}>●</span>}</span>
       </button>
       <div className="project-config-page__section-divider" />
@@ -67,7 +68,7 @@ export function ConfigSectionNav({
         className={`project-config-page__section-btn ${yamlView ? 'project-config-page__section-btn--active' : ''}`}
         onClick={onYamlToggle}
       >
-        <span>📝</span>
+        <span className="project-config-page__section-icon"><Icon name="file-text" size={18} /></span>
         <span>YAML源码</span>
       </button>
     </aside>

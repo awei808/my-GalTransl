@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { decodeProjectDir } from '../lib/api';
-import { loadLastProjectTab, saveLastProjectTab } from '../lib/projectTabMemory';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useProjectStore } from '../stores';
+import { encodeProjectDir } from '../lib/api';
 
 const ProjectTranslatePage = lazy(async () => {
   const mod = await import('../pages/ProjectTranslatePage');
@@ -28,17 +28,6 @@ const ProjectCachePage = lazy(async () => {
   return { default: mod.ProjectCachePage };
 });
 
-const CONFIG_FILE_KEY = 'galtransl-config-file';
-
-function loadConfigFileName(projectDir: string): string {
-  try {
-    const map = JSON.parse(localStorage.getItem(CONFIG_FILE_KEY) || '{}');
-    return map[projectDir] || 'config.yaml';
-  } catch {
-    return 'config.yaml';
-  }
-}
-
 /** Tab path → component mapping */
 const TAB_MAP: { path: string; label: string }[] = [
   { path: 'translate', label: '翻译工作台' },
@@ -51,33 +40,53 @@ const TAB_MAP: { path: string; label: string }[] = [
 /** Shared context passed to every child page */
 export interface ProjectPageContext {
   projectDir: string;
+  /** Base64url-encoded project directory — used in backend API URL paths */
   projectId: string;
   configFileName: string;
 }
 
+const TAB_STORAGE_KEY = 'galtransl-last-project-tab';
+const VALID_TABS = ['translate', 'cache', 'config', 'dictionary', 'names'] as const;
+
+function loadLastTab(): string {
+  try {
+    const tab = localStorage.getItem(TAB_STORAGE_KEY);
+    if (tab && (VALID_TABS as readonly string[]).includes(tab)) return tab;
+  } catch {}
+  return 'translate';
+}
+
+function saveLastTab(tab: string): void {
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
+  } catch {}
+}
+
 export function ProjectLayout() {
-  const { projectId } = useParams<{ projectId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const projectDir = useProjectStore((s) => s.projectDir);
+  const configFileName = useProjectStore((s) => s.configFileName);
 
-  const projectDir = projectId ? decodeProjectDir(projectId) : '';
-  const configFileName = useMemo(() => loadConfigFileName(projectDir), [projectDir]);
-
-  // Extract current tab from URL: /project/:projectId/cache → "cache"
+  // Extract current tab from URL: /project/cache → "cache"
   const segments = location.pathname.split('/');
-  const currentTab = segments[3] || 'translate';
+  const currentTab = segments[2] || 'translate';
 
-  // If accessing /project/:projectId without a tab, redirect to the last visited tab
+  // If accessing /project without a tab, redirect to the last visited tab
   useEffect(() => {
-    if (!segments[3]) {
-      const lastTab = loadLastProjectTab(projectDir);
-      navigate(location.pathname + '/' + lastTab, { replace: true });
+    if (!segments[2]) {
+      const lastTab = loadLastTab();
+      navigate('/project/' + lastTab, { replace: true });
     }
-  }, [segments[3], location.pathname, navigate, projectDir]);
+  }, [segments[2], navigate]);
 
   const ctx: ProjectPageContext = useMemo(
-    () => ({ projectDir, projectId: projectId || '', configFileName }),
-    [projectDir, projectId, configFileName],
+    () => ({
+      projectDir: projectDir || '',
+      projectId: projectDir ? encodeProjectDir(projectDir) : '',
+      configFileName,
+    }),
+    [projectDir, configFileName],
   );
 
   // ── Scroll to top on tab switch ──
@@ -89,10 +98,10 @@ export function ProjectLayout() {
 
   // Save the active tab whenever it changes
   useEffect(() => {
-    if (projectDir && activeTab) {
-      saveLastProjectTab(projectDir, activeTab);
+    if (activeTab) {
+      saveLastTab(activeTab);
     }
-  }, [projectDir, activeTab]);
+  }, [activeTab]);
 
   // 对"缓存与问题"页、人名翻译页、项目字典页：一旦访问过就保持挂载，
   // 避免重复加载，并让页内长任务在切换标签后继续运行。

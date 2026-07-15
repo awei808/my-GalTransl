@@ -395,25 +395,18 @@ export function HomePage({ onOpenProject }: HomePageProps) {
     const config = (lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized).trim() || 'config.yaml';
 
     if (!dir.trim()) return;
-    addProjectToHistory(dir, config);
     onOpenProject(dir, config);
-    const projectId = encodeProjectDir(dir);
-    navigate(`/project/${projectId}/translate`);
   }, [onOpenProject, navigate]);
 
   const handleHistoryClick = useCallback(
     (entry: ProjectHistoryEntry) => {
       onOpenProject(entry.projectDir, entry.configFileName);
-      const projectId = encodeProjectDir(entry.projectDir);
-      navigate(`/project/${projectId}/translate`);
     },
     [onOpenProject, navigate],
   );
 
   const handleJobClick = useCallback((job: Job) => {
     onOpenProject(job.project_dir, job.config_file_name);
-    const projectId = encodeProjectDir(job.project_dir);
-    navigate(`/project/${projectId}/translate`);
   }, [onOpenProject, navigate]);
 
   const handleStopJob = useCallback(async (job: Job, event: React.MouseEvent<HTMLButtonElement>) => {

@@ -297,32 +297,10 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
   const [cacheDir, setCacheDir] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [entries, setEntries] = useState<CacheEntry[]>([]);
-  /** 每个文件的条目缓存（含未保存修改），mount 后指向当前项目桶中的 Map */
+  /** 每个文件的条目缓存（含未保存修改） */
   const entriesMapRef = useRef<Map<string, CacheEntry[]>>(new Map());
   /** 有未保存修改的文件集合 */
   const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
-
-  /**
-   * 按 projectId 分桶保存本页状态，跨项目切换时既不串数据、也不丢 dirty 编辑与选择。
-   * 桶的内容会在 projectId 变化时先 snapshot 旧项目，再恢复或新建新项目的桶。
-   */
-  type ProjectBucket = {
-    cacheFiles: FileEntry[];
-    cacheDir: string;
-    selectedFile: string | null;
-    dirtyFiles: Set<string>;
-    entries: Map<string, CacheEntry[]>;
-    scrollPositions: Map<string, number>;
-    sidebarTab: SidebarTab;
-    searchQuery: string;
-    searchField: CacheSearchField;
-    searchResults: CacheSearchResult[];
-    searchTotal: number;
-    replaceQuery: string;
-    replaceWith: string;
-    replaceField: CacheReplaceField;
-    showReplace: boolean;
-  };
 
   useEffect(() => {
     const handleCacheBrowserFontSizeChange = () => {
@@ -341,8 +319,7 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
     '--cache-font-xs': `${Math.max(9, cacheBrowserFontSize - 2)}px`,
     '--cache-font-xxs': `${Math.max(8, cacheBrowserFontSize - 3)}px`,
   } as CSSProperties;
-  const bucketsRef = useRef<Map<string, ProjectBucket>>(new Map());
-  const lastProjectIdRef = useRef<string>('');
+
   const [loading, setLoading] = useState(true);
   const [refreshingFiles, setRefreshingFiles] = useState(false);
   const [loadingEntries, setLoadingEntries] = useState(false);
@@ -507,97 +484,13 @@ export function ProjectCachePage({ ctx, active = true }: { ctx: ProjectPageConte
     [projectId],
   );
 
-  // 按 projectId 切换状态桶：先 snapshot 旧项目，再恢复或新建新项目的桶。
-  // 该 effect 是本页跨项目状态保留的核心入口。
+  /**
+   * 单项目模式下：projectId 变化时重新加载缓存文件列表。
+   * 不再需要多项目分桶 snapshot/restore 逻辑。
+   */
   useEffect(() => {
     if (!projectId) return;
-    const prev = lastProjectIdRef.current;
-    if (prev && prev !== projectId) {
-      // snapshot 旧项目（此时 state 闭包仍是旧项目的数据，刚好用于写回）
-      const prevBucket: ProjectBucket = bucketsRef.current.get(prev) ?? {
-        cacheFiles: [],
-        cacheDir: '',
-        selectedFile: null,
-        dirtyFiles: new Set(),
-        entries: new Map(),
-        scrollPositions: new Map(),
-        sidebarTab: 'files',
-        searchQuery: '',
-        searchField: 'all',
-        searchResults: [],
-        searchTotal: 0,
-        replaceQuery: '',
-        replaceWith: '',
-        replaceField: 'dst',
-        showReplace: false,
-      };
-      prevBucket.cacheFiles = cacheFiles;
-      prevBucket.cacheDir = cacheDir;
-      prevBucket.selectedFile = selectedFile;
-      prevBucket.dirtyFiles = dirtyFiles;
-      prevBucket.entries = entriesMapRef.current;
-      prevBucket.scrollPositions = scrollPositionsRef.current;
-      prevBucket.sidebarTab = sidebarTab;
-      prevBucket.searchQuery = searchQuery;
-      prevBucket.searchField = searchField;
-      prevBucket.searchResults = searchResults;
-      prevBucket.searchTotal = searchTotal;
-      prevBucket.replaceQuery = replaceQuery;
-      prevBucket.replaceWith = replaceWith;
-      prevBucket.replaceField = replaceField;
-      prevBucket.showReplace = showReplace;
-      bucketsRef.current.set(prev, prevBucket);
-    }
-    lastProjectIdRef.current = projectId;
-
-    const existing = bucketsRef.current.get(projectId);
-    if (existing) {
-      // 恢复：ref 指向桶内共享 Map，state 恢复至桶内快照
-      entriesMapRef.current = existing.entries;
-      scrollPositionsRef.current = existing.scrollPositions;
-      setCacheFiles(existing.cacheFiles);
-      setCacheDir(existing.cacheDir);
-      setSelectedFile(existing.selectedFile);
-      setDirtyFiles(existing.dirtyFiles);
-      setSidebarTab(existing.sidebarTab);
-      setSearchQuery(existing.searchQuery);
-      setSearchField(existing.searchField);
-      setSearchResults(existing.searchResults);
-      setSearchTotal(existing.searchTotal);
-      setSelectedSearchIdx(-1);
-      setReplaceQuery(existing.replaceQuery);
-      setReplaceWith(existing.replaceWith);
-      setReplaceField(existing.replaceField);
-      setShowReplace(existing.showReplace);
-      setReplacePreview(null);
-      setReplacePreviewTotal(0);
-      // 若当前选中文件在缓存 Map 中有值，切换 selectedFile 的 effect 会同步 entries
-      if (!existing.selectedFile) setEntries([]);
-      setLoading(false);
-    } else {
-      // 全新项目：重置 refs 与可见 state，然后拉取文件列表
-      entriesMapRef.current = new Map();
-      scrollPositionsRef.current = new Map();
-      setCacheFiles([]);
-      setCacheDir('');
-      setSelectedFile(null);
-      setDirtyFiles(new Set());
-      setEntries([]);
-      setSidebarTab('files');
-      setSearchQuery('');
-      setSearchField('all');
-      setSearchResults([]);
-      setSearchTotal(0);
-      setSelectedSearchIdx(-1);
-      setReplaceQuery('');
-      setReplaceWith('');
-      setReplaceField('dst');
-      setShowReplace(false);
-      setReplacePreview(null);
-      setReplacePreviewTotal(0);
-      void loadCacheFiles(true);
-    }
-    // 仅在 projectId 变化时运行；state 的 stale closure 正是我们需要快照的"旧值"
+    void loadCacheFiles(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 

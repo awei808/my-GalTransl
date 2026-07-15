@@ -48,7 +48,7 @@ const OUTPUT_FOLDER_NAME = 'gt_output';
 const CACHE_FOLDER_NAME = 'transl_cache';
 const CONTINUOUS_RETRANSL_STORAGE_KEY = 'galtransl-continuous-retransl-by-project';
 
-const HIDDEN_TRANSLATORS = new Set(['rebuilda', 'rebuildr', 'show-plugs', 'dump-name']);
+const HIDDEN_TRANSLATORS = new Set(['show-plugs', 'dump-name']);
 
 // Module-level cache shared across remounts of this page. Switching project tabs
 // unmounts/remounts the component; without this cache the first render would see
@@ -1059,8 +1059,8 @@ export function ProjectTranslatePage({ ctx }: { ctx: ProjectPageContext }) {
                           role="button"
                           tabIndex={0}
                           title="点击跳转到配置编辑-重翻关键字"
-                          onClick={() => navigate(`/project/${projectId}/config?section=retranslKey`)}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/project/${projectId}/config?section=retranslKey`); } }}
+                          onClick={() => navigate('/project/config?section=retranslKey')}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/project/config?section=retranslKey'); } }}
                         >
                           <span className="ptv2-retransl-list__index">{idx + 1}</span>
                           <span className="ptv2-retransl-list__text">{item.key}</span>

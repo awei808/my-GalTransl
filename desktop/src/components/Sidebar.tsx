@@ -1,363 +1,79 @@
-import { useCallback, useEffect, useRef, useState, type TransitionEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { encodeProjectDir, decodeProjectDir, submitJob, fetchJob, fetchProjectRuntime, type ProjectRuntimeResponse } from '../lib/api';
-import { loadLastProjectTab } from '../lib/projectTabMemory';
+import { submitJob, fetchJob } from '../lib/api';
+import { Icon } from './icons';
 import { InlineFeedback } from './page-state/InlineFeedback';
+import { useProjectStore, useUIStore } from '../stores';
 import logoUrl from '../assets/logo.png';
 
-const CONFIG_FILE_KEY = 'galtransl-config-file';
-const LAST_ACTIVE_PROJECT_KEY = 'galtransl-last-active-project';
 const OUTPUT_FOLDER_NAME = 'gt_output';
 
-function loadConfigFileName(projectDir: string): string {
-  try {
-    const map = JSON.parse(localStorage.getItem(CONFIG_FILE_KEY) || '{}');
-    return map[projectDir] || 'config.yaml';
-  } catch {
-    return 'config.yaml';
-  }
-}
-
-function loadLastActiveProject(): string | null {
-  try {
-    return localStorage.getItem(LAST_ACTIVE_PROJECT_KEY);
-  } catch {
-    return null;
-  }
-}
-
 const PROJECT_TABS = [
-  { path: 'translate', label: '翻译工作台', icon: '🌐' },
-  { path: 'cache', label: '缓存与问题', icon: '💾' },
-  { path: 'dictionary', label: '项目字典', icon: '📖' },
-  { path: 'names', label: '人名翻译', icon: '👤' },
-  { path: 'config', label: '配置编辑', icon: '⚙️' },
+  { path: 'translate', label: '翻译工作台', icon: 'globe' },
+  { path: 'cache', label: '缓存与问题', icon: 'database' },
+  { path: 'dictionary', label: '项目字典', icon: 'book' },
+  { path: 'names', label: '人名翻译', icon: 'user' },
+  { path: 'config', label: '配置编辑', icon: 'settings' },
 ];
 
 type SidebarProps = {
-  openProjects: string[];
-  onCloseProject: (projectDir: string) => void;
-  onCloseOtherProjects: (projectDir: string) => void;
-  onCloseAllProjects: () => void;
+  onOpenProject: (projectDir: string, config: string) => void;
+  onCloseProject: () => void;
 };
 
-function buildInitialExpandedProjects(openProjects: string[], pathname: string): Record<string, boolean> {
-  if (openProjects.length === 0) {
-    return {};
-  }
-
-  let expandedProject: string | null = null;
-  const match = pathname.match(/^\/project\/([^/]+)/);
-  if (match) {
-    try {
-      const projectDir = decodeProjectDir(match[1]);
-      if (openProjects.includes(projectDir)) {
-        expandedProject = projectDir;
-      }
-    } catch {
-      expandedProject = null;
-    }
-  }
-
-  const lastActiveProject = loadLastActiveProject();
-  const rememberedProject = lastActiveProject && openProjects.includes(lastActiveProject)
-    ? lastActiveProject
-    : null;
-
-  const target = expandedProject ?? rememberedProject ?? openProjects[0];
-  const result: Record<string, boolean> = {};
-  for (const projectDir of openProjects) {
-    result[projectDir] = projectDir === target;
-  }
-  return result;
-}
-
-export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, onCloseAllProjects }: SidebarProps) {
+export function Sidebar({ onOpenProject: _onOpenProject, onCloseProject }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const projectDir = useProjectStore((s) => s.projectDir);
   const [expanded, setExpanded] = useState(true);
-  // Track which projects are expanded in the sidebar (keyed by projectDir)
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>(() =>
-    buildInitialExpandedProjects(openProjects, location.pathname)
-  );
-  // Keep submenu content mounted long enough for close animations to complete
-  const [renderedProjectChildren, setRenderedProjectChildren] = useState<Record<string, boolean>>({});
-  // Track the visual open/closed state separately so expand animations can start from collapsed
-  const [visibleProjectChildren, setVisibleProjectChildren] = useState<Record<string, boolean>>({});
-  // Track which project is showing the close confirmation bubble
-  const [confirmCloseDir, setConfirmCloseDir] = useState<string | null>(null);
-  // Track which projects are currently rebuilding output
-  const [rebuildingDirs, setRebuildingDirs] = useState<Record<string, boolean>>({});
-  // Track which projects have active translation jobs (running or pending)
-  const [translatingDirs, setTranslatingDirs] = useState<Record<string, boolean>>({});
+  const [rebuilding, setRebuilding] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const [rebuildToast, setRebuildToast] = useState<string | null>(null);
-  // Right-click context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; projectDir: string } | null>(null);
-  const prevOpenProjectsRef = useRef<string[]>(openProjects);
-  const confirmBubbleRef = useRef<HTMLDivElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const expandAnimationFrameRef = useRef<Record<string, number>>({});
 
-  // When a new project is opened, collapse all others and expand the new one
+  // Poll translation status for the current project
   useEffect(() => {
-    const prev = prevOpenProjectsRef.current;
-    // Detect newly added project
-    if (openProjects.length > prev.length) {
-      const newProject = openProjects.find((p) => !prev.includes(p));
-      if (newProject) {
-        setExpandedProjects(() => {
-          const next: Record<string, boolean> = {};
-          for (const key of openProjects) {
-            next[key] = key === newProject;
-          }
-          return next;
-        });
-      }
+    if (!projectDir) {
+      setTranslating(false);
+      return;
     }
-    prevOpenProjectsRef.current = openProjects;
-  }, [openProjects]);
 
-  // When navigating to a project page, auto-expand that project's menu (accordion)
-  useEffect(() => {
-    const match = location.pathname.match(/^\/project\/([^/]+)/);
-    if (match) {
+    let cancelled = false;
+    const pollStatus = async () => {
       try {
-        const projectDir = decodeProjectDir(match[1]);
-        if (openProjects.includes(projectDir)) {
-          setExpandedProjects((prev) => {
-            // Already expanded? No change needed
-            if (prev[projectDir] === true) return prev;
-            // Expand this project, collapse all others
-            const next: Record<string, boolean> = {};
-            for (const key of openProjects) {
-              next[key] = key === projectDir;
-            }
-            return next;
-          });
-        }
+        const response = await fetch(`/api/project-runtime?project_dir=${encodeURIComponent(projectDir)}`);
+        if (!response.ok) return;
+        const runtime = await response.json();
+        const isTranslating = runtime.job !== null &&
+          (runtime.job.status === 'pending' || runtime.job.status === 'running');
+        if (!cancelled) setTranslating(isTranslating);
       } catch {
-        // Invalid project ID in URL, ignore
+        if (!cancelled) setTranslating(false);
       }
-    }
-  }, [location.pathname, openProjects]);
+    };
 
-  // Close confirmation bubble when clicking outside
-  useEffect(() => {
-    if (confirmCloseDir === null) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (confirmBubbleRef.current && !confirmBubbleRef.current.contains(e.target as Node)) {
-        setConfirmCloseDir(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [confirmCloseDir]);
-
-  // Close context menu when clicking outside
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
-        setContextMenu(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setContextMenu(null);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
+    void pollStatus();
+    const poller = window.setInterval(pollStatus, 3000);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
+      cancelled = true;
+      window.clearInterval(poller);
     };
-  }, [contextMenu]);
-
-  const handleProjectContextMenu = useCallback((e: React.MouseEvent, projectDir: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Clamp menu position to viewport
-    const menuWidth = 180;
-    const menuHeight = 120;
-    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8);
-    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 8);
-    setContextMenu({ x, y, projectDir });
-    setConfirmCloseDir(null);
-  }, []);
+  }, [projectDir]);
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev);
   }, []);
 
-  // Use compact project headers when many projects are open
-  const compactProjectHeaders = openProjects.length > 6;
-
-  useEffect(() => {
-    setRenderedProjectChildren((prev) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-
-      for (const projectDir of openProjects) {
-        const isExpanded = projectDir in expandedProjects ? expandedProjects[projectDir] : false;
-        const shouldRender = isExpanded || prev[projectDir] === true;
-        next[projectDir] = shouldRender;
-        if (prev[projectDir] !== shouldRender) {
-          changed = true;
-        }
-      }
-
-      if (!changed && Object.keys(prev).length === openProjects.length) {
-        return prev;
-      }
-
-      return next;
-    });
-  }, [expandedProjects, openProjects]);
-
-  // Poll project runtime status to detect active translation jobs
-  useEffect(() => {
-    const pollTranslationStatus = async () => {
-      const statusMap: Record<string, boolean> = {};
-      await Promise.all(
-        openProjects.map(async (projectDir) => {
-          try {
-            const projectId = encodeProjectDir(projectDir);
-            const runtime: ProjectRuntimeResponse = await fetchProjectRuntime(projectId);
-            const isTranslating = runtime.job !== null &&
-              (runtime.job.status === 'pending' || runtime.job.status === 'running');
-            statusMap[projectDir] = isTranslating;
-          } catch {
-            statusMap[projectDir] = false;
-          }
-        })
-      );
-      setTranslatingDirs(statusMap);
-    };
-
-    void pollTranslationStatus();
-    const poller = window.setInterval(() => {
-      void pollTranslationStatus();
-    }, 3000);
-    return () => window.clearInterval(poller);
-  }, [openProjects]);
-
-  useEffect(() => {
-    for (const frameId of Object.values(expandAnimationFrameRef.current)) {
-      window.cancelAnimationFrame(frameId);
-    }
-    expandAnimationFrameRef.current = {};
-
-    setVisibleProjectChildren((prev) => {
-      const next: Record<string, boolean> = {};
-      let changed = false;
-
-      for (const projectDir of openProjects) {
-        const isRendered = renderedProjectChildren[projectDir] ?? false;
-        const isExpanded = projectDir in expandedProjects ? expandedProjects[projectDir] : false;
-        const wasVisible = prev[projectDir] ?? false;
-
-        if (!isRendered) {
-          next[projectDir] = false;
-          if (wasVisible) {
-            changed = true;
-          }
-          continue;
-        }
-
-        if (!isExpanded) {
-          next[projectDir] = false;
-          if (wasVisible) {
-            changed = true;
-          }
-          continue;
-        }
-
-        if (wasVisible) {
-          next[projectDir] = true;
-          continue;
-        }
-
-        next[projectDir] = false;
-        expandAnimationFrameRef.current[projectDir] = window.requestAnimationFrame(() => {
-          setVisibleProjectChildren((current) => {
-            if (current[projectDir]) {
-              return current;
-            }
-
-            return {
-              ...current,
-              [projectDir]: true,
-            };
-          });
-          delete expandAnimationFrameRef.current[projectDir];
-        });
-
-        if (wasVisible !== next[projectDir]) {
-          changed = true;
-        }
-      }
-
-      if (!changed && Object.keys(prev).length === openProjects.length) {
-        return prev;
-      }
-
-      return next;
-    });
-
-    return () => {
-      for (const frameId of Object.values(expandAnimationFrameRef.current)) {
-        window.cancelAnimationFrame(frameId);
-      }
-      expandAnimationFrameRef.current = {};
-    };
-  }, [expandedProjects, openProjects, renderedProjectChildren]);
-
-  const toggleProjectExpanded = useCallback((projectDir: string) => {
-    setExpandedProjects((prev) => {
-      const isCurrentlyExpanded = prev[projectDir] ?? false;
-      if (isCurrentlyExpanded) {
-        // Collapsing: just collapse this one
-        return {
-          ...prev,
-          [projectDir]: false,
-        };
-      } else {
-        // Expanding: collapse all others, expand this one (accordion)
-        const next: Record<string, boolean> = {};
-        for (const key of openProjects) {
-          next[key] = key === projectDir;
-        }
-        // Navigate to the project's last visited page
-        const projectId = encodeProjectDir(projectDir);
-        navigate(`/project/${projectId}/${loadLastProjectTab(projectDir)}`);
-        return next;
-      }
-    });
-  }, [openProjects, navigate]);
-
-  const handleRequestClose = useCallback((projectDir: string) => {
-    setConfirmCloseDir(projectDir);
-  }, []);
-
-  const handleConfirmClose = useCallback((projectDir: string) => {
-    setConfirmCloseDir(null);
-    onCloseProject(projectDir);
-  }, [onCloseProject]);
-
-  const handleCancelClose = useCallback(() => {
-    setConfirmCloseDir(null);
-  }, []);
-
-  const handleRebuildOutput = useCallback(async (projectDir: string) => {
-    const configFileName = loadConfigFileName(projectDir);
-    setRebuildingDirs((prev) => ({ ...prev, [projectDir]: true }));
+  const handleRebuildOutput = useCallback(async () => {
+    if (!projectDir || rebuilding || translating) return;
+    const configFileName = useProjectStore.getState().configFileName;
+    setRebuilding(true);
     try {
       const job = await submitJob({
         project_dir: projectDir,
         config_file_name: configFileName,
         translator: 'rebuilda',
       });
-      // Poll until job completes
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         const status = await fetchJob(job.job_id);
@@ -376,43 +92,29 @@ export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, on
     } catch (err) {
       setRebuildToast(`输出文件重建出错: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setRebuildingDirs((prev) => ({ ...prev, [projectDir]: false }));
+      setRebuilding(false);
     }
-  }, []);
+  }, [projectDir, rebuilding, translating]);
 
-  // When a new project is opened, collapse all others and expand the new one
-  // We detect this by checking if a project in openProjects doesn't have an expanded state yet
-  const getProjectExpanded = useCallback((projectDir: string) => {
-    // Default to collapsed if not yet set
-    if (!(projectDir in expandedProjects)) {
-      return false;
+  const handleCloseProject = useCallback(async () => {
+    if (!projectDir) return;
+    const confirmed = await useUIStore.getState().confirm({
+      title: '关闭项目',
+      message: '确定要关闭当前项目吗？未保存的更改将丢失。',
+      confirmText: '关闭',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (confirmed) {
+      onCloseProject();
     }
-    return expandedProjects[projectDir];
-  }, [expandedProjects]);
+  }, [projectDir, onCloseProject]);
 
-  const handleProjectChildrenTransitionEnd = useCallback(
-    (projectDir: string, event: TransitionEvent<HTMLDivElement>) => {
-      if (event.target !== event.currentTarget || event.propertyName !== 'max-height') {
-        return;
-      }
+  const projectName = projectDir
+    ? projectDir.replace(/[/\\]/g, '/').split('/').filter(Boolean).pop() || projectDir
+    : '';
 
-      if (getProjectExpanded(projectDir)) {
-        return;
-      }
-
-      setRenderedProjectChildren((prev) => {
-        if (!prev[projectDir]) {
-          return prev;
-        }
-
-        return {
-          ...prev,
-          [projectDir]: false,
-        };
-      });
-    },
-    [getProjectExpanded]
-  );
+  const isProjectActive = location.pathname.startsWith('/project');
 
   return (
     <aside className={`sidebar ${expanded ? 'sidebar--expanded' : 'sidebar--collapsed'}`}>
@@ -430,154 +132,126 @@ export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, on
           }
           title="首页"
         >
-          <span className="sidebar__nav-icon">🏠</span>
+          <span className="sidebar__nav-icon">
+            <Icon name="home" size={20} />
+          </span>
           {expanded && <span className="sidebar__nav-label">首页</span>}
         </NavLink>
       </div>
 
-      <nav className="sidebar__nav">
-        {openProjects.map((projectDir) => {
-          const projectName = projectDir.replace(/[/\\\\]/g, '/').split('/').filter(Boolean).pop() || projectDir;
-          const projectId = encodeProjectDir(projectDir);
-          const isProjectExpanded = getProjectExpanded(projectDir);
-          const shouldRenderProjectChildren = renderedProjectChildren[projectDir] ?? isProjectExpanded;
-          const isProjectChildrenVisible = visibleProjectChildren[projectDir] ?? isProjectExpanded;
-          const isConfirming = confirmCloseDir === projectDir;
-
-          return (
-            <div className={`sidebar__project-group${compactProjectHeaders ? ' sidebar__project-group--compact' : ''}`} key={projectDir}>
-              {expanded ? (
-                <>
+      {projectDir && (
+        <nav className="sidebar__nav">
+          <div className="sidebar__project-group">
+            {expanded ? (
+              <>
+                <div className="sidebar__project-header" title={projectDir}>
+                  <span
+                    className="sidebar__nav-icon sidebar__project-icon sidebar__project-icon--link"
+                    role="button"
+                    tabIndex={0}
+                    title="打开项目文件夹"
+                    onClick={(e) => { e.stopPropagation(); void invoke('open_folder', { path: projectDir }); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); void invoke('open_folder', { path: projectDir }); } }}
+                  >
+                    <Icon name="folder-open" size={20} />
+                  </span>
+                  <span className="sidebar__project-name">{projectName}</span>
                   <button
-                    className={`sidebar__project-header${compactProjectHeaders ? ' sidebar__project-header--compact' : ''}`}
-                    title={projectDir}
+                    className="sidebar__project-close"
                     type="button"
-                    onClick={() => toggleProjectExpanded(projectDir)}
-                    onContextMenu={(e) => handleProjectContextMenu(e, projectDir)}
+                    onClick={handleCloseProject}
+                    title="关闭项目"
                   >
-                    <span
-                      className={`sidebar__nav-icon sidebar__project-icon sidebar__project-icon--link${isProjectExpanded ? ' sidebar__project-icon--open' : ''}${compactProjectHeaders ? ' sidebar__project-icon--compact' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      title="打开项目文件夹"
-                      onClick={(e) => { e.stopPropagation(); void invoke('open_folder', { path: projectDir }); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); void invoke('open_folder', { path: projectDir }); } }}
-                    >
-                      {isProjectExpanded ? '📂' : '📁'}
-                    </span>
-                    <span className="sidebar__project-name">{projectName}</span>
-                    <button
-                      className="sidebar__project-close"
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); handleRequestClose(projectDir); }}
-                      title="关闭项目"
-                    >
-                      ✕
-                    </button>
-                    {isConfirming && (
-                      <div
-                        className="sidebar__project-confirm-bubble"
-                        ref={confirmBubbleRef}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <span className="sidebar__project-confirm-text">关闭?</span>
-                        <button
-                          className="sidebar__project-confirm-yes"
-                          type="button"
-                          onClick={() => handleConfirmClose(projectDir)}
-                        >
-                          确定
-                        </button>
-                        <button
-                          className="sidebar__project-confirm-no"
-                          type="button"
-                          onClick={handleCancelClose}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    )}
+                    <Icon name="x" size={16} />
                   </button>
-                  {shouldRenderProjectChildren && (
-                    <div
-                      className={`sidebar__project-children ${isProjectChildrenVisible ? 'sidebar__project-children--expanded' : 'sidebar__project-children--collapsed'}`}
-                      aria-hidden={!isProjectChildrenVisible}
-                      onTransitionEnd={(event) => handleProjectChildrenTransitionEnd(projectDir, event)}
-                    >
-                      {PROJECT_TABS.map((tab) => (
-                        <NavLink
-                          key={tab.path}
-                          to={`/project/${projectId}/${tab.path}`}
-                          className={({ isActive }) =>
-                            `sidebar__project-child ${isActive ? 'sidebar__project-child--active' : ''}`
-                          }
-                        >
-                          <span className="sidebar__project-child-icon">{tab.icon}</span>
-                          <span className="sidebar__project-child-label">{tab.label}</span>
-                        </NavLink>
-                      ))}
-                      <div className="sidebar__project-child-separator" />
-                      <NavLink
-                        to="."
-                        onClick={(e) => { e.preventDefault(); if (!rebuildingDirs[projectDir] && !translatingDirs[projectDir]) void handleRebuildOutput(projectDir); }}
-                        className={() => `sidebar__project-child sidebar__project-child--action${translatingDirs[projectDir] ? ' sidebar__project-child--disabled' : ''}`}
-                        title={translatingDirs[projectDir] ? '项目正在翻译中，无法构建输出' : '重建输出文件并打开文件夹'}
-                        style={(rebuildingDirs[projectDir] || translatingDirs[projectDir]) ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
-                      >
-                        <span className="sidebar__project-child-icon">{rebuildingDirs[projectDir] ? '⏳' : translatingDirs[projectDir] ? '🚫' : '📤'}</span>
-                        <span className="sidebar__project-child-label">构建输出</span>
-                      </NavLink>
-                    </div>
-                  )}
-                </>
-              ) : isProjectExpanded ? (
-                <>
-                  <NavLink
-                    to={`/project/${projectId}/${loadLastProjectTab(projectDir)}`}
-                    className={({ isActive }) =>
-                      `sidebar__nav-item ${isActive ? 'sidebar__nav-item--active' : ''}`
-                    }
-                    title={projectName}
-                  >
-                    <span className="sidebar__nav-icon">📁</span>
-                  </NavLink>
+                </div>
+                <div className="sidebar__project-children sidebar__project-children--expanded">
                   {PROJECT_TABS.map((tab) => (
                     <NavLink
                       key={tab.path}
-                      to={`/project/${projectId}/${tab.path}`}
+                      to={`/project/${tab.path}`}
                       className={({ isActive }) =>
-                        `sidebar__nav-item sidebar__nav-item--sub ${isActive ? 'sidebar__nav-item--active' : ''}`
+                        `sidebar__project-child ${isActive ? 'sidebar__project-child--active' : ''}`
                       }
-                      title={tab.label}
                     >
-                      <span className="sidebar__nav-icon">{tab.icon}</span>
+                      <span className="sidebar__project-child-icon">
+                        <Icon name={tab.icon} size={18} />
+                      </span>
+                      <span className="sidebar__project-child-label">{tab.label}</span>
                     </NavLink>
                   ))}
-                  <NavLink
-                    to="."
-                    onClick={(e) => { e.preventDefault(); if (!rebuildingDirs[projectDir] && !translatingDirs[projectDir]) void handleRebuildOutput(projectDir); }}
-                    className={() => `sidebar__nav-item sidebar__nav-item--sub${translatingDirs[projectDir] ? ' sidebar__nav-item--disabled' : ''}`}
-                    title={translatingDirs[projectDir] ? '项目正在翻译中' : '构建输出'}
-                    style={(rebuildingDirs[projectDir] || translatingDirs[projectDir]) ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
+                  <div className="sidebar__project-child-separator" />
+                  <button
+                    type="button"
+                    className={`sidebar__project-child sidebar__project-child--action${translating ? ' sidebar__project-child--disabled' : ''}`}
+                    onClick={(e) => { e.preventDefault(); if (!rebuilding && !translating) void handleRebuildOutput(); }}
+                    title={translating ? '项目正在翻译中，无法构建输出' : '重建输出文件并打开文件夹'}
+                    disabled={rebuilding || translating}
+                    style={(rebuilding || translating) ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
                   >
-                    <span className="sidebar__nav-icon">{rebuildingDirs[projectDir] ? '⏳' : translatingDirs[projectDir] ? '🚫' : '📤'}</span>
-                  </NavLink>
-                </>
-              ) : (
+                    <span className="sidebar__project-child-icon">
+                      <Icon name={rebuilding ? 'loader' : translating ? 'ban' : 'upload'} size={18} />
+                    </span>
+                    <span className="sidebar__project-child-label">构建输出</span>
+                  </button>
+                </div>
+              </>
+            ) : isProjectActive ? (
+              <>
                 <NavLink
-                  to={`/project/${projectId}/${loadLastProjectTab(projectDir)}`}
+                  to="/project/translate"
                   className={({ isActive }) =>
                     `sidebar__nav-item ${isActive ? 'sidebar__nav-item--active' : ''}`
                   }
                   title={projectName}
                 >
-                  <span className="sidebar__nav-icon">📁</span>
+                  <span className="sidebar__nav-icon">
+                    <Icon name="folder" size={20} />
+                  </span>
                 </NavLink>
-              )}
-            </div>
-          );
-        })}
-      </nav>
+                {PROJECT_TABS.map((tab) => (
+                  <NavLink
+                    key={tab.path}
+                    to={`/project/${tab.path}`}
+                    className={({ isActive }) =>
+                      `sidebar__nav-item sidebar__nav-item--sub ${isActive ? 'sidebar__nav-item--active' : ''}`
+                    }
+                    title={tab.label}
+                  >
+                    <span className="sidebar__nav-icon">
+                      <Icon name={tab.icon} size={20} />
+                    </span>
+                  </NavLink>
+                ))}
+                <button
+                  type="button"
+                  className={`sidebar__nav-item sidebar__nav-item--sub${translating ? ' sidebar__nav-item--disabled' : ''}`}
+                  onClick={(e) => { e.preventDefault(); if (!rebuilding && !translating) void handleRebuildOutput(); }}
+                  title={translating ? '项目正在翻译中' : '构建输出'}
+                  disabled={rebuilding || translating}
+                  style={(rebuilding || translating) ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
+                >
+                  <span className="sidebar__nav-icon">
+                    <Icon name={rebuilding ? 'loader' : translating ? 'ban' : 'upload'} size={20} />
+                  </span>
+                </button>
+              </>
+            ) : (
+              <NavLink
+                to="/project/translate"
+                className={({ isActive }) =>
+                  `sidebar__nav-item ${isActive ? 'sidebar__nav-item--active' : ''}`
+                }
+                title={projectName}
+              >
+                <span className="sidebar__nav-icon">
+                  <Icon name="folder" size={20} />
+                </span>
+              </NavLink>
+            )}
+          </div>
+        </nav>
+      )}
 
       <nav className="sidebar__bottom-nav">
         <NavLink
@@ -587,7 +261,9 @@ export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, on
           }
           title="翻译后端配置"
         >
-          <span className="sidebar__nav-icon">🤖</span>
+          <span className="sidebar__nav-icon">
+            <Icon name="cpu" size={20} />
+          </span>
           {expanded && <span className="sidebar__nav-label">翻译后端配置</span>}
         </NavLink>
 
@@ -598,7 +274,9 @@ export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, on
           }
           title="通用字典管理"
         >
-          <span className="sidebar__nav-icon">📚</span>
+          <span className="sidebar__nav-icon">
+            <Icon name="library" size={20} />
+          </span>
           {expanded && <span className="sidebar__nav-label">通用字典管理</span>}
         </NavLink>
 
@@ -609,7 +287,9 @@ export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, on
           }
           title="设置"
         >
-          <span className="sidebar__nav-icon">⚙️</span>
+          <span className="sidebar__nav-icon">
+            <Icon name="settings" size={20} />
+          </span>
           {expanded && <span className="sidebar__nav-label">设置</span>}
         </NavLink>
       </nav>
@@ -622,52 +302,11 @@ export function Sidebar({ openProjects, onCloseProject, onCloseOtherProjects, on
           title={expanded ? '收起侧边栏' : '展开侧边栏'}
         >
           <span className={`sidebar__toggle-icon ${expanded ? 'sidebar__toggle-icon--flip' : ''}`}>
-            ▶
+            <Icon name={expanded ? 'chevron-left' : 'chevron-right'} size={18} />
           </span>
           {expanded && <span className="sidebar__toggle-label">收起</span>}
         </button>
       </div>
-
-      {contextMenu && (
-        <div
-          className="sidebar__context-menu"
-          ref={contextMenuRef}
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            className="sidebar__context-menu-item"
-            type="button"
-            onClick={() => {
-              handleRequestClose(contextMenu.projectDir);
-              setContextMenu(null);
-            }}
-          >
-            关闭项目
-          </button>
-          <button
-            className="sidebar__context-menu-item"
-            type="button"
-            disabled={openProjects.length <= 1}
-            onClick={() => {
-              onCloseOtherProjects(contextMenu.projectDir);
-              setContextMenu(null);
-            }}
-          >
-            关闭其他项目
-          </button>
-          <button
-            className="sidebar__context-menu-item sidebar__context-menu-item--danger"
-            type="button"
-            disabled={openProjects.length === 0}
-            onClick={() => {
-              onCloseAllProjects();
-              setContextMenu(null);
-            }}
-          >
-            关闭所有项目
-          </button>
-        </div>
-      )}
 
       {rebuildToast ? (
         <div className="sidebar__toast-host" aria-live="assertive">

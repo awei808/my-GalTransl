@@ -1,17 +1,17 @@
-import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import {
   CUSTOM_BACKGROUND_CHANGE_EVENT,
   THEME_MODE_CHANGE_EVENT,
   type CustomBackgroundPreference,
-  decodeProjectDir,
-  encodeProjectDir,
   getCustomBackgroundPreference,
   getThemeModePreference,
 } from '../lib/api';
 import { Sidebar } from '../components/Sidebar';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ConnectionProvider } from '../features/connection/ConnectionContext';
 import { HomePage, addProjectToHistory } from '../pages/HomePage';
+import { useProjectStore } from '../stores';
 
 const ProjectLayout = lazy(async () => {
   const mod = await import('../components/ProjectLayout');
@@ -43,68 +43,11 @@ const NewProjectWizard = lazy(async () => {
   return { default: mod.NewProjectWizard };
 });
 
-const CONFIG_FILE_KEY = 'galtransl-config-file';
-const OPEN_PROJECTS_KEY = 'galtransl-open-projects';
-const LAST_ACTIVE_PROJECT_KEY = 'galtransl-last-active-project';
-
-function saveConfigFileName(projectDir: string, configFileName: string) {
-  try {
-    const map = JSON.parse(localStorage.getItem(CONFIG_FILE_KEY) || '{}');
-    map[projectDir] = configFileName;
-    localStorage.setItem(CONFIG_FILE_KEY, JSON.stringify(map));
-  } catch {
-    // ignore storage errors
-  }
-}
-
 function RouteLoadingFallback() {
   return <div className="inline-feedback">页面加载中…</div>;
 }
 
-function loadOpenProjects(): string[] {
-  try {
-    const raw = localStorage.getItem(OPEN_PROJECTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveOpenProjects(projects: string[]) {
-  try {
-    localStorage.setItem(OPEN_PROJECTS_KEY, JSON.stringify(projects));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function loadLastActiveProject(): string | null {
-  try {
-    return localStorage.getItem(LAST_ACTIVE_PROJECT_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function saveLastActiveProject(projectDir: string) {
-  try {
-    localStorage.setItem(LAST_ACTIVE_PROJECT_KEY, projectDir);
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function clearLastActiveProject() {
-  try {
-    localStorage.removeItem(LAST_ACTIVE_PROJECT_KEY);
-  } catch {
-    // ignore storage errors
-  }
-}
-
 export function App() {
-  const [openProjects, setOpenProjects] = useState<string[]>(() => loadOpenProjects());
-
   useEffect(() => {
     const root = document.documentElement;
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -136,57 +79,17 @@ export function App() {
     };
   }, []);
 
-  // Persist open projects to localStorage whenever the list changes
-  useEffect(() => {
-    saveOpenProjects(openProjects);
-  }, [openProjects]);
-
-  const handleOpenProject = useCallback((projectDir: string, config: string) => {
-    const cfg = config || 'config.yaml';
-    setOpenProjects((prev) => {
-      if (prev.includes(projectDir)) return prev;
-      return [projectDir, ...prev];
-    });
-    saveConfigFileName(projectDir, cfg);
-    addProjectToHistory(projectDir, cfg);
-  }, []);
-
-  const handleCloseProject = useCallback((projectDir: string) => {
-    setOpenProjects((prev) => prev.filter((d) => d !== projectDir));
-  }, []);
-
-  const handleCloseOtherProjects = useCallback((keepProjectDir: string) => {
-    setOpenProjects((prev) => prev.filter((d) => d === keepProjectDir));
-  }, []);
-
-  const handleCloseAllProjects = useCallback(() => {
-    setOpenProjects([]);
-  }, []);
-
   return (
     <HashRouter>
       <ConnectionProvider>
-        <AppInner
-          openProjects={openProjects}
-          onOpenProject={handleOpenProject}
-          onCloseProject={handleCloseProject}
-          onCloseOtherProjects={handleCloseOtherProjects}
-          onCloseAllProjects={handleCloseAllProjects}
-        />
+        <AppInner />
+        <ConfirmDialog />
       </ConnectionProvider>
     </HashRouter>
   );
 }
 
-type AppInnerProps = {
-  openProjects: string[];
-  onOpenProject: (projectDir: string, config: string) => void;
-  onCloseProject: (projectDir: string) => void;
-  onCloseOtherProjects: (keepProjectDir: string) => void;
-  onCloseAllProjects: () => void;
-};
-
-function AppInner({ openProjects, onOpenProject, onCloseProject, onCloseOtherProjects, onCloseAllProjects }: AppInnerProps) {
+function AppInner() {
   const navigate = useNavigate();
   const location = useLocation();
   const contentRef = useRef<HTMLElement | null>(null);
@@ -194,33 +97,17 @@ function AppInner({ openProjects, onOpenProject, onCloseProject, onCloseOtherPro
   const [transitionStage, setTransitionStage] = useState<'fadeIn' | 'fadeOut'>('fadeIn');
   const [customBackground, setCustomBackground] = useState<CustomBackgroundPreference>(() => getCustomBackgroundPreference());
 
-  useEffect(() => {
-    const projectMatch = location.pathname.match(/^\/project\/([^/]+)/);
-    if (projectMatch) {
-      try {
-        const projectDir = decodeProjectDir(projectMatch[1]);
-        saveLastActiveProject(projectDir);
-      } catch {
-        // ignore invalid project id in URL
-      }
-    }
-  }, [location.pathname]);
+  const handleOpenProject = (projectDir: string, config: string) => {
+    const cfg = config || 'config.yaml';
+    useProjectStore.getState().openProject(projectDir, cfg);
+    addProjectToHistory(projectDir, cfg);
+    navigate('/project/translate');
+  };
 
-  useEffect(() => {
-    const lastActiveProject = loadLastActiveProject();
-    if (!lastActiveProject) {
-      return;
-    }
-
-    if (openProjects.length === 0) {
-      clearLastActiveProject();
-      return;
-    }
-
-    if (!openProjects.includes(lastActiveProject)) {
-      saveLastActiveProject(openProjects[0]);
-    }
-  }, [openProjects]);
+  const handleCloseProject = () => {
+    useProjectStore.getState().closeProject();
+    navigate('/');
+  };
 
   useEffect(() => {
     const handleCustomBackgroundChange = () => {
@@ -241,7 +128,6 @@ function AppInner({ openProjects, onOpenProject, onCloseProject, onCloseOtherPro
   useEffect(() => {
     if (location.pathname !== displayLocation.pathname) {
       setTransitionStage('fadeOut');
-      // The fadeOut animation is 150 ms; give a generous margin before forcing.
       if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
       transitionTimerRef.current = setTimeout(() => {
         setDisplayLocation(location);
@@ -271,33 +157,6 @@ function AppInner({ openProjects, onOpenProject, onCloseProject, onCloseOtherPro
     }
   };
 
-  const handleCloseProjectAndNavigate = useCallback((projectDir: string) => {
-    onCloseProject(projectDir);
-    // Navigate to home if this was the current project, or if no projects remain
-    const projectMatch = location.pathname.match(/^\/project\/([^/]+)/);
-    const isCurrentProject = projectMatch && decodeProjectDir(projectMatch[1]) === projectDir;
-    const willHaveNoProjects = openProjects.length <= 1;
-    if (isCurrentProject || willHaveNoProjects) {
-      navigate('/');
-    }
-  }, [navigate, onCloseProject, location.pathname, openProjects]);
-
-  const handleCloseOtherProjectsAndNavigate = useCallback((keepProjectDir: string) => {
-    onCloseOtherProjects(keepProjectDir);
-    // Navigate to home if the current project is not the one being kept
-    const projectMatch = location.pathname.match(/^\/project\/([^/]+)/);
-    const isCurrentKept = projectMatch && decodeProjectDir(projectMatch[1]) === keepProjectDir;
-    if (!isCurrentKept) {
-      const projectId = encodeProjectDir(keepProjectDir);
-      navigate(`/project/${projectId}/translate`);
-    }
-  }, [navigate, onCloseOtherProjects, location.pathname]);
-
-  const handleCloseAllProjectsAndNavigate = useCallback(() => {
-    onCloseAllProjects();
-    navigate('/');
-  }, [navigate, onCloseAllProjects]);
-
   const surfaceOpacity = customBackground.surfaceOpacity / 100;
   const softSurfaceOpacity = Math.max(0.1, surfaceOpacity - 0.14);
   const appLayoutStyle = {
@@ -317,70 +176,65 @@ function AppInner({ openProjects, onOpenProject, onCloseProject, onCloseOtherPro
           opacity: customBackground.opacity / 100,
         }}
       />
-      <Sidebar
-        openProjects={openProjects}
-        onCloseProject={handleCloseProjectAndNavigate}
-        onCloseOtherProjects={handleCloseOtherProjectsAndNavigate}
-        onCloseAllProjects={handleCloseAllProjectsAndNavigate}
-      />
+      <Sidebar onOpenProject={handleOpenProject} onCloseProject={handleCloseProject} />
       <main
         ref={contentRef}
         className={`app-layout__content page-transition-${transitionStage}`}
         onAnimationEnd={handleTransitionEnd}
       >
         <Routes location={displayLocation}>
-              <Route
-                path="/"
-                element={<HomePage onOpenProject={onOpenProject} />}
-              />
-              <Route
-                path="/backend-profiles"
-                element={(
-                  <Suspense fallback={<RouteLoadingFallback />}>
-                    <BackendProfilesPage />
-                  </Suspense>
-                )}
-              />
-              <Route
-                path="/common-dictionaries"
-                element={(
-                  <Suspense fallback={<RouteLoadingFallback />}>
-                    <CommonDictionaryPage />
-                  </Suspense>
-                )}
-              />
-              <Route
-                path="/settings"
-                element={(
-                  <Suspense fallback={<RouteLoadingFallback />}>
-                    <SettingsPage />
-                  </Suspense>
-                )}
-              />
-              <Route
-                path="/settings/prompt-templates"
-                element={(
-                  <Suspense fallback={<RouteLoadingFallback />}>
-                    <PromptTemplatesPage />
-                  </Suspense>
-                )}
-              />
-              <Route
-                path="/new-project"
-                element={(
-                  <Suspense fallback={<RouteLoadingFallback />}>
-                    <NewProjectWizard onOpenProject={onOpenProject} />
-                  </Suspense>
-                )}
-              />
-              <Route
-                path="/project/:projectId/*"
-                element={(
-                  <Suspense fallback={<RouteLoadingFallback />}>
-                    <ProjectLayout />
-                  </Suspense>
-                )}
-              />
+          <Route
+            path="/"
+            element={<HomePage onOpenProject={handleOpenProject} />}
+          />
+          <Route
+            path="/backend-profiles"
+            element={(
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <BackendProfilesPage />
+              </Suspense>
+            )}
+          />
+          <Route
+            path="/common-dictionaries"
+            element={(
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <CommonDictionaryPage />
+              </Suspense>
+            )}
+          />
+          <Route
+            path="/settings"
+            element={(
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <SettingsPage />
+              </Suspense>
+            )}
+          />
+          <Route
+            path="/settings/prompt-templates"
+            element={(
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <PromptTemplatesPage />
+              </Suspense>
+            )}
+          />
+          <Route
+            path="/new-project"
+            element={(
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <NewProjectWizard onOpenProject={handleOpenProject} />
+              </Suspense>
+            )}
+          />
+          <Route
+            path="/project/*"
+            element={(
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <ProjectLayout />
+              </Suspense>
+            )}
+          />
         </Routes>
       </main>
     </div>

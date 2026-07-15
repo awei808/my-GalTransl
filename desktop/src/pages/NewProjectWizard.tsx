@@ -395,10 +395,7 @@ export function NewProjectWizard({ onOpenProject }: NewProjectWizardProps) {
   const handleFinish = useCallback(() => {
     if (!projectDir) return;
     onOpenProject(projectDir, 'config.yaml');
-    addProjectToHistory(projectDir, 'config.yaml');
-    const projectId = encodeProjectDir(projectDir);
-    navigate(`/project/${projectId}/translate`);
-  }, [projectDir, navigate, onOpenProject]);
+  }, [projectDir, onOpenProject]);
 
   const canNext = useMemo(() => {
     if (currentStep === 0) return projectCreated;
