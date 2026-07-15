@@ -20,15 +20,21 @@ export function unescapeControlChars(text: string): string {
 /* ── Text highlight helper ── */
 export function HighlightText({ text, query }: { text: string; query: string }) {
   if (!query) return <>{text}</>;
-  const idx = text.toLowerCase().indexOf(query.toLowerCase());
-  if (idx === -1) return <>{text}</>;
-  return (
-    <>
-      {text.slice(0, idx)}
-      <mark>{text.slice(idx, idx + query.length)}</mark>
-      {text.slice(idx + query.length)}
-    </>
-  );
+  const lower = text.toLowerCase();
+  const qLower = query.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let searchFrom = 0;
+  while (searchFrom < lower.length) {
+    const found = lower.indexOf(qLower, searchFrom);
+    if (found === -1) break;
+    if (found > lastIdx) parts.push(text.slice(lastIdx, found));
+    parts.push(<mark key={found} className="search-highlight">{text.slice(found, found + query.length)}</mark>);
+    lastIdx = found + query.length;
+    searchFrom = lastIdx;
+  }
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
+  return <>{parts}</>;
 }
 
 /* ── Cache entry card ── */

@@ -99,7 +99,7 @@ export function TranslateTabsPanel({
                     ))}
                   </ul>
                 ) : (
-                  <EmptyState title="暂无重翻词条" />
+                  <EmptyState title="暂无重翻词条" description="在项目配置「重翻关键字」中添加后，启动翻译时命中的句子会被重新翻译。" />
                 )}
               </div>
             )}
