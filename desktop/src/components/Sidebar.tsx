@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { submitJob, fetchJob } from '../lib/api';
+import { submitJob, fetchJob, fetchProjectRuntime, encodeProjectDir } from '../lib/api';
 import { Icon } from './icons';
 import { InlineFeedback } from './page-state/InlineFeedback';
 import { useProjectStore, useUIStore } from '../stores';
@@ -18,11 +18,10 @@ const PROJECT_TABS = [
 ];
 
 type SidebarProps = {
-  onOpenProject: (projectDir: string, config: string) => void;
   onCloseProject: () => void;
 };
 
-export function Sidebar({ onOpenProject: _onOpenProject, onCloseProject }: SidebarProps) {
+export function Sidebar({ onCloseProject }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const projectDir = useProjectStore((s) => s.projectDir);
@@ -41,9 +40,7 @@ export function Sidebar({ onOpenProject: _onOpenProject, onCloseProject }: Sideb
     let cancelled = false;
     const pollStatus = async () => {
       try {
-        const response = await fetch(`/api/project-runtime?project_dir=${encodeURIComponent(projectDir)}`);
-        if (!response.ok) return;
-        const runtime = await response.json();
+        const runtime = await fetchProjectRuntime(encodeProjectDir(projectDir));
         const isTranslating = runtime.job !== null &&
           (runtime.job.status === 'pending' || runtime.job.status === 'running');
         if (!cancelled) setTranslating(isTranslating);

@@ -176,7 +176,7 @@ function AppInner() {
           opacity: customBackground.opacity / 100,
         }}
       />
-      <Sidebar onOpenProject={handleOpenProject} onCloseProject={handleCloseProject} />
+      <Sidebar onCloseProject={handleCloseProject} />
       <main
         ref={contentRef}
         className={`app-layout__content page-transition-${transitionStage}`}

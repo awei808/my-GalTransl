@@ -68,6 +68,15 @@ export function ProjectLayout() {
   const projectDir = useProjectStore((s) => s.projectDir);
   const configFileName = useProjectStore((s) => s.configFileName);
 
+  // Redirect to home if no project is open
+  useEffect(() => {
+    if (!projectDir) {
+      navigate('/', { replace: true });
+    }
+  }, [projectDir, navigate]);
+
+  if (!projectDir) return null;
+
   // Extract current tab from URL: /project/cache → "cache"
   const segments = location.pathname.split('/');
   const currentTab = segments[2] || 'translate';
