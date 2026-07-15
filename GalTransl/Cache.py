@@ -21,6 +21,25 @@ _CACHE_KEY_COMPAT = {
     "post_dst_preview": "post_zh_preview",
 }
 
+# 缓存字段中文说明（写入完整快照时作为数组首项，方便用户阅读修改）
+_CACHE_FIELD_GUIDE = {
+    "_field_guide": True,
+    "_说明": "以下为翻译缓存条目，每个 JSON 对象对应一句原文的翻译结果。字段含义：",
+    "index": "序号 — 该句在文件中的位置编号",
+    "name": "说话人 — 该句的说话角色（空表示旁白/独白）",
+    "pre_src": "原文 — 未经任何处理的原始日文文本",
+    "post_src": "预处理后原文 — 经对话符号剥离、译前字典替换后的文本（实际发送给 AI 的原文）",
+    "pre_dst": "译文 — AI 返回的原始翻译结果",
+    "proofread_dst": "校对后译文 — 启用校对时，经二次校对后的翻译（空表示未校对）",
+    "trans_by": "翻译引擎 — 执行本次翻译的 AI 模型名称",
+    "proofread_by": "校对引擎 — 执行校对的 AI 模型名称",
+    "problem": "问题 — 自动检测到的翻译问题（如 残留日文、丢换行 等），空表示无问题",
+    "trans_conf": "翻译置信度 — AI 对翻译结果的置信度评分（0~1，部分模型不支持则为 0）",
+    "doub_content": "疑问内容 — AI 对翻译中存在疑问的部分",
+    "unknown_proper_noun": "未知专有名词 — AI 无法确定的专有名词",
+    "post_dst_preview": "后处理后译文 — 经译后字典替换、对话符号恢复后的最终输出预览",
+}
+
 def _cache_get(cache_obj: dict, key: str, default: Any = None) -> Any:
     """从缓存对象中读取值，优先使用新key名，回退到旧key名（兼容旧缓存）"""
     if key in cache_obj:
@@ -151,6 +170,8 @@ def _build_cache_obj(tran: CSentense, post_save: bool = False) -> Optional[dict]
 
 
 def _build_cache_dict_from_snapshot(cache_list: list) -> tuple[dict, list[str]]:
+    # 跳过 _field_guide 说明对象（仅用于用户阅读，不参与缓存匹配）
+    cache_list = [c for c in cache_list if not c.get("_field_guide")]
     cache_dict = {}
     cache_order: list[str] = []
     for i, cache in enumerate(cache_list):
@@ -268,6 +289,8 @@ async def save_transCache_to_json(trans_list: CTransList, cache_file_path: str, 
     try:
         if post_save:
             # 翻译完成后做一次完整快照，并清理append日志
+            # 在数组首项插入字段说明，方便用户阅读和手动修改缓存
+            cache_json.insert(0, _CACHE_FIELD_GUIDE)
             async with aiofiles.open(temp_file_path, mode="wb") as f:
                 json_data = orjson.dumps(cache_json, option=orjson.OPT_INDENT_2)
                 await f.write(json_data)
@@ -352,6 +375,8 @@ async def get_transCache_from_json(
         async with aiofiles.open(cache_file_path, encoding="utf8") as f:
             try:
                 cache_dictList = orjson.loads(await f.read())
+                # 跳过字段说明对象
+                cache_dictList = [c for c in cache_dictList if not c.get("_field_guide")]
                 for i, cache in enumerate(cache_dictList):
                     line_now, line_priv, line_next = "", "None", "None"
                     line_now = f'{cache["name"]}{_cache_get(cache, "pre_src")}'

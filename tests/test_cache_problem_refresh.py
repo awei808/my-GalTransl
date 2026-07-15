@@ -91,12 +91,13 @@ class CacheProblemRefreshTests(unittest.IsolatedAsyncioTestCase):
             with open(cache_file_path, "rb") as f:
                 refreshed = orjson.loads(f.read())
 
-            self.assertEqual(len(refreshed), 1)
+            # 首项为字段说明（_field_guide），实际缓存条目从索引 1 开始
+            self.assertEqual(len(refreshed), 2)
             # 预期：problem 字段应被刷新/移除
             self.assertNotIn(
                 "problem",
-                refreshed[0],
-                msg=f"problem 字段未被刷新: {refreshed[0]}",
+                refreshed[1],
+                msg=f"problem 字段未被刷新: {refreshed[1]}",
             )
 
 
