@@ -440,3 +440,60 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tcp_port_closed_returns_false() {
+        // A high-numbered port that should not be listening
+        assert!(!tcp_port_listening(54321));
+    }
+
+    #[test]
+    fn tcp_port_well_known_timeout() {
+        // google.com:81 should time out (not reject), returns false
+        let start = std::time::Instant::now();
+        assert!(!tcp_port_listening(81));
+        // Should fail fast (< 1s, not hanging)
+        assert!(start.elapsed().as_millis() < 1000);
+    }
+
+    #[test]
+    fn backend_executable_candidates_returns_vec() {
+        let candidates = backend_executable_candidates();
+        // Should return a Vec — may be empty in test envs
+        let _: &Vec<std::path::PathBuf> = &candidates;
+    }
+
+    #[test]
+    fn backend_executable_candidates_all_end_with_exe() {
+        let candidates = backend_executable_candidates();
+        for candidate in &candidates {
+            let name = candidate.file_name().unwrap().to_str().unwrap();
+            assert!(name.ends_with(".exe"), "Expected .exe extension: {:?}", candidate);
+        }
+    }
+
+    #[test]
+    fn managed_backend_slot_initially_none() {
+        let slot = managed_backend_slot();
+        let guard = slot.lock().unwrap();
+        assert!(guard.is_none());
+    }
+
+    #[test]
+    fn backend_startup_state_initially_not_starting() {
+        let (state, _) = backend_startup_state();
+        let guard = state.lock().unwrap();
+        assert!(!guard.starting);
+        assert!(guard.last_error.is_none());
+    }
+
+    #[test]
+    fn cleanup_handles_empty_slot() {
+        // Should not panic when no backend is running
+        cleanup_managed_backend_if_exited();
+    }
+}
