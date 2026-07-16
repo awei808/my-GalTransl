@@ -252,19 +252,6 @@ export function Sidebar({ onCloseProject }: SidebarProps) {
 
       <nav className="sidebar__bottom-nav">
         <NavLink
-          to="/backend-profiles"
-          className={({ isActive }) =>
-            `sidebar__nav-item ${isActive ? 'sidebar__nav-item--active' : ''}`
-          }
-          title="翻译后端配置"
-        >
-          <span className="sidebar__nav-icon">
-            <Icon name="cpu" size={20} />
-          </span>
-          {expanded && <span className="sidebar__nav-label">翻译后端配置</span>}
-        </NavLink>
-
-        <NavLink
           to="/common-dictionaries"
           className={({ isActive }) =>
             `sidebar__nav-item ${isActive ? 'sidebar__nav-item--active' : ''}`

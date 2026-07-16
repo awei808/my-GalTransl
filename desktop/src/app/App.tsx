@@ -19,19 +19,9 @@ const ProjectLayout = lazy(async () => {
   return { default: mod.ProjectLayout };
 });
 
-const BackendProfilesPage = lazy(async () => {
-  const mod = await import('../pages/BackendProfilesPage');
-  return { default: mod.BackendProfilesPage };
-});
-
 const SettingsPage = lazy(async () => {
   const mod = await import('../pages/SettingsPage');
   return { default: mod.SettingsPage };
-});
-
-const PromptTemplatesPage = lazy(async () => {
-  const mod = await import('../pages/PromptTemplatesPage');
-  return { default: mod.PromptTemplatesPage };
 });
 
 const CommonDictionaryPage = lazy(async () => {
@@ -189,14 +179,6 @@ function AppInner() {
             element={<HomePage onOpenProject={handleOpenProject} />}
           />
           <Route
-            path="/backend-profiles"
-            element={(
-              <Suspense fallback={<RouteLoadingFallback />}>
-                <BackendProfilesPage />
-              </Suspense>
-            )}
-          />
-          <Route
             path="/common-dictionaries"
             element={(
               <Suspense fallback={<RouteLoadingFallback />}>
@@ -209,14 +191,6 @@ function AppInner() {
             element={(
               <Suspense fallback={<RouteLoadingFallback />}>
                 <SettingsPage />
-              </Suspense>
-            )}
-          />
-          <Route
-            path="/settings/prompt-templates"
-            element={(
-              <Suspense fallback={<RouteLoadingFallback />}>
-                <PromptTemplatesPage />
               </Suspense>
             )}
           />

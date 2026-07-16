@@ -57,6 +57,9 @@ export const ICON_PATHS: Record<string, IconDef> = {
   cpu: {
     d: "M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3M6 6h12v12H6V6Zm3 3h6v6H9V9Z",
   },
+  server: {
+    d: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm0 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3ZM7 8h.01M7 15h.01",
+  },
 
   // ── Status / Action ──
   loader: {

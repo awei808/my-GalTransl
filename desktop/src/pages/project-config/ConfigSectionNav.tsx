@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Icon } from '../../components/icons';
 
-export type ConfigSectionKey = 'common' | 'backendSpecific' | 'plugin' | 'dictionary' | 'problemAnalyze' | 'retranslKey';
+export type ConfigSectionKey = 'common' | 'backendSpecific' | 'plugin' | 'dictionary' | 'problemAnalyze' | 'retranslKey' | 'backendProfiles' | 'prompts';
 
 export interface ConfigSectionDef {
   key: ConfigSectionKey;
@@ -12,6 +12,8 @@ export interface ConfigSectionDef {
 export const CONFIG_SECTIONS: ConfigSectionDef[] = [
   { key: 'common', label: '通用设置', icon: 'settings' },
   { key: 'backendSpecific', label: '翻译后端', icon: 'cpu' },
+  { key: 'backendProfiles', label: '后端配置', icon: 'server' },
+  { key: 'prompts', label: '提示词模板', icon: 'file-text' },
   { key: 'plugin', label: '插件设置', icon: 'puzzle' },
   { key: 'dictionary', label: '字典设置', icon: 'book' },
   { key: 'problemAnalyze', label: '问题分析', icon: 'search' },

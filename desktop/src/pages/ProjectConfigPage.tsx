@@ -16,6 +16,8 @@ import {
   BACKEND_PROFILES_CHANGE_EVENT,
   DEFAULT_BACKEND_PROFILE_CHANGE_EVENT } from '../lib/api';
 import { normalizeError } from '../lib/errors';
+import { BackendProfilesPage } from './BackendProfilesPage';
+import { PromptTemplatesPage } from './PromptTemplatesPage';
 import {
   ConfigSectionNav,
   CommonSettingsSection,
@@ -39,7 +41,7 @@ export function ProjectConfigPage({ ctx }: { ctx: ProjectPageContext }) {
   const [searchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useState<ConfigSectionKey>(() => {
     const s = searchParams.get('section');
-    if (s && ['common', 'backendSpecific', 'plugin', 'dictionary', 'problemAnalyze', 'retranslKey'].includes(s)) return s as ConfigSectionKey;
+    if (s && ['common', 'backendSpecific', 'backendProfiles', 'prompts', 'plugin', 'dictionary', 'problemAnalyze', 'retranslKey'].includes(s)) return s as ConfigSectionKey;
     return 'common';
   });
   const [yamlView, setYamlView] = useState(false);
@@ -393,6 +395,18 @@ export function ProjectConfigPage({ ctx }: { ctx: ProjectPageContext }) {
                   }}
                   onDirty={() => { setSaveSuccess(false); setDirty(true); }}
                 />
+              )}
+
+              {activeSection === 'backendProfiles' && (
+                <div className="project-config-page__embedded-page">
+                  <BackendProfilesPage />
+                </div>
+              )}
+
+              {activeSection === 'prompts' && (
+                <div className="project-config-page__embedded-page">
+                  <PromptTemplatesPage />
+                </div>
               )}
             </>
           )}

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { CustomSelect } from '../components/CustomSelect';
 import { PageHeader } from '../components/PageHeader';
 import { ConnectionStatusCard } from '../features/connection/ConnectionStatusCard';
@@ -37,7 +36,6 @@ const PROJECT_HOMEPAGE = 'https://github.com/GalTransl/GalTransl';
 const PROJECT_AUTHOR = 'xd2333';
 
 export function SettingsPage() {
-  const navigate = useNavigate();
   const {
     backendUrl,
     connectionPhase,
@@ -408,26 +406,6 @@ export function SettingsPage() {
             {customBackgroundImageDataUrl ? '已启用自定义背景。' : '未设置自定义背景。'}
             主题、背景和容器透底设置会即时生效，并在下次打开应用时保持。
             自动拉起服务端时会按“隐藏服务端控制台”选项决定是否显示命令行窗口。
-          </div>
-        </section>
-
-        <section className="panel">
-          <header className="panel__header">
-            <div>
-              <h2>提示词</h2>
-              <p>管理各翻译模板的默认提示词，可分别编辑并一键重置为内置值。</p>
-            </div>
-          </header>
-          <div className="settings-action-row">
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => {
-                navigate('/settings/prompt-templates');
-              }}
-            >
-              修改默认提示词
-            </button>
           </div>
         </section>
 
