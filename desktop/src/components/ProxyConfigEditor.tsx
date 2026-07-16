@@ -85,7 +85,7 @@ export function ProxyConfigEditor({ proxyConfig, onChange, readOnly = false }: P
                     onClick={() => removeProxy(idx)}
                     title="删除此代理"
                   >
-                    ✕
+                        <Icon name="x" size={16} />
                   </button>
                 )}
               </div>

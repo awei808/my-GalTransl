@@ -223,7 +223,7 @@ export function BackendConfigEditor({ config, onChange, readOnly = false, proxy 
                       onClick={() => removeToken(idx)}
                       title="删除此令牌"
                     >
-                      ✕
+                      <Icon name="x" size={16} />
                     </button>
                   )}
                 </div>
@@ -431,7 +431,7 @@ export function BackendConfigEditor({ config, onChange, readOnly = false, proxy 
                       onClick={() => removeSakuraEndpoint(idx)}
                       title="删除此端点"
                     >
-                      ✕
+                      <Icon name="x" size={16} />
                     </button>
                   )}
                 </div>

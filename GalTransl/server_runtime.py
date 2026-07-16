@@ -84,13 +84,47 @@ RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
 RUNTIME_SNAPSHOT_SUCCESS_LIMIT = 500
 
 
+# 7 阶段流水线——供前端"流程完成情况"展示用。
+# 顺序与 LLMTranslate.doLLMTranslate 的阶段执行顺序一致。
+PIPELINE_STAGE_NAMES: list[str] = [
+    "输入数据校验",
+    "文本无损压缩",
+    "生成全局游戏分析",
+    "构建术语表",
+    "生成文件级元数据",
+    "划分翻译区间",
+    "翻译执行中",
+]
+PIPELINE_STAGE_TOTAL: int = len(PIPELINE_STAGE_NAMES)
+
+
+def _compute_stage_index(stage: str) -> int:
+    """返回 stage 字段对应的流水线阶段索引（0-6）；-1 表示不匹配。"""
+    if not stage:
+        return -1
+    # 子阶段如 "文件级元数据 (1/5)" 通过前缀或包含匹配映射到对应主阶段
+    for idx, name in enumerate(PIPELINE_STAGE_NAMES):
+        if stage.startswith(name) or name in stage:
+            return idx
+    # 兜底："完整流水线启动" → 阶段 0，"流水线完成" → 阶段 6，"检查模型可用性" → 阶段 0
+    if "启动" in stage or "模型可用性" in stage:
+        return 0
+    if "完成" in stage:
+        return PIPELINE_STAGE_TOTAL - 1
+    return -1
+
+
 @dataclass(slots=True)
 class RuntimeState:
     project_dir: str
     workers_active: int = 0
     workers_configured: int = 0
     stage: str = ""
+    stage_index: int = -1
+    stage_total: int = PIPELINE_STAGE_TOTAL
     current_file: str = ""
+    latest_prompt_preview: str = ""
+    latest_assembled_preview: str = ""
     updated_at: str = field(default_factory=_utcnow_text)
     file_totals: dict[str, int] = field(default_factory=dict)
     cache_file_display_map: dict[str, str] = field(default_factory=dict)
@@ -280,7 +314,11 @@ class RuntimeRegistry:
             if state is None:
                 return {
                     "stage": "",
+                    "stage_index": -1,
+                    "stage_total": PIPELINE_STAGE_TOTAL,
                     "current_file": "",
+                    "latest_prompt_preview": "",
+                    "latest_assembled_preview": "",
                     "workers_active": 0,
                     "workers_configured": 0,
                     "translation_speed_lpm": 0,
@@ -302,7 +340,11 @@ class RuntimeRegistry:
                 merged_successes = merged_successes[:RUNTIME_SNAPSHOT_SUCCESS_LIMIT]
             return {
                 "stage": state.stage,
+                "stage_index": _compute_stage_index(state.stage),
+                "stage_total": PIPELINE_STAGE_TOTAL,
                 "current_file": state.current_file,
+                "latest_prompt_preview": state.latest_prompt_preview,
+                "latest_assembled_preview": state.latest_assembled_preview,
                 "workers_active": state.workers_active,
                 "workers_configured": state.workers_configured,
                 "translation_speed_lpm": speed,
@@ -327,6 +369,26 @@ def _trim_preview(value: str, limit: int = 140) -> str:
 
 
 RUNTIME_REGISTRY = RuntimeRegistry()
+
+
+def set_live_snippets(project_dir: str, prompt_preview: str = "", assembled_preview: str = "") -> None:
+    """在翻译循环中设置当前提示词和译文拼接的实时预览。
+
+    由 ForGalJsonMulitChat.translate() 在每轮 LLM 调用前后调用。
+    确保前端轮询 /runtime 时可以获取到最新提示词和译文拼接内容。
+    """
+    max_len = 600  # 每段预览最大字符数
+    with RUNTIME_REGISTRY._lock:
+        state = RUNTIME_REGISTRY._states.get(_normalize_project_dir(project_dir))
+        if state is None:
+            return
+        if prompt_preview:
+            state.latest_prompt_preview = prompt_preview[:max_len] if len(prompt_preview) > max_len else prompt_preview
+        if assembled_preview:
+            state.latest_assembled_preview = assembled_preview[:max_len] if len(assembled_preview) > max_len else assembled_preview
+        state.updated_at = _utcnow_text()
+
+
 _CACHE_APPEND_SUFFIX = ".append.jsonl"
 
 

@@ -61,7 +61,7 @@ export function DictEntryGroupCard({
               onClick={() => onDelete(rowIndex)}
               title="删除此条"
             >
-              ✕
+              <Icon name="x" size={16} />
             </button>
           </div>
         ))}

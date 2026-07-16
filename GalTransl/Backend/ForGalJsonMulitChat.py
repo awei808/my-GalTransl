@@ -21,6 +21,7 @@ from GalTransl.Backend.Prompts import (
     H_WORDS_LIST,
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
+from GalTransl.server_runtime import set_live_snippets
 from openai._types import NOT_GIVEN
 
 
@@ -1442,6 +1443,13 @@ class ForGalJsonMulitChat(BaseTranslate):
                 batch_metadata_block=batch_metadata_block,
             )
 
+            # 实时推送当前提示词预览（前端翻译控制台左栏"当前提示词"）
+            _project_dir = self.pj_config.getProjectDir()
+            try:
+                set_live_snippets(_project_dir, prompt_preview=user_content)
+            except Exception:
+                pass
+
             # 组装本次调用的 messages（历史 + 本轮 user）
             call_messages = conv + [{"role": "user", "content": user_content}]
 
@@ -1505,6 +1513,14 @@ class ForGalJsonMulitChat(BaseTranslate):
                 call_messages=call_messages,
                 prefill_used=prefill_used,
             )
+
+            # 实时推送译文拼接预览（前端翻译控制台右栏"译文拼接"）
+            if result_trans_list:
+                _assembled = "\n".join(str(t) for t in result_trans_list)
+                try:
+                    set_live_snippets(_project_dir, assembled_preview=_assembled)
+                except Exception:
+                    pass
 
             # 必须用 real_success（而非 success_count）判断，因失败兜底会将 success_count 覆盖为正数
             if real_success > 0:

@@ -62,6 +62,83 @@ def _write_yaml_file(path: str, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def _parse_yaml_comments(yaml_text: str) -> dict[str, str]:
+    """解析 YAML 模板文本，提取每条参数路径→注释的描述映射。
+
+    路径以点号分隔（如 common.gpt.numPerRequestTranslate）。
+    列表项以 [] 标识（如 tokens[].endpoint）。
+    """
+    comments: dict[str, str] = {}
+    stack: list[tuple[str, int]] = []  # (key, indent)
+
+    for raw_line in yaml_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip())
+
+        # 弹出比当前缩进更深或相同的栈帧（回到父级或同级）
+        while stack and stack[-1][1] >= indent:
+            stack.pop()
+
+        # 提取注释部分（# 及其后文本）
+        if '#' in stripped:
+            content_part, _, raw_comment = stripped.partition('#')
+            comment = raw_comment.strip()
+        else:
+            content_part = stripped
+            comment = ''
+
+        content_part = content_part.rstrip()
+
+        # 列表项 - 把键挂在父路径下方
+        if content_part.startswith('- '):
+            list_content = content_part[2:]
+            # list_content 可能是 "key: value" 或 "value"
+            if ':' in list_content:
+                key = list_content.split(':', 1)[0].strip()
+            else:
+                key = list_content.strip()
+            if key:
+                stack.append((key, indent))
+        else:
+            key = content_part.split(':', 1)[0].strip()
+            if key:
+                stack.append((key, indent))
+
+        # 构建当前路径并记录注释
+        if comment and stack:
+            path_parts = []
+            for k, _ in stack:
+                path_parts.append(k)
+            path = '.'.join(path_parts)
+            # 取第一个注释（前面可能有连续的注释行）
+            if path not in comments:
+                comments[path] = comment
+
+    return comments
+
+
+def _build_config_schema() -> dict[str, Any]:
+    """从 DEFAULT_PROJECT_CONFIG_YAML 模板生成配置 schema：
+    返回 { parameters: { "path.to.key": { "comment": "...", "children": [...] } } }
+    """
+    comments = _parse_yaml_comments(DEFAULT_PROJECT_CONFIG_YAML)
+    return {"parameters": comments}
+
+
+# 全局缓存：配置模板的注释映射，启动时解析一次
+_CONFIG_SCHEMA_CACHE: dict[str, Any] | None = None
+
+
+def _get_config_schema() -> dict[str, Any]:
+    global _CONFIG_SCHEMA_CACHE
+    if _CONFIG_SCHEMA_CACHE is None:
+        _CONFIG_SCHEMA_CACHE = _build_config_schema()
+    return _CONFIG_SCHEMA_CACHE
+
+
 def _list_dir_entries(dir_path: str, *, count_json_entries: bool = False) -> list[dict[str, Any]]:
     """List files in a directory with basic metadata."""
     entries = []
@@ -920,6 +997,13 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": f"failed to read config: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
+            # GET /api/projects/:id/config-schema
+            # 返回配置参数路径→注释描述映射，供前端设置界面显示参数解释。
+            if sub_path == "/config-schema":
+                schema = _get_config_schema()
+                self._send_json({"project_dir": project_dir, **schema})
+                return
+
             # GET /api/projects/:id/files
             if sub_path == "/files":
                 input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
@@ -1428,7 +1512,11 @@ def build_handler(registry: JobRegistry) -> type:
                         "updated_at": runtime["updated_at"],
                     },
                     "stage": runtime["stage"],
+                    "stage_index": runtime["stage_index"],
+                    "stage_total": runtime["stage_total"],
                     "current_file": runtime["current_file"],
+                    "latest_prompt_preview": runtime.get("latest_prompt_preview", ""),
+                    "latest_assembled_preview": runtime.get("latest_assembled_preview", ""),
                     "recent_errors": runtime["recent_errors"],
                     "recent_successes": runtime["recent_successes"],
                     "retransl_stats": progress_payload["retransl_stats"],

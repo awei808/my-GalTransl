@@ -199,7 +199,7 @@ export function BackendProfilesPage() {
     <div className="backend-profiles-page">
       <PageHeader
         className="backend-profiles-page__header"
-        title="🤖 翻译后端配置"
+        title="翻译后端配置"
         description="管理全局翻译后端配置，可在项目中直接选用，避免每个项目都重复配置。"
         status={
           <>

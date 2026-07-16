@@ -752,7 +752,7 @@ export function ProjectNamePage({ ctx, active = true }: { ctx: ProjectPageContex
                           onClick={() => handleDeleteRow(originalIndex)}
                           title="删除此行"
                         >
-                          ✕
+                          <Icon name="x" size={16} />
                         </button>
                       </td>
                     </tr>
