@@ -1238,6 +1238,107 @@ a:hover {
 }
 
 /* ==========================================
+   操作日志查看器
+   ========================================== */
+
+.page-logs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  overflow: hidden;
+}
+
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.logs-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.logs-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.logs-list {
+  flex: 1;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+}
+
+.log-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--color-border-default);
+  min-height: 28px;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-level {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 12px;
+}
+
+.log-time {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  min-width: 60px;
+}
+
+.log-source {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  flex-shrink: 0;
+  min-width: 40px;
+}
+
+.log-msg {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log--error   .log-level { color: var(--color-status-error); }
+.log--warning .log-level { color: var(--color-status-warning); }
+.log--info    .log-level { color: var(--color-brand-primary); }
+.log--success .log-level { color: var(--color-status-success); }
+
+.log--error   { background: color-mix(in srgb, var(--color-bg-error) 40%, transparent); }
+.log--warning { background: color-mix(in srgb, var(--color-bg-warning) 40%, transparent); }
+
+.logs-empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.logs-empty-hint {
+  font-size: var(--font-sm);
+  margin-top: var(--space-1);
+}
+
+/* ==========================================
    新建项目向导
    ========================================== */
 

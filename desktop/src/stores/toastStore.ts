@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store";
+import { pushLog } from "./logStore";
 
 export type ToastTone = "error" | "warning" | "success" | "info";
 
@@ -48,15 +49,19 @@ export const toast = {
   },
 
   success(msg: string, duration?: number) {
+    pushLog("success", msg, "toast");
     return toast.show(msg, { tone: "success", duration });
   },
   error(msg: string, duration?: number) {
+    pushLog("error", msg, "toast");
     return toast.show(msg, { tone: "error", duration });
   },
   warning(msg: string, duration?: number) {
+    pushLog("warning", msg, "toast");
     return toast.show(msg, { tone: "warning", duration });
   },
   info(msg: string, duration?: number) {
+    pushLog("info", msg, "toast");
     return toast.show(msg, { tone: "info", duration });
   },
 };

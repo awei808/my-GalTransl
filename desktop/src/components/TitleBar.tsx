@@ -94,7 +94,7 @@ const menus: MenuDef[] = [
       } },
       { label: "停止翻译", disabled: true, action: () => {} },
       { label: "", separator: true },
-      { label: "打开日志", action: () => {} },
+      { label: "打开日志", action: () => navigateTo("logs") },
     ],
   },
   {
