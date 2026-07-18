@@ -16,15 +16,17 @@ const tabs: TabDef[] = [
   { icon: "edit", view: "review", label: "校对审核" },
   { icon: "search", view: "search", label: "查找替换" },
   { icon: "alert-circle", view: "problems", label: "问题检测" },
+  { icon: "book", view: "dict", label: "字典管理" },
+  { icon: "terminal", view: "build-output", label: "构建输出" },
   { icon: "settings", view: "settings", label: "设置" },
 ];
 
 function handleTabClick(tab: TabDef) {
-  if (tab.view === "settings") {
-    navigateTo("settings");
+  const fullPageViews = ["dict", "settings", "backend-profiles", "plugins", "prompt-templates", "build-output"];
+  if (fullPageViews.includes(tab.view)) {
+    navigateTo(tab.view as any);
     setAppState({ sidebarOpen: false });
   } else if (["search", "problems"].includes(tab.view)) {
-    // 切换侧栏内容，主界面不变
     const alreadyOpen =
       appState.sidebarOpen && appState.sidebarTab === tab.view;
     setAppState({

@@ -46,6 +46,7 @@ async function handleOpenProject() {
   }
 
   openProject(projectId);
+  (window as any).__addRecentProject?.(selectedPath);
   toast.success("项目已打开");
 }
 
@@ -87,6 +88,8 @@ const menus: MenuDef[] = [
       { label: "", separator: true },
       { label: "查找", shortcut: "Ctrl+F", action: () => setAppState({ sidebarOpen: true, sidebarTab: "find" }) },
       { label: "替换", shortcut: "Ctrl+H", action: () => setAppState({ sidebarOpen: true, sidebarTab: "find" }) },
+      { label: "", separator: true },
+      { label: "保存", shortcut: "Ctrl+S", action: () => document.dispatchEvent(new CustomEvent("galtransl:save")) },
     ],
   },
   {
@@ -98,6 +101,10 @@ const menus: MenuDef[] = [
       { label: "停止翻译", disabled: true, action: () => {} },
       { label: "", separator: true },
       { label: "打开日志", action: () => navigateTo("logs") },
+      { label: "", separator: true },
+      { label: "后端配置", action: () => navigateTo("backend-profiles") },
+      { label: "提示词模板", action: () => navigateTo("prompt-templates") },
+      { label: "插件管理", action: () => navigateTo("plugins") },
     ],
   },
   {

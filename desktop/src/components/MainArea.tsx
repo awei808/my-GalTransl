@@ -6,6 +6,10 @@ import { ReviewPage } from "../pages/review/ReviewPage";
 import { SettingsPage } from "../pages/settings/SettingsPage";
 import { NewProjectWizard } from "../pages/wizard/NewProjectWizard";
 import { LogViewer } from "../pages/logs/LogViewer";
+import { DictionaryPage } from "../pages/dictionary/DictionaryPage";
+import { BackendProfilesPage } from "../pages/backends/BackendProfilesPage";
+import { PluginsPage } from "../pages/plugins/PluginsPage";
+import { PromptTemplatesPage } from "../pages/prompts/PromptTemplatesPage";
 
 export function MainArea() {
   const view = () => appState.activeView;
@@ -30,6 +34,18 @@ export function MainArea() {
         </Match>
         <Match when={view() === "new-project"}>
           <NewProjectWizard />
+        </Match>
+        <Match when={view() === "dict"}>
+          <DictionaryPage />
+        </Match>
+        <Match when={view() === "backend-profiles"}>
+          <BackendProfilesPage />
+        </Match>
+        <Match when={view() === "plugins"}>
+          <PluginsPage />
+        </Match>
+        <Match when={view() === "prompt-templates"}>
+          <PromptTemplatesPage />
         </Match>
       </Switch>
     </main>
