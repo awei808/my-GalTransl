@@ -15,7 +15,7 @@ const [toasts, setToasts] = createStore<{ items: ToastEntry[] }>({
   items: [],
 });
 
-const MAX_TOASTS = 3;
+const MAX_TOASTS = 5;
 let counter = 0;
 function uid() {
   return `t${Date.now()}-${++counter}`;
