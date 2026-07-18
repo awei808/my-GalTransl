@@ -233,8 +233,8 @@ body {
   position: relative;
 }
 
-.app-body.sidebar-collapsed .sidebar-column {
-  display: none;
+.app-body.sidebar-collapsed {
+  grid-template-columns: var(--sidebar-width) 0px 1fr;
 }
 
 /* ── Sidebar Panel ── */
