@@ -1033,6 +1033,207 @@ a:hover {
 }
 
 /* ==========================================
+   右下角吐司弹窗
+   ========================================== */
+
+.toast-host {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  color: #fff;
+  font-size: var(--font-base);
+  line-height: 1.4;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+  min-width: 280px;
+  max-width: 400px;
+  pointer-events: auto;
+  animation: toast-slide-in 0.3s ease-out;
+}
+
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-slide-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(20px); }
+}
+
+.toast--success { background: linear-gradient(135deg, #059669, #047857); }
+.toast--error   { background: linear-gradient(135deg, #dc2626, #b91c1c); }
+.toast--warning { background: linear-gradient(135deg, #d97706, #b45309); }
+.toast--info    { background: linear-gradient(135deg, #0066CC, #004999); }
+
+[data-theme="dark"] .toast--success { background: linear-gradient(135deg, #34d399, #059669); }
+[data-theme="dark"] .toast--error   { background: linear-gradient(135deg, #f87171, #dc2626); }
+[data-theme="dark"] .toast--warning { background: linear-gradient(135deg, #fbbf24, #d97706); }
+[data-theme="dark"] .toast--info    { background: linear-gradient(135deg, #0099FF, #0066CC); }
+
+.toast-icon {
+  flex-shrink: 0;
+  display: flex;
+}
+
+.toast-message {
+  flex: 1;
+  word-break: break-word;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.toast-close:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* ==========================================
+   居中确认弹窗
+   ========================================== */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: var(--z-dialog);
+  animation: confirm-overlay-in 0.2s ease;
+}
+
+@keyframes confirm-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--z-dialog);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 360px;
+  max-width: 560px;
+  animation: confirm-dialog-in 0.25s ease;
+}
+
+@keyframes confirm-dialog-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.confirm-header {
+  padding: 16px 20px 0;
+}
+
+.confirm-title {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.confirm-body {
+  padding: 12px 20px;
+}
+
+.confirm-message {
+  font-size: var(--font-base);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.confirm-input-group {
+  margin-top: 12px;
+}
+
+.confirm-input-label {
+  display: block;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}
+
+.confirm-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: var(--font-base);
+  font-family: var(--font-sans);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+}
+
+.confirm-input:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px var(--color-bg-selected);
+}
+
+.confirm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+}
+
+/* 确认按钮色调 */
+.btn--danger {
+  background: var(--color-status-error) !important;
+  color: #fff !important;
+  border-color: var(--color-status-error) !important;
+}
+
+.btn--warning {
+  background: var(--color-status-warning) !important;
+  color: #fff !important;
+  border-color: var(--color-status-warning) !important;
+}
+
+.btn--info, .btn--default {
+  background: var(--color-brand-primary) !important;
+  color: var(--color-text-on-brand) !important;
+  border-color: var(--color-brand-primary) !important;
+}
+
+.btn--danger:hover,
+.btn--warning:hover,
+.btn--info:hover,
+.btn--default:hover {
+  filter: brightness(1.1);
+}
+
+/* ==========================================
    新建项目向导
    ========================================== */
 
