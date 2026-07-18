@@ -1,5 +1,10 @@
 import { createSignal, onMount, onCleanup, For, Show } from "solid-js";
-import { appState, navigateTo, setAppState } from "../stores/appStore";
+import { appState, navigateTo, setAppState, openProject, closeProject } from "../stores/appStore";
+import { toast } from "../stores/toastStore";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { ensureDesktopBackendReady, encodeProjectDir } from "../lib/api/client";
+import { fetchProjectFiles } from "../lib/api/project";
 
 interface MenuItem {
   label: string;
@@ -14,15 +19,57 @@ interface MenuDef {
   items: MenuItem[];
 }
 
+// ── 异步操作实现 ──
+
+async function handleOpenProject() {
+  const dir = await open({ directory: true });
+  if (!dir) return;
+
+  const selectedPath = typeof dir === "string" ? dir.replace(/\//g, "\\") : dir;
+
+  toast.info("正在启动后端服务...");
+  try {
+    await ensureDesktopBackendReady({ timeoutMs: 30000 });
+  } catch {
+    toast.error("无法启动后端服务，请手动运行 run_backend.py");
+    // 继续尝试
+  }
+
+  const projectId = encodeProjectDir(selectedPath);
+  try {
+    await fetchProjectFiles(projectId);
+  } catch {
+    toast.error("所选目录不是有效的 GalTransl 项目");
+    return;
+  }
+
+  openProject(projectId);
+  toast.success("项目已打开");
+}
+
+async function handleCloseProject() {
+  closeProject();
+  toast.info("项目已关闭");
+}
+
+async function handleExit() {
+  try {
+    await getCurrentWebviewWindow().close();
+  } catch {
+    // fallback
+    window.close();
+  }
+}
+
 const menus: MenuDef[] = [
   {
     label: "文件",
     items: [
       { label: "新建项目", action: () => navigateTo("new-project") },
-      { label: "打开项目", action: () => {} },
-      { label: "关闭项目", disabled: () => !appState.activeProjectId, action: () => {} },
+      { label: "打开项目", action: () => { void handleOpenProject(); } },
+      { label: "关闭项目", disabled: () => !appState.activeProjectId, action: () => { void handleCloseProject(); } },
       { label: "", separator: true },
-      { label: "退出", action: () => {} },
+      { label: "退出", action: () => { void handleExit(); } },
     ],
   },
   {
@@ -53,7 +100,7 @@ const menus: MenuDef[] = [
   {
     label: "视图",
     items: [
-      { label: "切换侧栏", shortcut: "Ctrl+B", action: () => { setAppState('sidebarOpen', s => !s); } },
+      { label: "切换侧栏", shortcut: "Ctrl+B", action: () => { setAppState('sidebarOpen', (s: boolean) => !s); } },
       { label: "", separator: true },
       { label: "翻译控制台", action: () => navigateTo("translate") },
       { label: "校对审核", action: () => navigateTo("review") },
