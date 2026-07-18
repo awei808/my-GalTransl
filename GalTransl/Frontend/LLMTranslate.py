@@ -1439,13 +1439,15 @@ async def postprocess_results(
     output_file_path = file_path.replace(input_dir, output_dir)
     save_func = projectConfig.file_save_funcs.get(file_path, save_json)
 
+    # 逐文件输出构建（由独立 build-output 端点触发，校对完成后手动执行）
+    # 不再随流水线自动执行，避免 output/ 内容滞后于校对修改。
     if all_trans_list and all_json_list:
         final_result = update_json_with_transList(
             all_trans_list, all_json_list, name_replaceDict
         )
         makedirs(dirname(output_file_path), exist_ok=True)
         save_func(output_file_path, final_result)
-        LOGGER.info(f"+++ 结果保存 (project_dir){output_file_path.replace(proj_dir,'')}")  # 添加保存确认日志
+        LOGGER.info(f"+++ 结果保存 (project_dir){output_file_path.replace(proj_dir,'')}")
 
 
 async def init_gptapi(

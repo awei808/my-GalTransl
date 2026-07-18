@@ -20,6 +20,7 @@ import type {
   ProjectConfigResponse,
   ProjectConfigUpdatePayload,
   ConfigSchemaResponse,
+  BuildOutputResponse,
   ProjectDictionaryManagerResponse,
   ProjectDictionaryResponse,
   ProjectFilesResponse,
@@ -53,6 +54,22 @@ export async function updateProjectConfig(projectId: string, payload: ProjectCon
 /** 获取项目配置的参数路径→注释描述映射（用于设置界面显示参数解释） */
 export async function fetchConfigSchema(projectId: string) {
   return apiRequest<ConfigSchemaResponse>(`/api/projects/${projectId}/config-schema`);
+}
+
+/** 从缓存文件构建输出文件（全量构建）。POST 调用，校对审核完成后触发 */
+export async function buildProjectOutput(projectId: string, filenames?: string[]) {
+  return apiRequest<BuildOutputResponse>(`/api/projects/${projectId}/build-output`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(filenames ? { filenames } : {}),
+  });
+}
+
+/** 从缓存文件构建单个输出文件 */
+export async function buildSingleFileOutput(projectId: string, filename: string) {
+  return apiRequest<BuildOutputResponse>(`/api/projects/${projectId}/build-output/${encodeURIComponent(filename)}`, {
+    method: 'POST',
+  });
 }
 
 // ---- Project files ----

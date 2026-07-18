@@ -48,6 +48,8 @@ from GalTransl.server_runtime import (
     update_runtime_status,
 )
 
+from GalTransl.CSerialize import save_json
+
 def _read_yaml_file(path: str) -> dict:
     """Read and parse a YAML file."""
     with open(path, "r", encoding="utf-8") as f:
@@ -137,6 +139,107 @@ def _get_config_schema() -> dict[str, Any]:
     if _CONFIG_SCHEMA_CACHE is None:
         _CONFIG_SCHEMA_CACHE = _build_config_schema()
     return _CONFIG_SCHEMA_CACHE
+
+
+def _build_project_output(
+    project_dir: str,
+    *,
+    filenames: list[str] | None = None,
+) -> dict[str, Any]:
+    """从缓存文件构建输出文件（output/gt_output/）。
+
+    读取 cache/<filename>.json 和 input/<filename>.json，
+    将缓存中的译文（pre_dst / proofread_dst）合并回原始 JSON 后写出到 output/gt_output/。
+    """
+    import orjson
+
+    input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+    output_dir = os.path.join(project_dir, OUTPUT_FOLDERNAME)
+    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+
+    if not os.path.isdir(input_dir):
+        return {"success": False, "error": f"input dir not found: {input_dir}"}
+    if not os.path.isdir(cache_dir):
+        return {"success": False, "error": f"cache dir not found: {cache_dir}"}
+
+    # 确定要处理的文件列表
+    if filenames:
+        cache_names = [f for f in filenames if f.endswith(".json")]
+    else:
+        cache_names = sorted(f for f in os.listdir(cache_dir) if f.endswith(".json"))
+
+    built_files: list[str] = []
+    errors: list[str] = []
+    total_built = 0
+
+    for cache_name in cache_names:
+        cache_path = os.path.join(cache_dir, cache_name)
+        if not os.path.isfile(cache_path):
+            errors.append(f"cache file not found: {cache_name}")
+            continue
+
+        # 读取缓存文件（CacheEntry[]）
+        try:
+            with open(cache_path, "rb") as f:
+                cache_entries: list[dict] = orjson.loads(f.read())
+        except Exception as exc:
+            errors.append(f"read cache {cache_name} failed: {exc}")
+            continue
+
+        # 找对应的 input 文件
+        input_path = os.path.join(input_dir, cache_name)
+        if not os.path.isfile(input_path):
+            # 尝试去掉缓存文件名中的分块后缀（如 01_intro-1.json → 01_intro.json）
+            alt_name = cache_name.rsplit("-", 1)[0] + ".json" if "-" in cache_name else None
+            if alt_name and os.path.isfile(os.path.join(input_dir, alt_name)):
+                input_path = os.path.join(input_dir, alt_name)
+            else:
+                errors.append(f"input file not found for {cache_name}")
+                continue
+
+        try:
+            with open(input_path, "rb") as f:
+                input_data: list[dict] = orjson.loads(f.read())
+        except Exception as exc:
+            errors.append(f"read input {os.path.basename(input_path)} failed: {exc}")
+            continue
+
+        # 缓存条目建立索引映射：pre_src → 条目
+        cache_map: dict[str, dict] = {}
+        for ce in cache_entries:
+            src = ce.get("pre_src", "")
+            if src:
+                cache_map[src] = ce
+
+        # 合并译文回 input JSON
+        updated_count = 0
+        for item in input_data:
+            msg = item.get("message", "")
+            if msg in cache_map:
+                ce = cache_map[msg]
+                # 优先用 proofread_dst，其次 pre_dst
+                dst = ce.get("proofread_dst") or ce.get("pre_dst") or ""
+                if dst:
+                    item["message"] = dst
+                    updated_count += 1
+
+        # 写出 output
+        output_path = os.path.join(output_dir, cache_name)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        try:
+            save_json(output_path, input_data)
+            built_files.append(cache_name)
+            total_built += 1
+        except Exception as exc:
+            errors.append(f"write output {cache_name} failed: {exc}")
+
+    return {
+        "success": True,
+        "project_dir": project_dir,
+        "built_files": built_files,
+        "total_built": total_built,
+        "errors": errors,
+    }
 
 
 def _list_dir_entries(dir_path: str, *, count_json_entries: bool = False) -> list[dict[str, Any]]:
@@ -1002,6 +1105,40 @@ def build_handler(registry: JobRegistry) -> type:
             if sub_path == "/config-schema":
                 schema = _get_config_schema()
                 self._send_json({"project_dir": project_dir, **schema})
+                return
+
+            # POST /api/projects/:id/build-output
+            # 从缓存文件构建输出文件。支持全量构建和单个文件构建。
+            # 请求体可选: {"filenames": ["01_intro.json", ...]} 仅构建指定文件
+            # 无请求体 / 空 filenames：构建所有缓存文件
+            if sub_path == "/build-output":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                filenames: list[str] | None = None
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length > 0:
+                    try:
+                        payload = self._read_json_body()
+                        filenames = payload.get("filenames")
+                    except (ValueError, TypeError, json.JSONDecodeError):
+                        pass
+                result = _build_project_output(project_dir, filenames=filenames)
+                self._send_json(result)
+                return
+
+            # POST /api/projects/:id/build-output/<filename>
+            # 构建单个文件
+            if sub_path.startswith("/build-output/"):
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                filename = sub_path[len("/build-output/"):]
+                if not filename:
+                    self._send_json({"error": "filename is required"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                result = _build_project_output(project_dir, filenames=[filename])
+                self._send_json(result)
                 return
 
             # GET /api/projects/:id/files

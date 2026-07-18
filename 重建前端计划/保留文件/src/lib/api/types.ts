@@ -252,6 +252,14 @@ export type StopProjectResponse = {
   message: string;
 };
 
+export type BuildOutputResponse = {
+  success: boolean;
+  project_dir: string;
+  built_files: string[];
+  total_built: number;
+  errors?: string[];
+};
+
 export type DictFileContent = {
   path: string;
   lines: string[];
