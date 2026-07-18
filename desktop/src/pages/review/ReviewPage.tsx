@@ -211,11 +211,18 @@ export function ReviewPage() {
   }
 
   // 当 activeFilePath 变化时加载文件
+  const VIRTUAL_THRESHOLD = 1500;
+  const VIRTUAL_LIMIT = 750;
+  const [totalCount, setTotalCount] = createSignal(0);
+  const [showAll, setShowAll] = createSignal(false);
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
     if (!pid || !file) {
       setEntries([]);
+      setTotalCount(0);
+      setShowAll(false);
       clearUndo();
       return;
     }
@@ -223,12 +230,35 @@ export function ReviewPage() {
     setLoading(true);
     fetchCacheFile(pid, file)
       .then((res: CacheFileResponse) => {
-        setEntries(res.entries ?? []);
+        const all = res.entries ?? [];
+        setTotalCount(all.length);
+        if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
+          setEntries(all.slice(0, VIRTUAL_LIMIT));
+        } else {
+          setEntries(all);
+        }
         setExpandedSet(new Set());
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   });
+
+  function handleShowAll() {
+    setShowAll(true);
+    // 触发重新加载
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (pid && file) {
+      setLoading(true);
+      fetchCacheFile(pid, file)
+        .then((res: CacheFileResponse) => {
+          setEntries(res.entries ?? []);
+          setExpandedSet(new Set());
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }
+  }
 
   function toggleExpand(index: number) {
     setExpandedSet((prev) => {
@@ -344,6 +374,15 @@ export function ReviewPage() {
               </p>
             }
           >
+            {/* 虚拟滚动提示 */}
+            <Show when={totalCount() > VIRTUAL_THRESHOLD && !showAll()}>
+              <div class="review-virtual-banner">
+                共 {totalCount()} 条，当前仅显示前 {VIRTUAL_LIMIT} 条
+                <button class="btn btn--sm" onClick={handleShowAll} style="margin-left:8px">
+                  显示全部
+                </button>
+              </div>
+            </Show>
             <For each={entries()}>
               {(entry, i) => (
                 <div id={`entry-${entry.index}`}>

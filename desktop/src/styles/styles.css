@@ -894,6 +894,17 @@ body {
   padding: var(--space-6);
 }
 
+/* ── 虚拟滚动横幅 ── */
+.review-virtual-banner {
+  display: flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-info);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
 /* ── 条目卡片 ── */
 .entry-card {
   background: var(--color-bg-panel);
@@ -2768,4 +2779,96 @@ a:hover {
 
 .pt-textarea:focus {
   border-color: var(--color-border-focus);
+}
+
+/* ==========================================
+   项目配置页面
+   ========================================== */
+
+.page-project-config {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.pc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.pc-layout {
+  flex: 1;
+  display: flex;
+  gap: var(--space-2);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.pc-nav {
+  width: 180px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  overflow-y: auto;
+}
+
+.pc-nav-item {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-base);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-default);
+  transition: background var(--duration-fast);
+}
+
+.pc-nav-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.pc-nav-item.active {
+  background: var(--color-bg-selected);
+  color: var(--color-brand-primary);
+  font-weight: var(--weight-medium);
+}
+
+.pc-fields {
+  flex: 1;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.pc-section-title {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.pc-field {
+  margin-bottom: var(--space-2);
+}
+
+.pc-field-label {
+  display: block;
+  font-size: var(--font-base);
+  font-weight: var(--weight-medium);
+  margin-bottom: 2px;
+}
+
+.pc-field-desc {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.pc-field-input {
+  width: 100%;
+  max-width: 400px;
 }

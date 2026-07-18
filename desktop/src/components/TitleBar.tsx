@@ -105,6 +105,8 @@ const menus: MenuDef[] = [
       { label: "后端配置", action: () => navigateTo("backend-profiles") },
       { label: "提示词模板", action: () => navigateTo("prompt-templates") },
       { label: "插件管理", action: () => navigateTo("plugins") },
+      { label: "", separator: true },
+      { label: "项目配置", action: () => navigateTo("project-config") },
     ],
   },
   {

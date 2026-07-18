@@ -7,6 +7,7 @@ import { SettingsPage } from "../pages/settings/SettingsPage";
 import { NewProjectWizard } from "../pages/wizard/NewProjectWizard";
 import { LogViewer } from "../pages/logs/LogViewer";
 import { DictionaryPage } from "../pages/dictionary/DictionaryPage";
+import { ProjectConfigPage } from "../pages/project-config/ProjectConfigPage";
 import { BackendProfilesPage } from "../pages/backends/BackendProfilesPage";
 import { PluginsPage } from "../pages/plugins/PluginsPage";
 import { PromptTemplatesPage } from "../pages/prompts/PromptTemplatesPage";
@@ -46,6 +47,9 @@ export function MainArea() {
         </Match>
         <Match when={view() === "prompt-templates"}>
           <PromptTemplatesPage />
+        </Match>
+        <Match when={view() === "project-config"}>
+          <ProjectConfigPage />
         </Match>
       </Switch>
     </main>

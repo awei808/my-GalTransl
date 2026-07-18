@@ -6,6 +6,7 @@ import {
   For,
 } from "solid-js";
 import { toast } from "../../stores/toastStore";
+import { navigateTo } from "../../stores/appStore";
 import {
   getThemeModePreference,
   setThemeModePreference,
@@ -180,6 +181,18 @@ export function SettingsPage() {
       <p class="page-description">管理应用配置和后端连接。</p>
 
       <div class="settings-content">
+        {/* ── 项目设置 ── */}
+        <section class="settings-section">
+          <div class="settings-section-header">
+            <h3>项目设置</h3>
+            <p>编辑当前打开项目的翻译配置参数（config.yaml）。</p>
+          </div>
+          <div class="settings-field" style="cursor:pointer; border-bottom:none" onClick={() => navigateTo("project-config")}>
+            <span class="settings-label">编辑项目配置</span>
+            <span class="settings-about-value settings-about-link">后端、插件、字典等参数 →</span>
+          </div>
+        </section>
+
         {/* ── 外观 ── */}
         <section class="settings-section">
           <div class="settings-section-header">
@@ -350,6 +363,27 @@ export function SettingsPage() {
 
           <div class="settings-hint">
             取值范围 {HOME_LIST_LIMIT_MIN}-{HOME_LIST_LIMIT_MAX}。超出范围会自动修正。
+          </div>
+        </section>
+
+        {/* ── 配置管理 ── */}
+        <section class="settings-section">
+          <div class="settings-section-header">
+            <h3>配置管理</h3>
+            <p>管理后端连接配置、翻译插件、以及各翻译引擎的提示词模板。</p>
+          </div>
+
+          <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("backend-profiles")}>
+            <span class="settings-label">后端配置</span>
+            <span class="settings-about-value settings-about-link">管理 API 地址与模型 →</span>
+          </div>
+          <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("plugins")}>
+            <span class="settings-label">插件管理</span>
+            <span class="settings-about-value settings-about-link">查看已安装插件 →</span>
+          </div>
+          <div class="settings-field" style="cursor:pointer; border-bottom:none" onClick={() => navigateTo("prompt-templates")}>
+            <span class="settings-label">提示词模板</span>
+            <span class="settings-about-value settings-about-link">编辑默认提示词 →</span>
           </div>
         </section>
 

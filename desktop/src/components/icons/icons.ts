@@ -151,6 +151,11 @@ export const ICON_PATHS: Record<string, IconDef> = {
   'external-link': {
     d: "M14 4h6v6M20 4 10 14M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5",
   },
+
+  // ── Terminal / Build ──
+  terminal: {
+    d: "M4 17l6-6-6-6M13 19h7",
+  },
 };
 
 /** Get all icon names (for testing / validation) */
