@@ -2,7 +2,7 @@ import { createStore } from "solid-js/store";
 
 // ── 类型 ──
 
-export type ActiveView = "home" | "translate" | "review" | "settings";
+export type ActiveView = "home" | "translate" | "review" | "settings" | "new-project";
 
 export type ConnectionPhase =
   | "offline"
@@ -54,6 +54,9 @@ export const [appState, setAppState] = createStore<AppState>(defaultState);
 export function navigateTo(view: ActiveView) {
   setAppState("activeView", view);
   if (view === "settings") {
+    setAppState({ sidebarOpen: false, sidebarTab: null });
+  }
+  if (view === "new-project") {
     setAppState({ sidebarOpen: false, sidebarTab: null });
   }
 }

@@ -18,8 +18,9 @@ const menus: MenuDef[] = [
   {
     label: "文件",
     items: [
-      { label: "打开项目", shortcut: "", action: () => {} },
-      { label: "关闭项目", disabled: true, action: () => {} },
+      { label: "新建项目", action: () => navigateTo("new-project") },
+      { label: "打开项目", action: () => {} },
+      { label: "关闭项目", disabled: () => !appState.activeProjectId, action: () => {} },
       { label: "", separator: true },
       { label: "退出", action: () => {} },
     ],
@@ -41,7 +42,9 @@ const menus: MenuDef[] = [
   {
     label: "翻译",
     items: [
-      { label: "启动流程", action: () => {} },
+      { label: "启动流程", action: () => {
+        if (appState.activeProjectId) navigateTo("translate");
+      } },
       { label: "停止翻译", disabled: true, action: () => {} },
       { label: "", separator: true },
       { label: "打开日志", action: () => {} },
@@ -90,9 +93,13 @@ export function TitleBar() {
   }
 
   function handleItemClick(item: MenuItem) {
-    if (item.disabled || item.separator) return;
+    if (isDisabled(item) || item.separator) return;
     setOpenMenu(null);
     item.action?.();
+  }
+
+  function itemDisabled(item: MenuItem): boolean {
+    return typeof item.disabled === "function" ? item.disabled() : !!item.disabled;
   }
 
   return (
@@ -116,7 +123,7 @@ export function TitleBar() {
                         <div class="titlebar-dropdown-separator" />
                       ) : (
                         <div
-                          class={`titlebar-dropdown-item ${item.disabled ? "disabled" : ""}`}
+                          class={`titlebar-dropdown-item ${itemDisabled(item) ? "disabled" : ""}`}
                           onClick={() => handleItemClick(item)}
                           role="menuitem"
                         >

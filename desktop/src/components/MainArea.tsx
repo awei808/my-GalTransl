@@ -4,6 +4,7 @@ import { HomePage } from "../pages/home/HomePage";
 import { TranslateConsole } from "../pages/translate/TranslateConsole";
 import { ReviewPage } from "../pages/review/ReviewPage";
 import { SettingsPage } from "../pages/settings/SettingsPage";
+import { NewProjectWizard } from "../pages/wizard/NewProjectWizard";
 
 export function MainArea() {
   const view = () => appState.activeView;
@@ -22,6 +23,9 @@ export function MainArea() {
         </Match>
         <Match when={view() === "settings"}>
           <SettingsPage />
+        </Match>
+        <Match when={view() === "new-project"}>
+          <NewProjectWizard />
         </Match>
       </Switch>
     </main>
