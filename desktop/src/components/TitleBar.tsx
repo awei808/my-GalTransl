@@ -4,7 +4,7 @@ import { appState, navigateTo, setAppState } from "../stores/appStore";
 interface MenuItem {
   label: string;
   shortcut?: string;
-  disabled?: boolean;
+  disabled?: boolean | (() => boolean);
   separator?: boolean;
   action?: () => void;
 }
@@ -93,7 +93,7 @@ export function TitleBar() {
   }
 
   function handleItemClick(item: MenuItem) {
-    if (isDisabled(item) || item.separator) return;
+    if (itemDisabled(item) || item.separator) return;
     setOpenMenu(null);
     item.action?.();
   }
