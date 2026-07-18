@@ -17,7 +17,9 @@ export function App() {
       <TitleBar />
       <div class={`app-body ${!sidebarOpen() ? "sidebar-collapsed" : ""}`}>
         <ActivityBar />
-        <SidebarPanel />
+        <div class="sidebar-column">
+          <SidebarPanel />
+        </div>
         <MainArea />
       </div>
       <StatusBar />
