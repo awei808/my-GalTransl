@@ -30,8 +30,10 @@ async function handleOpenProject() {
   toast.info("正在启动后端服务...");
   try {
     await ensureDesktopBackendReady({ timeoutMs: 30000 });
+    setAppState({ connectionPhase: "online", backendOnline: true });
   } catch {
     toast.error("无法启动后端服务，请手动运行 run_backend.py");
+    setAppState({ connectionPhase: "offline", backendOnline: false });
     // 继续尝试
   }
 
@@ -49,6 +51,7 @@ async function handleOpenProject() {
 
 async function handleCloseProject() {
   closeProject();
+  setAppState({ connectionPhase: "offline", backendOnline: false });
   toast.info("项目已关闭");
 }
 
@@ -75,15 +78,15 @@ const menus: MenuDef[] = [
   {
     label: "编辑",
     items: [
-      { label: "撤销", shortcut: "Ctrl+Z", action: () => {} },
-      { label: "重做", shortcut: "Ctrl+Y", action: () => {} },
+      { label: "撤销", shortcut: "Ctrl+Z", action: () => document.dispatchEvent(new CustomEvent("galtransl:undo")) },
+      { label: "重做", shortcut: "Ctrl+Y", action: () => document.dispatchEvent(new CustomEvent("galtransl:redo")) },
       { label: "", separator: true },
       { label: "剪切", shortcut: "Ctrl+X", action: () => {} },
       { label: "复制", shortcut: "Ctrl+C", action: () => {} },
       { label: "粘贴", shortcut: "Ctrl+V", action: () => {} },
       { label: "", separator: true },
-      { label: "查找", shortcut: "Ctrl+F", action: () => {} },
-      { label: "替换", shortcut: "Ctrl+H", action: () => {} },
+      { label: "查找", shortcut: "Ctrl+F", action: () => setAppState({ sidebarOpen: true, sidebarTab: "find" }) },
+      { label: "替换", shortcut: "Ctrl+H", action: () => setAppState({ sidebarOpen: true, sidebarTab: "find" }) },
     ],
   },
   {

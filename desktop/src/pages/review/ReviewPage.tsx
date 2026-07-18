@@ -4,9 +4,10 @@ import {
   For,
   Show,
   onCleanup,
+  onMount,
 } from "solid-js";
 import { appState, setAppState, markDirty, markClean } from "../../stores/appStore";
-import { pushUndo, clearUndo } from "../../stores/undoStore";
+import { pushUndo, clearUndo, undo, redo, getUndoState } from "../../stores/undoStore";
 import { fetchCacheFile, saveCacheFile } from "../../lib/api/project";
 import type { CacheEntry, CacheFileResponse } from "../../lib/api/types";
 
@@ -138,6 +139,76 @@ export function ReviewPage() {
   const [loading, setLoading] = createSignal(false);
   const [expandedSet, setExpandedSet] = createSignal<Set<number>>(new Set());
   const [jumpValue, setJumpValue] = createSignal("");
+
+  // ── 键盘快捷键（撤销/重做） ──
+  function handleKeyDown(e: KeyboardEvent) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (e.key === "z") {
+      e.preventDefault();
+      handleUndo();
+    } else if (e.key === "y") {
+      e.preventDefault();
+      handleRedo();
+    }
+  }
+
+  // ── 菜单事件（编辑→撤销/重做） ──
+  function handleMenuUndo() { handleUndo(); }
+  function handleMenuRedo() { handleRedo(); }
+
+  onMount(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("galtransl:undo", handleMenuUndo);
+    document.addEventListener("galtransl:redo", handleMenuRedo);
+  });
+  onCleanup(() => {
+    document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("galtransl:undo", handleMenuUndo);
+    document.removeEventListener("galtransl:redo", handleMenuRedo);
+  });
+
+  function handleUndo() {
+    const entry = undo();
+    if (!entry) return;
+    const currentFile = appState.activeFilePath;
+    if (entry.file !== currentFile) return;
+
+    setEntries((prev) => {
+      const next = [...prev];
+      const idx = next.findIndex((e) => e.index === entry.index);
+
+      if (idx === -1 && Object.keys(entry.before).length > 0) {
+        // 被删除的条目：恢复（插入到正确位置）
+        next.splice(entry.index, 0, entry.before as unknown as CacheEntry);
+        return next;
+      }
+      if (idx === -1) return prev;
+      // 字段编辑
+      next[idx] = { ...next[idx], ...entry.before };
+      return next;
+    });
+  }
+
+  function handleRedo() {
+    const entry = redo();
+    if (!entry) return;
+    const currentFile = appState.activeFilePath;
+    if (entry.file !== currentFile) return;
+
+    setEntries((prev) => {
+      const next = [...prev];
+      const idx = next.findIndex((e) => e.index === entry.index);
+
+      if (Object.keys(entry.after).length === 0 && idx !== -1) {
+        // 重做删除
+        next.splice(idx, 1);
+        return next;
+      }
+      if (idx === -1) return prev;
+      next[idx] = { ...next[idx], ...entry.after };
+      return next;
+    });
+  }
 
   // 当 activeFilePath 变化时加载文件
   createEffect(() => {

@@ -11,11 +11,16 @@ import {
   appState,
   setAppState,
 } from "../stores/appStore";
-import { fetchProjectFiles } from "../lib/api/project";
+import { toast } from "../stores/toastStore";
+import { pushUndo } from "../stores/undoStore";
+import { fetchProjectFiles, searchCache, replaceCache } from "../lib/api/project";
 import { fetchProjectProblems } from "../lib/api/project";
 import type {
   FileEntry,
   ProblemEntry,
+  CacheSearchResult,
+  CacheSearchField,
+  CacheReplaceField,
 } from "../lib/api/types";
 
 /* ── 文件浏览器 ── */
@@ -95,14 +100,97 @@ function FileExplorer() {
 /* ── 查找替换 ── */
 function FindReplacePanel() {
   const [query, setQuery] = createSignal("");
-  const [replace, setReplace] = createSignal("");
+  const [replaceText, setReplaceText] = createSignal("");
+  const [field, setField] = createSignal<CacheSearchField>("all");
+  const [results, setResults] = createSignal<CacheSearchResult[]>([]);
+  const [searched, setSearched] = createSignal(false);
+  const [searching, setSearching] = createSignal(false);
+  const [replacing, setReplacing] = createSignal(false);
 
-  function handleSearch() {
-    // TODO: integrate searchCache API
+  async function handleSearch() {
+    const pid = appState.activeProjectId;
+    const q = query().trim();
+    if (!pid || !q) {
+      toast.warning("请先输入搜索内容");
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await searchCache(pid, q, field(), 500);
+      setResults(res.results ?? []);
+      setSearched(true);
+      if (res.total === 0) toast.info("未找到匹配结果");
+      else toast.success(`找到 ${res.total} 个结果`);
+    } catch (e: any) {
+      toast.error(`搜索失败: ${e.message}`);
+    } finally {
+      setSearching(false);
+    }
   }
 
-  function handleReplace() {
-    // TODO: integrate replaceCache API
+  async function handleReplace() {
+    const pid = appState.activeProjectId;
+    const q = query().trim();
+    const r = replaceText();
+    if (!pid || !q) {
+      toast.warning("请先输入查找内容");
+      return;
+    }
+    setReplacing(true);
+    try {
+      // 先执行 dryRun 确认数量
+      const dryRes = await replaceCache(pid, q, r, "dst", true);
+      if (dryRes.total_matches === 0) {
+        toast.info("未找到可替换的匹配项");
+        setReplacing(false);
+        return;
+      }
+
+      // 记录到 undo
+      for (const fd of dryRes.file_details) {
+        if (fd.entries) {
+          for (const e of fd.entries) {
+            pushUndo({
+              id: `${fd.filename}:${e.index}`,
+              file: fd.filename,
+              index: e.index,
+              before: { pre_dst: e.pre_dst },
+              after: { pre_dst: r },
+              description: "查找替换",
+            });
+          }
+        }
+      }
+
+      // 执行真实替换
+      const res = await replaceCache(pid, q, r, "dst", false);
+      toast.success(`已替换 ${res.total_matches} 个匹配项，涉及 ${res.total_files} 个文件`);
+      // 重新搜索
+      await handleSearch();
+    } catch (e: any) {
+      toast.error(`替换失败: ${e.message}`);
+    } finally {
+      setReplacing(false);
+    }
+  }
+
+  // 按文件名分组
+  const grouped = () => {
+    const map = new Map<string, CacheSearchResult[]>();
+    for (const r of results()) {
+      const list = map.get(r.filename) ?? [];
+      list.push(r);
+      map.set(r.filename, list);
+    }
+    return [...map.entries()];
+  };
+
+  function jumpToResult(r: CacheSearchResult) {
+    setAppState({
+      activeView: "review",
+      activeFilePath: r.filename,
+      sidebarTab: "explorer",
+    });
   }
 
   return (
@@ -124,19 +212,65 @@ function FindReplacePanel() {
             class="find-input"
             type="text"
             placeholder="替换为"
-            value={replace()}
-            onInput={(e) => setReplace(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleReplace()}
+            value={replaceText()}
+            onInput={(e) => setReplaceText(e.currentTarget.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           />
         </div>
+        <div class="find-input-group">
+          <select
+            class="find-input"
+            value={field()}
+            onChange={(e) => setField(e.currentTarget.value as CacheSearchField)}
+          >
+            <option value="all">全部字段</option>
+            <option value="src">原文</option>
+            <option value="dst">译文</option>
+            <option value="problem">问题</option>
+          </select>
+        </div>
         <div class="find-actions">
-          <button class="btn btn--sm" onClick={handleSearch}>
-            查找
+          <button class="btn btn--sm" onClick={handleSearch} disabled={searching()}>
+            {searching() ? "搜索中…" : "查找"}
           </button>
-          <button class="btn btn--sm" onClick={handleReplace}>
-            替换全部
+          <button class="btn btn--sm" onClick={handleReplace} disabled={replacing() || results().length === 0}>
+            {replacing() ? "替换中…" : "替换全部"}
           </button>
         </div>
+
+        <Show when={searched()}>
+          <Show
+            when={results().length > 0}
+            fallback={
+              <p class="sidebar-placeholder">未找到匹配结果</p>
+            }
+          >
+            <div class="find-results">
+              <div class="find-results-header">
+                共 {results().length} 个结果
+              </div>
+              <For each={grouped()}>
+                {([filename, entries]) => (
+                  <div class="find-result-group">
+                    <div class="find-result-filename">{filename}</div>
+                    <For each={entries}>
+                      {(r) => (
+                        <div class="find-result-item" onClick={() => jumpToResult(r)}>
+                          <span class="find-result-index">#{r.index}</span>
+                          <span class="find-result-preview">
+                            {r.match_src ? r.post_src?.slice(0, 40) : ""}
+                            {r.match_dst ? r.pre_dst?.slice(0, 40) : ""}
+                            {r.match_problem ? r.problem?.slice(0, 40) : ""}
+                          </span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        </Show>
       </div>
     </div>
   );

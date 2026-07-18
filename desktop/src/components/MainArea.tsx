@@ -4,6 +4,7 @@ import { HomePage } from "../pages/home/HomePage";
 import { TranslateConsole } from "../pages/translate/TranslateConsole";
 import { ReviewPage } from "../pages/review/ReviewPage";
 import { SettingsPage } from "../pages/settings/SettingsPage";
+import { NewProjectWizard } from "../pages/wizard/NewProjectWizard";
 import { LogViewer } from "../pages/logs/LogViewer";
 
 export function MainArea() {
