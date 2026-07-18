@@ -1,5 +1,7 @@
 import { createStore } from "solid-js/store";
 import { invoke } from "@tauri-apps/api/core";
+import { appState } from "./appStore";
+import { decodeProjectDir } from "../lib/api/client";
 
 export type LogLevel = "error" | "warning" | "info" | "success";
 
@@ -36,13 +38,33 @@ function isTauri(): boolean {
 async function resolveLogFilePath(): Promise<string | null> {
   if (!isTauri()) return null;
   if (_logFilePath) return _logFilePath;
-  const root: string = await invoke("get_project_root");
-  const logDir = `${root.replace(/\\/g, "/")}/logs`;
+
+  const today = todayStr();
+  let logDir: string;
+
+  // 优先：翻译项目目录（和后端日志放一起）
+  const projectDir = getProjectDirFromState();
+  if (projectDir) {
+    logDir = projectDir.replace(/\\/g, "/");
+  } else {
+    // 兜底：项目根 logs/
+    const root: string = await invoke("get_project_root");
+    logDir = `${root.replace(/\\/g, "/")}/logs`;
+  }
+
   try {
     await invoke("create_dir", { path: logDir });
   } catch {}
-  _logFilePath = `${logDir}/frontend-${todayStr()}.log`;
+
+  _logFilePath = `${logDir}/frontend-${today}.log`;
   return _logFilePath;
+}
+
+/** 从 appState 获取当前翻译项目的真实目录 */
+function getProjectDirFromState(): string | null {
+  const encoded = appState.activeProjectId;
+  if (!encoded) return null;
+  return decodeProjectDir(encoded);
 }
 
 function todayStr(): string {
