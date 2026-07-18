@@ -8,7 +8,7 @@ import {
 import { appState } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
-import { fetchProjectRuntime, stopProjectTranslation } from "../../lib/api/project";
+import { fetchProjectRuntime, fetchProjectProgress, stopProjectTranslation } from "../../lib/api/project";
 import { fetchTranslators, submitJob } from "../../lib/api/general";
 import type {
   ProjectRuntimeResponse,
@@ -98,8 +98,7 @@ export function TranslateConsole() {
     // 翻译器列表只加载一次
     if (translators().length === 0) {
       fetchTranslators()
-        .then((res) => {
-          const list = res.translators ?? [];
+        .then((list) => {
           setTranslators(list);
           if (list.length > 0 && !selectedBackend()) {
             setSelectedBackend(list[0].name);
@@ -121,6 +120,7 @@ export function TranslateConsole() {
     }
     submitJob({
       project_dir: pid,
+      config_file_name: "config.yaml",
       translator: selectedBackend(),
     })
       .then(() => toast.success("翻译任务已提交"))
