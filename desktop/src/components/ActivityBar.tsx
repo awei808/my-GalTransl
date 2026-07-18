@@ -4,6 +4,9 @@ import {
   setAppState,
   navigateTo,
 } from "../stores/appStore";
+import { toast } from "../stores/toastStore";
+import { confirm } from "../stores/confirmStore";
+import { buildProjectOutput } from "../lib/api/project";
 
 interface TabDef {
   icon: string;
@@ -21,8 +24,40 @@ const tabs: TabDef[] = [
   { icon: "settings", view: "settings", label: "设置" },
 ];
 
+async function handleBuildOutput() {
+  const pid = appState.activeProjectId;
+  if (!pid) {
+    toast.warning("请先打开一个项目");
+    return;
+  }
+
+  const result = await confirm.show({
+    title: "构建输出",
+    message: "将从缓存文件生成最终输出文件。此操作会覆盖已有的输出文件。是否继续？",
+    confirmLabel: "开始构建",
+    tone: "info",
+  });
+  if (!result.confirmed) return;
+
+  toast.info("正在构建输出文件...");
+  try {
+    const res = await buildProjectOutput(pid);
+    toast.success(`构建完成：共生成 ${res.total_built} 个文件`);
+    if (res.errors && res.errors.length > 0) {
+      toast.warning(`${res.errors.length} 个文件构建出错`);
+    }
+  } catch (e: any) {
+    toast.error(`构建失败: ${e.message}`);
+  }
+}
+
 function handleTabClick(tab: TabDef) {
-  const fullPageViews = ["dict", "settings", "backend-profiles", "plugins", "prompt-templates", "build-output"];
+  if (tab.view === "build-output") {
+    handleBuildOutput();
+    return;
+  }
+
+  const fullPageViews = ["dict", "settings", "backend-profiles", "plugins", "prompt-templates"];
   if (fullPageViews.includes(tab.view)) {
     navigateTo(tab.view as any);
     setAppState({ sidebarOpen: false });

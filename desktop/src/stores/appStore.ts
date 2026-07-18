@@ -2,7 +2,7 @@ import { createStore } from "solid-js/store";
 
 // ── 类型 ──
 
-export type ActiveView = "home" | "translate" | "review" | "settings" | "new-project" | "logs" | "dict" | "backend-profiles" | "plugins" | "prompt-templates" | "build-output" | "project-config";
+export type ActiveView = "home" | "translate" | "review" | "settings" | "new-project" | "logs" | "dict" | "backend-profiles" | "plugins" | "prompt-templates" | "project-config";
 
 export type ConnectionPhase =
   | "offline"
