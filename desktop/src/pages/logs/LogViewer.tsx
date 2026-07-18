@@ -1,10 +1,14 @@
-import { createSignal, For, Show } from "solid-js";
-import { getLogs, clearLogs, LogLevel, getLogsByLevel } from "../../stores/logStore";
-import { appState } from "../../stores/appStore";
+import { createSignal, For, Show, onMount } from "solid-js";
+import { getLogs, clearLogs, getLogsByLevel, loadLogsFromFile } from "../../stores/logStore";
+import type { LogLevel } from "../../stores/logStore";
 
 export function LogViewer() {
   const [filter, setFilter] = createSignal<LogLevel | "all">("all");
-  const [expanded, setExpanded] = createSignal(false);
+
+  // 挂载时加载文件日志
+  onMount(() => {
+    loadLogsFromFile();
+  });
 
   function handleClear() {
     clearLogs();
@@ -58,7 +62,7 @@ export function LogViewer() {
         fallback={
           <div class="logs-empty">
             <p>暂无操作日志</p>
-            <p class="logs-empty-hint">所有 Toast 通知、操作错误和信息将自动记录在此。</p>
+            <p class="logs-empty-hint">所有操作记录将自动保存到文件。</p>
           </div>
         }
       >
@@ -68,7 +72,9 @@ export function LogViewer() {
               <div class={levelClass(entry.level)}>
                 <span class="log-level">{levelIcon(entry.level)}</span>
                 <span class="log-time">{fmtTime(entry.ts)}</span>
-                <span class="log-source" title={entry.source}>{entry.source}</span>
+                <span class="log-source" title={entry.source}>
+                  {entry.source}
+                </span>
                 <span class="log-msg">{entry.message}</span>
               </div>
             )}

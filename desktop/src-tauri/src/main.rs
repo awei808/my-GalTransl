@@ -403,6 +403,22 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn append_text_file(path: String, content: String) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("打开日志文件失败: {}", e))?;
+    writeln!(file, "{}", content).map_err(|e| format!("写入日志失败: {}", e))
+}
+
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))
+}
+
+#[tauri::command]
 fn copy_files(sources: Vec<String>, destination_dir: String) -> Result<(), String> {
     std::fs::create_dir_all(&destination_dir).map_err(|e| format!("创建目录失败: {}", e))?;
     for src in &sources {
@@ -427,6 +443,8 @@ fn main() {
             reveal_file,
             create_dir,
             write_text_file,
+            append_text_file,
+            read_text_file,
             copy_files,
         ])
         .on_window_event(|_window, event| {
