@@ -34,7 +34,7 @@ async function handleBuildOutput() {
   const result = await confirm.show({
     title: "构建输出",
     message: "将从缓存文件生成最终输出文件。此操作会覆盖已有的输出文件。是否继续？",
-    confirmLabel: "开始构建",
+    confirmText: "开始构建",
     tone: "info",
   });
   if (!result.confirmed) return;
@@ -63,10 +63,10 @@ function handleTabClick(tab: TabDef) {
     setAppState({ sidebarOpen: false });
   } else if (["search", "problems"].includes(tab.view)) {
     const alreadyOpen =
-      appState.sidebarOpen && appState.sidebarTab === tab.view;
+      appState.sidebarOpen && appState.sidebarTab === (tab.view === "search" ? "find" : tab.view);
     setAppState({
       sidebarOpen: !alreadyOpen,
-      sidebarTab: alreadyOpen ? null : (tab.view as "search" | "problems"),
+      sidebarTab: alreadyOpen ? null : (tab.view === "search" ? "find" : tab.view as "problems"),
     });
   } else {
     navigateTo(tab.view as "translate" | "review");

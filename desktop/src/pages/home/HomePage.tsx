@@ -1,5 +1,5 @@
-import { createSignal, createEffect, For, Show, onMount } from "solid-js";
-import { appState, navigateTo, openProject } from "../../stores/appStore";
+import { createSignal, For, Show, onMount } from "solid-js";
+import { appState, openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
 import { fetchJobs } from "../../lib/api/general";

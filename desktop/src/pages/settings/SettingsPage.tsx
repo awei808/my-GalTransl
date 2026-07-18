@@ -1,9 +1,7 @@
 import {
   createSignal,
-  createEffect,
   onMount,
   Show,
-  For,
 } from "solid-js";
 import { toast } from "../../stores/toastStore";
 import { navigateTo } from "../../stores/appStore";
