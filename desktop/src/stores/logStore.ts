@@ -1,6 +1,5 @@
 import { createStore } from "solid-js/store";
 import { invoke } from "@tauri-apps/api/core";
-import { appDataDir } from "@tauri-apps/api/path";
 
 export type LogLevel = "error" | "warning" | "info" | "success";
 
@@ -37,11 +36,12 @@ function isTauri(): boolean {
 async function resolveLogFilePath(): Promise<string | null> {
   if (!isTauri()) return null;
   if (_logFilePath) return _logFilePath;
-  const dir = await appDataDir();
+  const root: string = await invoke("get_project_root");
+  const logDir = `${root.replace(/\\/g, "/")}/logs`;
   try {
-    await invoke("create_dir", { path: `${dir}logs` });
+    await invoke("create_dir", { path: logDir });
   } catch {}
-  _logFilePath = `${dir}logs/frontend-${todayStr()}.log`;
+  _logFilePath = `${logDir}/frontend-${todayStr()}.log`;
   return _logFilePath;
 }
 

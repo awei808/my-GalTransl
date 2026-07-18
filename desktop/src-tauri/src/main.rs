@@ -398,6 +398,35 @@ fn create_dir(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_project_root() -> Result<String, String> {
+    // 取 exe 所在目录的父目录的父目录 = 项目根
+    // exe: .../desktop/src-tauri/target/debug/galtransl-desktop.exe
+    //   ↑ desktop/  ↑ src-tauri/ ↑ target/ ...
+    // 在开发模式下（cargo run），exe 在 target/debug/
+    // 在发行版中，exe 可能直接被放在 desktop/ 下
+    let exe = std::env::current_exe().map_err(|e| format!("获取 exe 路径失败: {}", e))?;
+    let mut root = exe.parent().ok_or("无法获取 exe 父目录")?.to_path_buf();
+
+    // 向上查找直到发现 package.json（即项目根）
+    for _ in 0..6 {
+        if root.join("package.json").exists() {
+            return Ok(root.to_string_lossy().to_string());
+        }
+        if !root.pop() {
+            break;
+        }
+    }
+
+    // 兜底：exe 的上级
+    let fallback = exe
+        .parent()
+        .ok_or("无法确定项目根目录")?
+        .to_string_lossy()
+        .to_string();
+    Ok(fallback)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))
 }
@@ -442,6 +471,7 @@ fn main() {
             open_folder,
             reveal_file,
             create_dir,
+            get_project_root,
             write_text_file,
             append_text_file,
             read_text_file,
