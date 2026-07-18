@@ -259,6 +259,7 @@ def assemble_release(frontend_exe: Path | None, backend_exe: Path | None):
 
     if frontend_exe and frontend_exe.exists():
         shutil.copy2(frontend_exe, BUILD_DIR / "GalTransl Desktop.exe")
+        log_ok(f"前端 exe -> GalTransl Desktop.exe")
     else:
         log_warn("前端 exe 缺失，已跳过")
 
