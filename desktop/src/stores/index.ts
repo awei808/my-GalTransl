@@ -1,8 +1,12 @@
-export { useProjectStore } from './projectStore';
-export type { ProjectState } from './projectStore';
+// SolidJS stores — new frontend
+export { appState, setAppState, navigateTo, openProject, closeProject, markDirty, markClean } from './appStore';
+export type { ActiveView, ConnectionPhase, SidebarTab, AppState } from './appStore';
 
-export { useSettingsStore } from './settingsStore';
-export type { SettingsState, ThemeMode, CustomBackground } from './settingsStore';
+export { toast } from './toastStore';
+export type { ToastTone, ToastEntry } from './toastStore';
 
-export { useUIStore } from './uiStore';
-export type { UIState, ConfirmDialogOptions } from './uiStore';
+export { confirm } from './confirmStore';
+export type { ConfirmOptions, ConfirmResult } from './confirmStore';
+
+export { pushUndo, undo, redo, clearUndo, getUndoState } from './undoStore';
+export type { UndoEntry } from './undoStore';

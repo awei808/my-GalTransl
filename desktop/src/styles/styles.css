@@ -1,0 +1,87 @@
+/* ==========================================
+   GalTransl Desktop — Global Styles Entry
+   ========================================== */
+
+@import "./tokens.css";
+
+/* ── CSS Reset ── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: var(--font-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--color-bg-selected);
+  color: var(--color-text-primary);
+}
+
+/* ── Focus ── */
+:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+/* ── App Body Layout ── */
+.app-body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) var(--sidebar-expanded-width, 0px) 1fr;
+  height: calc(100vh - var(--topbar-height) - var(--statusbar-height));
+  flex: 1;
+}
+
+.app-body.sidebar-collapsed {
+  grid-template-columns: var(--sidebar-width) 0px 1fr;
+}
+
+/* ── Links ── */
+a {
+  color: var(--color-text-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}

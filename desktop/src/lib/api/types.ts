@@ -66,6 +66,11 @@ export type ProjectConfigResponse = {
   config_file_name: string;
 };
 
+export type ConfigSchemaResponse = {
+  project_dir: string;
+  parameters: Record<string, string>;
+};
+
 export type ProjectConfigUpdatePayload = {
   config: Record<string, unknown>;
   config_file_name: string;
@@ -228,7 +233,11 @@ export type ProjectRuntimeResponse = {
   job: RuntimeJob | null;
   summary: ProjectRuntimeSummary;
   stage: string;
+  stage_index: number;
+  stage_total: number;
   current_file: string;
+  latest_prompt_preview: string;
+  latest_assembled_preview: string;
   recent_errors: ProjectRuntimeErrorEntry[];
   recent_successes: ProjectRuntimeSuccessEntry[];
   retransl_stats: ProjectRetranslStatEntry[];
@@ -241,6 +250,14 @@ export type StopProjectResponse = {
   job_id: string;
   status: JobStatus;
   message: string;
+};
+
+export type BuildOutputResponse = {
+  success: boolean;
+  project_dir: string;
+  built_files: string[];
+  total_built: number;
+  errors?: string[];
 };
 
 export type DictFileContent = {
