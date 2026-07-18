@@ -1,9 +1,6 @@
 import {
   createSignal,
   createEffect,
-  createMemo,
-  onMount,
-  onCleanup,
   Show,
   For,
 } from "solid-js";
@@ -106,14 +103,15 @@ export function NewProjectWizard() {
     try {
       const sep = dir.includes("/") ? "/" : "\\";
       const template = await fetchDefaultProjectConfigTemplate();
-      await invoke("write_text_file", {
-        path: `${dir}${sep}config.yaml`,
-        content: template,
-      });
+      // 先创建目录，再写入文件
       await invoke("create_dir", { path: dir });
       await invoke("create_dir", { path: `${dir}${sep}gt_input` });
       await invoke("create_dir", { path: `${dir}${sep}gt_output` });
       await invoke("create_dir", { path: `${dir}${sep}transl_cache` });
+      await invoke("write_text_file", {
+        path: `${dir}${sep}config.yaml`,
+        content: template,
+      });
       setProjectCreated(true);
       setFeedback({ type: "success", message: "项目创建成功！" });
     } catch (err: any) {
@@ -276,57 +274,55 @@ export function NewProjectWizard() {
   }
 
   // 完成：提取人名 + 打开项目
-  const handleFinish = createMemo(() => {
-    return async () => {
-      const dir = projectDir();
-      if (!dir) return;
+  async function handleFinish() {
+    const dir = projectDir();
+    if (!dir) return;
 
-      // 如果有文件，提交 dump-name 任务
-      if (importedFiles().length > 0) {
-        setNameJobStatus("running");
-        try {
-          const job = await submitJob({
-            project_dir: dir,
-            config_file_name: "config.yaml",
-            translator: "dump-name",
-          });
-          // 轮询任务状态
-          const poll = async () => {
-            try {
-              const s = await fetchJob(job.job_id);
-              if (s.status === "completed") {
-                setNameJobStatus("completed");
-                setNameJobMessage(
-                  s.success
-                    ? "人名提取完成！"
-                    : `提取完成但有警告: ${s.error || ""}`
-                );
-              } else if (s.status === "failed") {
-                setNameJobStatus("failed");
-                setNameJobMessage(s.error || "提取失败");
-              } else {
-                setTimeout(poll, 2000);
-              }
-            } catch {
-              setTimeout(poll, 3000);
+    // 先打开项目
+    const pid = encodeProjectDir(dir);
+    openProject(pid);
+    toast.success("项目已创建并打开");
+
+    // 如果有文件，提交 dump-name 任务
+    if (importedFiles().length > 0) {
+      setNameJobStatus("running");
+      try {
+        const job = await submitJob({
+          project_dir: dir,
+          config_file_name: "config.yaml",
+          translator: "dump-name",
+        });
+        // 轮询任务状态
+        const poll = async () => {
+          try {
+            const s = await fetchJob(job.job_id);
+            if (s.status === "completed") {
+              setNameJobStatus("completed");
+              setNameJobMessage(
+                s.success
+                  ? "人名提取完成！"
+                  : `提取完成但有警告: ${s.error || ""}`
+              );
+            } else if (s.status === "failed") {
+              setNameJobStatus("failed");
+              setNameJobMessage(s.error || "提取失败");
+            } else {
+              setTimeout(poll, 2000);
             }
-          };
-          poll();
-        } catch (err: any) {
-          setNameJobStatus("failed");
-          setNameJobMessage(err.message || String(err));
-        }
-      } else {
-        setNameJobStatus("completed");
-        setNameJobMessage("gt_input 中没有文件，已跳过人名提取。");
+          } catch {
+            setTimeout(poll, 3000);
+          }
+        };
+        poll();
+      } catch (err: any) {
+        setNameJobStatus("failed");
+        setNameJobMessage(err.message || String(err));
       }
-
-      // 打开项目
-      const pid = encodeProjectDir(dir);
-      openProject(pid);
-      toast.success("项目已创建并打开");
-    };
-  });
+    } else {
+      setNameJobStatus("completed");
+      setNameJobMessage("gt_input 中没有文件，已跳过人名提取。");
+    }
+  }
 
   // 保存父目录到 localStorage
   createEffect(() => {
@@ -510,7 +506,7 @@ export function NewProjectWizard() {
             下一步
           </button>
         ) : (
-          <button class="btn btn--primary" onClick={handleFinish()}>
+          <button class="btn btn--primary" onClick={handleFinish}>
             完成并打开项目
           </button>
         )}

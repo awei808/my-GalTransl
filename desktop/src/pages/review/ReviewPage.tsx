@@ -19,6 +19,7 @@ function EntryCard(props: {
   onSkip: () => void;
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
+  onBlur: () => void;
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
@@ -48,6 +49,7 @@ function EntryCard(props: {
             type="text"
             value={e().pre_dst}
             onInput={(ev) => props.onFieldChange("pre_dst", ev.currentTarget.value)}
+            onBlur={props.onBlur}
           />
         </div>
 
@@ -100,6 +102,7 @@ function EntryCard(props: {
                     onInput={(ev) =>
                       props.onFieldChange(field.key, ev.currentTarget.value)
                     }
+                    onBlur={props.onBlur}
                   />
                 </Show>
               </div>
@@ -140,6 +143,27 @@ export function ReviewPage() {
   const [expandedSet, setExpandedSet] = createSignal<Set<number>>(new Set());
   const [jumpValue, setJumpValue] = createSignal("");
 
+  // ── 文件内查找 ──
+  const [findOpen, setFindOpen] = createSignal(false);
+  const [findQuery, setFindQuery] = createSignal("");
+
+  // 根据查找条件过滤条目
+  const filteredEntries = () => {
+    const q = findQuery().toLowerCase().trim();
+    if (!q) return entries();
+    return entries().filter(
+      (e) =>
+        (e.pre_src && e.pre_src.toLowerCase().includes(q)) ||
+        (e.pre_dst && e.pre_dst.toLowerCase().includes(q)) ||
+        (e.problem && e.problem.toLowerCase().includes(q))
+    );
+  };
+
+  function handleFindInFile() {
+    setFindOpen(!findOpen());
+    if (findOpen()) setFindQuery("");
+  }
+
   // ── 键盘快捷键（撤销/重做） ──
   function handleKeyDown(e: KeyboardEvent) {
     if (!e.ctrlKey && !e.metaKey) return;
@@ -160,11 +184,13 @@ export function ReviewPage() {
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("galtransl:undo", handleMenuUndo);
     document.addEventListener("galtransl:redo", handleMenuRedo);
+    document.addEventListener("galtransl:find-in-file", handleFindInFile);
   });
   onCleanup(() => {
     document.removeEventListener("keydown", handleKeyDown);
     document.removeEventListener("galtransl:undo", handleMenuUndo);
     document.removeEventListener("galtransl:redo", handleMenuRedo);
+    document.removeEventListener("galtransl:find-in-file", handleFindInFile);
   });
 
   function handleUndo() {
@@ -327,6 +353,30 @@ export function ReviewPage() {
     }
   }
 
+  /** 失焦保存：将当前文件的所有条目保存到后端，然后重新获取以刷新问题检测 */
+  let savePending = false;
+
+  async function handleBlur() {
+    if (savePending) return;
+    savePending = true;
+
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (!pid || !file) { savePending = false; return; }
+
+    try {
+      // 保存所有条目到后端
+      await saveCacheFile(pid, file, entries() as any);
+      // 重新获取（后端返回含最新 problem 数据）
+      const res = await fetchCacheFile(pid, file);
+      setEntries((res as any).entries ?? []);
+    } catch {
+      // 静默处理
+    } finally {
+      savePending = false;
+    }
+  }
+
   const file = () => appState.activeFilePath;
 
   return (
@@ -336,6 +386,27 @@ export function ReviewPage() {
         <Show when={file()}>
           <span class="review-filename">{file()}</span>
         </Show>
+
+        {/* 文件内查找 */}
+        <Show when={findOpen()}>
+          <div class="find-in-file">
+            <input
+              class="find-input"
+              placeholder="查找（原文/译文/问题）"
+              value={findQuery()}
+              onInput={(e) => setFindQuery(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Escape" && handleFindInFile()}
+              autofocus
+            />
+            <Show when={findQuery().trim()}>
+              <span class="find-in-file-count">
+                {filteredEntries().length}/{entries().length}
+              </span>
+            </Show>
+            <button class="find-in-file-close" onClick={handleFindInFile}>×</button>
+          </div>
+        </Show>
+
         <div class="review-jump-group">
           <input
             class="review-jump-input"
@@ -363,14 +434,14 @@ export function ReviewPage() {
           fallback={<p class="review-placeholder">加载中…</p>}
         >
           <Show
-            when={entries().length > 0}
+            when={filteredEntries().length > 0}
             fallback={
               <p class="review-placeholder">
                 {appState.activeProjectId && !file()
                   ? "请在侧栏中选择一个文件"
-                  : appState.activeProjectId
-                    ? "该文件暂无条目"
-                    : "请先打开项目"}
+                  : findQuery().trim()
+                    ? "未找到匹配条目"
+                    : "该文件暂无条目"}
               </p>
             }
           >
@@ -383,7 +454,7 @@ export function ReviewPage() {
                 </button>
               </div>
             </Show>
-            <For each={entries()}>
+            <For each={filteredEntries()}>
               {(entry, i) => (
                 <div id={`entry-${entry.index}`}>
                   <EntryCard
@@ -395,6 +466,7 @@ export function ReviewPage() {
                     onFieldChange={(field, value) =>
                       handleFieldChange(i(), field, value)
                     }
+                    onBlur={handleBlur}
                   />
                 </div>
               )}

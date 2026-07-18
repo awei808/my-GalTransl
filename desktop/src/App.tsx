@@ -16,10 +16,12 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
   switch (e.key) {
     case "f":
       e.preventDefault();
-      setAppState({ sidebarOpen: true, sidebarTab: "find" });
+      // Ctrl+F: 文件内查找（各页面自行响应）
+      document.dispatchEvent(new CustomEvent("galtransl:find-in-file"));
       break;
     case "h":
       e.preventDefault();
+      // Ctrl+H: 打开侧栏文件夹替换
       setAppState({ sidebarOpen: true, sidebarTab: "find" });
       break;
     case "b":

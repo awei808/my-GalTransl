@@ -84,7 +84,10 @@ function FileExplorer() {
                   stroke-width="1.5"
                   style="flex-shrink:0"
                 >
-                  <path d="M6 2h8l4 4v16H6V2Zm8 0v4h4" />
+                  {f.is_file
+                    ? <path d="M6 2h8l4 4v16H6V2Zm8 0v4h4" />
+                    : <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+                  }
                 </svg>
                 <span class="file-tree-name">{f.name}</span>
                 <span class="file-tree-count">{f.entry_count}</span>
@@ -106,6 +109,16 @@ function FindReplacePanel() {
   const [searched, setSearched] = createSignal(false);
   const [searching, setSearching] = createSignal(false);
   const [replacing, setReplacing] = createSignal(false);
+
+  let autoSearchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function onQueryChange(value: string) {
+    setQuery(value);
+    clearTimeout(autoSearchTimer);
+    autoSearchTimer = setTimeout(() => {
+      if (value.trim()) handleSearch();
+    }, 400);
+  }
 
   async function handleSearch() {
     const pid = appState.activeProjectId;
@@ -203,7 +216,7 @@ function FindReplacePanel() {
             type="text"
             placeholder="查找"
             value={query()}
-            onInput={(e) => setQuery(e.currentTarget.value)}
+            onInput={(e) => onQueryChange(e.currentTarget.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           />
         </div>

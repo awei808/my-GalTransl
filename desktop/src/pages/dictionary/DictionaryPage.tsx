@@ -63,14 +63,12 @@ export function DictionaryPage() {
 
   function onDictChange(value: string) {
     setDraftText(value);
-    doAutoSave();
   }
 
   function onNameChange(index: number, field: "src_name" | "dst_name", value: string) {
     const next = [...nameEntries()];
     next[index] = { ...next[index], [field]: value };
     setNameEntries(next);
-    doAutoSaveNames();
   }
 
   async function doAutoSave() {
@@ -369,12 +367,14 @@ export function DictionaryPage() {
                           class="name-entry-src name-input"
                           value={entry.src_name}
                           onInput={(e) => onNameChange(i(), "src_name", e.currentTarget.value)}
+                          onBlur={doAutoSaveNames}
                         />
                         <span class="name-entry-arrow">→</span>
                         <input
                           class="name-entry-dst name-input"
                           value={entry.dst_name}
                           onInput={(e) => onNameChange(i(), "dst_name", e.currentTarget.value)}
+                          onBlur={doAutoSaveNames}
                         />
                         <span class="name-col-count-val">{entry.count}</span>
                       </div>
@@ -452,6 +452,7 @@ export function DictionaryPage() {
               class="dict-textarea"
               value={draftText()}
               onInput={(e) => onDictChange(e.currentTarget.value)}
+              onBlur={doAutoSave}
               spellcheck={false}
             />
           </Show>
