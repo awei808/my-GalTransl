@@ -9,6 +9,7 @@ import type {
   FetchOpenAIModelsResponse,
   Job,
   JobsResponse,
+  ModelCheckResult,
   PluginInfo,
   PluginsResponse,
   ProblemTypeInfo,
@@ -120,12 +121,33 @@ export async function fetchOpenAIModels(payload: FetchOpenAIModelsPayload) {
   });
 }
 
+// ---- Model availability check ----
+
+export async function checkModelAvailability(payload: {
+  projectId: string;
+  translator: string;
+  configFileName?: string;
+}): Promise<ModelCheckResult> {
+  return apiRequest<ModelCheckResult>(
+    `/api/projects/${payload.projectId}/check-model`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        translator: payload.translator,
+        config_file_name: payload.configFileName ?? 'config.yaml',
+      }),
+    }
+  );
+}
+
 // Re-export types for convenience
 export type {
   AppSettings,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
   Job,
+  ModelCheckResult,
   PluginInfo,
   ProblemTypeInfo,
   PromptTemplateInfo,

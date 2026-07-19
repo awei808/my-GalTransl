@@ -270,9 +270,17 @@ fn ensure_backend_ready_inner(hide_console: bool, timeout_ms: Option<u64>) -> Re
     startup_result
 }
 
+/// 确保后端已就绪（供前端 invoke 调用）
+/// 由于带 timeout 轮询可能阻塞，使用 spawn_blocking 避免阻塞 webview
 #[tauri::command]
-fn ensure_backend_ready(hide_console: Option<bool>, timeout_ms: Option<u64>) -> Result<String, String> {
-    ensure_backend_ready_inner(hide_console.unwrap_or(true), timeout_ms)
+async fn ensure_backend_ready(hide_console: Option<bool>, timeout_ms: Option<u64>) -> Result<String, String> {
+    let hide = hide_console.unwrap_or(true);
+    let timeout = timeout_ms;
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_backend_ready_inner(hide, timeout)
+    })
+    .await
+    .map_err(|e| format!("后端启动线程异常: {}", e))?
 }
 
 #[cfg(target_os = "windows")]
@@ -448,18 +456,67 @@ fn read_text_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn copy_files(sources: Vec<String>, destination_dir: String) -> Result<(), String> {
+fn path_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[tauri::command]
+fn copy_files(sources: Vec<String>, destination_dir: String) -> Result<Vec<String>, String> {
     std::fs::create_dir_all(&destination_dir).map_err(|e| format!("创建目录失败: {}", e))?;
-    for src in &sources {
-        let file_name = std::path::Path::new(src)
-            .file_name()
-            .ok_or_else(|| format!("无效的文件路径: {}", src))?
-            .to_string_lossy()
-            .to_string();
-        let dest = std::path::Path::new(&destination_dir).join(&file_name);
-        std::fs::copy(src, &dest).map_err(|e| format!("复制文件失败: {} → {} ({})", src, dest.display(), e))?;
+    let dest = std::path::Path::new(&destination_dir);
+
+    // 递归展开目录，把所有文件收集为 (源路径, 相对目标路径)
+    fn collect_files(
+        src: &std::path::Path,
+        base: &std::path::Path,
+        out: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    ) -> Result<(), String> {
+        let meta = std::fs::metadata(src)
+            .map_err(|e| format!("读取路径失败: {} ({})", src.display(), e))?;
+        if meta.is_file() {
+            let rel = src
+                .strip_prefix(base)
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|_| {
+                    src.file_name()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| src.to_path_buf())
+                });
+            out.push((src.to_path_buf(), rel));
+        } else if meta.is_dir() {
+            for entry in std::fs::read_dir(src)
+                .map_err(|e| format!("读取目录失败: {} ({})", src.display(), e))?
+            {
+                let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+                collect_files(&entry.path(), base, out)?;
+            }
+        }
+        Ok(())
     }
-    Ok(())
+
+    let mut tasks: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    for src in &sources {
+        let src_path = std::path::Path::new(src);
+        let base = src_path.parent().unwrap_or(src_path).to_path_buf();
+        collect_files(src_path, &base, &mut tasks)?;
+    }
+
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut copied: Vec<String> = Vec::new();
+    for (src_file, rel) in &tasks {
+        let dest_path = dest.join(rel);
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建子目录失败: {}", e))?;
+        }
+        std::fs::copy(src_file, &dest_path)
+            .map_err(|e| format!("复制文件失败: {} → {} ({})", src_file.display(), dest_path.display(), e))?;
+        copied.push(rel.to_string_lossy().to_string());
+    }
+    Ok(copied)
 }
 
 fn main() {
@@ -476,30 +533,34 @@ fn main() {
             append_text_file,
             read_text_file,
             copy_files,
+            path_exists,
         ])
-        .on_window_event(|_window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                let _ = shutdown_managed_backend_inner();
-            }
-        })
         .setup(|_app| {
-            // 应用启动时自动激活后端
-            let result = ensure_backend_ready_inner(
-                true,                                     // hide_console
-                Some(BACKEND_STARTUP_TIMEOUT_MS),         // timeout_ms
-            );
-            match &result {
-                Ok(msg) => {
-                    eprintln!("[galtransl] 后端自动启动成功: {}", msg);
+            // 在后台线程启动后端，不阻塞窗口显示
+            std::thread::spawn(|| {
+                let result = ensure_backend_ready_inner(
+                    true,
+                    Some(BACKEND_STARTUP_TIMEOUT_MS),
+                );
+                match &result {
+                    Ok(msg) => {
+                        eprintln!("[galtransl] 后端自动启动成功: {}", msg);
+                    }
+                    Err(e) => {
+                        eprintln!("[galtransl] 后端自动启动失败: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("[galtransl] 后端自动启动失败: {}", e);
-                }
-            }
+            });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // 仅在桌面端整体退出时关闭后端，避免单个窗口（如外部链接弹窗）销毁误杀后端
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let _ = shutdown_managed_backend_inner();
+            }
+        });
 }
 
 #[cfg(test)]

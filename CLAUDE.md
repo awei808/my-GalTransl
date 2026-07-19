@@ -35,7 +35,7 @@ python run_backend.py --port 18910
 cd desktop && npm install && npm run tauri dev
 
 # 构建桌面端可发行文件
-C:/Python312/python.exe build_release.py
+py build_release.py
 ```
 
 测试使用 `unittest`（异步用 `IsolatedAsyncioTestCase`）。没有用到 pytest 特有的功能。

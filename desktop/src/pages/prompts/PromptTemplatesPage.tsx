@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show, onMount } from "solid-js";
+import { createSignal, For, Show, onMount } from "solid-js";
 import { toast } from "../../stores/toastStore";
 import { fetchPromptTemplates } from "../../lib/api/general";
 import type { PromptTemplateInfo } from "../../lib/api/types";

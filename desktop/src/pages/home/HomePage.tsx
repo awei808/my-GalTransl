@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { appState, setAppState, openProject } from "../../stores/appStore";
+import { setAppState, openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
 import { fetchJobs } from "../../lib/api/general";
@@ -59,8 +59,8 @@ export function HomePage() {
   onMount(() => {
     setRecent(getRecentProjects());
 
-    // 首页加载后自动激活后端
-    autoActivateBackend();
+    // 首页首次绘制完成后再异步激活后端，避免阻塞首屏响应
+    requestAnimationFrame(() => requestAnimationFrame(autoActivateBackend));
 
     fetchVersion()
       .then((v) => setVersion(v))
@@ -110,7 +110,7 @@ export function HomePage() {
         <h1 class="home-logo">GalTransl</h1>
         <p class="home-subtitle">视觉小说翻译工具</p>
         <p class="home-version">
-          {loadingVersion ? "检查版本中…" : version() ? `v${version()}` : ""}
+          {loadingVersion() ? "检查版本中…" : version() ? `v${version()}` : ""}
         </p>
         <div class="home-info">
           <p>

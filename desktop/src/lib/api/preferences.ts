@@ -499,3 +499,20 @@ export function getPromptTemplateOverridesForJob(translator: string): Record<str
 
 // ---- Re-export AppSettings type for convenience ----
 export type { AppSettings };
+
+// ---- Problem detection enabled types ----
+
+const PROBLEM_TYPES_KEY = 'galtransl:enabled-problem-types';
+
+export function getEnabledProblemTypes(): string[] {
+  try {
+    const raw = localStorage.getItem(PROBLEM_TYPES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setEnabledProblemTypes(types: string[]): void {
+  localStorage.setItem(PROBLEM_TYPES_KEY, JSON.stringify(types));
+}

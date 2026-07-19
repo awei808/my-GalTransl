@@ -3,7 +3,6 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { toast } from "../../stores/toastStore";
 import { navigateTo } from "../../stores/appStore";
 import {
   getThemeModePreference,
@@ -19,6 +18,8 @@ import {
   setHomeHistoryRetentionLimit,
   getHomeJobRetentionLimit,
   setHomeJobRetentionLimit,
+  getEnabledProblemTypes,
+  setEnabledProblemTypes,
   CUSTOM_BACKGROUND_OPACITY_MIN,
   CUSTOM_BACKGROUND_OPACITY_MAX,
   CUSTOM_BACKGROUND_SURFACE_OPACITY_MIN,
@@ -28,8 +29,8 @@ import {
   CACHE_BROWSER_FONT_SIZE_MIN,
   CACHE_BROWSER_FONT_SIZE_MAX,
 } from "../../lib/api/preferences";
-import { fetchVersion, fetchVersionCheck } from "../../lib/api/general";
-import type { ThemeMode, CustomBackgroundPreference } from "../../lib/api/types";
+import { fetchVersion, fetchVersionCheck, fetchProblemTypes } from "../../lib/api/general";
+import type { ThemeMode, ProblemTypeInfo } from "../../lib/api/types";
 import { compressImageToDataUrl } from "./imageCompress";
 
 const PROJECT_HOMEPAGE = "https://github.com/GalTransl/GalTransl";
@@ -60,6 +61,11 @@ export function SettingsPage() {
   const [checkingVer, setCheckingVer] = createSignal(true);
   const [verError, setVerError] = createSignal("");
 
+  // ── 问题检测项 ──
+  const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
+  const [enabledProblemTypes, setEnabledProblemTypesSignal] = createSignal<string[]>(getEnabledProblemTypes());
+  const [problemLoading, setProblemLoading] = createSignal(false);
+
   onMount(() => {
     fetchVersion()
       .then((v) => setCoreVersion(v))
@@ -73,6 +79,21 @@ export function SettingsPage() {
       })
       .catch((e: Error) => setVerError(e.message))
       .finally(() => setCheckingVer(false));
+
+    // 加载问题检测项列表
+    setProblemLoading(true);
+    fetchProblemTypes()
+      .then((types) => {
+        setProblemTypes(types);
+        // 如果还没有保存过偏好，默认全选
+        if (enabledProblemTypes().length === 0 && types.length > 0) {
+          const all = types.map((t) => t.name);
+          setEnabledProblemTypesSignal(all);
+          setEnabledProblemTypes(all);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setProblemLoading(false));
   });
 
   // ── 处理函数 ──
@@ -171,6 +192,15 @@ export function SettingsPage() {
     setBgOpacity(String(next.opacity));
     setBgSurfaceOpacity(String(next.surfaceOpacity));
     setBgError("");
+  }
+
+  function toggleProblemType(name: string) {
+    const current = enabledProblemTypes();
+    const next = current.includes(name)
+      ? current.filter((n) => n !== name)
+      : [...current, name];
+    setEnabledProblemTypesSignal(next);
+    setEnabledProblemTypes(next);
   }
 
   return (
@@ -382,6 +412,43 @@ export function SettingsPage() {
           <div class="settings-field" style="cursor:pointer; border-bottom:none" onClick={() => navigateTo("prompt-templates")}>
             <span class="settings-label">提示词模板</span>
             <span class="settings-about-value settings-about-link">编辑默认提示词 →</span>
+          </div>
+        </section>
+
+        {/* ── 校对审核（问题检测项） ── */}
+        <section class="settings-section">
+          <div class="settings-section-header">
+            <h3>校对审核</h3>
+            <p>选择校对审核时需要检测的问题类型。未选中的类型在检测时会被跳过。</p>
+          </div>
+
+          {problemLoading() ? (
+            <p class="settings-hint">加载问题类型中…</p>
+          ) : problemTypes().length === 0 ? (
+            <p class="settings-hint">未连接到后端，无法获取问题类型列表。</p>
+          ) : (
+            <div class="settings-problem-types">
+              <For each={problemTypes()}>
+                {(pt) => (
+                  <label class="settings-problem-item">
+                    <input
+                      type="checkbox"
+                      checked={enabledProblemTypes().includes(pt.name)}
+                      onChange={() => toggleProblemType(pt.name)}
+                    />
+                    <span class="settings-problem-info">
+                      <span class="settings-problem-name">{pt.name}</span>
+                      <span class="settings-problem-desc">{pt.description}</span>
+                    </span>
+                  </label>
+                )}
+              </For>
+            </div>
+          )}
+
+          <div class="settings-hint">
+            已启用 {enabledProblemTypes().length} / {problemTypes().length} 个检测项。
+            {enabledProblemTypes().length === 0 && " ⚠️ 未选择任何检测项时将不会发现问题。"}
           </div>
         </section>
 

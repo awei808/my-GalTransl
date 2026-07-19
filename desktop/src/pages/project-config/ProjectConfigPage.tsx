@@ -1,8 +1,7 @@
-import { createSignal, createEffect, For, Show, onMount } from "solid-js";
+import { createSignal, For, Show, onMount } from "solid-js";
 import { appState } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
-import type { ProjectConfigResponse, ConfigSchemaResponse } from "../../lib/api/types";
 
 export function ProjectConfigPage() {
   const [config, setConfig] = createSignal<Record<string, any>>({});
@@ -31,11 +30,24 @@ export function ProjectConfigPage() {
     }
   }
 
-  /** 按 key 的前缀分组，如 "general.source_language" → 组 "general" */
+  /** 将嵌套配置展平为点分键（如 "common.workersPerProject"），按前缀分组 */
   const groupedKeys = () => {
-    const keys = Object.keys(config()).filter((k) => typeof config()[k] !== "object" || config()[k] === null);
+    const flat: [string, any][] = [];
+
+    function walk(obj: Record<string, any>, prefix: string) {
+      for (const [k, v] of Object.entries(obj)) {
+        const key = prefix ? `${prefix}.${k}` : k;
+        if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+          walk(v as Record<string, any>, key);
+        } else {
+          flat.push([key, v]);
+        }
+      }
+    }
+    walk(config(), "");
+
     const groups = new Map<string, string[]>();
-    for (const key of keys) {
+    for (const [key] of flat) {
       const dot = key.indexOf(".");
       const group = dot > 0 ? key.slice(0, dot) : "_root";
       if (!groups.has(group)) groups.set(group, []);
@@ -53,16 +65,34 @@ export function ProjectConfigPage() {
   }
 
   function getValue(key: string): any {
-    const v = config()[key];
+    const parts = key.split(".");
+    let v: any = config();
+    for (const p of parts) {
+      if (v == null || typeof v !== "object") return "";
+      v = v[p];
+    }
     return v !== undefined ? v : "";
   }
 
   function setValue(key: string, value: any) {
-    setConfig((prev) => ({ ...prev, [key]: value }));
+    const parts = key.split(".");
+    setConfig((prev) => {
+      const next = { ...prev };
+      let cur: any = next;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (cur[parts[i]] == null || typeof cur[parts[i]] !== "object") {
+          cur[parts[i]] = {};
+        }
+        cur[parts[i]] = { ...cur[parts[i]] };
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = value;
+      return next;
+    });
   }
 
   function inferType(key: string): "string" | "number" | "boolean" {
-    const v = config()[key];
+    const v = getValue(key);
     if (typeof v === "boolean") return "boolean";
     if (typeof v === "number") return "number";
     return "string";

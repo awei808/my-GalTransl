@@ -1,16 +1,17 @@
 import type { PluginInfo } from "../../lib/api/types";
-import { fetchPlugins, fetchTranslationGuidelines } from "../../lib/api/general";
 
 interface StepSettingsProps {
   selectedFilePlugin: string;
+  selectedTextPlugin: string;
   workersPerProject: number;
   numPerRequest: number;
   language: string;
   translationGuideline: string;
   guidelines: string[];
-  settingsSaved: boolean;
   filePlugins: PluginInfo[];
+  textPlugins: PluginInfo[];
   onFilePluginChange: (v: string) => void;
+  onTextPluginChange: (v: string) => void;
   onWorkersChange: (v: number) => void;
   onNumPerRequestChange: (v: number) => void;
   onLanguageChange: (v: string) => void;
@@ -41,6 +42,26 @@ export function StepSettings(props: StepSettingsProps) {
             }
           </select>
           <span class="field__hint">用于识别与解析源文件格式。</span>
+        </div>
+        <div class="field wizard-settings-grid__full">
+          <span class="field__label">文本插件</span>
+          <div class="text-plugins-selector">
+            {props.textPlugins.length > 0
+              ? props.textPlugins.map((p) => (
+                  <label class="text-plugin-chip">
+                    <input
+                      type="radio"
+                      name="text-plugin"
+                      checked={props.selectedTextPlugin === p.name}
+                      onChange={() => props.onTextPluginChange(p.name)}
+                    />
+                    <span>{p.display_name} ({p.name})</span>
+                  </label>
+                ))
+              : <span class="field__hint">未加载到文本插件列表</span>
+            }
+          </div>
+          <span class="field__hint">按顺序执行的文本处理插件，可多选。</span>
         </div>
         <div class="field">
           <span class="field__label">并发文件数</span>
@@ -94,15 +115,6 @@ export function StepSettings(props: StepSettingsProps) {
             ))}
           </select>
         </div>
-      </div>
-      <div class="wizard-actions">
-        <button
-          class="btn btn--primary"
-          disabled={props.settingsSaved}
-          onClick={props.onSaveSettings}
-        >
-          {props.settingsSaved ? "已保存 ✓" : "保存设置"}
-        </button>
       </div>
     </div>
   );

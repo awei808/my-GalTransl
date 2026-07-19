@@ -1,5 +1,7 @@
 /* ── Deterministic speaker color from name hash ── */
 
+type CSSProperties = Record<string, string>;
+
 export function speakerHue(name: string): number {
   let h = 5381;
   for (let i = 0; i < name.length; i++) {
@@ -8,7 +10,7 @@ export function speakerHue(name: string): number {
   return ((h & 0x7fffffff) % 360);
 }
 
-export function speakerStyle(name: string): React.CSSProperties {
+export function speakerStyle(name: string): CSSProperties {
   const hue = speakerHue(name);
   return {
     background: `hsl(${hue}, 60%, 92%)`,

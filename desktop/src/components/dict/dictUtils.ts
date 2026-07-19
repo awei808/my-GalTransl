@@ -46,28 +46,28 @@ export function getFilesByTab(
 export function parseRows(text: string, tab: DictTab): DictRow[] {
   const lines = text.split('\n');
   return lines.map((line) => {
-    if (!line.trim() && !line.includes('\t')) return { type: 'blank', values: [], raw: line };
+    if (!line.trim() && !line.includes('|')) return { type: 'blank', values: [], raw: line };
     if (line.startsWith('//') || line.startsWith('#') || line.startsWith('\\\\')) {
       return { type: 'comment', values: [line], raw: line };
     }
-    const parts = line.split('\t');
+    const parts = line.split('|');
     if (tab === 'gpt') {
       const [src = '', dst = '', ...notes] = parts;
-      return { type: 'gpt', values: [src, dst, notes.join('\t')], raw: line };
+      return { type: 'gpt', values: [src, dst, notes.join('|')], raw: line };
     }
     if (
       parts.length >= 4
       && ['pre_jp', 'post_jp', 'pre_zh', 'post_zh', 'pre_src', 'post_src', 'pre_dst', 'post_dst'].includes(parts[0])
     ) {
       const [target = '', cond = '', search = '', replace = '', ...rest] = parts;
-      return { type: 'conditional', values: [target, cond, search, replace, rest.join('\t')], raw: line };
+      return { type: 'conditional', values: [target, cond, search, replace, rest.join('|')], raw: line };
     }
     if (parts.length >= 3 && ['diag', 'mono'].includes(parts[0])) {
       const [scene = '', search = '', ...replace] = parts;
-      return { type: 'situation', values: [scene, search, replace.join('\t')], raw: line };
+      return { type: 'situation', values: [scene, search, replace.join('|')], raw: line };
     }
     const [search = '', replace = '', ...rest] = parts;
-    return { type: 'normal', values: [search, replace, rest.join('\t')], raw: line };
+    return { type: 'normal', values: [search, replace, rest.join('|')], raw: line };
   });
 }
 
@@ -75,7 +75,7 @@ export function rowsToText(rows: DictRow[]): string {
   return rows.map((row) => {
     if (row.type === 'blank') return '';
     if (row.type === 'comment') return row.values[0] ?? row.raw;
-    return row.values.join('\t');
+    return row.values.join('|');
   }).join('\n');
 }
 

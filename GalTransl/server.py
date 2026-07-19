@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import threading
+from asyncio import run
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,10 +16,12 @@ import os
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version
+from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
+from GalTransl.COpenAI import COpenAITokenPool
+from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_SYSTEM_PROMPT,
     FORGAL_JSON_TRANS_PROMPT,
@@ -49,6 +52,54 @@ from GalTransl.server_runtime import (
 )
 
 from GalTransl.CSerialize import save_json
+
+
+async def _check_model_availability(
+    project_dir: str, translator: str, config_file_name: str
+) -> dict[str, Any]:
+    """主动检测所选后端的模型 / token 可用性。
+
+    复用与翻译任务相同的 tokenPool 构建逻辑：仅 OpenAI-Compatible 类后端
+    （translator 名称含 NEED_OpenAITokenPool 片段）需要 token 检测；本地 /
+    特殊端点（sakura、galtransl 等）走 endpointQueue，无需检测，返回
+    applicable=False。检测阶段 proxy 行为与真实翻译任务保持一致（不传 proxy）。
+    """
+    cfg = CProjectConfig(project_dir, config_file_name)
+    if not any(frag in translator for frag in NEED_OpenAITokenPool):
+        return {
+            "ok": True,
+            "applicable": False,
+            "available": 0,
+            "total": 0,
+            "engine": translator,
+            "message": "该后端为本地 / 特殊端点，无需 API token 检测",
+        }
+    token_pool = COpenAITokenPool(cfg, translator)
+    total = len(token_pool.tokens)
+    if total == 0:
+        return {
+            "ok": False,
+            "applicable": True,
+            "available": 0,
+            "total": 0,
+            "engine": translator,
+            "message": "未在配置中找到任何 token，请检查 config.yaml 的 OpenAI-Compatible.tokens",
+        }
+    await token_pool.checkTokenAvailablity()
+    available = len(token_pool.tokens)
+    return {
+        "ok": available > 0,
+        "applicable": True,
+        "available": available,
+        "total": total,
+        "engine": translator,
+        "message": (
+            f"模型可用，可用 token {available}/{total}"
+            if available > 0
+            else f"所有 token 均不可用（共 {total} 个）"
+        ),
+    }
+
 
 def _read_yaml_file(path: str) -> dict:
     """Read and parse a YAML file."""
@@ -1105,6 +1156,43 @@ def build_handler(registry: JobRegistry) -> type:
             if sub_path == "/config-schema":
                 schema = _get_config_schema()
                 self._send_json({"project_dir": project_dir, **schema})
+                return
+
+            # POST /api/projects/:id/check-model
+            # 主动检测所选后端的模型 / token 可用性。请求体:
+            #   {"translator": "GPT-Free-ForGal-json-multi-chat",
+            #    "config_file_name": "config.yaml"}
+            if sub_path == "/check-model":
+                if self.command != "POST":
+                    self._send_json(
+                        {"error": "method not allowed"},
+                        status=HTTPStatus.METHOD_NOT_ALLOWED,
+                    )
+                    return
+                payload = self._read_json_body()
+                translator = str(payload.get("translator", "")).strip()
+                config_file_name = (
+                    str(payload.get("config_file_name", "config.yaml")).strip()
+                    or "config.yaml"
+                )
+                if not translator:
+                    self._send_json(
+                        {"error": "translator is required"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                try:
+                    result = run(
+                        _check_model_availability(
+                            project_dir, translator, config_file_name
+                        )
+                    )
+                    self._send_json(result)
+                except Exception as exc:
+                    self._send_json(
+                        {"error": f"模型可用性检测失败: {exc}"},
+                        status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    )
                 return
 
             # POST /api/projects/:id/build-output

@@ -13,6 +13,22 @@ export type TranslatorOption = {
   name: string;
 };
 
+/** 模型可用性检测结果（POST /api/projects/:id/check-model 返回） */
+export type ModelCheckResult = {
+  /** 是否通过：applicable 时表示有可用 token；非 applicable 时恒为 true */
+  ok: boolean;
+  /** 该后端是否适用 token 检测（OpenAI-Compatible 类为 true，本地/特殊端点为 false） */
+  applicable: boolean;
+  /** 检测后可用 token 数 */
+  available: number;
+  /** 配置中 token 总数 */
+  total: number;
+  /** 后端名称（translator） */
+  engine: string;
+  /** 给用户看的状态说明 */
+  message: string;
+};
+
 export type Job = {
   config_file_name: string;
   created_at: string;

@@ -1,14 +1,15 @@
 import {
   createSignal,
+  createMemo,
   createEffect,
   Show,
   For,
 } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { navigateTo, openProject } from "../../stores/appStore";
+import { openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
+import { confirm } from "../../stores/confirmStore";
 import { Icon } from "../../components/icons/Icon";
 import {
   fetchDefaultProjectConfigTemplate,
@@ -21,9 +22,9 @@ import {
   fetchProjectConfig,
   updateProjectConfig,
 } from "../../lib/api/project";
-import { encodeProjectDir } from "../../lib/api/client";
+import { encodeProjectDir, ensureDesktopBackendReady } from "../../lib/api/client";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
-import type { PluginInfo } from "../../lib/api/types";
+import type { PluginInfo, Job } from "../../lib/api/types";
 import { StepProjectInfo } from "./StepProjectInfo";
 import { StepImportFiles } from "./StepImportFiles";
 import { StepBackendSelect } from "./StepBackendSelect";
@@ -32,6 +33,41 @@ import { StepExtractNames } from "./StepExtractNames";
 
 const STEPS = ["项目位置", "导入文件", "翻译后端", "常用设置", "提取人名"];
 const LAST_PARENT_DIR_KEY = "galtransl-new-project-last-parent-dir";
+
+/* 等待任务结束（completed/failed/cancelled），带超时保护 */
+const JOB_POLL_INTERVAL = 2000;
+const JOB_TIMEOUT_MS = 10 * 60 * 1000;
+
+function waitForJob(jobId: string): Promise<Job> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tick = async () => {
+      try {
+        const s = await fetchJob(jobId);
+        if (
+          s.status === "completed" ||
+          s.status === "failed" ||
+          s.status === "cancelled"
+        ) {
+          resolve(s);
+          return;
+        }
+        if (Date.now() - start > JOB_TIMEOUT_MS) {
+          reject(new Error("等待人名提取超时"));
+          return;
+        }
+        setTimeout(tick, JOB_POLL_INTERVAL);
+      } catch {
+        if (Date.now() - start > JOB_TIMEOUT_MS) {
+          reject(new Error("无法获取人名提取任务状态"));
+          return;
+        }
+        setTimeout(tick, 3000);
+      }
+    };
+    tick();
+  });
+}
 
 export function NewProjectWizard() {
   const [currentStep, setCurrentStep] = createSignal(0);
@@ -57,18 +93,23 @@ export function NewProjectWizard() {
   const [filePlugins, setFilePlugins] = createSignal<PluginInfo[]>([]);
   const [selectedFilePlugin, setSelectedFilePlugin] =
     createSignal("file_galtransl_json");
+  const [textPlugins, setTextPlugins] = createSignal<PluginInfo[]>([]);
+  const [selectedTextPlugin, setSelectedTextPlugin] = createSignal(
+    "text_common_normalfix",
+  );
   const [workersPerProject, setWorkersPerProject] = createSignal(16);
   const [numPerRequest, setNumPerRequest] = createSignal(16);
   const [language, setLanguage] = createSignal("zh-cn");
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
   const [translationGuideline, setTranslationGuideline] = createSignal("");
-  const [settingsSaved, setSettingsSaved] = createSignal(false);
 
   // Step 5
   const [nameJobStatus, setNameJobStatus] = createSignal<
     "idle" | "running" | "completed" | "failed"
   >("idle");
   const [nameJobMessage, setNameJobMessage] = createSignal("");
+  // 完成阶段是否正在等待后端/提取（用于禁用按钮、显示进度）
+  const [finishing, setFinishing] = createSignal(false);
 
   const projectDir = createMemo(() => {
     const p = parentDir();
@@ -100,6 +141,23 @@ export function NewProjectWizard() {
       setFeedback({ type: "error", message: "请选择目录并输入项目名称" });
       return;
     }
+    // 探测目标文件夹是否已存在，避免静默覆盖已有配置
+    let dirExists = false;
+    try {
+      dirExists = await invoke("path_exists", { path: dir });
+    } catch {
+      dirExists = false;
+    }
+    if (dirExists) {
+      const result = await confirm.show({
+        title: "目标文件夹已存在",
+        message: `文件夹已存在：\n${dir}\n\n点击「覆盖」将重新生成 config.yaml（已有的译文、缓存等文件会保留）；点击「取消」可返回修改项目名。`,
+        confirmText: "覆盖",
+        cancelText: "取消",
+        tone: "warning",
+      });
+      if (!result.confirmed) return;
+    }
     try {
       const sep = dir.includes("/") ? "/" : "\\";
       const template = await fetchDefaultProjectConfigTemplate();
@@ -108,6 +166,10 @@ export function NewProjectWizard() {
       await invoke("create_dir", { path: `${dir}${sep}gt_input` });
       await invoke("create_dir", { path: `${dir}${sep}gt_output` });
       await invoke("create_dir", { path: `${dir}${sep}transl_cache` });
+      // 预建批次缓存子文件夹（后端翻译流程各阶段使用）
+      for (const sub of ["pass0_cache", "pass1_cache", "pass2_cache", "pass3_cache"]) {
+        await invoke("create_dir", { path: `${dir}${sep}transl_cache${sep}${sub}` }).catch(() => {});
+      }
       await invoke("write_text_file", {
         path: `${dir}${sep}config.yaml`,
         content: template,
@@ -122,38 +184,34 @@ export function NewProjectWizard() {
     }
   }
 
-  // 导入文件
+  // 导入文件（文件或文件夹均可；文件夹会被递归展开）
   async function importPathsToInput(paths: string[]) {
     const inputDir = gtInputDir();
     if (!inputDir || paths.length === 0) return;
-    const existing = new Set(importedFiles().map((n) => n.toLowerCase()));
-    const namesBatch = new Set<string>();
-    const toImport: string[] = [];
-    const accepted: string[] = [];
-    for (const p of paths) {
-      const name = p.split(/[/\\]/).pop() || p;
-      const key = name.toLowerCase();
-      if (existing.has(key) || namesBatch.has(key)) continue;
-      namesBatch.add(key);
-      toImport.push(p);
-      accepted.push(name);
-    }
-    if (toImport.length === 0) {
-      setFeedback({ type: "info", message: "已过滤重复文件，本次无新增导入。" });
-      return;
-    }
     try {
-      await invoke("copy_files", {
-        sources: toImport,
+      const copied: string[] = await invoke("copy_files", {
+        sources: paths,
         destinationDir: inputDir,
       });
-      setImportedFiles((prev) => [...prev, ...accepted]);
+      if (!copied || copied.length === 0) {
+        setFeedback({ type: "info", message: "没有可导入的文件。" });
+        return;
+      }
+      // 去重：过滤掉本次会话已导入的同名条目（保留首次出现）
+      const seen = new Set<string>();
+      const unique = copied.filter((c) => {
+        const k = c.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      setImportedFiles((prev) => {
+        const existing = new Set(prev.map((n) => n.toLowerCase()));
+        return [...prev, ...unique.filter((n) => !existing.has(n.toLowerCase()))];
+      });
       setFeedback({
         type: "success",
-        message:
-          toImport.length < paths.length
-            ? `已导入 ${toImport.length} 个文件，已过滤 ${paths.length - toImport.length} 个重复文件`
-            : `已导入 ${toImport.length} 个文件`,
+        message: `已导入 ${unique.length} 个文件`,
       });
     } catch (err: any) {
       setFeedback({
@@ -163,47 +221,9 @@ export function NewProjectWizard() {
     }
   }
 
-  // 文件拖拽
-  function handleFileDrop(e: DragEvent) {
-    if (!gtInputDir()) return;
-    e.preventDefault();
-
-    // 尝试从 dataTransfer.files 获取路径
-    const dt = e.dataTransfer;
-    if (!dt) return;
-    const files = Array.from(dt.files);
-    const paths = files
-      .map((f) => (f as any).path)
-      .filter((p): p is string => Boolean(p?.trim()));
-
-    if (paths.length > 0) {
-      importPathsToInput(paths);
-      return;
-    }
-
-    // 否则尝试解析 text/uri-list
-    const uriData = dt.getData("text/uri-list") || dt.getData("text/plain");
-    if (uriData) {
-      const parsed = uriData
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("#"))
-        .map((l) => {
-          try {
-            if (l.startsWith("file://")) {
-              const u = new URL(l);
-              const d = decodeURIComponent(u.pathname || "");
-              return /^\/[A-Za-z]:/.test(d) ? d.slice(1) : d;
-            }
-            return decodeURIComponent(l);
-          } catch {
-            return l;
-          }
-        })
-        .map((p) => p.replace(/\//g, "\\"))
-        .filter((p) => /^[A-Za-z]:\\/.test(p) || p.startsWith("\\\\"));
-      if (parsed.length > 0) importPathsToInput(parsed);
-    }
+  // 文件导入（实际路径来自原生拖拽或文件选择）
+  async function handleImportPaths(paths: string[]) {
+    await importPathsToInput(paths);
   }
 
   // 文件选择器
@@ -232,6 +252,15 @@ export function NewProjectWizard() {
   async function handleSaveSettings() {
     const dir = projectDir();
     if (!dir) return;
+
+    // 后端守卫：激活失败明确提示，而非静默报错
+    try {
+      await ensureDesktopBackendReady({ timeoutMs: 25000 });
+    } catch {
+      toast.error("无法启动后端服务，请先手动运行 run_backend.py 后再试");
+      return;
+    }
+
     try {
       const pid = encodeProjectDir(dir);
       const res = await fetchProjectConfig(pid, "config.yaml");
@@ -251,19 +280,13 @@ export function NewProjectWizard() {
       config.plugin = {
         ...((config.plugin as Record<string, unknown>) || {}),
         filePlugin: selectedFilePlugin(),
-        textPlugins:
-          Array.isArray(
-            ((config.plugin as Record<string, unknown>) || {}).textPlugins
-          )
-            ? ((config.plugin as Record<string, unknown>)).textPlugins
-            : [],
+        textPlugins: [selectedTextPlugin()],
       };
       await updateProjectConfig(pid, {
         config,
         config_file_name: "config.yaml",
       });
       setSelectedBackendProfile(dir, selectedBackend());
-      setSettingsSaved(true);
       setFeedback({ type: "success", message: "设置已保存" });
     } catch (err: any) {
       setFeedback({
@@ -276,52 +299,58 @@ export function NewProjectWizard() {
   // 完成：提取人名 + 打开项目
   async function handleFinish() {
     const dir = projectDir();
-    if (!dir) return;
+    if (!dir || finishing()) return;
 
-    // 先打开项目
+    // 后端守卫：激活失败明确提示，而非静默报错
+    try {
+      await ensureDesktopBackendReady({ timeoutMs: 30000 });
+    } catch {
+      toast.error("无法启动后端服务，请先手动运行 run_backend.py 后再试");
+      return;
+    }
+
     const pid = encodeProjectDir(dir);
-    openProject(pid);
-    toast.success("项目已创建并打开");
 
-    // 如果有文件，提交 dump-name 任务
+    // 若有文件，先提交 dump-name 任务并等待完成，再打开项目
+    // （保证向导卸载前页面始终可见提取进度，避免无声后台运行）
     if (importedFiles().length > 0) {
+      setFinishing(true);
       setNameJobStatus("running");
+      setNameJobMessage("正在提取人名…");
       try {
         const job = await submitJob({
           project_dir: dir,
           config_file_name: "config.yaml",
           translator: "dump-name",
         });
-        // 轮询任务状态
-        const poll = async () => {
-          try {
-            const s = await fetchJob(job.job_id);
-            if (s.status === "completed") {
-              setNameJobStatus("completed");
-              setNameJobMessage(
-                s.success
-                  ? "人名提取完成！"
-                  : `提取完成但有警告: ${s.error || ""}`
-              );
-            } else if (s.status === "failed") {
-              setNameJobStatus("failed");
-              setNameJobMessage(s.error || "提取失败");
-            } else {
-              setTimeout(poll, 2000);
-            }
-          } catch {
-            setTimeout(poll, 3000);
-          }
-        };
-        poll();
+        const result = await waitForJob(job.job_id);
+        if (result.status === "failed" || result.status === "cancelled") {
+          setNameJobStatus("failed");
+          setNameJobMessage(result.error || "提取失败");
+          toast.error(`人名提取失败: ${result.error || "未知错误"}`);
+        } else {
+          setNameJobStatus("completed");
+          setNameJobMessage(
+            result.success
+              ? "人名提取完成！"
+              : `提取完成但有警告: ${result.error || ""}`
+          );
+        }
       } catch (err: any) {
         setNameJobStatus("failed");
         setNameJobMessage(err.message || String(err));
+        toast.error(`人名提取失败: ${err.message || String(err)}`);
+      } finally {
+        setFinishing(false);
       }
     } else {
       setNameJobStatus("completed");
       setNameJobMessage("gt_input 中没有文件，已跳过人名提取。");
     }
+
+    // 提取结束（或无需提取）后再打开项目，避免向导卸载后人名提取无反馈
+    openProject(pid);
+    toast.success("项目已创建并打开");
   }
 
   // 保存父目录到 localStorage
@@ -334,9 +363,10 @@ export function NewProjectWizard() {
   createEffect(() => {
     if (currentStep() === 3) {
       fetchPlugins()
-        .then((p) =>
-          setFilePlugins(p.filter((x: PluginInfo) => x.type === "file"))
-        )
+        .then((p) => {
+          setFilePlugins(p.filter((x: PluginInfo) => x.type === "file"));
+          setTextPlugins(p.filter((x: PluginInfo) => x.type === "text"));
+        })
         .catch(() => {});
       fetchTranslationGuidelines()
         .then((list: string[]) => {
@@ -351,16 +381,8 @@ export function NewProjectWizard() {
     }
   });
 
-  // settingsSaved 在后续编辑时复位
-  createEffect(() => {
-    if (settingsSaved()) {
-      // 当用户重新编辑时复位
-    }
-  });
-
   const canNext = () => {
     if (currentStep() === 0) return projectCreated();
-    if (currentStep() === 3) return settingsSaved();
     return true;
   };
 
@@ -371,18 +393,11 @@ export function NewProjectWizard() {
     setCurrentStep((s) => Math.max(0, s - 1));
   }
 
-  function handleNext() {
-    const cur = currentStep();
-
-    // Step 2 → 3: 自动选择后端配置
-    if (cur === 1) {
-      // nothing special
+  async function handleNext() {
+    // 从第4步（常用设置）离开时自动保存
+    if (currentStep() === 3) {
+      await handleSaveSettings();
     }
-    // Step 3 → 4: 加载插件
-    if (cur === 2) {
-      // done in effect
-    }
-
     setCurrentStep((s) => Math.min(STEPS.length - 1, s + 1));
   }
 
@@ -441,7 +456,7 @@ export function NewProjectWizard() {
             <StepImportFiles
               gtInputDir={gtInputDir()}
               importedFiles={importedFiles()}
-              onFileDrop={handleFileDrop}
+              onImportPaths={handleImportPaths}
               onFilePick={handleFilePick}
               onOpenInputFolder={handleOpenInputFolder}
             />
@@ -455,14 +470,16 @@ export function NewProjectWizard() {
           {currentStep() === 3 && (
             <StepSettings
               selectedFilePlugin={selectedFilePlugin()}
+              selectedTextPlugin={selectedTextPlugin()}
               workersPerProject={workersPerProject()}
               numPerRequest={numPerRequest()}
               language={language()}
               translationGuideline={translationGuideline()}
               guidelines={guidelines()}
-              settingsSaved={settingsSaved()}
               filePlugins={filePlugins()}
+              textPlugins={textPlugins()}
               onFilePluginChange={setSelectedFilePlugin}
+              onTextPluginChange={setSelectedTextPlugin}
               onWorkersChange={setWorkersPerProject}
               onNumPerRequestChange={setNumPerRequest}
               onLanguageChange={setLanguage}
@@ -493,7 +510,7 @@ export function NewProjectWizard() {
         <button
           class="btn"
           onClick={handleBack}
-          disabled={currentStep() === 0}
+          disabled={currentStep() === 0 || finishing()}
         >
           上一步
         </button>
@@ -501,13 +518,17 @@ export function NewProjectWizard() {
           <button
             class="btn btn--primary"
             onClick={handleNext}
-            disabled={!canNext()}
+            disabled={!canNext() || finishing()}
           >
             下一步
           </button>
         ) : (
-          <button class="btn btn--primary" onClick={handleFinish}>
-            完成并打开项目
+          <button
+            class="btn btn--primary"
+            onClick={handleFinish}
+            disabled={finishing()}
+          >
+            {finishing() ? "正在提取人名…" : "完成并打开项目"}
           </button>
         )}
       </div>

@@ -6,8 +6,8 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { appState, setAppState, markDirty, markClean } from "../../stores/appStore";
-import { pushUndo, clearUndo, undo, redo, getUndoState } from "../../stores/undoStore";
+import { appState, markDirty } from "../../stores/appStore";
+import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
 import { fetchCacheFile, saveCacheFile } from "../../lib/api/project";
 import type { CacheEntry, CacheFileResponse } from "../../lib/api/types";
 
@@ -136,6 +136,30 @@ const ALL_FIELDS = [
   { key: "post_dst_preview", label: "后处理译文预览" },
 ];
 
+/* 构造一条空白 CacheEntry（用于「新增条目」） */
+function createBlankEntry(index: number): CacheEntry {
+  return {
+    index,
+    name: "",
+    pre_src: "",
+    post_src: "",
+    pre_dst: "",
+    proofread_dst: "",
+    trans_by: "",
+    proofread_by: "",
+    problem: "",
+    trans_conf: 0,
+    doub_content: "",
+    unknown_proper_noun: "",
+    pre_jp: "",
+    post_jp: "",
+    pre_zh: "",
+    proofread_zh: "",
+    post_zh_preview: "",
+    post_dst_preview: "",
+  };
+}
+
 /* ── ReviewPage 主组件 ── */
 export function ReviewPage() {
   const [entries, setEntries] = createSignal<CacheEntry[]>([]);
@@ -199,16 +223,26 @@ export function ReviewPage() {
     const currentFile = appState.activeFilePath;
     if (entry.file !== currentFile) return;
 
+    const isAdd =
+      Object.keys(entry.before).length === 0 &&
+      Object.keys(entry.after).length > 0;
+
     setEntries((prev) => {
       const next = [...prev];
       const idx = next.findIndex((e) => e.index === entry.index);
 
-      if (idx === -1 && Object.keys(entry.before).length > 0) {
-        // 被删除的条目：恢复（插入到正确位置）
-        next.splice(entry.index, 0, entry.before as unknown as CacheEntry);
+      if (isAdd) {
+        // 新增的撤销 = 移除该条目
+        if (idx !== -1) next.splice(idx, 1);
         return next;
       }
-      if (idx === -1) return prev;
+      if (idx === -1) {
+        // 被删除的条目：恢复（插入到正确位置）
+        if (Object.keys(entry.before).length > 0) {
+          next.splice(entry.index, 0, entry.before as unknown as CacheEntry);
+        }
+        return next;
+      }
       // 字段编辑
       next[idx] = { ...next[idx], ...entry.before };
       return next;
@@ -221,10 +255,21 @@ export function ReviewPage() {
     const currentFile = appState.activeFilePath;
     if (entry.file !== currentFile) return;
 
+    const isAdd =
+      Object.keys(entry.before).length === 0 &&
+      Object.keys(entry.after).length > 0;
+
     setEntries((prev) => {
       const next = [...prev];
       const idx = next.findIndex((e) => e.index === entry.index);
 
+      if (isAdd) {
+        // 新增的重做 = 重新插入
+        if (idx === -1) {
+          next.splice(entry.index, 0, entry.after as unknown as CacheEntry);
+        }
+        return next;
+      }
       if (Object.keys(entry.after).length === 0 && idx !== -1) {
         // 重做删除
         next.splice(idx, 1);
@@ -263,7 +308,7 @@ export function ReviewPage() {
         } else {
           setEntries(all);
         }
-        setExpandedSet(new Set());
+        setExpandedSet(new Set<number>());
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -279,7 +324,7 @@ export function ReviewPage() {
       fetchCacheFile(pid, file)
         .then((res: CacheFileResponse) => {
           setEntries(res.entries ?? []);
-          setExpandedSet(new Set());
+          setExpandedSet(new Set<number>());
         })
         .catch(() => {})
         .finally(() => setLoading(false));
@@ -306,7 +351,6 @@ export function ReviewPage() {
       next[entryIndex] = { ...next[entryIndex], [field]: value };
       return next;
     });
-    const after = { ...entries()[entryIndex], [field]: value };
 
     // 记录到 undo
     pushUndo({
@@ -353,6 +397,34 @@ export function ReviewPage() {
     }
   }
 
+  /** 新增一条空白条目到当前文件末尾，并保存 */
+  async function handleAddEntry() {
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (!pid || !file) return;
+
+    const maxIndex = entries().reduce((m, e) => Math.max(m, e.index), -1);
+    const newEntry = createBlankEntry(maxIndex + 1);
+
+    setEntries((prev) => [...prev, newEntry]);
+    pushUndo({
+      id: `${file}:add:${newEntry.index}`,
+      file,
+      index: newEntry.index,
+      before: {},
+      after: newEntry as any,
+      description: "新增条目",
+    });
+    markDirty(file);
+
+    await handleBlur();
+    // 滚动到新条目
+    setTimeout(() => {
+      const el = document.getElementById(`entry-${newEntry.index}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  }
+
   /** 失焦保存：将当前文件的所有条目保存到后端，然后重新获取以刷新问题检测 */
   let savePending = false;
 
@@ -385,6 +457,23 @@ export function ReviewPage() {
       <div class="review-toolbar">
         <Show when={file()}>
           <span class="review-filename">{file()}</span>
+        </Show>
+
+        {/* 增删改快捷按钮 */}
+        <Show when={file()}>
+          <div class="review-actions">
+            <button
+              class="btn btn--sm btn--primary"
+              onClick={handleAddEntry}
+              title="在当前文件末尾新增一条空白条目"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="flex-shrink:0">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              新增条目
+            </button>
+          </div>
         </Show>
 
         {/* 文件内查找 */}

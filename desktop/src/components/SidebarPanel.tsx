@@ -20,14 +20,12 @@ import type {
   ProblemEntry,
   CacheSearchResult,
   CacheSearchField,
-  CacheReplaceField,
 } from "../lib/api/types";
 
 /* ── 文件浏览器 ── */
 function FileExplorer() {
   const [files, setFiles] = createSignal<FileEntry[]>([]);
   const [loading, setLoading] = createSignal(false);
-  const [expanded, setExpanded] = createSignal(true);
 
   createEffect(() => {
     const pid = appState.activeProjectId;
@@ -317,7 +315,7 @@ function ProblemList() {
     return [...map.entries()];
   };
 
-  function jumpToEntry(filename: string, index: number) {
+  function jumpToEntry(filename: string) {
     setAppState({
       activeView: "review",
       activeFilePath: filename,
@@ -345,7 +343,7 @@ function ProblemList() {
                     <div
                       class="problem-entry"
                       onClick={() =>
-                        jumpToEntry(entry.filename, entry.index)
+                        jumpToEntry(entry.filename)
                       }
                     >
                       <span class="problem-index">#{entry.index}</span>

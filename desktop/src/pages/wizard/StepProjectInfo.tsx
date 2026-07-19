@@ -1,7 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
-import { Icon } from "../../components/icons/Icon";
-
 interface StepProjectInfoProps {
   parentDir: string;
   projectName: string;

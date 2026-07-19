@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show, onMount } from "solid-js";
+import { createSignal, For, Show, onMount } from "solid-js";
 import { toast } from "../../stores/toastStore";
 import { fetchPlugins } from "../../lib/api/general";
 import type { PluginInfo } from "../../lib/api/types";

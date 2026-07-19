@@ -9,11 +9,11 @@ import { appState } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
 import { fetchProjectRuntime, fetchProjectProgress, stopProjectTranslation } from "../../lib/api/project";
-import { fetchTranslators, submitJob } from "../../lib/api/general";
+import { fetchTranslators, submitJob, checkModelAvailability } from "../../lib/api/general";
 import { decodeProjectDir } from "../../lib/api/client";
 import type {
+  ModelCheckResult,
   ProjectRuntimeResponse,
-  ProjectProgressResponse,
   TranslatorOption,
 } from "../../lib/api/types";
 
@@ -47,11 +47,21 @@ function StepIndicator(props: { stage: string; index: number; total: number }) {
 }
 
 /* ── 统计数据行 ── */
-function StatRow(props: { label: string; value: string | number }) {
+function StatRow(props: {
+  label: string;
+  value: string | number;
+  tone?: "error" | "default";
+}) {
   return (
     <div class="stat-row">
       <span class="stat-label">{props.label}</span>
-      <span class="stat-value">{props.value}</span>
+      <span
+        class={`stat-value ${
+          props.tone === "error" ? "stat-value--error" : ""
+        }`}
+      >
+        {props.value}
+      </span>
     </div>
   );
 }
@@ -59,12 +69,17 @@ function StatRow(props: { label: string; value: string | number }) {
 /* ── 翻译控制台 ── */
 export function TranslateConsole() {
   const [runtime, setRuntime] = createSignal<ProjectRuntimeResponse | null>(null);
-  const [progress, setProgress] = createSignal<ProjectProgressResponse | null>(null);
   const [translators, setTranslators] = createSignal<TranslatorOption[]>([]);
   const [selectedBackend, setSelectedBackend] = createSignal<string>("");
   const [running, setRunning] = createSignal(false);
   const [dropdownOpen, setDropdownOpen] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
+
+  // 模型可用性检测状态
+  type ModelCheckState = "idle" | "checking" | "ok" | "error" | "na";
+  const [modelCheckState, setModelCheckState] = createSignal<ModelCheckState>("idle");
+  const [modelCheckResult, setModelCheckResult] = createSignal<ModelCheckResult | null>(null);
+  let checkingToken = 0; // 防止并发/过期响应覆盖最新结果
 
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let dropdownRef: HTMLDivElement | undefined;
@@ -76,7 +91,6 @@ export function TranslateConsole() {
     const pid = appState.activeProjectId;
     if (!pid) {
       setRuntime(null);
-      setProgress(null);
       setRunning(false);
       prevJobStatus = "";
       clearInterval(pollTimer);
@@ -84,25 +98,37 @@ export function TranslateConsole() {
       return;
     }
 
+    const projectId = pid;
+
     async function poll() {
       try {
-        const [rt, pg] = await Promise.all([
-          fetchProjectRuntime(pid),
-          fetchProjectProgress(pid),
+        const [rt] = await Promise.all([
+          fetchProjectRuntime(projectId),
+          fetchProjectProgress(projectId),
         ]);
         pollErrorCount = 0;
         setRuntime(rt);
-        setProgress(pg);
         const status = rt.job?.status;
-        setRunning(status === "running");
+        // pending（已排队）/ running 都视为运行中，确保有反馈与停止按钮
+        setRunning(status === "running" || status === "pending");
 
-        // 检测状态变更，弹出通知
-        if (prevJobStatus && prevJobStatus !== status) {
-          if (status === "completed") toast.success("翻译任务已完成");
-          else if (status === "failed") toast.error(`翻译失败: ${rt.job?.error || "未知错误"}`);
-          else if (status === "cancelled") toast.info("翻译任务已取消");
+        // 检测状态变更并通知用户；失败时主动停止任务
+        if (status && prevJobStatus !== status) {
+          if (status === "running") {
+            toast.info("翻译任务已开始");
+          } else if (status === "completed") {
+            toast.success("翻译任务已完成");
+          } else if (status === "failed") {
+            toast.error(`翻译失败: ${rt.job?.error || "未知错误"}`);
+            // 主动停止任务，清理后端残留进程
+            stopProjectTranslation(projectId)
+              .then(() => {})
+              .catch(() => {});
+          } else if (status === "cancelled") {
+            toast.info("翻译任务已取消");
+          }
         }
-        prevJobStatus = status || "";
+        if (status) prevJobStatus = status;
       } catch {
         pollErrorCount++;
         if (pollErrorCount === 3) {
@@ -131,12 +157,74 @@ export function TranslateConsole() {
     clearInterval(pollTimer);
   });
 
+  // 主动检测所选后端的模型可用性
+  async function runModelCheck() {
+    const pid = appState.activeProjectId;
+    const backend = selectedBackend();
+    if (!pid || !backend) return;
+    const token = ++checkingToken;
+    setModelCheckState("checking");
+    setModelCheckResult(null);
+    try {
+      const res = await checkModelAvailability({
+        projectId: pid,
+        translator: backend,
+        configFileName: "config.yaml",
+      });
+      if (token !== checkingToken) return; // 已有更新的请求，丢弃本次
+      setModelCheckResult(res);
+      if (!res.applicable) {
+        setModelCheckState("na"); // 本地/特殊端点，无需 token 检测
+      } else {
+        setModelCheckState(res.ok ? "ok" : "error");
+      }
+    } catch (e: any) {
+      if (token !== checkingToken) return;
+      setModelCheckResult({
+        ok: false,
+        applicable: true,
+        available: 0,
+        total: 0,
+        engine: backend,
+        message: e?.message || "检测请求失败",
+      });
+      setModelCheckState("error");
+    }
+  }
+
+  // 后端变化（或项目打开、任务结束后）主动触发一次检测
+  createEffect(() => {
+    const pid = appState.activeProjectId;
+    const backend = selectedBackend();
+    if (!pid || !backend || isRunning()) return;
+    runModelCheck();
+  });
+
   function handleStart() {
     const pid = appState.activeProjectId;
     if (!pid || !selectedBackend()) {
       toast.warning("请先选择后端并打开项目");
       return;
     }
+    // 检测未通过（且确实适用 token 检测）时，二次确认后再启动
+    if (modelCheckState() === "error" && modelCheckResult()?.applicable) {
+      confirm
+        .show({
+          title: "模型可用性未通过",
+          message: `检测显示：${modelCheckResult()!.message}。仍要启动翻译任务吗？`,
+          tone: "warning",
+        })
+        .then((r) => {
+          if (r.confirmed) doSubmit();
+        });
+      return;
+    }
+    doSubmit();
+  }
+
+  function doSubmit() {
+    const pid = appState.activeProjectId;
+    if (!pid || !selectedBackend()) return;
     if (submitting()) return; // 防止重复点击
     // project_dir 必须是真实路径，不能是 base64 编码
     const realPath = decodeProjectDir(pid);
@@ -150,7 +238,7 @@ export function TranslateConsole() {
       config_file_name: "config.yaml",
       translator: selectedBackend(),
     })
-      .then(() => toast.success("翻译任务已提交"))
+      .then(() => toast.success("翻译任务已提交，正在启动…"))
       .catch((e) => toast.error(`提交失败: ${e.message}`))
       .finally(() => setSubmitting(false));
   }
@@ -187,6 +275,17 @@ export function TranslateConsole() {
   const hasProject = () => !!appState.activeProjectId;
   const isRunning = () => running();
 
+  // 检测状态文案
+  const modelCheckText = () => {
+    const s = modelCheckState();
+    const r = modelCheckResult();
+    if (s === "checking") return "检测中…";
+    if (s === "na") return "本地 / 特殊端点，无需检测";
+    if (s === "ok") return r ? `可用 ${r.available}/${r.total}` : "可用";
+    if (s === "error") return r ? r.message : "检测失败";
+    return "";
+  };
+
   return (
     <div class="page page-translate">
       <Show
@@ -219,6 +318,20 @@ export function TranslateConsole() {
                   summary()
                     ? `${summary()!.percent.toFixed(1)}%`
                     : "—"
+                }
+              />
+              <StatRow
+                label="失败条目"
+                value={summary()?.failed ?? "—"}
+                tone={
+                  summary() && summary()!.failed > 0 ? "error" : "default"
+                }
+              />
+              <StatRow
+                label="问题条目"
+                value={summary()?.problems ?? "—"}
+                tone={
+                  summary() && summary()!.problems > 0 ? "error" : "default"
                 }
               />
             </div>
@@ -294,6 +407,24 @@ export function TranslateConsole() {
                 <button class="btn btn--danger" onClick={handleStop}>
                   停止翻译
                 </button>
+              </Show>
+            </div>
+
+            {/* 模型可用性检测 */}
+            <div class="model-check">
+              <button
+                class="btn btn--ghost model-check__btn"
+                onClick={runModelCheck}
+                disabled={modelCheckState() === "checking" || !selectedBackend() || isRunning()}
+                title="主动检测所选后端的模型/token 可用性"
+              >
+                {modelCheckState() === "checking" ? "检测中…" : "检测可用性"}
+              </button>
+              <Show when={modelCheckState() !== "idle"}>
+                <span class={`model-check__status model-check__status--${modelCheckState()}`}>
+                  <span class="model-check__dot" />
+                  <span class="model-check__text">{modelCheckText()}</span>
+                </span>
               </Show>
             </div>
           </div>

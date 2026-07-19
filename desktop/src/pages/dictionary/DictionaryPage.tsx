@@ -2,6 +2,7 @@ import {
   createSignal,
   createEffect,
   For,
+  Index,
   Show,
   onCleanup,
 } from "solid-js";
@@ -15,22 +16,19 @@ import {
   deleteProjectDictionaryFile,
   fetchCommonDictionaryManager,
   createCommonDictionaryFile,
-  saveCommonDictionaryFile,
   deleteCommonDictionaryFile,
   fetchNameDict,
   fetchNameTable,
   generateNameTable,
   saveNameTable,
 } from "../../lib/api/project";
+import { fetchJob } from "../../lib/api/general";
 import type {
   ProjectDictionaryManagerResponse,
-  CommonDictionaryManagerResponse,
-  DictFileContent,
   DictionaryCategory,
-  NameDictResponse,
   NameEntry,
 } from "../../lib/api/types";
-import { getFilesByTab } from "../../components/dict/dictUtils";
+import { getFilesByTab, parseRows, rowsToText, getFieldLabels } from "../../components/dict/dictUtils";
 import type { DictTab } from "../../components/dict/dictUtils";
 
 const TABS: { key: string; label: string }[] = [
@@ -42,7 +40,7 @@ const TABS: { key: string; label: string }[] = [
 
 export function DictionaryPage() {
   const [data, setData] = createSignal<ProjectDictionaryManagerResponse | null>(null);
-  const [loading, setLoading] = createSignal(false);
+  const [, setLoading] = createSignal(false);
   const [activeTab, setActiveTab] = createSignal<string>("gpt");
   const [selectedFile, setSelectedFile] = createSignal<string | null>(null);
   const [draftText, setDraftText] = createSignal("");
@@ -54,21 +52,11 @@ export function DictionaryPage() {
   const [nameEntries, setNameEntries] = createSignal<NameEntry[]>([]);
   const [generating, setGenerating] = createSignal(false);
 
-  // 自动保存定时器
-  let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
-  let autoSaveNameTimer: ReturnType<typeof setTimeout> | undefined;
-
   onCleanup(() => {
   });
 
   function onDictChange(value: string) {
     setDraftText(value);
-  }
-
-  function onNameChange(index: number, field: "src_name" | "dst_name", value: string) {
-    const next = [...nameEntries()];
-    next[index] = { ...next[index], [field]: value };
-    setNameEntries(next);
   }
 
   async function doAutoSave() {
@@ -100,33 +88,40 @@ export function DictionaryPage() {
   // 视图模式：card（卡片）| text（纯文本）
   const [viewMode, setViewMode] = createSignal<"card" | "text">("text");
 
-  // 将字典文本解析为条目数组（每行 src\tgt 或 src=tgt）
-  const parsedEntries = () => {
-    const text = draftText();
-    if (!text.trim()) return [];
-    return text.split("\n")
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith("#") && !line.startsWith("//"))
-      .map(line => {
-        const sep = line.includes("\t") ? "\t" : (line.includes("=") && !line.startsWith("=") ? "=" : null);
-        if (!sep) return { src: line, dst: "" };
-        const idx = line.indexOf(sep);
-        return { src: line.slice(0, idx).trim(), dst: line.slice(idx + 1).trim() };
-      });
-  };
+  // 使用 dictUtils 解析当前字典文本为结构化行
+  const parsedRows = () => parseRows(draftText(), activeTab() as DictTab);
 
-  // 卡片模式修改：刷新 draftText
-  function updateEntry(index: number, field: "src" | "dst", value: string) {
-    const entries = parsedEntries();
-    if (index < 0 || index >= entries.length) return;
-    entries[index] = { ...entries[index], [field]: value };
-    // 用制表符重组回纯文本
-    setDraftText(entries.map(e => `${e.src}\t${e.dst}`).join("\n"));
+  /** 更新某行的某个字段值 */
+  function updateRowValue(ri: number, colIndex: number, value: string) {
+    const rows = parsedRows();
+    if (ri < 0 || ri >= rows.length) return;
+    const row = rows[ri];
+    if (row.type === "blank" || row.type === "comment") return;
+    const vals = [...row.values];
+    vals[colIndex] = value;
+    row.values = vals;
+    // 利用 rowsToText 序列化
+    const all = [...parsedRows()];
+    all[ri] = row;
+    setDraftText(rowsToText(all));
+  }
+
+  /** 卡片字段标签 */
+  function cardFields() {
+    const tab = activeTab();
+    const row = parsedRows().find(r => r.type !== "blank" && r.type !== "comment");
+    if (!row) return getFieldLabels("normal", tab as DictTab);
+    return getFieldLabels(row.type, tab as DictTab);
   }
 
   function addEntry() {
     const text = draftText().trim();
-    setDraftText(text ? text + "\n\t" : "\t");
+    const tab = activeTab();
+    if (tab === "gpt") {
+      setDraftText(text ? text + "\n||" : "||");
+    } else {
+      setDraftText(text ? text + "\n|" : "|");
+    }
   }
 
   async function loadData() {
@@ -147,7 +142,7 @@ export function DictionaryPage() {
       const res = await fetchProjectDictionaryManager(pid()!);
       setData(res as any);
       // 自动选择第一个文件
-      const files = getFilesByTab(res as any, activeTab());
+      const files = getFilesByTab(res as any, activeTab() as DictTab);
       if (files.length > 0 && !selectedFile()) {
         const firstKey = `${activeTab()}_dict:${files[0]}`;
         setSelectedFile(firstKey);
@@ -178,9 +173,47 @@ export function DictionaryPage() {
     if (!pid()) return;
     setGenerating(true);
     try {
-      const res = await generateNameTable(pid()!);
-      setNameEntries(res.names ?? []);
-      toast.success(`已提取 ${res.total} 个人名`);
+      // 1. 提交生成任务（后端返回异步 job_id）
+      const submitRes = await generateNameTable(pid()!);
+      const jobId = (submitRes as any).job_id;
+      if (!jobId) {
+        toast.error("提交人名提取任务失败：未返回任务 ID");
+        return;
+      }
+
+      // 2. 轮询等待任务完成
+      const POLL_INTERVAL = 2000;
+      const TIMEOUT_MS = 10 * 60 * 1000;
+      const start = Date.now();
+      let finalStatus: string | null = null;
+
+      while (true) {
+        if (Date.now() - start > TIMEOUT_MS) {
+          toast.error("人名提取超时");
+          return;
+        }
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        try {
+          const s = await fetchJob(jobId);
+          if (s.status === "completed" || s.status === "failed" || s.status === "cancelled") {
+            finalStatus = s.status;
+            break;
+          }
+        } catch {
+          // 网络抖动，继续轮询
+        }
+      }
+
+      if (finalStatus !== "completed") {
+        toast.error(`人名提取未成功完成（状态: ${finalStatus}）`);
+        return;
+      }
+
+      // 3. 从 name-table 接口读取实际结果
+      const tableRes = await fetchNameTable(pid()!);
+      const names = tableRes.names ?? [];
+      setNameEntries(names);
+      toast.success(`已提取 ${names.length} 个人名`);
       doAutoSaveNames();
     } catch (e: any) {
       toast.error(`提取人名失败: ${e.message}`);
@@ -193,34 +226,7 @@ export function DictionaryPage() {
     const next = [...nameEntries()];
     next[index] = { ...next[index], [field]: value };
     setNameEntries(next);
-    scheduleAutoSaveNames();
-  }
-
-  async function loadData() {
-    setLoading(true);
-    try {
-      if (!pid()) {
-        const res = await fetchCommonDictionaryManager();
-        setData(res as any);
-        return;
-      }
-      if (activeTab() === "names") {
-        await loadNameData();
-        return;
-      }
-      const res = await fetchProjectDictionaryManager(pid()!);
-      setData(res as any);
-      const files = getFilesByTab(res as any, activeTab());
-      if (files.length > 0 && !selectedFile()) {
-        const firstKey = `${activeTab()}_dict:${files[0]}`;
-        setSelectedFile(firstKey);
-        selectFile(firstKey);
-      }
-    } catch (e: any) {
-      toast.error(`加载字典失败: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
+    doAutoSaveNames();
   }
 
   createEffect(() => {
@@ -314,7 +320,7 @@ export function DictionaryPage() {
     }
   }
 
-  const activeFiles = () => getFilesByTab(data() as any, activeTab());
+  const activeFiles = () => getFilesByTab(data() as any, activeTab() as DictTab);
 
   return (
     <div class="page page-dict">
@@ -392,26 +398,26 @@ export function DictionaryPage() {
                   <span class="name-col-count">出现次数</span>
                 </div>
                 <div class="name-table-body">
-                  <For each={nameEntries()}>
-                    {(entry, i) => (
+                  <Index each={nameEntries()}>
+                    {(entrySignal, i) => (
                       <div class="name-entry-row editable">
                         <input
                           class="name-entry-src name-input"
-                          value={entry.src_name}
-                          onInput={(e) => onNameChange(i(), "src_name", e.currentTarget.value)}
+                          value={entrySignal().src_name}
+                          onInput={(e) => onNameEntryChange(i, "src_name", e.currentTarget.value)}
                           onBlur={doAutoSaveNames}
                         />
                         <span class="name-entry-arrow">→</span>
                         <input
                           class="name-entry-dst name-input"
-                          value={entry.dst_name}
-                          onInput={(e) => onNameChange(i(), "dst_name", e.currentTarget.value)}
+                          value={entrySignal().dst_name}
+                          onInput={(e) => onNameEntryChange(i, "dst_name", e.currentTarget.value)}
                           onBlur={doAutoSaveNames}
                         />
-                        <span class="name-col-count-val">{entry.count}</span>
+                        <span class="name-col-count-val">{entrySignal().count}</span>
                       </div>
                     )}
-                  </For>
+                  </Index>
                 </div>
               </Show>
             </div>
@@ -500,32 +506,40 @@ export function DictionaryPage() {
               /* ── 卡片模式 ── */
               <div class="dict-card-list">
                 <Show
-                  when={parsedEntries().length > 0}
+                  when={parsedRows().filter(r => r.type !== "blank").length > 0}
                   fallback={
                     <div class="dict-editor-empty">
                       暂无条目，点击下方按钮添加
                     </div>
                   }
                 >
-                  <For each={parsedEntries()}>
-                    {(entry, i) => (
-                      <div class="dict-card">
-                        <input
-                          class="dict-card-input dict-card-src"
-                          value={entry.src}
-                          onInput={(e) => updateEntry(i(), "src", e.currentTarget.value)}
-                          placeholder="原文"
-                        />
-                        <span class="dict-card-arrow">→</span>
-                        <input
-                          class="dict-card-input dict-card-dst"
-                          value={entry.dst}
-                          onInput={(e) => updateEntry(i(), "dst", e.currentTarget.value)}
-                          placeholder="译文"
-                        />
-                      </div>
+                  <Index each={parsedRows()}>
+                    {(rowSignal, ri) => (
+                      <Show when={rowSignal().type !== "blank"}>
+                        <div class="dict-card">
+                          <Show when={rowSignal().type === "comment"} fallback={
+                            <Index each={rowSignal().values}>
+                              {(valSignal, ci) => (
+                                <>
+                                  <Show when={ci > 0}>
+                                    <span class="dict-card-arrow">→</span>
+                                  </Show>
+                                  <input
+                                    class="dict-card-input"
+                                    value={valSignal()}
+                                    onInput={(e) => updateRowValue(ri, ci, e.currentTarget.value)}
+                                    placeholder={cardFields()[ci] || ""}
+                                  />
+                                </>
+                              )}
+                            </Index>
+                          }>
+                            <span class="dict-card-comment">{rowSignal().values[0]}</span>
+                          </Show>
+                        </div>
+                      </Show>
                     )}
-                  </For>
+                  </Index>
                 </Show>
                 <button class="btn btn--sm dict-card-add" onClick={addEntry}>
                   + 添加条目

@@ -13,26 +13,27 @@ export function Icon(props: IconProps) {
   const def = (): IconDef | undefined => ICON_PATHS[props.name];
   const size = () => props.size ?? 20;
   const sw = () => props.strokeWidth ?? 1.5;
+  const cur = def();
 
   return (
-    <Show when={def()}>
+    <Show when={cur}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width={size()}
         height={size()}
         viewBox="0 0 24 24"
-        fill={def()?.fill ? "currentColor" : "none"}
-        stroke={def()?.fill ? "none" : "currentColor"}
-        stroke-width={def()?.fill ? "0" : sw()}
+        fill={cur!.fill ? "currentColor" : "none"}
+        stroke={cur!.fill ? "none" : "currentColor"}
+        stroke-width={cur!.fill ? "0" : sw()}
         stroke-linecap="round"
         stroke-linejoin="round"
         class={props.class}
         aria-hidden="true"
       >
-        {Array.isArray(def()!.d) ? (
-          def()!.d.map((d) => <path d={d} />)
+        {Array.isArray(cur!.d) ? (
+          cur!.d.map((seg) => <path d={seg} />)
         ) : (
-          <path d={def()!.d} />
+          <path d={cur!.d} />
         )}
       </svg>
     </Show>
