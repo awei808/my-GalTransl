@@ -97,6 +97,38 @@ export function DictionaryPage() {
   const pid = () => appState.activeProjectId;
   const isProject = () => !!pid();
 
+  // 视图模式：card（卡片）| text（纯文本）
+  const [viewMode, setViewMode] = createSignal<"card" | "text">("text");
+
+  // 将字典文本解析为条目数组（每行 src\tgt 或 src=tgt）
+  const parsedEntries = () => {
+    const text = draftText();
+    if (!text.trim()) return [];
+    return text.split("\n")
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith("#") && !line.startsWith("//"))
+      .map(line => {
+        const sep = line.includes("\t") ? "\t" : (line.includes("=") && !line.startsWith("=") ? "=" : null);
+        if (!sep) return { src: line, dst: "" };
+        const idx = line.indexOf(sep);
+        return { src: line.slice(0, idx).trim(), dst: line.slice(idx + 1).trim() };
+      });
+  };
+
+  // 卡片模式修改：刷新 draftText
+  function updateEntry(index: number, field: "src" | "dst", value: string) {
+    const entries = parsedEntries();
+    if (index < 0 || index >= entries.length) return;
+    entries[index] = { ...entries[index], [field]: value };
+    // 用制表符重组回纯文本
+    setDraftText(entries.map(e => `${e.src}\t${e.dst}`).join("\n"));
+  }
+
+  function addEntry() {
+    const text = draftText().trim();
+    setDraftText(text ? text + "\n\t" : "\t");
+  }
+
   async function loadData() {
     setLoading(true);
     try {
@@ -446,15 +478,68 @@ export function DictionaryPage() {
           >
             <div class="dict-editor-header">
               <span class="dict-editor-filename">{selectedFile()}</span>
-              <div class="dict-editor-actions" />
+              <div class="dict-editor-actions">
+                <button
+                  class={`btn btn--sm ${viewMode() === "text" ? "btn--primary" : ""}`}
+                  onClick={() => setViewMode("text")}
+                  title="纯文本模式"
+                >
+                  文本
+                </button>
+                <button
+                  class={`btn btn--sm ${viewMode() === "card" ? "btn--primary" : ""}`}
+                  onClick={() => setViewMode("card")}
+                  title="卡片模式"
+                >
+                  卡片
+                </button>
+              </div>
             </div>
-            <textarea
-              class="dict-textarea"
-              value={draftText()}
-              onInput={(e) => onDictChange(e.currentTarget.value)}
-              onBlur={doAutoSave}
-              spellcheck={false}
-            />
+
+            <Show when={viewMode() === "text"} fallback={
+              /* ── 卡片模式 ── */
+              <div class="dict-card-list">
+                <Show
+                  when={parsedEntries().length > 0}
+                  fallback={
+                    <div class="dict-editor-empty">
+                      暂无条目，点击下方按钮添加
+                    </div>
+                  }
+                >
+                  <For each={parsedEntries()}>
+                    {(entry, i) => (
+                      <div class="dict-card">
+                        <input
+                          class="dict-card-input dict-card-src"
+                          value={entry.src}
+                          onInput={(e) => updateEntry(i(), "src", e.currentTarget.value)}
+                          placeholder="原文"
+                        />
+                        <span class="dict-card-arrow">→</span>
+                        <input
+                          class="dict-card-input dict-card-dst"
+                          value={entry.dst}
+                          onInput={(e) => updateEntry(i(), "dst", e.currentTarget.value)}
+                          placeholder="译文"
+                        />
+                      </div>
+                    )}
+                  </For>
+                </Show>
+                <button class="btn btn--sm dict-card-add" onClick={addEntry}>
+                  + 添加条目
+                </button>
+              </div>
+            }>
+              <textarea
+                class="dict-textarea"
+                value={draftText()}
+                onInput={(e) => onDictChange(e.currentTarget.value)}
+                onBlur={doAutoSave}
+                spellcheck={false}
+              />
+            </Show>
           </Show>
         </div>
         </Show>

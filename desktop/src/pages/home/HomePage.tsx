@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { appState, openProject } from "../../stores/appStore";
+import { appState, setAppState, openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
 import { fetchJobs } from "../../lib/api/general";
@@ -36,6 +36,20 @@ function addRecentProject(dir: string) {
 /** 外部暴露：供 TitleBar 在打开项目后调用 */
 (window as any).__addRecentProject = addRecentProject;
 
+/** 首页加载后自动激活后端 */
+async function autoActivateBackend() {
+  // Rust 的 setup() 已尝试启动后端，这里只需确认连通
+  try {
+    toast.info("正在激活后端服务…");
+    await ensureDesktopBackendReady({ timeoutMs: 25000 });
+    setAppState({ connectionPhase: "online", backendOnline: true });
+    toast.success("后端已就绪");
+  } catch {
+    toast.warning("后端未连接，部分功能可能需要手动启动 run_backend.py");
+    setAppState({ connectionPhase: "offline", backendOnline: false });
+  }
+}
+
 export function HomePage() {
   const [version, setVersion] = createSignal("");
   const [recent, setRecent] = createSignal<RecentProject[]>([]);
@@ -44,6 +58,9 @@ export function HomePage() {
 
   onMount(() => {
     setRecent(getRecentProjects());
+
+    // 首页加载后自动激活后端
+    autoActivateBackend();
 
     fetchVersion()
       .then((v) => setVersion(v))

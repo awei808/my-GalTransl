@@ -25,12 +25,22 @@ export class ApiError extends Error {
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const baseUrl = getBackendBaseUrl();
 
+  // 30 秒超时，防止请求挂死
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  const mergedInit: RequestInit = { ...init, signal: controller.signal };
+
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, init);
-  } catch {
+    response = await fetch(`${baseUrl}${path}`, mergedInit);
+  } catch (err: unknown) {
+    clearTimeout(timeout);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(`请求超时：${baseUrl}${path}`, 408);
+    }
     throw new ApiError(`无法连接到后端：${baseUrl}`, 0);
   }
+  clearTimeout(timeout);
 
   const data = (await response.json().catch(() => ({}))) as T & ErrorResponse;
   if (!response.ok) {

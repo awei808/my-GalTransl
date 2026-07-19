@@ -16,12 +16,10 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
   switch (e.key) {
     case "f":
       e.preventDefault();
-      // Ctrl+F: 文件内查找（各页面自行响应）
       document.dispatchEvent(new CustomEvent("galtransl:find-in-file"));
       break;
     case "h":
       e.preventDefault();
-      // Ctrl+H: 打开侧栏文件夹替换
       setAppState({ sidebarOpen: true, sidebarTab: "find" });
       break;
     case "b":
@@ -30,7 +28,6 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
       break;
     case "s":
       e.preventDefault();
-      // 触发 save 事件，各页面自行响应
       document.dispatchEvent(new CustomEvent("galtransl:save"));
       break;
   }
@@ -39,7 +36,9 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
 export function App() {
   const sidebarOpen = () => appState.sidebarOpen;
 
-  onMount(() => document.addEventListener("keydown", handleGlobalKeyDown));
+  onMount(() => {
+    document.addEventListener("keydown", handleGlobalKeyDown);
+  });
   onCleanup(() => document.removeEventListener("keydown", handleGlobalKeyDown));
 
   return (

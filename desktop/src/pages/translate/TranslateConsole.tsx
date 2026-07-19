@@ -10,6 +10,7 @@ import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
 import { fetchProjectRuntime, fetchProjectProgress, stopProjectTranslation } from "../../lib/api/project";
 import { fetchTranslators, submitJob } from "../../lib/api/general";
+import { decodeProjectDir } from "../../lib/api/client";
 import type {
   ProjectRuntimeResponse,
   ProjectProgressResponse,
@@ -63,9 +64,12 @@ export function TranslateConsole() {
   const [selectedBackend, setSelectedBackend] = createSignal<string>("");
   const [running, setRunning] = createSignal(false);
   const [dropdownOpen, setDropdownOpen] = createSignal(false);
+  const [submitting, setSubmitting] = createSignal(false);
 
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let dropdownRef: HTMLDivElement | undefined;
+  let pollErrorCount = 0;
+  let prevJobStatus = "";
 
   // 仅在项目打开时轮询
   createEffect(() => {
@@ -73,6 +77,8 @@ export function TranslateConsole() {
     if (!pid) {
       setRuntime(null);
       setProgress(null);
+      setRunning(false);
+      prevJobStatus = "";
       clearInterval(pollTimer);
       pollTimer = undefined;
       return;
@@ -84,11 +90,24 @@ export function TranslateConsole() {
           fetchProjectRuntime(pid),
           fetchProjectProgress(pid),
         ]);
+        pollErrorCount = 0;
         setRuntime(rt);
         setProgress(pg);
-        setRunning(rt.job?.status === "running");
+        const status = rt.job?.status;
+        setRunning(status === "running");
+
+        // 检测状态变更，弹出通知
+        if (prevJobStatus && prevJobStatus !== status) {
+          if (status === "completed") toast.success("翻译任务已完成");
+          else if (status === "failed") toast.error(`翻译失败: ${rt.job?.error || "未知错误"}`);
+          else if (status === "cancelled") toast.info("翻译任务已取消");
+        }
+        prevJobStatus = status || "";
       } catch {
-        // 后端未就绪或翻译未开始，静默处理
+        pollErrorCount++;
+        if (pollErrorCount === 3) {
+          toast.warning("后端连接异常，请检查后端是否运行");
+        }
       }
     }
 
@@ -118,13 +137,22 @@ export function TranslateConsole() {
       toast.warning("请先选择后端并打开项目");
       return;
     }
+    if (submitting()) return; // 防止重复点击
+    // project_dir 必须是真实路径，不能是 base64 编码
+    const realPath = decodeProjectDir(pid);
+    if (!realPath) {
+      toast.error("项目路径解析失败");
+      return;
+    }
+    setSubmitting(true);
     submitJob({
-      project_dir: pid,
+      project_dir: realPath,
       config_file_name: "config.yaml",
       translator: selectedBackend(),
     })
       .then(() => toast.success("翻译任务已提交"))
-      .catch((e) => toast.error(`提交失败: ${e.message}`));
+      .catch((e) => toast.error(`提交失败: ${e.message}`))
+      .finally(() => setSubmitting(false));
   }
 
   function handleStop() {
@@ -258,8 +286,8 @@ export function TranslateConsole() {
                     </div>
                   </Show>
                 </div>
-                <button class="btn btn--primary" onClick={handleStart}>
-                  启动流程
+                <button class="btn btn--primary" onClick={handleStart} disabled={submitting()}>
+                  {submitting() ? "提交中…" : "启动流程"}
                 </button>
               </Show>
               <Show when={isRunning()}>

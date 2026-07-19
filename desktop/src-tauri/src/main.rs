@@ -485,13 +485,12 @@ fn main() {
         .setup(|_app| {
             // 应用启动时自动激活后端
             let result = ensure_backend_ready_inner(
-                BACKEND_HOST.to_string(),
-                BACKEND_PORT,
-                BACKEND_STARTUP_TIMEOUT_MS,
+                true,                                     // hide_console
+                Some(BACKEND_STARTUP_TIMEOUT_MS),         // timeout_ms
             );
             match &result {
-                Ok(port) => {
-                    eprintln!("[galtransl] 后端自动启动成功 (端口 {})", port);
+                Ok(msg) => {
+                    eprintln!("[galtransl] 后端自动启动成功: {}", msg);
                 }
                 Err(e) => {
                     eprintln!("[galtransl] 后端自动启动失败: {}", e);
