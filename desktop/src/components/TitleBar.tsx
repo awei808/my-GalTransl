@@ -3,7 +3,7 @@ import { appState, navigateTo, setAppState, openProject, closeProject } from "..
 import { toast } from "../stores/toastStore";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { ensureDesktopBackendReady, encodeProjectDir } from "../lib/api/client";
+import { ensureDesktopBackendReady, encodeProjectDir, isBackendReachable } from "../lib/api/client";
 import { fetchProjectFiles } from "../lib/api/project";
 
 interface MenuItem {
@@ -27,7 +27,14 @@ async function handleOpenProject() {
 
   const selectedPath = typeof dir === "string" ? dir.replace(/\//g, "\\") : dir;
 
-  toast.info("正在启动后端服务...");
+  // 仅当后端确实不可达时才提示“正在启动”，避免对已连接后端误报
+  let needsStart = true;
+  try {
+    needsStart = !(await isBackendReachable(800));
+  } catch {
+    needsStart = true;
+  }
+  if (needsStart) toast.info("正在启动后端服务...");
   try {
     await ensureDesktopBackendReady({ timeoutMs: 30000 });
     setAppState({ connectionPhase: "online", backendOnline: true });
@@ -46,14 +53,14 @@ async function handleOpenProject() {
   }
 
   openProject(projectId);
-  (window as any).__addRecentProject?.(selectedPath);
+  window.__addRecentProject?.(selectedPath);
   toast.success("项目已打开");
 }
 
 async function handleCloseProject() {
   closeProject();
-  setAppState({ connectionPhase: "offline", backendOnline: false });
   toast.info("项目已关闭");
+  // 注意：关闭项目不会停止共享后端，不要因此把连接状态置为离线
 }
 
 async function handleExit() {
@@ -70,34 +77,73 @@ const menus: MenuDef[] = [
     label: "文件",
     items: [
       { label: "新建项目", action: () => navigateTo("new-project") },
-      { label: "打开项目", action: () => { void handleOpenProject(); } },
-      { label: "关闭项目", disabled: () => !appState.activeProjectId, action: () => { void handleCloseProject(); } },
+      {
+        label: "打开项目",
+        action: () => {
+          void handleOpenProject();
+        },
+      },
+      {
+        label: "关闭项目",
+        disabled: () => !appState.activeProjectId,
+        action: () => {
+          void handleCloseProject();
+        },
+      },
       { label: "", separator: true },
-      { label: "退出", action: () => { void handleExit(); } },
+      {
+        label: "退出",
+        action: () => {
+          void handleExit();
+        },
+      },
     ],
   },
   {
     label: "编辑",
     items: [
-      { label: "撤销", shortcut: "Ctrl+Z", action: () => document.dispatchEvent(new CustomEvent("galtransl:undo")) },
-      { label: "重做", shortcut: "Ctrl+Y", action: () => document.dispatchEvent(new CustomEvent("galtransl:redo")) },
+      {
+        label: "撤销",
+        shortcut: "Ctrl+Z",
+        action: () => document.dispatchEvent(new CustomEvent("galtransl:undo")),
+      },
+      {
+        label: "重做",
+        shortcut: "Ctrl+Y",
+        action: () => document.dispatchEvent(new CustomEvent("galtransl:redo")),
+      },
       { label: "", separator: true },
       { label: "剪切", shortcut: "Ctrl+X", action: () => {} },
       { label: "复制", shortcut: "Ctrl+C", action: () => {} },
       { label: "粘贴", shortcut: "Ctrl+V", action: () => {} },
       { label: "", separator: true },
-      { label: "文件内查找", shortcut: "Ctrl+F", action: () => document.dispatchEvent(new CustomEvent("galtransl:find-in-file")) },
-      { label: "文件夹替换", shortcut: "Ctrl+H", action: () => setAppState({ sidebarOpen: true, sidebarTab: "find" }) },
+      {
+        label: "文件内查找",
+        shortcut: "Ctrl+F",
+        action: () => document.dispatchEvent(new CustomEvent("galtransl:find-in-file")),
+      },
+      {
+        label: "文件夹替换",
+        shortcut: "Ctrl+H",
+        action: () => setAppState({ sidebarOpen: true, sidebarTab: "find" }),
+      },
       { label: "", separator: true },
-      { label: "保存", shortcut: "Ctrl+S", action: () => document.dispatchEvent(new CustomEvent("galtransl:save")) },
+      {
+        label: "保存",
+        shortcut: "Ctrl+S",
+        action: () => document.dispatchEvent(new CustomEvent("galtransl:save")),
+      },
     ],
   },
   {
     label: "翻译",
     items: [
-      { label: "启动流程", action: () => {
-        if (appState.activeProjectId) navigateTo("translate");
-      } },
+      {
+        label: "启动流程",
+        action: () => {
+          if (appState.activeProjectId) navigateTo("translate");
+        },
+      },
       { label: "停止翻译", disabled: true, action: () => {} },
       { label: "", separator: true },
       { label: "打开日志", action: () => navigateTo("logs") },
@@ -112,7 +158,13 @@ const menus: MenuDef[] = [
   {
     label: "视图",
     items: [
-      { label: "切换侧栏", shortcut: "Ctrl+B", action: () => { setAppState('sidebarOpen', (s: boolean) => !s); } },
+      {
+        label: "切换侧栏",
+        shortcut: "Ctrl+B",
+        action: () => {
+          setAppState("sidebarOpen", (s: boolean) => !s);
+        },
+      },
       { label: "", separator: true },
       { label: "翻译控制台", action: () => navigateTo("translate") },
       { label: "校对审核", action: () => navigateTo("review") },

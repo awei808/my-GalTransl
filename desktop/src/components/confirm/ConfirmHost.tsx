@@ -55,7 +55,11 @@ export function ConfirmHost() {
   return (
     <Portal>
       <Show when={state().visible}>
-        <div class="confirm-overlay" style={{ opacity: state().visible ? 1 : 0 }} onClick={handleOverlayClick} />
+        <div
+          class="confirm-overlay"
+          style={{ opacity: state().visible ? 1 : 0 }}
+          onClick={handleOverlayClick}
+        />
         <div class="confirm-dialog confirm-dialog--enter" role="dialog" aria-modal="true">
           <div class="confirm-header">
             <h2 class="confirm-title">{state().options?.title ?? ""}</h2>
@@ -63,17 +67,13 @@ export function ConfirmHost() {
           <div class="confirm-body">
             <Show
               when={state().options?.html}
-              fallback={
-                <p class="confirm-message">{state().options?.message ?? ""}</p>
-              }
+              fallback={<p class="confirm-message">{state().options?.message ?? ""}</p>}
             >
               <div innerHTML={state().options!.html!} />
             </Show>
             <Show when={state().options?.inputLabel}>
               <div class="confirm-input-group">
-                <label class="confirm-input-label">
-                  {state().options!.inputLabel}
-                </label>
+                <label class="confirm-input-label">{state().options!.inputLabel}</label>
                 <input
                   class="confirm-input"
                   type="text"
@@ -88,11 +88,7 @@ export function ConfirmHost() {
             <button class="btn btn--cancel" onClick={handleCancel}>
               {state().options?.cancelText ?? "取消"}
             </button>
-            <button
-              ref={confirmBtnRef}
-              class={`btn ${toneClass()}`}
-              onClick={handleConfirm}
-            >
+            <button ref={confirmBtnRef} class={`btn ${toneClass()}`} onClick={handleConfirm}>
               {state().options?.confirmText ?? "确认"}
             </button>
           </div>

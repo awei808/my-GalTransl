@@ -1,17 +1,17 @@
-import type { Job } from './api';
+import type { Job } from "./api";
 
-const formatter = new Intl.DateTimeFormat('zh-CN', {
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  month: '2-digit',
-  second: '2-digit',
-  year: 'numeric',
+const formatter = new Intl.DateTimeFormat("zh-CN", {
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  month: "2-digit",
+  second: "2-digit",
+  year: "numeric",
 });
 
 export function formatTimestamp(value: string) {
   if (!value) {
-    return '—';
+    return "—";
   }
 
   const parsed = new Date(value);
@@ -23,17 +23,17 @@ export function formatTimestamp(value: string) {
 }
 
 export function formatJobResult(job: Job) {
-  if (job.status === 'completed' && job.success) {
-    return 'Completed successfully';
+  if (job.status === "completed" && job.success) {
+    return "Completed successfully";
   }
 
-  if (job.status === 'failed') {
-    return 'Failed';
+  if (job.status === "failed") {
+    return "Failed";
   }
 
-  if (job.status === 'cancelled') {
-    return 'Cancelled';
+  if (job.status === "cancelled") {
+    return "Cancelled";
   }
 
-  return 'In progress';
+  return "In progress";
 }

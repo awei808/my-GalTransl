@@ -29,9 +29,7 @@ export function StepImportFiles(props: StepImportFilesProps) {
           highlight(false);
         } else if (payload.type === "drop") {
           highlight(false);
-          const paths = (payload.paths || []).filter(
-            (p) => typeof p === "string" && p.trim()
-          );
+          const paths = (payload.paths || []).filter((p) => typeof p === "string" && p.trim());
           if (paths.length > 0) props.onImportPaths(paths);
         }
       });
@@ -69,20 +67,14 @@ export function StepImportFiles(props: StepImportFilesProps) {
         <button class="btn btn--sm" onClick={props.onFilePick}>
           选择文件
         </button>
-        <button
-          class="btn btn--sm"
-          onClick={props.onOpenInputFolder}
-          disabled={!props.gtInputDir}
-        >
+        <button class="btn btn--sm" onClick={props.onOpenInputFolder} disabled={!props.gtInputDir}>
           打开输入文件夹
         </button>
       </div>
       {props.importedFiles.length > 0 && (
         <ul class="wizard-file-list">
           {props.importedFiles.map((f) => (
-            <li class="wizard-file-list__item">
-              {f}
-            </li>
+            <li class="wizard-file-list__item">{f}</li>
           ))}
         </ul>
       )}

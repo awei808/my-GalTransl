@@ -24,3 +24,6 @@ galtransl_backend.spec
 
 .workbuddy/
 desktop/*.timestamp-*.mjs
+
+# 翻译生成缓存（本地产物，不入库）
+sampleProject/transl_cache/

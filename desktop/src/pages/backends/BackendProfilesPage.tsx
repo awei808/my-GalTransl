@@ -9,7 +9,18 @@ import {
   getDefaultBackendProfile,
   setDefaultBackendProfile,
 } from "../../lib/api/preferences";
+import { getErrorMessage } from "../../lib/errors";
 
+interface TokenEntry {
+  endpoint?: string;
+  modelName?: string;
+}
+interface OpenAICompatConfig {
+  tokens?: TokenEntry[];
+}
+interface SakuraConfig {
+  endpoints?: string[];
+}
 interface ProfileEntry {
   name: string;
   config: Record<string, unknown>;
@@ -39,9 +50,10 @@ export function BackendProfilesPage() {
     setLoading(true);
     try {
       const data = await fetchBackendProfiles();
-      const entries: ProfileEntry[] = Object.entries(data.profiles || {}).map(
-        ([name, config]) => ({ name, config: config as Record<string, unknown> })
-      );
+      const entries: ProfileEntry[] = Object.entries(data.profiles || {}).map(([name, config]) => ({
+        name,
+        config: config as Record<string, unknown>,
+      }));
       setProfiles(entries);
     } catch {
       toast.error("加载后端配置失败");
@@ -65,8 +77,8 @@ export function BackendProfilesPage() {
       toast.success("配置已更新");
       setEditMode(false);
       await loadProfiles();
-    } catch (e: any) {
-      toast.error(`保存失败: ${e.message}`);
+    } catch (e) {
+      toast.error(`保存失败: ${getErrorMessage(e)}`);
     } finally {
       setSaving(false);
     }
@@ -91,8 +103,8 @@ export function BackendProfilesPage() {
       setNewName("");
       setNewConfigText("");
       await loadProfiles();
-    } catch (e: any) {
-      toast.error(`创建失败: ${e.message}`);
+    } catch (e) {
+      toast.error(`创建失败: ${getErrorMessage(e)}`);
     } finally {
       setSaving(false);
     }
@@ -113,8 +125,8 @@ export function BackendProfilesPage() {
         setDefaultName("");
       }
       await loadProfiles();
-    } catch (e: any) {
-      toast.error(`删除失败: ${e.message}`);
+    } catch (e) {
+      toast.error(`删除失败: ${getErrorMessage(e)}`);
     }
   }
 
@@ -125,17 +137,14 @@ export function BackendProfilesPage() {
   }
 
   function configSummary(config: Record<string, unknown>): string {
-    const openai = config["OpenAI-Compatible"];
-    const sakura = config["SakuraLLM"];
-    if (openai && typeof openai === "object" && !Array.isArray(openai)) {
-      const tokens = (openai as any).tokens;
-      if (Array.isArray(tokens) && tokens.length > 0) {
-        return `${tokens[0].endpoint || "?"} / ${tokens[0].modelName || "?"}`;
-      }
+    const openai = config["OpenAI-Compatible"] as OpenAICompatConfig | undefined;
+    if (openai?.tokens && openai.tokens.length > 0) {
+      const t = openai.tokens[0];
+      return `${t.endpoint || "?"} / ${t.modelName || "?"}`;
     }
-    if (sakura && typeof sakura === "object" && !Array.isArray(sakura)) {
-      const eps = (sakura as any).endpoints;
-      if (Array.isArray(eps) && eps.length > 0) return `Sakura: ${eps[0]}`;
+    const sakura = config["SakuraLLM"] as SakuraConfig | undefined;
+    if (sakura?.endpoints && sakura.endpoints.length > 0) {
+      return `Sakura: ${sakura.endpoints[0]}`;
     }
     return "未配置";
   }
@@ -146,7 +155,9 @@ export function BackendProfilesPage() {
       <p class="page-description">管理 API 地址、模型、代理等后端连接配置。</p>
 
       <div class="bp-toolbar">
-        <button class="btn btn--sm" onClick={() => setShowNew(true)}>新建配置</button>
+        <button class="btn btn--sm" onClick={() => setShowNew(true)}>
+          新建配置
+        </button>
         <button class="btn btn--sm" onClick={loadProfiles} disabled={loading()}>
           {loading() ? "加载中…" : "刷新"}
         </button>
@@ -157,21 +168,33 @@ export function BackendProfilesPage() {
         <div class="bp-editor-panel">
           <div class="bp-editor-header">
             <h3>编辑: {editName()}</h3>
-            <button class="btn btn--sm" onClick={() => setEditMode(false)}>关闭</button>
+            <button class="btn btn--sm" onClick={() => setEditMode(false)}>
+              关闭
+            </button>
           </div>
           <div class="bp-editor-body">
+            <p class="bp-json-hint">
+              配置为 JSON 格式。OpenAI 兼容接口请在 <code>OpenAI-Compatible.tokens</code> 中填写
+              <code>endpoint</code>（接口地址）、<code>modelName</code>（模型名）、
+              <code>token</code>（密钥，注意字段名为 token 而非 apiKey）；Sakura 本地模型请在 <code>SakuraLLM.endpoints</code> 填写本地地址。
+            </p>
             <div class="settings-field">
               <span class="settings-label">配置名称</span>
               <input class="field__input" value={editName()} disabled />
             </div>
             <div class="settings-field" style="align-items:flex-start; padding-top:8px">
-              <span class="settings-label" style="margin-top:4px">配置 JSON</span>
+              <span class="settings-label" style="margin-top:4px">
+                配置 JSON
+              </span>
               <textarea
                 class="bp-json-editor"
                 value={JSON.stringify(editConfig(), null, 2)}
                 onInput={(e) => {
-                  try { setEditConfig(JSON.parse(e.currentTarget.value)); }
-                  catch { /* invalid json, ignore */ }
+                  try {
+                    setEditConfig(JSON.parse(e.currentTarget.value));
+                  } catch {
+                    /* invalid json, ignore */
+                  }
                 }}
                 spellcheck={false}
               />
@@ -190,9 +213,16 @@ export function BackendProfilesPage() {
         <div class="bp-new-dialog">
           <div class="bp-new-header">
             <h3>新建配置</h3>
-            <button class="btn btn--sm" onClick={() => setShowNew(false)}>取消</button>
+            <button class="btn btn--sm" onClick={() => setShowNew(false)}>
+              取消
+            </button>
           </div>
           <div class="bp-new-body">
+            <p class="bp-json-hint">
+              配置为 JSON 格式。OpenAI 兼容接口请在 <code>OpenAI-Compatible.tokens</code> 中填写
+              <code>endpoint</code>（接口地址）、<code>modelName</code>（模型名）、
+              <code>token</code>（密钥，注意字段名为 token 而非 apiKey）；Sakura 本地模型请在 <code>SakuraLLM.endpoints</code> 填写本地地址。
+            </p>
             <div class="settings-field">
               <span class="settings-label">名称</span>
               <input
@@ -203,10 +233,12 @@ export function BackendProfilesPage() {
               />
             </div>
             <div class="settings-field" style="align-items:flex-start; padding-top:8px">
-              <span class="settings-label" style="margin-top:4px">JSON 配置</span>
+              <span class="settings-label" style="margin-top:4px">
+                JSON 配置
+              </span>
               <textarea
                 class="bp-json-editor"
-                placeholder='{"OpenAI-Compatible":{"tokens":[{"endpoint":"https://...","modelName":"gpt-4o","apiKey":"sk-..."}]}}'
+                placeholder='{"OpenAI-Compatible":{"tokens":[{"endpoint":"https://...","modelName":"gpt-4o","token":"sk-..."}]}}'
                 value={newConfigText()}
                 onInput={(e) => setNewConfigText(e.currentTarget.value)}
                 spellcheck={false}
@@ -214,7 +246,11 @@ export function BackendProfilesPage() {
             </div>
           </div>
           <div class="bp-new-footer">
-            <button class="btn btn--sm btn--primary" onClick={handleCreate} disabled={saving() || !newName().trim()}>
+            <button
+              class="btn btn--sm btn--primary"
+              onClick={handleCreate}
+              disabled={saving() || !newName().trim()}
+            >
               {saving() ? "创建中…" : "创建"}
             </button>
           </div>
@@ -224,7 +260,10 @@ export function BackendProfilesPage() {
       {/* 配置列表 */}
       <div class="bp-list">
         <Show when={!loading()} fallback={<p class="bp-empty">加载中…</p>}>
-          <Show when={profiles().length > 0} fallback={<p class="bp-empty">暂无配置，请新建一个</p>}>
+          <Show
+            when={profiles().length > 0}
+            fallback={<p class="bp-empty">暂无配置，请新建一个</p>}
+          >
             <For each={profiles()}>
               {(p) => (
                 <div class="bp-card">
@@ -236,7 +275,9 @@ export function BackendProfilesPage() {
                     <div class="bp-card-meta">{configSummary(p.config)}</div>
                   </div>
                   <div class="bp-card-actions">
-                    <button class="btn btn--sm" onClick={() => openEditor(p.name)}>编辑</button>
+                    <button class="btn btn--sm" onClick={() => openEditor(p.name)}>
+                      编辑
+                    </button>
                     <button
                       class="btn btn--sm"
                       onClick={() => handleSetDefault(p.name)}
@@ -244,7 +285,9 @@ export function BackendProfilesPage() {
                     >
                       设为默认
                     </button>
-                    <button class="btn btn--sm" onClick={() => handleDelete(p.name)}>删除</button>
+                    <button class="btn btn--sm" onClick={() => handleDelete(p.name)}>
+                      删除
+                    </button>
                   </div>
                 </div>
               )}

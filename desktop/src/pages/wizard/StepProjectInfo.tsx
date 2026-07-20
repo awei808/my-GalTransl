@@ -22,10 +22,15 @@ export function StepProjectInfo(props: StepProjectInfoProps) {
             <input
               class="field__input"
               value={props.parentDir}
-              onInput={(e) => { props.onParentDirChange(e.currentTarget.value); props.onProjectCreatedChange(false); }}
+              onInput={(e) => {
+                props.onParentDirChange(e.currentTarget.value);
+                props.onProjectCreatedChange(false);
+              }}
               placeholder="例如：E:\GalTransl\projects"
             />
-            <button class="btn btn--sm" onClick={props.onSelectParentDir}>浏览</button>
+            <button class="btn btn--sm" onClick={props.onSelectParentDir}>
+              浏览
+            </button>
           </div>
           <span class="field__hint">建议选择英文路径，避免空格与特殊字符。</span>
         </div>
@@ -34,14 +39,21 @@ export function StepProjectInfo(props: StepProjectInfoProps) {
           <input
             class="field__input"
             value={props.projectName}
-            onInput={(e) => { props.onProjectNameChange(e.currentTarget.value); props.onProjectCreatedChange(false); }}
+            onInput={(e) => {
+              props.onProjectNameChange(e.currentTarget.value);
+              props.onProjectCreatedChange(false);
+            }}
             placeholder="例如：MyProject"
           />
         </div>
         <div class="wizard-path-preview">
           <span class="wizard-path-preview__label">将创建目录</span>
-          <code class="wizard-path-preview__path">{props.projectDir || "请先填写父目录与项目名称"}</code>
-          <div class="wizard-path-preview__meta">包含 gt_input / gt_output / transl_cache 与 config.yaml</div>
+          <code class="wizard-path-preview__path">
+            {props.projectDir || "请先填写父目录与项目名称"}
+          </code>
+          <div class="wizard-path-preview__meta">
+            包含 gt_input / gt_output / transl_cache 与 config.yaml
+          </div>
         </div>
       </div>
       <div class="wizard-actions">

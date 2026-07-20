@@ -1,15 +1,11 @@
 /**
  * Home page utility functions — history, job memory, helpers.
  */
-import {
-  getHomeHistoryRetentionLimit,
-  getHomeJobRetentionLimit,
-  type Job,
-} from '../../lib/api';
+import { getHomeHistoryRetentionLimit, getHomeJobRetentionLimit, type Job } from "../../lib/api";
 
-const HISTORY_KEY = 'galtransl-project-history';
-const JOB_MEMORY_KEY = 'galtransl-home-jobs-memory';
-const JOB_CLEARED_KEY = 'galtransl-home-jobs-cleared';
+const HISTORY_KEY = "galtransl-project-history";
+const JOB_MEMORY_KEY = "galtransl-home-jobs-memory";
+const JOB_CLEARED_KEY = "galtransl-home-jobs-cleared";
 
 export type ProjectHistoryEntry = {
   projectDir: string;
@@ -50,12 +46,12 @@ export function removeProjectFromHistory(projectDir: string) {
 // ---- Job memory ----
 
 function getJobSortTimestamp(job: Job): number {
-  const timestamp = Date.parse(job.finished_at || job.started_at || job.created_at || '');
+  const timestamp = Date.parse(job.finished_at || job.started_at || job.created_at || "");
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
-function isActiveJobStatus(status: Job['status']): boolean {
-  return status === 'pending' || status === 'running';
+function isActiveJobStatus(status: Job["status"]): boolean {
+  return status === "pending" || status === "running";
 }
 
 function isActiveJob(job: Job): boolean {
@@ -63,34 +59,38 @@ function isActiveJob(job: Job): boolean {
 }
 
 function normalizeRememberedJob(value: unknown): Job | null {
-  if (!value || typeof value !== 'object') return null;
+  if (!value || typeof value !== "object") return null;
 
   const raw = value as Partial<Record<keyof Job, unknown>>;
   const status = raw.status;
-  if (status !== 'pending' && status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
+  if (
+    status !== "pending" &&
+    status !== "running" &&
+    status !== "completed" &&
+    status !== "failed" &&
+    status !== "cancelled"
+  ) {
     return null;
   }
 
-  if (typeof raw.job_id !== 'string' || typeof raw.project_dir !== 'string') return null;
+  if (typeof raw.job_id !== "string" || typeof raw.project_dir !== "string") return null;
 
   return {
-    config_file_name: typeof raw.config_file_name === 'string' ? raw.config_file_name : '',
-    created_at: typeof raw.created_at === 'string' ? raw.created_at : '',
-    error: typeof raw.error === 'string' ? raw.error : '',
-    finished_at: typeof raw.finished_at === 'string' ? raw.finished_at : '',
+    config_file_name: typeof raw.config_file_name === "string" ? raw.config_file_name : "",
+    created_at: typeof raw.created_at === "string" ? raw.created_at : "",
+    error: typeof raw.error === "string" ? raw.error : "",
+    finished_at: typeof raw.finished_at === "string" ? raw.finished_at : "",
     job_id: raw.job_id,
     project_dir: raw.project_dir,
-    started_at: typeof raw.started_at === 'string' ? raw.started_at : '',
+    started_at: typeof raw.started_at === "string" ? raw.started_at : "",
     status,
-    success: typeof raw.success === 'boolean' ? raw.success : false,
-    translator: typeof raw.translator === 'string' ? raw.translator : '',
+    success: typeof raw.success === "boolean" ? raw.success : false,
+    translator: typeof raw.translator === "string" ? raw.translator : "",
   };
 }
 
 export function sortAndLimitJobs(jobs: Job[], limit: number): Job[] {
-  return jobs
-    .sort((a, b) => getJobSortTimestamp(b) - getJobSortTimestamp(a))
-    .slice(0, limit);
+  return jobs.sort((a, b) => getJobSortTimestamp(b) - getJobSortTimestamp(a)).slice(0, limit);
 }
 
 export function loadRememberedJobs(limit = getHomeJobRetentionLimit()): Job[] {
@@ -127,7 +127,7 @@ export function loadClearedJobIds(): Set<string> {
     if (!raw) return new Set();
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((id): id is string => typeof id === 'string'));
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
   } catch {
     return new Set();
   }
@@ -141,7 +141,12 @@ export function saveClearedJobIds(ids: Set<string>) {
   }
 }
 
-export function mergeJobsWithMemory(existing: Job[], incoming: Job[], limit: number, cleared: Set<string>): Job[] {
+export function mergeJobsWithMemory(
+  existing: Job[],
+  incoming: Job[],
+  limit: number,
+  cleared: Set<string>,
+): Job[] {
   const merged = new Map<string, Job>();
 
   incoming.forEach((job) => {
@@ -162,18 +167,23 @@ export function mergeJobsWithMemory(existing: Job[], incoming: Job[], limit: num
 // ---- Display helpers ----
 
 export function projectName(projectDir: string): string {
-  return projectDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || projectDir;
+  return (
+    projectDir
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || projectDir
+  );
 }
 
 export function formatDate(isoString: string): string {
   try {
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return isoString;
-    return date.toLocaleDateString('zh-CN', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    return date.toLocaleDateString("zh-CN", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   } catch {
     return isoString;

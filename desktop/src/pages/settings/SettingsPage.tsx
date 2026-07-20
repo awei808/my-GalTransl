@@ -1,8 +1,4 @@
-import {
-  createSignal,
-  onMount,
-  Show,
-} from "solid-js";
+import { createSignal, onMount, Show, For } from "solid-js";
 import { navigateTo } from "../../stores/appStore";
 import {
   getThemeModePreference,
@@ -32,6 +28,7 @@ import {
 import { fetchVersion, fetchVersionCheck, fetchProblemTypes } from "../../lib/api/general";
 import type { ThemeMode, ProblemTypeInfo } from "../../lib/api/types";
 import { compressImageToDataUrl } from "./imageCompress";
+import { getErrorMessage } from "../../lib/errors";
 
 const PROJECT_HOMEPAGE = "https://github.com/GalTransl/GalTransl";
 const PROJECT_AUTHOR = "xd2333";
@@ -44,7 +41,7 @@ export function SettingsPage() {
   const [bgName, setBgName] = createSignal(getCustomBackgroundPreference().imageName);
   const [bgOpacity, setBgOpacity] = createSignal(String(getCustomBackgroundPreference().opacity));
   const [bgSurfaceOpacity, setBgSurfaceOpacity] = createSignal(
-    String(getCustomBackgroundPreference().surfaceOpacity)
+    String(getCustomBackgroundPreference().surfaceOpacity),
   );
   const [fontSize, setFontSize] = createSignal(String(getCacheBrowserFontSizePreference()));
   const [bgBusy, setBgBusy] = createSignal(false);
@@ -63,7 +60,8 @@ export function SettingsPage() {
 
   // ── 问题检测项 ──
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
-  const [enabledProblemTypes, setEnabledProblemTypesSignal] = createSignal<string[]>(getEnabledProblemTypes());
+  const [enabledProblemTypes, setEnabledProblemTypesSignal] =
+    createSignal<string[]>(getEnabledProblemTypes());
   const [problemLoading, setProblemLoading] = createSignal(false);
 
   onMount(() => {
@@ -72,9 +70,9 @@ export function SettingsPage() {
       .catch(() => {});
 
     fetchVersionCheck()
-      .then((res: any) => {
+      .then((res) => {
         setCoreVersion(res.version);
-        setLatestVersion(res.latest_version);
+        setLatestVersion(res.latest_version ?? "");
         setUpdateAvail(res.update_available);
       })
       .catch((e: Error) => setVerError(e.message))
@@ -175,9 +173,9 @@ export function SettingsPage() {
         setBgName(next.imageName);
         setBgOpacity(String(next.opacity));
         setBgSurfaceOpacity(String(next.surfaceOpacity));
-      } catch (err: any) {
-        const isQuota = err instanceof DOMException && (err.name === "QuotaExceededError" || (err as any).code === 22);
-        setBgError(isQuota ? "图片过大，请选择更小的图片" : err.message || "保存背景失败");
+      } catch (err) {
+        const isQuota = err instanceof DOMException && err.name === "QuotaExceededError";
+        setBgError(isQuota ? "图片过大，请选择更小的图片" : getErrorMessage(err) || "保存背景失败");
       } finally {
         setBgBusy(false);
       }
@@ -196,9 +194,7 @@ export function SettingsPage() {
 
   function toggleProblemType(name: string) {
     const current = enabledProblemTypes();
-    const next = current.includes(name)
-      ? current.filter((n) => n !== name)
-      : [...current, name];
+    const next = current.includes(name) ? current.filter((n) => n !== name) : [...current, name];
     setEnabledProblemTypesSignal(next);
     setEnabledProblemTypes(next);
   }
@@ -215,7 +211,11 @@ export function SettingsPage() {
             <h3>项目设置</h3>
             <p>编辑当前打开项目的翻译配置参数（config.yaml）。</p>
           </div>
-          <div class="settings-field" style="cursor:pointer; border-bottom:none" onClick={() => navigateTo("project-config")}>
+          <div
+            class="settings-field"
+            style="cursor:pointer; border-bottom:none"
+            onClick={() => navigateTo("project-config")}
+          >
             <span class="settings-label">编辑项目配置</span>
             <span class="settings-about-value settings-about-link">后端、插件、字典等参数 →</span>
           </div>
@@ -262,7 +262,11 @@ export function SettingsPage() {
               <button class="btn btn--sm" onClick={handleBgPick} disabled={bgBusy()}>
                 {bgBusy() ? "处理中…" : bgDataUrl() ? "更换图片" : "选择图片"}
               </button>
-              <button class="btn btn--sm" onClick={handleBgClear} disabled={!bgDataUrl() || bgBusy()}>
+              <button
+                class="btn btn--sm"
+                onClick={handleBgClear}
+                disabled={!bgDataUrl() || bgBusy()}
+              >
                 清除
               </button>
             </div>
@@ -350,7 +354,8 @@ export function SettingsPage() {
           </div>
 
           <div class="settings-hint">
-            {bgDataUrl() ? "已启用自定义背景。" : "未设置自定义背景。"}主题、背景和容器透明度设置会即时生效。
+            {bgDataUrl() ? "已启用自定义背景。" : "未设置自定义背景。"}
+            主题、背景和容器透明度设置会即时生效。
           </div>
         </section>
 
@@ -401,7 +406,11 @@ export function SettingsPage() {
             <p>管理后端连接配置、翻译插件、以及各翻译引擎的提示词模板。</p>
           </div>
 
-          <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("backend-profiles")}>
+          <div
+            class="settings-field"
+            style="cursor:pointer"
+            onClick={() => navigateTo("backend-profiles")}
+          >
             <span class="settings-label">后端配置</span>
             <span class="settings-about-value settings-about-link">管理 API 地址与模型 →</span>
           </div>
@@ -409,7 +418,11 @@ export function SettingsPage() {
             <span class="settings-label">插件管理</span>
             <span class="settings-about-value settings-about-link">查看已安装插件 →</span>
           </div>
-          <div class="settings-field" style="cursor:pointer; border-bottom:none" onClick={() => navigateTo("prompt-templates")}>
+          <div
+            class="settings-field"
+            style="cursor:pointer; border-bottom:none"
+            onClick={() => navigateTo("prompt-templates")}
+          >
             <span class="settings-label">提示词模板</span>
             <span class="settings-about-value settings-about-link">编辑默认提示词 →</span>
           </div>
@@ -462,7 +475,12 @@ export function SettingsPage() {
           <div class="settings-about-list">
             <div class="settings-about-row">
               <span class="settings-about-label">项目主页</span>
-              <a class="settings-about-value settings-about-link" href={PROJECT_HOMEPAGE} target="_blank" rel="noreferrer noopener">
+              <a
+                class="settings-about-value settings-about-link"
+                href={PROJECT_HOMEPAGE}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
                 {PROJECT_HOMEPAGE}
               </a>
             </div>

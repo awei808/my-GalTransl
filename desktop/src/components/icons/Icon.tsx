@@ -30,11 +30,7 @@ export function Icon(props: IconProps) {
         class={props.class}
         aria-hidden="true"
       >
-        {Array.isArray(cur!.d) ? (
-          cur!.d.map((seg) => <path d={seg} />)
-        ) : (
-          <path d={cur!.d} />
-        )}
+        {Array.isArray(cur!.d) ? cur!.d.map((seg) => <path d={seg} />) : <path d={cur!.d} />}
       </svg>
     </Show>
   );

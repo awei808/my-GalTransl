@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store";
+import type { CacheEntry } from "../lib/api/types";
 
 /**
  * 全局撤销/重做系统
@@ -16,10 +17,10 @@ export interface UndoEntry {
   file: string;
   /** 条目在文件中的 index */
   index: number;
-  /** 编辑前的字段快照 */
-  before: Record<string, unknown>;
-  /** 编辑后的字段快照 */
-  after: Record<string, unknown>;
+  /** 编辑前的字段快照（完整条目或字段子集） */
+  before: CacheEntry | Record<string, unknown>;
+  /** 编辑后的字段快照（完整条目或字段子集） */
+  after: CacheEntry | Record<string, unknown>;
   /** 操作描述（用于菜单显示） */
   description?: string;
 }

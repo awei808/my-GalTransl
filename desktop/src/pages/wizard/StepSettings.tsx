@@ -32,34 +32,38 @@ export function StepSettings(props: StepSettingsProps) {
             value={props.selectedFilePlugin}
             onChange={(e) => props.onFilePluginChange(e.currentTarget.value)}
           >
-            {props.filePlugins.length > 0
-              ? props.filePlugins.map((p) => (
-                  <option value={p.name}>
-                    {p.display_name} ({p.name})
-                  </option>
-                ))
-              : <option value={props.selectedFilePlugin}>{props.selectedFilePlugin}</option>
-            }
+            {props.filePlugins.length > 0 ? (
+              props.filePlugins.map((p) => (
+                <option value={p.name}>
+                  {p.display_name} ({p.name})
+                </option>
+              ))
+            ) : (
+              <option value={props.selectedFilePlugin}>{props.selectedFilePlugin}</option>
+            )}
           </select>
           <span class="field__hint">用于识别与解析源文件格式。</span>
         </div>
         <div class="field wizard-settings-grid__full">
           <span class="field__label">文本插件</span>
           <div class="text-plugins-selector">
-            {props.textPlugins.length > 0
-              ? props.textPlugins.map((p) => (
-                  <label class="text-plugin-chip">
-                    <input
-                      type="radio"
-                      name="text-plugin"
-                      checked={props.selectedTextPlugin === p.name}
-                      onChange={() => props.onTextPluginChange(p.name)}
-                    />
-                    <span>{p.display_name} ({p.name})</span>
-                  </label>
-                ))
-              : <span class="field__hint">未加载到文本插件列表</span>
-            }
+            {props.textPlugins.length > 0 ? (
+              props.textPlugins.map((p) => (
+                <label class="text-plugin-chip">
+                  <input
+                    type="radio"
+                    name="text-plugin"
+                    checked={props.selectedTextPlugin === p.name}
+                    onChange={() => props.onTextPluginChange(p.name)}
+                  />
+                  <span>
+                    {p.display_name} ({p.name})
+                  </span>
+                </label>
+              ))
+            ) : (
+              <span class="field__hint">未加载到文本插件列表</span>
+            )}
           </div>
           <span class="field__hint">按顺序执行的文本处理插件，可多选。</span>
         </div>
@@ -104,12 +108,13 @@ export function StepSettings(props: StepSettingsProps) {
             value={props.translationGuideline}
             onChange={(e) => props.onGuidelineChange(e.currentTarget.value)}
           >
-            {props.guidelines.length === 0 && props.translationGuideline === ""
-              ? <option value="">（未找到翻译规范文件）</option>
-              : null}
-            {props.translationGuideline && !props.guidelines.includes(props.translationGuideline)
-              ? <option value={props.translationGuideline}>{props.translationGuideline}</option>
-              : null}
+            {props.guidelines.length === 0 && props.translationGuideline === "" ? (
+              <option value="">（未找到翻译规范文件）</option>
+            ) : null}
+            {props.translationGuideline &&
+            !props.guidelines.includes(props.translationGuideline) ? (
+              <option value={props.translationGuideline}>{props.translationGuideline}</option>
+            ) : null}
             {props.guidelines.map((g) => (
               <option value={g}>{g}</option>
             ))}

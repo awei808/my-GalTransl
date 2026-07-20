@@ -54,7 +54,9 @@ async function resolveLogFilePath(): Promise<string | null> {
 
   try {
     await invoke("create_dir", { path: logDir });
-  } catch {}
+  } catch {
+    // 目录已存在则忽略
+  }
 
   _logFilePath = `${logDir}/frontend-${today}.log`;
   return _logFilePath;
@@ -101,9 +103,7 @@ export function pushLog(level: LogLevel, message: string, source?: string) {
   };
   setLogState("entries", (entries) => {
     const next = [...entries, entry];
-    return next.length > logState.maxSize
-      ? next.slice(next.length - logState.maxSize)
-      : next;
+    return next.length > logState.maxSize ? next.slice(next.length - logState.maxSize) : next;
   });
   flushToFile(entry);
   return entry;
@@ -111,10 +111,18 @@ export function pushLog(level: LogLevel, message: string, source?: string) {
 
 /** 便捷方法 */
 export const log = {
-  error(msg: string, source?: string) { return pushLog("error", msg, source); },
-  warning(msg: string, source?: string) { return pushLog("warning", msg, source); },
-  info(msg: string, source?: string) { return pushLog("info", msg, source); },
-  success(msg: string, source?: string) { return pushLog("success", msg, source); },
+  error(msg: string, source?: string) {
+    return pushLog("error", msg, source);
+  },
+  warning(msg: string, source?: string) {
+    return pushLog("warning", msg, source);
+  },
+  info(msg: string, source?: string) {
+    return pushLog("info", msg, source);
+  },
+  success(msg: string, source?: string) {
+    return pushLog("success", msg, source);
+  },
 };
 
 /** 获取所有日志 */
@@ -148,9 +156,7 @@ export async function loadLogsFromFile() {
     const lines = content.trim().split("\n");
     const fileEntries: LogEntry[] = [];
     for (const line of lines) {
-      const match = line.match(
-        /^\[(.+?)\]\[(ERROR|WARNING|INFO|SUCCESS)\](?:\[(.+?)\])? (.+)$/
-      );
+      const match = line.match(/^\[(.+?)\]\[(ERROR|WARNING|INFO|SUCCESS)\](?:\[(.+?)\])? (.+)$/);
       if (!match) continue;
       fileEntries.push({
         id: `file-${fileEntries.length}`,
@@ -162,12 +168,9 @@ export async function loadLogsFromFile() {
     }
     // 合并去重
     setLogState("entries", (existing) => {
-      const existingSet = new Set(
-        existing.map((e) => `${e.ts.getTime()}-${e.level}-${e.message}`)
-      );
+      const existingSet = new Set(existing.map((e) => `${e.ts.getTime()}-${e.level}-${e.message}`));
       const toAdd = fileEntries.filter(
-        (fe) =>
-          !existingSet.has(`${fe.ts.getTime()}-${fe.level}-${fe.message}`)
+        (fe) => !existingSet.has(`${fe.ts.getTime()}-${fe.level}-${fe.message}`),
       );
       const merged = [...existing, ...toAdd];
       merged.sort((a, b) => a.ts.getTime() - b.ts.getTime());

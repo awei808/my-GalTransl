@@ -1,7 +1,4 @@
-import {
-  getBackendProfileNames,
-  getDefaultBackendProfile,
-} from "../../lib/api/preferences";
+import { getBackendProfileNames, getDefaultBackendProfile } from "../../lib/api/preferences";
 
 interface StepBackendSelectProps {
   selectedBackend: string;
@@ -36,7 +33,9 @@ export function StepBackendSelect(props: StepBackendSelectProps) {
         >
           <option value="__default__">跟随全局默认</option>
           <option value="">不使用（使用项目自身配置）</option>
-          {names.map((name) => (<option value={name}>{name}</option>))}
+          {names.map((name) => (
+            <option value={name}>{name}</option>
+          ))}
         </select>
         <span class="field__hint">{hint}</span>
       </div>

@@ -23,17 +23,17 @@ export const DUR = {
 // ── Easings ────────────────────────────────────────────
 export const EASE = {
   /** Default ease for most UI transitions */
-  default: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+  default: "cubic-bezier(0.25, 0.1, 0.25, 1)",
   /** Deceleration (entering elements) */
-  decel: 'cubic-bezier(0, 0, 0.2, 1)',
+  decel: "cubic-bezier(0, 0, 0.2, 1)",
   /** Acceleration (exiting elements) */
-  accel: 'cubic-bezier(0.4, 0, 1, 1)',
+  accel: "cubic-bezier(0.4, 0, 1, 1)",
   /** Sharp — material-style standard */
-  sharp: 'cubic-bezier(0.4, 0, 0.6, 1)',
+  sharp: "cubic-bezier(0.4, 0, 0.6, 1)",
   /** Spring overshoot (celebrations, badge pop) */
-  spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+  spring: "cubic-bezier(0.34, 1.56, 0.64, 1)",
   /** Smooth bar fill */
-  barFill: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  barFill: "cubic-bezier(0.22, 1, 0.36, 1)",
 } as const;
 
 // ── Translate-page motion timing (JS-driven) ───────────

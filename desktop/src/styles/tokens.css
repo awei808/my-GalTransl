@@ -9,48 +9,48 @@
    ========================================== */
 :root {
   /* --- 基础色板 --- */
-  --color-brand-primary: #0066CC;
-  --color-brand-primary-hover: #0052A3;
-  --color-brand-primary-active: #003D7A;
-  --color-brand-dark: #0099FF;
-  --color-brand-dark-hover: #33ADFF;
-  --color-brand-dark-active: #0080DD;
+  --color-brand-primary: #0066cc;
+  --color-brand-primary-hover: #0052a3;
+  --color-brand-primary-active: #003d7a;
+  --color-brand-dark: #0099ff;
+  --color-brand-dark-hover: #33adff;
+  --color-brand-dark-active: #0080dd;
 
   /* --- 浅色模式语义色 --- */
-  --color-bg-app: #F0F5FF;            /* 页面基础背景 */
-  --color-bg-panel: #FFFFFF;           /* 卡片/面板背景 */
-  --color-bg-input: #FFFFFF;           /* 输入框背景 */
+  --color-bg-app: #f0f5ff; /* 页面基础背景 */
+  --color-bg-panel: #ffffff; /* 卡片/面板背景 */
+  --color-bg-input: #ffffff; /* 输入框背景 */
   --color-bg-hover: rgba(0, 102, 204, 0.08);
   --color-bg-active: rgba(0, 102, 204, 0.15);
   --color-bg-selected: rgba(0, 102, 204, 0.2);
-  --color-bg-overlay: rgba(0, 0, 0, 0.4);  /* 模态遮罩 */
+  --color-bg-overlay: rgba(0, 0, 0, 0.4); /* 模态遮罩 */
 
-  --color-border-default: #D0D9E8;
-  --color-border-hover: #B0BCCE;
-  --color-border-focus: #0066CC;
+  --color-border-default: #d0d9e8;
+  --color-border-hover: #b0bcce;
+  --color-border-focus: #0066cc;
 
-  --color-text-primary: #1F2937;
-  --color-text-secondary: #6B7280;
-  --color-text-tertiary: #9CA3AF;
-  --color-text-disabled: #9CA3AF;
-  --color-text-on-brand: #FFFFFF;
-  --color-text-link: #0066CC;
+  --color-text-primary: #1f2937;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+  --color-text-disabled: #9ca3af;
+  --color-text-on-brand: #ffffff;
+  --color-text-link: #0066cc;
 
   /* --- 状态色（独立语义） --- */
-  --color-status-success: #0E7A3D;
-  --color-status-warning: #BF7C00;
-  --color-status-error: #CF222E;
-  --color-status-info: #0066CC;
+  --color-status-success: #0e7a3d;
+  --color-status-warning: #bf7c00;
+  --color-status-error: #cf222e;
+  --color-status-info: #0066cc;
 
   /* --- 状态色背景（浅色底色） --- */
-  --color-bg-success: #E6F7EE;
-  --color-bg-warning: #FFF7E6;
-  --color-bg-error: #FFEBEE;
-  --color-bg-info: #E6F1FB;
+  --color-bg-success: #e6f7ee;
+  --color-bg-warning: #fff7e6;
+  --color-bg-error: #ffebee;
+  --color-bg-info: #e6f1fb;
 
   /* --- 翻译专用色 --- */
-  --color-progress-complete: #10B981;
-  --color-progress-pending: #9CA3AF;
+  --color-progress-complete: #10b981;
+  --color-progress-pending: #9ca3af;
   --color-diff-added: rgba(16, 185, 129, 0.2);
   --color-diff-removed: rgba(239, 68, 68, 0.2);
   --color-diff-changed: rgba(245, 158, 11, 0.2);
@@ -58,64 +58,63 @@
 
 /* --- 深色模式 --- */
 [data-theme="dark"] {
-  --color-brand-primary: #0099FF;
-  --color-brand-primary-hover: #33ADFF;
-  --color-brand-primary-active: #0080DD;
+  --color-brand-primary: #0099ff;
+  --color-brand-primary-hover: #33adff;
+  --color-brand-primary-active: #0080dd;
 
-  --color-bg-app: #12161C;
-  --color-bg-panel: #1E232A;
-  --color-bg-input: #252B33;
+  --color-bg-app: #12161c;
+  --color-bg-panel: #1e232a;
+  --color-bg-input: #252b33;
   --color-bg-hover: rgba(0, 153, 255, 0.1);
   --color-bg-active: rgba(0, 153, 255, 0.2);
   --color-bg-selected: rgba(0, 153, 255, 0.3);
   --color-bg-overlay: rgba(0, 0, 0, 0.6);
 
-  --color-border-default: #2C323A;
-  --color-border-hover: #3A4149;
-  --color-border-focus: #0099FF;
+  --color-border-default: #2c323a;
+  --color-border-hover: #3a4149;
+  --color-border-focus: #0099ff;
 
-  --color-text-primary: #E5E7EB;
-  --color-text-secondary: #9CA3AF;
-  --color-text-tertiary: #6B7280;
-  --color-text-disabled: #4B5563;
-  --color-text-on-brand: #FFFFFF;
-  --color-text-link: #0099FF;
+  --color-text-primary: #e5e7eb;
+  --color-text-secondary: #9ca3af;
+  --color-text-tertiary: #6b7280;
+  --color-text-disabled: #4b5563;
+  --color-text-on-brand: #ffffff;
+  --color-text-link: #0099ff;
 
-  --color-status-success: #3FB950;
-  --color-status-warning: #D29922;
-  --color-status-error: #F85149;
-  --color-status-info: #0099FF;
+  --color-status-success: #3fb950;
+  --color-status-warning: #d29922;
+  --color-status-error: #f85149;
+  --color-status-info: #0099ff;
 
   --color-bg-success: rgba(63, 185, 80, 0.12);
   --color-bg-warning: rgba(210, 153, 34, 0.12);
   --color-bg-error: rgba(248, 81, 73, 0.12);
   --color-bg-info: rgba(0, 153, 255, 0.12);
 
-  --color-progress-complete: #34D399;
-  --color-progress-pending: #4B5563;
+  --color-progress-complete: #34d399;
+  --color-progress-pending: #4b5563;
   --color-diff-added: rgba(52, 211, 153, 0.2);
   --color-diff-removed: rgba(248, 113, 113, 0.2);
   --color-diff-changed: rgba(251, 191, 36, 0.2);
 }
-
 
 /* ==========================================
    2. 排版系统
    ========================================== */
 :root {
   /* 字族 */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-               "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code",
-               Consolas, "Courier New", monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC",
+    sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace;
 
   /* 字号（px：桌面端固定） */
-  --font-sm: 12px;     /* 辅助文字/状态栏 */
-  --font-base: 13px;   /* 全局 UI 基准（VSCode 标准） */
-  --font-md: 14px;     /* 按钮/菜单/标签 */
-  --font-lg: 16px;     /* 小标题 */
-  --font-xl: 20px;     /* 弹窗标题 */
-  --font-2xl: 28px;    /* 欢迎页 Logo */
+  --font-sm: 12px; /* 辅助文字/状态栏 */
+  --font-base: 13px; /* 全局 UI 基准（VSCode 标准） */
+  --font-md: 14px; /* 按钮/菜单/标签 */
+  --font-lg: 16px; /* 小标题 */
+  --font-xl: 20px; /* 弹窗标题 */
+  --font-2xl: 28px; /* 欢迎页 Logo */
 
   /* 字重 */
   --weight-regular: 400;
@@ -129,33 +128,30 @@
   --leading-relaxed: 1.75;
 }
 
-
 /* ==========================================
    3. 间距系统（8px 网格）
    ========================================== */
 :root {
   --space-0: 0px;
-  --space-1: 8px;     /* 基准网格 */
-  --space-1-5: 12px;  /* 1.5 格 */
-  --space-2: 16px;    /* 2 格，常用内边距 */
-  --space-3: 24px;    /* 3 格，组件间距 */
-  --space-4: 32px;    /* 4 格，区块间距 */
-  --space-6: 48px;    /* 6 格，大间距 */
-  --space-8: 64px;    /* 8 格 */
+  --space-1: 8px; /* 基准网格 */
+  --space-1-5: 12px; /* 1.5 格 */
+  --space-2: 16px; /* 2 格，常用内边距 */
+  --space-3: 24px; /* 3 格，组件间距 */
+  --space-4: 32px; /* 4 格，区块间距 */
+  --space-6: 48px; /* 6 格，大间距 */
+  --space-8: 64px; /* 8 格 */
 }
-
 
 /* ==========================================
    4. 圆角系统
    ========================================== */
 :root {
-  --radius-sm: 4px;     /* 标签/输入框 */
-  --radius-md: 8px;     /* 按钮/卡片（核心圆角） */
-  --radius-lg: 12px;    /* 面板/弹窗 */
-  --radius-xl: 16px;    /* 大模态/分组框 */
+  --radius-sm: 4px; /* 标签/输入框 */
+  --radius-md: 8px; /* 按钮/卡片（核心圆角） */
+  --radius-lg: 12px; /* 面板/弹窗 */
+  --radius-xl: 16px; /* 大模态/分组框 */
   --radius-full: 9999px; /* 药丸形 */
 }
-
 
 /* ==========================================
    5. 阴影系统
@@ -164,15 +160,13 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
-  --shadow-focus: 0 0 0 2px var(--color-bg-app),
-                  0 0 0 4px var(--color-brand-primary);
+  --shadow-focus: 0 0 0 2px var(--color-bg-app), 0 0 0 4px var(--color-brand-primary);
 }
 [data-theme="dark"] {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
-
 
 /* ==========================================
    6. 动效系统
@@ -186,7 +180,6 @@
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
 }
 
-
 /* ==========================================
    7. 布局与组件专用 Tokens
    ========================================== */
@@ -195,8 +188,8 @@
   --topbar-height: 40px;
 
   /* 侧边栏 */
-  --sidebar-width: 48px;            /* 图标列宽（折叠） */
-  --sidebar-expanded-width: 260px;  /* 展开默认宽度（可拖拽） */
+  --sidebar-width: 72px; /* 图标+文字列宽 */
+  --sidebar-expanded-width: 260px; /* 展开默认宽度（可拖拽） */
   --panel-min-width: 200px;
   --panel-min-height: 100px;
 
@@ -204,7 +197,7 @@
   --statusbar-height: 28px;
 
   /* 翻译控制台 */
-  --console-header-aspect: 4;       /* 顶部矩形宽高比 4:1 */
+  --console-header-aspect: 4; /* 顶部矩形宽高比 4:1 */
   --console-gap: var(--space-2);
 
   /* 校对审核 */
@@ -230,16 +223,15 @@
   --scrollbar-width: 8px;
 }
 
-
 /* ==========================================
    8. Z-Index 层级（必须显式管理）
    ========================================== */
 :root {
-  --z-base: 0;         /* 主内容区 */
-  --z-sidebar: 100;    /* 侧边栏 */
-  --z-resize: 10;      /* 拖拽分隔条 */
-  --z-dropdown: 1000;  /* 菜单下拉/右键菜单 */
-  --z-toast: 2000;     /* 右下角吐司 */
-  --z-dialog: 3000;    /* 居中确认弹窗组 */
-  --z-tooltip: 4000;   /* 悬浮提示 */
+  --z-base: 0; /* 主内容区 */
+  --z-sidebar: 100; /* 侧边栏 */
+  --z-resize: 10; /* 拖拽分隔条 */
+  --z-dropdown: 1000; /* 菜单下拉/右键菜单 */
+  --z-toast: 2000; /* 右下角吐司 */
+  --z-dialog: 3000; /* 居中确认弹窗组 */
+  --z-tooltip: 4000; /* 悬浮提示 */
 }

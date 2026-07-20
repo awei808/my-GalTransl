@@ -11,21 +11,21 @@ import type {
   PromptTemplateOverride,
   ThemeMode,
   SubmitJobPayload,
-} from './types';
+} from "./types";
 
 // ---- Storage keys ----
 
-const BACKEND_PROFILE_KEY = 'galtransl-backend-profile';
-const BACKEND_PROFILES_STORAGE_KEY = 'galtransl-backend-profiles';
-const DEFAULT_BACKEND_PROFILE_KEY = 'galtransl-default-backend-profile';
-const TRANSLATOR_TEMPLATE_KEY = 'galtransl-project-translator-template';
-const HOME_HISTORY_LIMIT_KEY = 'galtransl-home-history-limit';
-const HOME_JOB_LIMIT_KEY = 'galtransl-home-job-limit';
-const THEME_MODE_KEY = 'galtransl-theme-mode';
-const CUSTOM_BACKGROUND_KEY = 'galtransl-custom-background';
-const HIDE_BACKEND_CONSOLE_KEY = 'galtransl-hide-backend-console';
-const CACHE_BROWSER_FONT_SIZE_KEY = 'galtransl-cache-browser-font-size';
-const PROMPT_TEMPLATES_OVERRIDES_KEY = 'galtransl_prompt_templates_overrides';
+const BACKEND_PROFILE_KEY = "galtransl-backend-profile";
+const BACKEND_PROFILES_STORAGE_KEY = "galtransl-backend-profiles";
+const DEFAULT_BACKEND_PROFILE_KEY = "galtransl-default-backend-profile";
+const TRANSLATOR_TEMPLATE_KEY = "galtransl-project-translator-template";
+const HOME_HISTORY_LIMIT_KEY = "galtransl-home-history-limit";
+const HOME_JOB_LIMIT_KEY = "galtransl-home-job-limit";
+const THEME_MODE_KEY = "galtransl-theme-mode";
+const CUSTOM_BACKGROUND_KEY = "galtransl-custom-background";
+const HIDE_BACKEND_CONSOLE_KEY = "galtransl-hide-backend-console";
+const CACHE_BROWSER_FONT_SIZE_KEY = "galtransl-cache-browser-font-size";
+const PROMPT_TEMPLATES_OVERRIDES_KEY = "galtransl_prompt_templates_overrides";
 
 // ---- Defaults & limits ----
 
@@ -46,14 +46,14 @@ export const CACHE_BROWSER_FONT_SIZE_DEFAULT = 14;
 
 // ---- Custom events ----
 
-export const BACKEND_PROFILES_CHANGE_EVENT = 'galtransl:backend-profiles-change';
-export const DEFAULT_BACKEND_PROFILE_CHANGE_EVENT = 'galtransl:default-backend-profile-change';
-export const HOME_HISTORY_LIMIT_CHANGE_EVENT = 'galtransl:home-history-limit-change';
-export const HOME_JOB_LIMIT_CHANGE_EVENT = 'galtransl:home-job-limit-change';
-export const THEME_MODE_CHANGE_EVENT = 'galtransl:theme-mode-change';
-export const CUSTOM_BACKGROUND_CHANGE_EVENT = 'galtransl:custom-background-change';
-export const HIDE_BACKEND_CONSOLE_CHANGE_EVENT = 'galtransl:hide-backend-console-change';
-export const CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT = 'galtransl:cache-browser-font-size-change';
+export const BACKEND_PROFILES_CHANGE_EVENT = "galtransl:backend-profiles-change";
+export const DEFAULT_BACKEND_PROFILE_CHANGE_EVENT = "galtransl:default-backend-profile-change";
+export const HOME_HISTORY_LIMIT_CHANGE_EVENT = "galtransl:home-history-limit-change";
+export const HOME_JOB_LIMIT_CHANGE_EVENT = "galtransl:home-job-limit-change";
+export const THEME_MODE_CHANGE_EVENT = "galtransl:theme-mode-change";
+export const CUSTOM_BACKGROUND_CHANGE_EVENT = "galtransl:custom-background-change";
+export const HIDE_BACKEND_CONSOLE_CHANGE_EVENT = "galtransl:hide-backend-console-change";
+export const CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT = "galtransl:cache-browser-font-size-change";
 
 // ---- Normalizers ----
 
@@ -62,7 +62,7 @@ function cloneBackendProfile(profile: Record<string, unknown>): Record<string, u
 }
 
 function normalizeHomeListLimit(value: unknown, fallback: number): number {
-  const numeric = typeof value === 'number' ? value : Number(value);
+  const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   const integer = Math.trunc(numeric);
   if (integer < HOME_LIST_LIMIT_MIN) return HOME_LIST_LIMIT_MIN;
@@ -71,7 +71,7 @@ function normalizeHomeListLimit(value: unknown, fallback: number): number {
 }
 
 function normalizeCustomBackgroundSurfaceOpacity(value: unknown): number {
-  const numeric = typeof value === 'number' ? value : Number(value);
+  const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return CUSTOM_BACKGROUND_SURFACE_OPACITY_DEFAULT;
   const integer = Math.trunc(numeric);
   if (integer < CUSTOM_BACKGROUND_SURFACE_OPACITY_MIN) return CUSTOM_BACKGROUND_SURFACE_OPACITY_MIN;
@@ -80,7 +80,7 @@ function normalizeCustomBackgroundSurfaceOpacity(value: unknown): number {
 }
 
 function normalizeCustomBackgroundOpacity(value: unknown): number {
-  const numeric = typeof value === 'number' ? value : Number(value);
+  const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return CUSTOM_BACKGROUND_OPACITY_DEFAULT;
   const integer = Math.trunc(numeric);
   if (integer < CUSTOM_BACKGROUND_OPACITY_MIN) return CUSTOM_BACKGROUND_OPACITY_MIN;
@@ -89,12 +89,12 @@ function normalizeCustomBackgroundOpacity(value: unknown): number {
 }
 
 function normalizeThemeMode(value: unknown): ThemeMode {
-  if (value === 'light' || value === 'dark' || value === 'system') return value;
-  return 'system';
+  if (value === "light" || value === "dark" || value === "system") return value;
+  return "system";
 }
 
 function normalizeCacheBrowserFontSize(value: unknown): number {
-  const numeric = typeof value === 'number' ? value : Number(value);
+  const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return CACHE_BROWSER_FONT_SIZE_DEFAULT;
   const integer = Math.trunc(numeric);
   if (integer < CACHE_BROWSER_FONT_SIZE_MIN) return CACHE_BROWSER_FONT_SIZE_MIN;
@@ -103,27 +103,27 @@ function normalizeCacheBrowserFontSize(value: unknown): number {
 }
 
 function normalizeHideBackendConsole(value: unknown): boolean {
-  if (typeof value === 'boolean') return value;
-  if (value === 'true') return true;
-  if (value === 'false') return false;
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
   return HIDE_BACKEND_CONSOLE_DEFAULT;
 }
 
 function defaultCustomBackgroundPreference(): CustomBackgroundPreference {
   return {
-    imageDataUrl: '',
-    imageName: '',
+    imageDataUrl: "",
+    imageName: "",
     opacity: CUSTOM_BACKGROUND_OPACITY_DEFAULT,
     surfaceOpacity: CUSTOM_BACKGROUND_SURFACE_OPACITY_DEFAULT,
   };
 }
 
 function normalizeCustomBackgroundPreference(value: unknown): CustomBackgroundPreference {
-  if (!value || typeof value !== 'object') return defaultCustomBackgroundPreference();
+  if (!value || typeof value !== "object") return defaultCustomBackgroundPreference();
   const preference = value as Partial<CustomBackgroundPreference>;
   return {
-    imageDataUrl: typeof preference.imageDataUrl === 'string' ? preference.imageDataUrl : '',
-    imageName: typeof preference.imageName === 'string' ? preference.imageName : '',
+    imageDataUrl: typeof preference.imageDataUrl === "string" ? preference.imageDataUrl : "",
+    imageName: typeof preference.imageName === "string" ? preference.imageName : "",
     opacity: normalizeCustomBackgroundOpacity(preference.opacity),
     surfaceOpacity: normalizeCustomBackgroundSurfaceOpacity(preference.surfaceOpacity),
   };
@@ -136,11 +136,11 @@ function readBackendProfilesStorage(): BackendProfilesMap {
     const raw = localStorage.getItem(BACKEND_PROFILES_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const profiles: BackendProfilesMap = {};
     for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!name.trim()) continue;
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
         profiles[name] = cloneBackendProfile(value as Record<string, unknown>);
       }
     }
@@ -153,7 +153,9 @@ function readBackendProfilesStorage(): BackendProfilesMap {
 function writeBackendProfilesStorage(profiles: BackendProfilesMap) {
   try {
     localStorage.setItem(BACKEND_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
-    window.dispatchEvent(new CustomEvent(BACKEND_PROFILES_CHANGE_EVENT, { detail: Object.keys(profiles) }));
+    window.dispatchEvent(
+      new CustomEvent(BACKEND_PROFILES_CHANGE_EVENT, { detail: Object.keys(profiles) }),
+    );
   } catch {
     // ignore storage errors
   }
@@ -170,13 +172,18 @@ export function getBackendProfileNames(): string[] {
   return Object.keys(readBackendProfilesStorage());
 }
 
-export function resolveSelectedBackendProfile(projectDir: string): { name: string; profile: Record<string, unknown> | null } {
+export function resolveSelectedBackendProfile(projectDir: string): {
+  name: string;
+  profile: Record<string, unknown> | null;
+} {
   const name = getSelectedBackendProfile(projectDir);
-  if (!name) return { name: '', profile: null };
+  if (!name) return { name: "", profile: null };
   return { name, profile: getBackendProfile(name) };
 }
 
-export function getSelectedBackendProfileJobPayload(projectDir: string): Pick<SubmitJobPayload, 'backend_profile' | 'backend_profile_data'> {
+export function getSelectedBackendProfileJobPayload(
+  projectDir: string,
+): Pick<SubmitJobPayload, "backend_profile" | "backend_profile_data"> {
   const { name, profile } = resolveSelectedBackendProfile(projectDir);
   if (!profile) return {};
   return {
@@ -187,9 +194,9 @@ export function getSelectedBackendProfileJobPayload(projectDir: string): Pick<Su
 
 export function getDefaultBackendProfile(): string {
   try {
-    return localStorage.getItem(DEFAULT_BACKEND_PROFILE_KEY) || '';
+    return localStorage.getItem(DEFAULT_BACKEND_PROFILE_KEY) || "";
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -208,7 +215,7 @@ export function setDefaultBackendProfile(name: string) {
 
 export function getSelectedBackendProfile(projectDir: string): string {
   try {
-    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || '{}');
+    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || "{}");
     if (map[projectDir] !== undefined) return map[projectDir];
     return getDefaultBackendProfile();
   } catch {
@@ -218,18 +225,18 @@ export function getSelectedBackendProfile(projectDir: string): string {
 
 export function getSelectedBackendProfileDisplay(projectDir: string): string {
   try {
-    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || '{}');
+    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || "{}");
     if (map[projectDir] !== undefined) return map[projectDir];
-    return '__default__';
+    return "__default__";
   } catch {
-    return '__default__';
+    return "__default__";
   }
 }
 
 export function setSelectedBackendProfile(projectDir: string, profileName: string) {
   try {
-    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || '{}');
-    if (profileName === '__default__') {
+    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || "{}");
+    if (profileName === "__default__") {
       delete map[projectDir];
     } else {
       map[projectDir] = profileName;
@@ -242,7 +249,7 @@ export function setSelectedBackendProfile(projectDir: string, profileName: strin
 
 export function hasExplicitBackendProfile(projectDir: string): boolean {
   try {
-    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || '{}');
+    const map = JSON.parse(localStorage.getItem(BACKEND_PROFILE_KEY) || "{}");
     return projectDir in map;
   } catch {
     return false;
@@ -263,7 +270,7 @@ export async function fetchBackendProfile(name: string) {
 
 export async function createBackendProfile(name: string, profile: Record<string, unknown>) {
   const trimmedName = name.trim();
-  if (!trimmedName) throw new Error('profile name is required');
+  if (!trimmedName) throw new Error("profile name is required");
   const profiles = readBackendProfilesStorage();
   profiles[trimmedName] = cloneBackendProfile(profile);
   writeBackendProfilesStorage(profiles);
@@ -276,13 +283,13 @@ export async function updateBackendProfile(name: string, profile: Record<string,
 
 export async function deleteBackendProfile(name: string) {
   const trimmedName = name.trim();
-  if (!trimmedName) throw new Error('profile name is required');
+  if (!trimmedName) throw new Error("profile name is required");
   const profiles = readBackendProfilesStorage();
   if (!(trimmedName in profiles)) throw new Error(`profile not found: ${trimmedName}`);
   delete profiles[trimmedName];
   writeBackendProfilesStorage(profiles);
   if (getDefaultBackendProfile() === trimmedName) {
-    setDefaultBackendProfile('');
+    setDefaultBackendProfile("");
   }
   return { success: true, name: trimmedName };
 }
@@ -291,16 +298,16 @@ export async function deleteBackendProfile(name: string) {
 
 export function getSelectedTranslatorTemplate(projectDir: string): string {
   try {
-    const map = JSON.parse(localStorage.getItem(TRANSLATOR_TEMPLATE_KEY) || '{}');
-    return typeof map[projectDir] === 'string' ? map[projectDir] : '';
+    const map = JSON.parse(localStorage.getItem(TRANSLATOR_TEMPLATE_KEY) || "{}");
+    return typeof map[projectDir] === "string" ? map[projectDir] : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
 export function setSelectedTranslatorTemplate(projectDir: string, translatorName: string) {
   try {
-    const map = JSON.parse(localStorage.getItem(TRANSLATOR_TEMPLATE_KEY) || '{}');
+    const map = JSON.parse(localStorage.getItem(TRANSLATOR_TEMPLATE_KEY) || "{}");
     map[projectDir] = translatorName;
     localStorage.setItem(TRANSLATOR_TEMPLATE_KEY, JSON.stringify(map));
   } catch {
@@ -365,7 +372,9 @@ export function setCacheBrowserFontSizePreference(size: number): number {
   const normalized = normalizeCacheBrowserFontSize(size);
   try {
     localStorage.setItem(CACHE_BROWSER_FONT_SIZE_KEY, String(normalized));
-    window.dispatchEvent(new CustomEvent(CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT, { detail: normalized }));
+    window.dispatchEvent(
+      new CustomEvent(CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT, { detail: normalized }),
+    );
   } catch {
     // ignore storage errors
   }
@@ -387,7 +396,9 @@ export function setHideBackendConsolePreference(enabled: boolean): boolean {
   const normalized = normalizeHideBackendConsole(enabled);
   try {
     localStorage.setItem(HIDE_BACKEND_CONSOLE_KEY, String(normalized));
-    window.dispatchEvent(new CustomEvent(HIDE_BACKEND_CONSOLE_CHANGE_EVENT, { detail: normalized }));
+    window.dispatchEvent(
+      new CustomEvent(HIDE_BACKEND_CONSOLE_CHANGE_EVENT, { detail: normalized }),
+    );
   } catch {
     // ignore storage errors
   }
@@ -401,7 +412,7 @@ export function getThemeModePreference(): ThemeMode {
     const raw = localStorage.getItem(THEME_MODE_KEY);
     return normalizeThemeMode(raw);
   } catch {
-    return 'system';
+    return "system";
   }
 }
 
@@ -429,7 +440,9 @@ export function getCustomBackgroundPreference(): CustomBackgroundPreference {
   }
 }
 
-export function setCustomBackgroundPreference(preference: CustomBackgroundPreference): CustomBackgroundPreference {
+export function setCustomBackgroundPreference(
+  preference: CustomBackgroundPreference,
+): CustomBackgroundPreference {
   const normalized = normalizeCustomBackgroundPreference(preference);
   localStorage.setItem(CUSTOM_BACKGROUND_KEY, JSON.stringify(normalized));
   window.dispatchEvent(new CustomEvent(CUSTOM_BACKGROUND_CHANGE_EVENT, { detail: normalized }));
@@ -454,7 +467,7 @@ export function loadPromptTemplateOverrides(): Record<string, PromptTemplateOver
     const raw = localStorage.getItem(PROMPT_TEMPLATES_OVERRIDES_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null) {
+    if (typeof parsed === "object" && parsed !== null) {
       return parsed as Record<string, PromptTemplateOverride>;
     }
     return {};
@@ -463,7 +476,9 @@ export function loadPromptTemplateOverrides(): Record<string, PromptTemplateOver
   }
 }
 
-export function savePromptTemplateOverrides(overrides: Record<string, PromptTemplateOverride>): void {
+export function savePromptTemplateOverrides(
+  overrides: Record<string, PromptTemplateOverride>,
+): void {
   try {
     localStorage.setItem(PROMPT_TEMPLATES_OVERRIDES_KEY, JSON.stringify(overrides));
   } catch {
@@ -474,7 +489,7 @@ export function savePromptTemplateOverrides(overrides: Record<string, PromptTemp
 export function getPromptTemplateOverride(name: string): PromptTemplateOverride | null {
   const overrides = loadPromptTemplateOverrides();
   const override = overrides[name];
-  if (override && typeof override === 'object') return override;
+  if (override && typeof override === "object") return override;
   return null;
 }
 
@@ -490,7 +505,9 @@ export function deletePromptTemplateOverride(name: string): void {
   savePromptTemplateOverrides(overrides);
 }
 
-export function getPromptTemplateOverridesForJob(translator: string): Record<string, PromptTemplateOverride> {
+export function getPromptTemplateOverridesForJob(
+  translator: string,
+): Record<string, PromptTemplateOverride> {
   const overrides = loadPromptTemplateOverrides();
   const override = overrides[translator];
   if (!override) return {};
@@ -502,7 +519,7 @@ export type { AppSettings };
 
 // ---- Problem detection enabled types ----
 
-const PROBLEM_TYPES_KEY = 'galtransl:enabled-problem-types';
+const PROBLEM_TYPES_KEY = "galtransl:enabled-problem-types";
 
 export function getEnabledProblemTypes(): string[] {
   try {

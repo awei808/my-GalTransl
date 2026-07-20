@@ -25,7 +25,7 @@ function uid() {
 export const toast = {
   show(
     message: string,
-    opts?: { tone?: ToastTone; duration?: number; allowHtml?: boolean }
+    opts?: { tone?: ToastTone; duration?: number; allowHtml?: boolean },
   ): string {
     const id = uid();
     const entry: ToastEntry = {

@@ -1,12 +1,9 @@
 import { Icon } from "./icons/Icon";
-import {
-  appState,
-  setAppState,
-  navigateTo,
-} from "../stores/appStore";
+import { appState, setAppState, navigateTo, type ActiveView } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { confirm } from "../stores/confirmStore";
 import { buildProjectOutput } from "../lib/api/project";
+import { getErrorMessage } from "../lib/errors";
 
 interface TabDef {
   icon: string;
@@ -46,8 +43,8 @@ async function handleBuildOutput() {
     if (res.errors && res.errors.length > 0) {
       toast.warning(`${res.errors.length} 个文件构建出错`);
     }
-  } catch (e: any) {
-    toast.error(`构建失败: ${e.message}`);
+  } catch (e) {
+    toast.error(`构建失败: ${getErrorMessage(e)}`);
   }
 }
 
@@ -59,14 +56,14 @@ function handleTabClick(tab: TabDef) {
 
   const fullPageViews = ["dict", "settings", "backend-profiles", "plugins", "prompt-templates"];
   if (fullPageViews.includes(tab.view)) {
-    navigateTo(tab.view as any);
+    navigateTo(tab.view as ActiveView);
     setAppState({ sidebarOpen: false });
   } else if (["search", "problems"].includes(tab.view)) {
     const alreadyOpen =
       appState.sidebarOpen && appState.sidebarTab === (tab.view === "search" ? "find" : tab.view);
     setAppState({
       sidebarOpen: !alreadyOpen,
-      sidebarTab: alreadyOpen ? null : (tab.view === "search" ? "find" : tab.view as "problems"),
+      sidebarTab: alreadyOpen ? null : tab.view === "search" ? "find" : (tab.view as "problems"),
     });
   } else {
     navigateTo(tab.view as "translate" | "review");
@@ -80,11 +77,7 @@ function handleTabClick(tab: TabDef) {
 function isActive(tab: TabDef) {
   const state = appState;
   if (tab.view === state.activeView) return true;
-  if (
-    ["search", "problems"].includes(tab.view) &&
-    tab.view === state.sidebarTab
-  )
-    return true;
+  if (["search", "problems"].includes(tab.view) && tab.view === state.sidebarTab) return true;
   return false;
 }
 
@@ -100,6 +93,7 @@ export function ActivityBar() {
             aria-label={tab.label}
           >
             <Icon name={tab.icon} size={22} />
+            <span class="activitybar-label">{tab.label}</span>
           </button>
         ))}
       </div>

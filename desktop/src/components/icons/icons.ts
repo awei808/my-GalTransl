@@ -30,10 +30,10 @@ export const ICON_PATHS: Record<string, IconDef> = {
   folder: {
     d: "M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z",
   },
-  'folder-open': {
+  "folder-open": {
     d: "M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V10M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M3 7l1.5 5h17",
   },
-  'file-text': {
+  "file-text": {
     d: "M6 2h8l4 4v16H6V2Zm8 0v4h4M8 10h8M8 14h8M8 18h5",
   },
 
@@ -81,7 +81,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
     d: "M7 4.5 19 12 7 19.5V4.5Z",
     fill: true,
   },
-  'play-stroke': {
+  "play-stroke": {
     d: "M7 4.5 19 12 7 19.5V4.5Z",
   },
   square: {
@@ -91,10 +91,10 @@ export const ICON_PATHS: Record<string, IconDef> = {
   check: {
     d: "M5 12l5 5 9-11",
   },
-  'check-circle': {
+  "check-circle": {
     d: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM8 12l3 3 5-6",
   },
-  'alert-circle': {
+  "alert-circle": {
     d: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8v5M12 16h.01",
   },
 
@@ -108,7 +108,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   refresh: {
     d: "M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5",
   },
-  'refresh-ccw': {
+  "refresh-ccw": {
     d: "M3 12a9 9 0 0 1 6.7-8.7L12 5M12 3v5M21 12a9 9 0 0 1-6.7 8.7L12 19M12 21v-5",
   },
 
@@ -121,16 +121,16 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
 
   // ── Misc ──
-  'chevron-down': {
+  "chevron-down": {
     d: "M5 9 12 16 19 9",
   },
-  'chevron-right': {
+  "chevron-right": {
     d: "M9 5 16 12 9 19",
   },
-  'chevron-left': {
+  "chevron-left": {
     d: "M15 5 8 12 15 19",
   },
-  'chevron-up': {
+  "chevron-up": {
     d: "M5 15 12 8 19 15",
   },
   plus: {
@@ -148,7 +148,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   copy: {
     d: "M8 4h10a2 2 0 0 1 2 2v10M6 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z",
   },
-  'external-link': {
+  "external-link": {
     d: "M14 4h6v6M20 4 10 14M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5",
   },
 

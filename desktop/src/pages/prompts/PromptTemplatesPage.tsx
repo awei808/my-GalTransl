@@ -7,6 +7,7 @@ import {
   setPromptTemplateOverride,
   deletePromptTemplateOverride,
 } from "../../lib/api/preferences";
+import { getErrorMessage } from "../../lib/errors";
 
 export function PromptTemplatesPage() {
   const [templates, setTemplates] = createSignal<PromptTemplateInfo[]>([]);
@@ -53,8 +54,8 @@ export function PromptTemplatesPage() {
       });
       setOverridden(true);
       toast.success("提示词已保存");
-    } catch (e: any) {
-      toast.error(`保存失败: ${e.message}`);
+    } catch (e) {
+      toast.error(`保存失败: ${getErrorMessage(e)}`);
     } finally {
       setSaving(false);
     }
@@ -108,11 +109,7 @@ export function PromptTemplatesPage() {
                   <button class="btn btn--sm" onClick={handleReset} disabled={!overridden()}>
                     重置为默认
                   </button>
-                  <button
-                    class="btn btn--sm btn--primary"
-                    onClick={handleSave}
-                    disabled={saving()}
-                  >
+                  <button class="btn btn--sm btn--primary" onClick={handleSave} disabled={saving()}>
                     {saving() ? "保存中…" : "保存"}
                   </button>
                 </div>

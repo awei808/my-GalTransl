@@ -19,12 +19,8 @@ export function StatusBar() {
   return (
     <footer class="statusbar">
       <div class="statusbar-left">
-        <span class={`status-indicator ${phaseClass()}`}>
-          {phaseLabel()}
-        </span>
-        {appState.activeProjectId && (
-          <span class="status-project">项目已打开</span>
-        )}
+        <span class={`status-indicator ${phaseClass()}`}>{phaseLabel()}</span>
+        {appState.activeProjectId && <span class="status-project">项目已打开</span>}
       </div>
       <div class="statusbar-right">
         <span class="status-view">{appState.activeView}</span>

@@ -4,9 +4,9 @@
  * All shared TypeScript types for API requests and responses.
  */
 
-export type ConnectionPhase = 'connecting' | 'online' | 'offline';
+export type ConnectionPhase = "connecting" | "online" | "offline";
 
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export type TranslatorOption = {
   description: string;
@@ -98,6 +98,8 @@ export type FileEntry = {
   size: number;
   modified: string;
   entry_count?: number;
+  /** 是否为元数据文件（FileMetaData.json / BatchMetadata.json），与平铺译文缓存不在同目录 */
+  is_metadata?: boolean;
 };
 
 export type ProjectFilesResponse = {
@@ -115,6 +117,22 @@ export type CacheFileResponse = {
   filename: string;
   entries: CacheEntry[];
 };
+
+/* 元数据 JSON（FileMetaData.json / BatchMetadata.json）：不定结构，按对象数组处理 */
+export type MetadataEntry = Record<string, unknown>;
+export type MetadataResponse = {
+  exists: boolean;
+  name: string;
+  entries: MetadataEntry[];
+  path?: string;
+};
+export type MetadataSaveResponse = {
+  success: boolean;
+  name: string;
+  path?: string;
+  entries?: MetadataEntry[];
+};
+export type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json";
 
 export type CacheEntry = {
   index: number;
@@ -137,7 +155,7 @@ export type CacheEntry = {
   post_dst_preview?: string;
 };
 
-export type CacheSearchField = 'all' | 'src' | 'dst' | 'problem';
+export type CacheSearchField = "all" | "src" | "dst" | "problem";
 
 export type CacheSearchResult = {
   filename: string;
@@ -157,7 +175,7 @@ export type CacheSearchResponse = {
   total: number;
 };
 
-export type CacheReplaceField = 'src' | 'dst' | 'all';
+export type CacheReplaceField = "src" | "dst" | "all";
 
 export type CacheReplaceFileDetail = {
   filename: string;
@@ -293,7 +311,7 @@ export type ProjectDictionaryResponse = {
   dict_contents: Record<string, DictFileContent>;
 };
 
-export type DictionaryCategory = 'pre' | 'gpt' | 'post';
+export type DictionaryCategory = "pre" | "gpt" | "post";
 
 export type ProjectDictionaryManagerResponse = {
   project_dir: string;
@@ -349,6 +367,7 @@ export type NameTableGenerateResponse = {
   source_file: string;
   names: NameEntry[];
   total: number;
+  job_id?: string;
 };
 
 export type NameTableSaveResponse = {
@@ -384,7 +403,7 @@ export type AppSettings = {
   printTranslationLogInTerminal: boolean;
 };
 
-export type ThemeMode = 'light' | 'dark' | 'system';
+export type ThemeMode = "light" | "dark" | "system";
 
 export type CustomBackgroundPreference = {
   imageDataUrl: string;

@@ -3,7 +3,11 @@ import { setAppState, openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
 import { fetchJobs } from "../../lib/api/general";
-import { ensureDesktopBackendReady, encodeProjectDir } from "../../lib/api/client";
+import {
+  ensureDesktopBackendReady,
+  encodeProjectDir,
+  isBackendReachable,
+} from "../../lib/api/client";
 import { fetchProjectFiles } from "../../lib/api/project";
 import type { Job } from "../../lib/api/types";
 
@@ -34,13 +38,19 @@ function addRecentProject(dir: string) {
 }
 
 /** 外部暴露：供 TitleBar 在打开项目后调用 */
-(window as any).__addRecentProject = addRecentProject;
+window.__addRecentProject = addRecentProject;
 
 /** 首页加载后自动激活后端 */
 async function autoActivateBackend() {
   // Rust 的 setup() 已尝试启动后端，这里只需确认连通
+  let needsStart = true;
   try {
-    toast.info("正在激活后端服务…");
+    needsStart = !(await isBackendReachable(800));
+  } catch {
+    needsStart = true;
+  }
+  try {
+    if (needsStart) toast.info("正在激活后端服务…");
     await ensureDesktopBackendReady({ timeoutMs: 25000 });
     setAppState({ connectionPhase: "online", backendOnline: true });
     toast.success("后端已就绪");
@@ -76,8 +86,10 @@ export function HomePage() {
     toast.info("正在打开项目...");
     try {
       await ensureDesktopBackendReady({ timeoutMs: 30000 });
+      setAppState({ connectionPhase: "online", backendOnline: true });
     } catch {
       toast.warning("无法连接后端，部分功能可能不可用");
+      setAppState({ connectionPhase: "offline", backendOnline: false });
     }
     const projectId = encodeProjectDir(dir);
     try {
@@ -91,12 +103,18 @@ export function HomePage() {
 
   function statusLabel(status: string) {
     switch (status) {
-      case "running": return "运行中";
-      case "completed": return "已完成";
-      case "failed": return "失败";
-      case "cancelled": return "已取消";
-      case "pending": return "等待中";
-      default: return status;
+      case "running":
+        return "运行中";
+      case "completed":
+        return "已完成";
+      case "failed":
+        return "失败";
+      case "cancelled":
+        return "已取消";
+      case "pending":
+        return "等待中";
+      default:
+        return status;
     }
   }
 
@@ -126,15 +144,19 @@ export function HomePage() {
         {/* ── 最近项目 ── */}
         <div class="home-panel">
           <h3 class="home-panel-title">最近项目</h3>
-          <Show
-            when={recent().length > 0}
-            fallback={<p class="home-panel-empty">暂无最近项目</p>}
-          >
+          <Show when={recent().length > 0} fallback={<p class="home-panel-empty">暂无最近项目</p>}>
             <div class="home-list">
               <For each={recent()}>
                 {(p) => (
                   <div class="home-list-item clickable" onClick={() => handleOpenRecent(p.dir)}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
                       <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
                     </svg>
                     <span class="home-list-name">{p.name}</span>
@@ -149,17 +171,16 @@ export function HomePage() {
         {/* ── 最近任务 ── */}
         <div class="home-panel">
           <h3 class="home-panel-title">最近任务</h3>
-          <Show
-            when={jobs().length > 0}
-            fallback={<p class="home-panel-empty">暂无任务记录</p>}
-          >
+          <Show when={jobs().length > 0} fallback={<p class="home-panel-empty">暂无任务记录</p>}>
             <div class="home-list">
               <For each={jobs()}>
                 {(job) => (
                   <div class="home-list-item">
                     <div class="home-job-left">
                       <span class="home-list-name">{job.translator}</span>
-                      <span class="home-list-meta">{new Date(job.created_at).toLocaleString("zh-CN")}</span>
+                      <span class="home-list-meta">
+                        {new Date(job.created_at).toLocaleString("zh-CN")}
+                      </span>
                     </div>
                     <span class={`home-job-status ${statusClass(job.status)}`}>
                       {statusLabel(job.status)}

@@ -1,15 +1,10 @@
-import {
-  createSignal,
-  createMemo,
-  createEffect,
-  Show,
-  For,
-} from "solid-js";
+import { createSignal, createMemo, createEffect, Show, For } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
+import { getErrorMessage } from "../../lib/errors";
 import { Icon } from "../../components/icons/Icon";
 import {
   fetchDefaultProjectConfigTemplate,
@@ -18,10 +13,7 @@ import {
   submitJob,
   fetchJob,
 } from "../../lib/api/general";
-import {
-  fetchProjectConfig,
-  updateProjectConfig,
-} from "../../lib/api/project";
+import { fetchProjectConfig, updateProjectConfig } from "../../lib/api/project";
 import { encodeProjectDir, ensureDesktopBackendReady } from "../../lib/api/client";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
 import type { PluginInfo, Job } from "../../lib/api/types";
@@ -44,11 +36,7 @@ function waitForJob(jobId: string): Promise<Job> {
     const tick = async () => {
       try {
         const s = await fetchJob(jobId);
-        if (
-          s.status === "completed" ||
-          s.status === "failed" ||
-          s.status === "cancelled"
-        ) {
+        if (s.status === "completed" || s.status === "failed" || s.status === "cancelled") {
           resolve(s);
           return;
         }
@@ -77,9 +65,7 @@ export function NewProjectWizard() {
   } | null>(null);
 
   // Step 1
-  const [parentDir, setParentDir] = createSignal(
-    localStorage.getItem(LAST_PARENT_DIR_KEY) || ""
-  );
+  const [parentDir, setParentDir] = createSignal(localStorage.getItem(LAST_PARENT_DIR_KEY) || "");
   const [projectName, setProjectName] = createSignal("");
   const [projectCreated, setProjectCreated] = createSignal(false);
 
@@ -91,12 +77,9 @@ export function NewProjectWizard() {
 
   // Step 4
   const [filePlugins, setFilePlugins] = createSignal<PluginInfo[]>([]);
-  const [selectedFilePlugin, setSelectedFilePlugin] =
-    createSignal("file_galtransl_json");
+  const [selectedFilePlugin, setSelectedFilePlugin] = createSignal("file_galtransl_json");
   const [textPlugins, setTextPlugins] = createSignal<PluginInfo[]>([]);
-  const [selectedTextPlugin, setSelectedTextPlugin] = createSignal(
-    "text_common_normalfix",
-  );
+  const [selectedTextPlugin, setSelectedTextPlugin] = createSignal("text_common_normalfix");
   const [workersPerProject, setWorkersPerProject] = createSignal(16);
   const [numPerRequest, setNumPerRequest] = createSignal(16);
   const [language, setLanguage] = createSignal("zh-cn");
@@ -168,7 +151,9 @@ export function NewProjectWizard() {
       await invoke("create_dir", { path: `${dir}${sep}transl_cache` });
       // 预建批次缓存子文件夹（后端翻译流程各阶段使用）
       for (const sub of ["pass0_cache", "pass1_cache", "pass2_cache", "pass3_cache"]) {
-        await invoke("create_dir", { path: `${dir}${sep}transl_cache${sep}${sub}` }).catch(() => {});
+        await invoke("create_dir", { path: `${dir}${sep}transl_cache${sep}${sub}` }).catch(
+          () => {},
+        );
       }
       await invoke("write_text_file", {
         path: `${dir}${sep}config.yaml`,
@@ -176,10 +161,10 @@ export function NewProjectWizard() {
       });
       setProjectCreated(true);
       setFeedback({ type: "success", message: "项目创建成功！" });
-    } catch (err: any) {
+    } catch (err) {
       setFeedback({
         type: "error",
-        message: `创建失败: ${err.message || String(err)}`,
+        message: `创建失败: ${getErrorMessage(err)}`,
       });
     }
   }
@@ -213,10 +198,10 @@ export function NewProjectWizard() {
         type: "success",
         message: `已导入 ${unique.length} 个文件`,
       });
-    } catch (err: any) {
+    } catch (err) {
       setFeedback({
         type: "error",
-        message: `导入失败: ${err.message || String(err)}`,
+        message: `导入失败: ${getErrorMessage(err)}`,
       });
     }
   }
@@ -240,10 +225,10 @@ export function NewProjectWizard() {
     if (!d) return;
     try {
       await invoke("open_folder", { path: d });
-    } catch (err: any) {
+    } catch (err) {
       setFeedback({
         type: "error",
-        message: `打开失败: ${err.message || String(err)}`,
+        message: `打开失败: ${getErrorMessage(err)}`,
       });
     }
   }
@@ -282,16 +267,20 @@ export function NewProjectWizard() {
         filePlugin: selectedFilePlugin(),
         textPlugins: [selectedTextPlugin()],
       };
+
+      // AI 令牌不再写入项目 config.yaml：统一由程序全局「后端配置」管理，
+      // 翻译时由后端在运行时应用选中的 profile（见 Service.run_job_async）。
+
       await updateProjectConfig(pid, {
         config,
         config_file_name: "config.yaml",
       });
       setSelectedBackendProfile(dir, selectedBackend());
       setFeedback({ type: "success", message: "设置已保存" });
-    } catch (err: any) {
+    } catch (err) {
       setFeedback({
         type: "error",
-        message: `保存失败: ${err.message || String(err)}`,
+        message: `保存失败: ${getErrorMessage(err)}`,
       });
     }
   }
@@ -331,15 +320,13 @@ export function NewProjectWizard() {
         } else {
           setNameJobStatus("completed");
           setNameJobMessage(
-            result.success
-              ? "人名提取完成！"
-              : `提取完成但有警告: ${result.error || ""}`
+            result.success ? "人名提取完成！" : `提取完成但有警告: ${result.error || ""}`,
           );
         }
-      } catch (err: any) {
+      } catch (err) {
         setNameJobStatus("failed");
-        setNameJobMessage(err.message || String(err));
-        toast.error(`人名提取失败: ${err.message || String(err)}`);
+        setNameJobMessage(getErrorMessage(err));
+        toast.error(`人名提取失败: ${getErrorMessage(err)}`);
       } finally {
         setFinishing(false);
       }
@@ -349,7 +336,8 @@ export function NewProjectWizard() {
     }
 
     // 提取结束（或无需提取）后再打开项目，避免向导卸载后人名提取无反馈
-    openProject(pid);
+    // 新建项目恒使用 config.yaml，显式传入跳过探测
+    openProject(pid, { configFileName: "config.yaml" });
     toast.success("项目已创建并打开");
   }
 
@@ -372,9 +360,7 @@ export function NewProjectWizard() {
         .then((list: string[]) => {
           setGuidelines(list);
           if (!translationGuideline() && list.length > 0) {
-            setTranslationGuideline(
-              list.includes("日译中_增强") ? "日译中_增强" : list[0]
-            );
+            setTranslationGuideline(list.includes("日译中_增强") ? "日译中_增强" : list[0]);
           }
         })
         .catch(() => {});
@@ -386,8 +372,7 @@ export function NewProjectWizard() {
     return true;
   };
 
-  const stepProgress = () =>
-    Math.round(((currentStep() + 1) / STEPS.length) * 100);
+  const stepProgress = () => Math.round(((currentStep() + 1) / STEPS.length) * 100);
 
   function handleBack() {
     setCurrentStep((s) => Math.max(0, s - 1));
@@ -414,11 +399,7 @@ export function NewProjectWizard() {
               class={`wizard-step ${i() === currentStep() ? "wizard-step--active" : ""} ${i() < currentStep() ? "wizard-step--completed" : ""}`}
             >
               <span class="wizard-step__number">
-                {i() < currentStep() ? (
-                  <Icon name="check" size={12} />
-                ) : (
-                  i() + 1
-                )}
+                {i() < currentStep() ? <Icon name="check" size={12} /> : i() + 1}
               </span>
               <span class="wizard-step__label">{label}</span>
             </li>
@@ -430,7 +411,9 @@ export function NewProjectWizard() {
       <div class="wizard-content">
         <div class="wizard-step-summary">
           <div class="wizard-step-summary__top">
-            <span>第 {currentStep() + 1} / {STEPS.length} 步</span>
+            <span>
+              第 {currentStep() + 1} / {STEPS.length} 步
+            </span>
             <strong>{STEPS[currentStep()]}</strong>
           </div>
           <div class="wizard-step-summary__bar">
@@ -488,18 +471,13 @@ export function NewProjectWizard() {
             />
           )}
           {currentStep() === 4 && (
-            <StepExtractNames
-              nameJobStatus={nameJobStatus()}
-              nameJobMessage={nameJobMessage()}
-            />
+            <StepExtractNames nameJobStatus={nameJobStatus()} nameJobMessage={nameJobMessage()} />
           )}
         </div>
 
         {/* 反馈消息 */}
         <Show when={feedback()}>
-          <div
-            class={`wizard-feedback wizard-feedback--${feedback()!.type}`}
-          >
+          <div class={`wizard-feedback wizard-feedback--${feedback()!.type}`}>
             {feedback()!.message}
           </div>
         </Show>
@@ -507,11 +485,7 @@ export function NewProjectWizard() {
 
       {/* 导航按钮 */}
       <div class="wizard-nav">
-        <button
-          class="btn"
-          onClick={handleBack}
-          disabled={currentStep() === 0 || finishing()}
-        >
+        <button class="btn" onClick={handleBack} disabled={currentStep() === 0 || finishing()}>
           上一步
         </button>
         {currentStep() < 4 ? (
@@ -523,11 +497,7 @@ export function NewProjectWizard() {
             下一步
           </button>
         ) : (
-          <button
-            class="btn btn--primary"
-            onClick={handleFinish}
-            disabled={finishing()}
-          >
+          <button class="btn btn--primary" onClick={handleFinish} disabled={finishing()}>
             {finishing() ? "正在提取人名…" : "完成并打开项目"}
           </button>
         )}

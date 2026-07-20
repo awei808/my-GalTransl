@@ -1,15 +1,14 @@
-import {
-  createSignal,
-  createEffect,
-  For,
-  Show,
-  onCleanup,
-  onMount,
-} from "solid-js";
-import { appState, markDirty } from "../../stores/appStore";
+import { createSignal, createEffect, Index, Show, For, onCleanup, onMount, createMemo } from "solid-js";
+import { appState, markDirty, getActiveConfigFileName } from "../../stores/appStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
-import { fetchCacheFile, saveCacheFile } from "../../lib/api/project";
-import type { CacheEntry, CacheFileResponse } from "../../lib/api/types";
+import { confirm } from "../../stores/confirmStore";
+import {
+  fetchCacheFile,
+  saveCacheFile,
+  fetchProjectMetadata,
+  saveProjectMetadata,
+} from "../../lib/api/project";
+import type { CacheEntry, CacheFileResponse, MetadataEntry } from "../../lib/api/types";
 
 /* ── 单条 CacheEntry 组件 ── */
 function EntryCard(props: {
@@ -31,7 +30,15 @@ function EntryCard(props: {
         {/* 问题行 */}
         <div class="entry-problem">
           <Show when={hasProblem()}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-status-error);flex-shrink:0">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              style="color:var(--color-status-error);flex-shrink:0"
+            >
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -55,25 +62,45 @@ function EntryCard(props: {
 
         {/* 右侧操作按钮 */}
         <div class="entry-actions">
-          <button
-            class="entry-btn"
-            title="展开字段"
-            onClick={props.onToggleExpand}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="entry-btn" title="展开/收起全部字段" onClick={props.onToggleExpand}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d={props.expanded ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
             </svg>
+            <span class="entry-btn-text">展开</span>
           </button>
-          <button class="entry-btn" title="跳过检查" onClick={props.onSkip}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="entry-btn" title="跳过该条目的检查" onClick={props.onSkip}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
               <circle cx="12" cy="12" r="3" />
             </svg>
+            <span class="entry-btn-text">跳过</span>
           </button>
-          <button class="entry-btn entry-btn--danger" title="删除" onClick={props.onDelete}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
             </svg>
+            <span class="entry-btn-text">删除</span>
           </button>
         </div>
       </div>
@@ -82,7 +109,7 @@ function EntryCard(props: {
       <Show when={props.expanded}>
         <div class="entry-expanded">
           {ALL_FIELDS.map((field) => {
-            const val = (e() as any)[field.key];
+            const val = e()[field.key];
             const isEditable = field.key === "pre_dst" || field.key === "proofread_dst";
             return (
               <div class="entry-field">
@@ -99,9 +126,7 @@ function EntryCard(props: {
                     class="field-value field-value--editable"
                     type="text"
                     value={String(val ?? "")}
-                    onInput={(ev) =>
-                      props.onFieldChange(field.key, ev.currentTarget.value)
-                    }
+                    onInput={(ev) => props.onFieldChange(field.key, ev.currentTarget.value)}
                     onBlur={props.onBlur}
                   />
                 </Show>
@@ -114,8 +139,85 @@ function EntryCard(props: {
   );
 }
 
+/* ── 单条元数据组件（FileMetaData / BatchMetadata）── */
+function MetadataCard(props: {
+  entry: MetadataEntry;
+  onFieldChange: (field: string, value: unknown) => void;
+  onDelete: () => void;
+  onBlur: () => void;
+}) {
+  const e = () => props.entry;
+  const idValue = () => String(e().id ?? "");
+  const fields = () => Object.keys(e()).filter((k) => k !== "id");
+  // 数组字段按行展示；其余按字符串展示
+  const display = (v: unknown) =>
+    Array.isArray(v) ? v.map((x) => String(x)).join("\n") : v == null ? "" : String(v);
+  const isArrayField = (v: unknown) => Array.isArray(v);
+
+  return (
+    <div class="meta-card">
+      <div class="meta-card-head">
+        <span class="meta-card-id" title="条目 id（不可编辑）">
+          id: {idValue()}
+        </span>
+        {/* 右上角删除按钮 */}
+        <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete}>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+          </svg>
+          <span class="entry-btn-text">删除</span>
+        </button>
+      </div>
+      <div class="meta-fields">
+        <For each={fields()}>
+          {(field) => {
+            const val = () => e()[field];
+            return (
+              <div class="meta-field">
+                <span class="field-label">{field}</span>
+                <Show
+                  when={isArrayField(val())}
+                  fallback={
+                    <input
+                      class="meta-input"
+                      type="text"
+                      value={display(val())}
+                      onInput={(ev) => props.onFieldChange(field, ev.currentTarget.value)}
+                      onBlur={props.onBlur}
+                    />
+                  }
+                >
+                  <textarea
+                    class="meta-textarea"
+                    rows="3"
+                    value={display(val())}
+                    onInput={(ev) =>
+                      props.onFieldChange(
+                        field,
+                        ev.currentTarget.value.split("\n"),
+                      )
+                    }
+                    onBlur={props.onBlur}
+                  />
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </div>
+  );
+}
+
 /* CacheEntry 18 字段的中文标签 */
-const ALL_FIELDS = [
+const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
   { key: "index", label: "索引" },
   { key: "name", label: "说话人" },
   { key: "pre_src", label: "译前原文" },
@@ -167,6 +269,27 @@ export function ReviewPage() {
   const [expandedSet, setExpandedSet] = createSignal<Set<number>>(new Set());
   const [jumpValue, setJumpValue] = createSignal("");
 
+  // ── 模式由打开的文件路径隐式决定，无需手动切换 ──
+  // 元数据文件（FileMetaData.json / BatchMetadata.json）位于 pass1_cache / pass2_cache，
+  // 与平铺在 transl_cache 下的译文缓存不在同目录；按其文件名 basename 即可判定模式。
+  type ReviewMode = "translate" | "metadata";
+  type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json";
+  const METADATA_FILES: readonly MetadataFileName[] = ["FileMetaData.json", "BatchMetadata.json"];
+  function metadataNameOf(path: string | null | undefined): MetadataFileName | null {
+    if (!path) return null;
+    const base = path.split(/[\\/]/).pop() ?? path;
+    return (METADATA_FILES as readonly string[]).includes(base) ? (base as MetadataFileName) : null;
+  }
+  const reviewMode = createMemo<ReviewMode>(() =>
+    metadataNameOf(appState.activeFilePath) ? "metadata" : "translate",
+  );
+  const metaName = createMemo<MetadataFileName>(
+    () => metadataNameOf(appState.activeFilePath) ?? "FileMetaData.json",
+  );
+  const [metaEntries, setMetaEntries] = createSignal<MetadataEntry[]>([]);
+  const [metaLoading, setMetaLoading] = createSignal(false);
+  let metaSavePending = false;
+
   // ── 文件内查找 ──
   const [findOpen, setFindOpen] = createSignal(false);
   const [findQuery, setFindQuery] = createSignal("");
@@ -179,7 +302,7 @@ export function ReviewPage() {
       (e) =>
         (e.pre_src && e.pre_src.toLowerCase().includes(q)) ||
         (e.pre_dst && e.pre_dst.toLowerCase().includes(q)) ||
-        (e.problem && e.problem.toLowerCase().includes(q))
+        (e.problem && e.problem.toLowerCase().includes(q)),
     );
   };
 
@@ -201,8 +324,12 @@ export function ReviewPage() {
   }
 
   // ── 菜单事件（编辑→撤销/重做） ──
-  function handleMenuUndo() { handleUndo(); }
-  function handleMenuRedo() { handleRedo(); }
+  function handleMenuUndo() {
+    handleUndo();
+  }
+  function handleMenuRedo() {
+    handleRedo();
+  }
 
   onMount(() => {
     document.addEventListener("keydown", handleKeyDown);
@@ -223,9 +350,7 @@ export function ReviewPage() {
     const currentFile = appState.activeFilePath;
     if (entry.file !== currentFile) return;
 
-    const isAdd =
-      Object.keys(entry.before).length === 0 &&
-      Object.keys(entry.after).length > 0;
+    const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
 
     setEntries((prev) => {
       const next = [...prev];
@@ -255,9 +380,7 @@ export function ReviewPage() {
     const currentFile = appState.activeFilePath;
     if (entry.file !== currentFile) return;
 
-    const isAdd =
-      Object.keys(entry.before).length === 0 &&
-      Object.keys(entry.after).length > 0;
+    const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
 
     setEntries((prev) => {
       const next = [...prev];
@@ -290,6 +413,8 @@ export function ReviewPage() {
   createEffect(() => {
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
+    // 元数据模式下不加载翻译缓存文件
+    if (reviewMode() !== "translate") return;
     if (!pid || !file) {
       setEntries([]);
       setTotalCount(0);
@@ -331,6 +456,65 @@ export function ReviewPage() {
     }
   }
 
+  // ── 元数据加载 / 保存 / 删除 ──
+  createEffect(() => {
+    const pid = appState.activeProjectId;
+    const name = metaName();
+    if (reviewMode() !== "metadata" || !pid) {
+      setMetaEntries([]);
+      return;
+    }
+    setMetaLoading(true);
+    fetchProjectMetadata(pid, name)
+      .then((res) => setMetaEntries(res.entries ?? []))
+      .catch(() => setMetaEntries([]))
+      .finally(() => setMetaLoading(false));
+  });
+
+  function handleMetaFieldChange(index: number, field: string, value: unknown) {
+    setMetaEntries((prev) => {
+      const next = prev.slice();
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  }
+
+  async function saveMeta() {
+    if (metaSavePending) return;
+    metaSavePending = true;
+    const pid = appState.activeProjectId;
+    if (!pid) {
+      metaSavePending = false;
+      return;
+    }
+    try {
+      await saveProjectMetadata(pid, metaName(), metaEntries());
+    } catch {
+      // 静默处理
+    } finally {
+      metaSavePending = false;
+    }
+  }
+
+  function handleMetaDelete(index: number) {
+    const entry = metaEntries()[index];
+    if (!entry) return;
+    const idLabel = entry.id ? `id 为「${String(entry.id)}」` : `第 ${index + 1} 条`;
+    confirm
+      .show({
+        title: "删除元数据条目",
+        message: `确定要删除${idLabel}的元数据条目吗？此操作不可撤销。`,
+        tone: "danger",
+        confirmText: "删除",
+      })
+      .then((r) => {
+        if (r.confirmed) {
+          setMetaEntries((prev) => prev.filter((_, i) => i !== index));
+          saveMeta();
+        }
+      });
+  }
+
   function toggleExpand(index: number) {
     setExpandedSet((prev) => {
       const next = new Set(prev);
@@ -340,11 +524,7 @@ export function ReviewPage() {
     });
   }
 
-  function handleFieldChange(
-    entryIndex: number,
-    field: string,
-    value: string
-  ) {
+  function handleFieldChange(entryIndex: number, field: string, value: string) {
     const before = { ...entries()[entryIndex] };
     setEntries((prev) => {
       const next = [...prev];
@@ -357,7 +537,7 @@ export function ReviewPage() {
       id: `${appState.activeFilePath}:${entryIndex}`,
       file: appState.activeFilePath ?? "",
       index: entryIndex,
-      before: { [field]: (before as any)[field] },
+      before: { [field]: before[field as keyof CacheEntry] },
       after: { [field]: value },
       description: `修改 ${ALL_FIELDS.find((f) => f.key === field)?.label ?? field}`,
     });
@@ -379,7 +559,7 @@ export function ReviewPage() {
       id: `${appState.activeFilePath}:${index}`,
       file: appState.activeFilePath ?? "",
       index,
-      before: deleted as any,
+      before: deleted,
       after: {},
       description: "删除条目",
     });
@@ -412,7 +592,7 @@ export function ReviewPage() {
       file,
       index: newEntry.index,
       before: {},
-      after: newEntry as any,
+      after: newEntry,
       description: "新增条目",
     });
     markDirty(file);
@@ -434,14 +614,17 @@ export function ReviewPage() {
 
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
-    if (!pid || !file) { savePending = false; return; }
+    if (!pid || !file) {
+      savePending = false;
+      return;
+    }
 
     try {
-      // 保存所有条目到后端
-      await saveCacheFile(pid, file, entries() as any);
+      // 保存所有条目到后端（传入真实配置文件名，config.inc.yaml 项目也能正确重建 problem）
+      await saveCacheFile(pid, file, entries(), getActiveConfigFileName());
       // 重新获取（后端返回含最新 problem 数据）
       const res = await fetchCacheFile(pid, file);
-      setEntries((res as any).entries ?? []);
+      setEntries(res.entries ?? []);
     } catch {
       // 静默处理
     } finally {
@@ -455,6 +638,7 @@ export function ReviewPage() {
     <div class="page page-review">
       {/* ── 工具栏 ── */}
       <div class="review-toolbar">
+        <Show when={reviewMode() === "translate"}>
         <Show when={file()}>
           <span class="review-filename">{file()}</span>
         </Show>
@@ -467,7 +651,15 @@ export function ReviewPage() {
               onClick={handleAddEntry}
               title="在当前文件末尾新增一条空白条目"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="flex-shrink:0">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                style="flex-shrink:0"
+              >
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
@@ -492,7 +684,9 @@ export function ReviewPage() {
                 {filteredEntries().length}/{entries().length}
               </span>
             </Show>
-            <button class="find-in-file-close" onClick={handleFindInFile}>×</button>
+            <button class="find-in-file-close" onClick={handleFindInFile}>
+              ×
+            </button>
           </div>
         </Show>
 
@@ -510,18 +704,48 @@ export function ReviewPage() {
           </button>
         </div>
         <Show when={entries().length > 0}>
-          <span class="review-count">
-            {entries().length} 条
-          </span>
+          <span class="review-count">{entries().length} 条</span>
+        </Show>
+        </Show>{/* /translate mode */}
+
+        <Show when={reviewMode() === "metadata"}>
+          <span class="review-filename">{metaName()}</span>
+          <Show when={metaEntries().length > 0}>
+            <span class="review-count">{metaEntries().length} 条</span>
+          </Show>
         </Show>
       </div>
 
       {/* ── 条目列表 ── */}
       <div class="review-list">
-        <Show
-          when={!loading()}
-          fallback={<p class="review-placeholder">加载中…</p>}
-        >
+        {/* 元数据模式：渲染元数据 JSON 条目 */}
+        <Show when={reviewMode() === "metadata"}>
+          <Show when={!metaLoading()} fallback={<p class="review-placeholder">加载中…</p>}>
+            <Show
+              when={metaEntries().length > 0}
+              fallback={
+                <p class="review-placeholder">
+                  {appState.activeProjectId ? "该元数据文件暂无条目" : "请先打开翻译项目"}
+                </p>
+              }
+            >
+              <Index each={metaEntries()}>
+                {(entrySignal, i) => (
+                  <MetadataCard
+                    entry={entrySignal()}
+                    onFieldChange={(f, v) => handleMetaFieldChange(i, f, v)}
+                    onDelete={() => handleMetaDelete(i)}
+                    onBlur={saveMeta}
+                  />
+                )}
+              </Index>
+            </Show>
+          </Show>
+        </Show>
+
+        {/* 翻译校对模式 */}
+        <Show when={reviewMode() !== "metadata"}>
+        <Show when={!loading()} fallback={<p class="review-placeholder">加载中…</p>}>
           <Show
             when={filteredEntries().length > 0}
             fallback={
@@ -543,24 +767,29 @@ export function ReviewPage() {
                 </button>
               </div>
             </Show>
-            <For each={filteredEntries()}>
-              {(entry, i) => (
-                <div id={`entry-${entry.index}`}>
-                  <EntryCard
-                    entry={entry}
-                    expanded={expandedSet().has(i())}
-                    onToggleExpand={() => toggleExpand(i())}
-                    onSkip={() => handleSkip(i())}
-                    onDelete={() => handleDelete(i())}
-                    onFieldChange={(field, value) =>
-                      handleFieldChange(i(), field, value)
-                    }
-                    onBlur={handleBlur}
-                  />
-                </div>
-              )}
-            </For>
+            {/* 用 <Index> 按索引复用 DOM：handleFieldChange 每次生成新的 entry 对象，
+                若用 <For>（按引用复用）会把正在编辑的那条 <input> 销毁重建，导致失焦 / IME 中断。
+                <Index> 保留节点，仅更新 props 与绑定，输入焦点不丢。 */}
+            <Index each={filteredEntries()}>
+              {(entrySignal, i) => {
+                const entry = entrySignal();
+                return (
+                  <div id={`entry-${entry.index}`}>
+                    <EntryCard
+                      entry={entry}
+                      expanded={expandedSet().has(i)}
+                      onToggleExpand={() => toggleExpand(i)}
+                      onSkip={() => handleSkip(i)}
+                      onDelete={() => handleDelete(i)}
+                      onFieldChange={(field, value) => handleFieldChange(i, field, value)}
+                      onBlur={handleBlur}
+                    />
+                  </div>
+                );
+              }}
+            </Index>
           </Show>
+        </Show>
         </Show>
       </div>
     </div>

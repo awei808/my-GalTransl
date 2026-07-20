@@ -19,10 +19,14 @@ export function LogViewer() {
 
   function levelIcon(level: LogLevel) {
     switch (level) {
-      case "error":   return "✕";
-      case "warning": return "⚠";
-      case "info":    return "ℹ";
-      case "success": return "✓";
+      case "error":
+        return "✕";
+      case "warning":
+        return "⚠";
+      case "info":
+        return "ℹ";
+      case "success":
+        return "✓";
     }
   }
 
@@ -39,7 +43,9 @@ export function LogViewer() {
   return (
     <div class="page page-logs">
       <div class="logs-toolbar">
-        <h2 class="page-title" style={{ "margin-bottom": 0 }}>操作日志</h2>
+        <h2 class="page-title" style={{ "margin-bottom": 0 }}>
+          操作日志
+        </h2>
         <div class="logs-actions">
           <div class="logs-filters">
             <For each={filters}>
@@ -53,7 +59,9 @@ export function LogViewer() {
               )}
             </For>
           </div>
-          <button class="btn btn--sm" onClick={handleClear}>清空</button>
+          <button class="btn btn--sm" onClick={handleClear}>
+            清空
+          </button>
         </div>
       </div>
 

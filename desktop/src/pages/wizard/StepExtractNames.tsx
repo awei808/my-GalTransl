@@ -20,15 +20,11 @@ export function StepExtractNames(props: StepExtractNamesProps) {
         <div class="wizard-message wizard-message--success">
           {props.nameJobMessage}
           <br />
-          <span class="wizard-message__hint">
-            可在项目的「人名翻译」菜单中使用 AI 翻译人名。
-          </span>
+          <span class="wizard-message__hint">可在项目的「人名翻译」菜单中使用 AI 翻译人名。</span>
         </div>
       )}
       {props.nameJobStatus === "failed" && (
-        <div class="wizard-message wizard-message--error">
-          提取失败: {props.nameJobMessage}
-        </div>
+        <div class="wizard-message wizard-message--error">提取失败: {props.nameJobMessage}</div>
       )}
       {props.nameJobStatus === "idle" && (
         <p class="wizard-message">点击「完成并打开项目」后将自动提取人名。</p>

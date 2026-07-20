@@ -7,7 +7,7 @@ export function speakerHue(name: string): number {
   for (let i = 0; i < name.length; i++) {
     h = ((h << 5) + h + name.charCodeAt(i)) | 0;
   }
-  return ((h & 0x7fffffff) % 360);
+  return (h & 0x7fffffff) % 360;
 }
 
 export function speakerStyle(name: string): CSSProperties {

@@ -1,20 +1,10 @@
-import {
-  Match,
-  Switch,
-  createSignal,
-  createEffect,
-  onCleanup,
-  Show,
-  For,
-} from "solid-js";
-import {
-  appState,
-  setAppState,
-} from "../stores/appStore";
+import { Match, Switch, createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { appState, setAppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
 import { fetchProjectFiles, searchCache, replaceCache } from "../lib/api/project";
 import { fetchProjectProblems } from "../lib/api/project";
+import { getErrorMessage } from "../lib/errors";
 import type {
   FileEntry,
   ProblemEntry,
@@ -52,26 +42,20 @@ function FileExplorer() {
     <div class="sidebar-panel">
       <div class="sidebar-header">文件浏览器</div>
       <div class="sidebar-content">
-        <Show
-          when={!loading()}
-          fallback={
-            <p class="sidebar-placeholder">加载中…</p>
-          }
-        >
+        <Show when={!loading()} fallback={<p class="sidebar-placeholder">加载中…</p>}>
           <Show
             when={files().length > 0}
             fallback={
               <p class="sidebar-placeholder">
-                {appState.activeProjectId
-                  ? "暂无缓存文件"
-                  : "请先打开项目"}
+                {appState.activeProjectId ? "暂无缓存文件" : "请先打开项目"}
               </p>
             }
           >
             {files().map((f) => (
               <div
-                class={`file-tree-item ${selected() === f.name ? "selected" : ""}`}
+                class={`file-tree-item ${selected() === f.name ? "selected" : ""} ${f.is_metadata ? "file-tree-item--meta" : ""}`}
                 onClick={() => selectFile(f)}
+                title={f.is_metadata ? "元数据文件（校对审核将以元数据模式打开）" : f.name}
               >
                 <svg
                   width="16"
@@ -82,12 +66,16 @@ function FileExplorer() {
                   stroke-width="1.5"
                   style="flex-shrink:0"
                 >
-                  {f.is_file
-                    ? <path d="M6 2h8l4 4v16H6V2Zm8 0v4h4" />
-                    : <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-                  }
+                  {f.is_file ? (
+                    <path d="M6 2h8l4 4v16H6V2Zm8 0v4h4" />
+                  ) : (
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+                  )}
                 </svg>
                 <span class="file-tree-name">{f.name}</span>
+                <Show when={f.is_metadata}>
+                  <span class="file-tree-tag">元数据</span>
+                </Show>
                 <span class="file-tree-count">{f.entry_count}</span>
               </div>
             ))}
@@ -132,8 +120,8 @@ function FindReplacePanel() {
       setSearched(true);
       if (res.total === 0) toast.info("未找到匹配结果");
       else toast.success(`找到 ${res.total} 个结果`);
-    } catch (e: any) {
-      toast.error(`搜索失败: ${e.message}`);
+    } catch (e) {
+      toast.error(`搜索失败: ${getErrorMessage(e)}`);
     } finally {
       setSearching(false);
     }
@@ -178,8 +166,8 @@ function FindReplacePanel() {
       toast.success(`已替换 ${res.total_matches} 个匹配项，涉及 ${res.total_files} 个文件`);
       // 重新搜索
       await handleSearch();
-    } catch (e: any) {
-      toast.error(`替换失败: ${e.message}`);
+    } catch (e) {
+      toast.error(`替换失败: ${getErrorMessage(e)}`);
     } finally {
       setReplacing(false);
     }
@@ -244,7 +232,11 @@ function FindReplacePanel() {
           <button class="btn btn--sm" onClick={handleSearch} disabled={searching()}>
             {searching() ? "搜索中…" : "查找"}
           </button>
-          <button class="btn btn--sm" onClick={handleReplace} disabled={replacing() || results().length === 0}>
+          <button
+            class="btn btn--sm"
+            onClick={handleReplace}
+            disabled={replacing() || results().length === 0}
+          >
             {replacing() ? "替换中…" : "替换全部"}
           </button>
         </div>
@@ -252,14 +244,10 @@ function FindReplacePanel() {
         <Show when={searched()}>
           <Show
             when={results().length > 0}
-            fallback={
-              <p class="sidebar-placeholder">未找到匹配结果</p>
-            }
+            fallback={<p class="sidebar-placeholder">未找到匹配结果</p>}
           >
             <div class="find-results">
-              <div class="find-results-header">
-                共 {results().length} 个结果
-              </div>
+              <div class="find-results-header">共 {results().length} 个结果</div>
               <For each={grouped()}>
                 {([filename, entries]) => (
                   <div class="find-result-group">
@@ -328,28 +316,16 @@ function ProblemList() {
     <div class="sidebar-panel">
       <div class="sidebar-header">问题检测</div>
       <div class="sidebar-content">
-        <Show
-          when={grouped().length > 0}
-          fallback={
-            <p class="sidebar-placeholder">暂无问题</p>
-          }
-        >
+        <Show when={grouped().length > 0} fallback={<p class="sidebar-placeholder">暂无问题</p>}>
           <For each={grouped()}>
             {([filename, entries]) => (
               <div class="problem-group">
                 <div class="problem-filename">{filename}</div>
                 <For each={entries}>
                   {(entry) => (
-                    <div
-                      class="problem-entry"
-                      onClick={() =>
-                        jumpToEntry(entry.filename)
-                      }
-                    >
+                    <div class="problem-entry" onClick={() => jumpToEntry(entry.filename)}>
                       <span class="problem-index">#{entry.index}</span>
-                      <span class="problem-desc">
-                        {entry.problem?.slice(0, 50)}
-                      </span>
+                      <span class="problem-desc">{entry.problem?.slice(0, 50)}</span>
                     </div>
                   )}
                 </For>
@@ -386,14 +362,8 @@ export function SidebarPanel() {
 
     function handlePointerMove(e: PointerEvent) {
       const sidebarLeft = 48;
-      const newWidth = Math.max(
-        180,
-        Math.min(500, e.clientX - sidebarLeft)
-      );
-      root.style.setProperty(
-        "--sidebar-expanded-width",
-        `${newWidth}px`
-      );
+      const newWidth = Math.max(180, Math.min(500, e.clientX - sidebarLeft));
+      root.style.setProperty("--sidebar-expanded-width", `${newWidth}px`);
     }
 
     function handlePointerUp() {

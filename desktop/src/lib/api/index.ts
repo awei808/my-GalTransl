@@ -73,10 +73,16 @@ export type {
   BackendProfilesMap,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
-} from './types';
+} from "./types";
 
 // ---- Client ----
-export { ApiError, encodeProjectDir, decodeProjectDir, ensureDesktopBackendReady, setRuntimeBackendBaseUrl } from './client';
+export {
+  ApiError,
+  encodeProjectDir,
+  decodeProjectDir,
+  ensureDesktopBackendReady,
+  setRuntimeBackendBaseUrl,
+} from "./client";
 
 // ---- General API ----
 export {
@@ -94,7 +100,7 @@ export {
   fetchDefaultProjectConfigTemplate,
   fetchPromptTemplates,
   fetchOpenAIModels,
-} from './general';
+} from "./general";
 
 // ---- Project API ----
 export {
@@ -130,7 +136,7 @@ export {
   getAiTranslateUrl,
   fetchNameDict,
   fetchProjectLogs,
-} from './project';
+} from "./project";
 
 // ---- Preferences ----
 export {
@@ -192,4 +198,4 @@ export {
   setPromptTemplateOverride,
   deletePromptTemplateOverride,
   getPromptTemplateOverridesForJob,
-} from './preferences';
+} from "./preferences";

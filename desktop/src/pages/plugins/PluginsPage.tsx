@@ -59,14 +59,31 @@ export function PluginsPage() {
           <div class="plugin-detail">
             <div class="plugin-detail-header">
               <h3>{p().display_name || p().name}</h3>
-              <button class="btn btn--sm" onClick={() => setSelectedPlugin(null)}>关闭</button>
+              <button class="btn btn--sm" onClick={() => setSelectedPlugin(null)}>
+                关闭
+              </button>
             </div>
             <div class="plugin-detail-body">
-              <div class="plugin-detail-row"><span>名称</span><span>{p().name}</span></div>
-              <div class="plugin-detail-row"><span>版本</span><span>{p().version}</span></div>
-              <div class="plugin-detail-row"><span>作者</span><span>{p().author}</span></div>
-              <div class="plugin-detail-row"><span>类型</span><span>{p().type}</span></div>
-              <div class="plugin-detail-row"><span>模块</span><span style="font-family:var(--font-mono)">{p().module}</span></div>
+              <div class="plugin-detail-row">
+                <span>名称</span>
+                <span>{p().name}</span>
+              </div>
+              <div class="plugin-detail-row">
+                <span>版本</span>
+                <span>{p().version}</span>
+              </div>
+              <div class="plugin-detail-row">
+                <span>作者</span>
+                <span>{p().author}</span>
+              </div>
+              <div class="plugin-detail-row">
+                <span>类型</span>
+                <span>{p().type}</span>
+              </div>
+              <div class="plugin-detail-row">
+                <span>模块</span>
+                <span style="font-family:var(--font-mono)">{p().module}</span>
+              </div>
               <div class="plugin-detail-desc">{p().description}</div>
             </div>
           </div>
@@ -79,10 +96,7 @@ export function PluginsPage() {
           <Show when={filtered().length > 0} fallback={<p class="plugin-empty">无匹配插件</p>}>
             <For each={filtered()}>
               {(p) => (
-                <div
-                  class="plugin-card"
-                  onClick={() => setSelectedPlugin(p)}
-                >
+                <div class="plugin-card" onClick={() => setSelectedPlugin(p)}>
                   <div class="plugin-card-name">{p.display_name || p.name}</div>
                   <div class="plugin-card-version">v{p.version}</div>
                   <div class="plugin-card-author">{p.author}</div>
