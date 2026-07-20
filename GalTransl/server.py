@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool
+from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS1_CACHE_DIR, PASS2_CACHE_DIR
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
@@ -55,7 +55,11 @@ from GalTransl.CSerialize import save_json
 
 
 async def _check_model_availability(
-    project_dir: str, translator: str, config_file_name: str
+    project_dir: str,
+    translator: str,
+    config_file_name: str,
+    backend_profile: str = "",
+    backend_profile_data: dict | None = None,
 ) -> dict[str, Any]:
     """主动检测所选后端的模型 / token 可用性。
 
@@ -64,7 +68,49 @@ async def _check_model_availability(
     特殊端点（sakura、galtransl 等）走 endpointQueue，无需检测，返回
     applicable=False。检测阶段 proxy 行为与真实翻译任务保持一致（不传 proxy）。
     """
-    cfg = CProjectConfig(project_dir, config_file_name)
+    # ── 配置名自动解析（与 cache/save 保持一致）──
+    resolved_config = config_file_name
+    if not os.path.isfile(os.path.join(project_dir, config_file_name)):
+        for candidate in ("config.inc.yaml", "config.yaml"):
+            if os.path.isfile(os.path.join(project_dir, candidate)):
+                resolved_config = candidate
+                break
+
+    try:
+        cfg = CProjectConfig(project_dir, resolved_config)
+    except Exception:
+        return {
+            "ok": False,
+            "applicable": True,
+            "available": 0,
+            "total": 0,
+            "engine": translator,
+            "message": f"无法加载项目配置文件（{resolved_config}），请检查配置是否存在",
+        }
+
+    # 应用全局后端配置（backend profile）覆盖 backendSpecific，使「检测」与「真实调用」使用同一份令牌来源。
+    # 这样翻译项目的 AI 令牌统一由程序全局后端配置管理，项目自身 config.yaml 的 tokens 不再参与检测。
+    profile: dict = backend_profile_data if isinstance(backend_profile_data, dict) else {}
+    if not profile and backend_profile:
+        profiles_data = _read_backend_profiles()
+        profiles = profiles_data.get("profiles", {})
+        if backend_profile in profiles:
+            candidate = profiles[backend_profile]
+            if isinstance(candidate, dict):
+                profile = candidate
+        # 未找到则回退到 config.yaml（兼容旧项目）
+    using_profile = bool(profile)
+    if profile:
+        cfg.projectConfig["backendSpecific"] = profile
+        if "proxy" in profile:
+            cfg.projectConfig["proxy"] = profile["proxy"]
+            cfg.refreshProxyEnabledFlag()
+    token_src = (
+        f"全局后端配置「{backend_profile}」"
+        if (using_profile and backend_profile)
+        else ("全局后端配置" if using_profile else "项目配置")
+    )
+
     if not any(frag in translator for frag in NEED_OpenAITokenPool):
         return {
             "ok": True,
@@ -74,6 +120,39 @@ async def _check_model_availability(
             "engine": translator,
             "message": "该后端为本地 / 特殊端点，无需 API token 检测",
         }
+
+    # 先读原始 token 列表，区分「配置中无 token」与「token 全是示例/不可用」
+    raw_tokens = (
+        cfg.getBackendConfigSection("OpenAI-Compatible").get("tokens") or []
+    )
+    example_count = sum(
+        1 for t in raw_tokens if "-example-" in (t.get("token") or "")
+    )
+    real_count = len(raw_tokens) - example_count
+
+    if len(raw_tokens) == 0:
+        return {
+            "ok": False,
+            "applicable": True,
+            "available": 0,
+            "total": 0,
+            "engine": translator,
+            "message": (
+                f"{token_src} 中没有 token。请到「后端配置」页添加真实 API Key"
+                if using_profile
+                else "未配置 AI 令牌：请到「后端配置」页添加全局 API Key，再返回此处检测"
+            ),
+        }
+    if real_count == 0 and example_count > 0:
+        return {
+            "ok": False,
+            "applicable": True,
+            "available": 0,
+            "total": example_count,
+            "engine": translator,
+            "message": f"{token_src} 中 {example_count} 个 token 均为示例 key（含 -example-），不会被使用。请替换为真实 API Key",
+        }
+
     token_pool = COpenAITokenPool(cfg, translator)
     total = len(token_pool.tokens)
     if total == 0:
@@ -83,7 +162,7 @@ async def _check_model_availability(
             "available": 0,
             "total": 0,
             "engine": translator,
-            "message": "未在配置中找到任何 token，请检查 config.yaml 的 OpenAI-Compatible.tokens",
+            "message": "Token 池构建结果为空，请检查 token 格式是否正确",
         }
     await token_pool.checkTokenAvailablity()
     available = len(token_pool.tokens)
@@ -96,7 +175,7 @@ async def _check_model_availability(
         "message": (
             f"模型可用，可用 token {available}/{total}"
             if available > 0
-            else f"所有 token 均不可用（共 {total} 个）"
+            else f"所有 {total} 个 token 均不可用（endpoint 无响应或 key 无效）"
         ),
     }
 
@@ -349,6 +428,21 @@ def _is_safe_config_filename(filename: str) -> bool:
     if ".." in trimmed:
         return False
     return True
+
+
+def _detect_config_file(project_dir: str) -> str:
+    """探测项目目录下真实存在的配置文件名。
+
+    GalTransl 项目可能使用 ``config.inc.yaml``（含敏感/个性化配置）或
+    ``config.yaml``。前端打开项目时据此拿到真实配置名，避免写死 ``config.yaml``
+    导致读不到 / 写错配置文件。优先 ``config.inc.yaml``，其次 ``config.yaml``，
+    都不存在时回退 ``config.yaml``（与提交任务时的回退逻辑一致）。
+    """
+    candidates = ("config.inc.yaml", "config.yaml")
+    for name in candidates:
+        if os.path.isfile(os.path.join(project_dir, name)):
+            return name
+    return "config.yaml"
 
 
 def _is_path_within(base_dir: str, target_path: str) -> bool:
@@ -1151,6 +1245,16 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": f"failed to read config: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
+            # GET /api/projects/:id/config-name
+            # 探测项目目录下真实配置文件名，供前端贯通真实配置名（避免写死 config.yaml）。
+            if sub_path == "/config-name":
+                try:
+                    config_name = _detect_config_file(project_dir)
+                    self._send_json({"project_dir": project_dir, "config_file_name": config_name})
+                except Exception as exc:
+                    self._send_json({"error": f"failed to detect config: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
             # GET /api/projects/:id/config-schema
             # 返回配置参数路径→注释描述映射，供前端设置界面显示参数解释。
             if sub_path == "/config-schema":
@@ -1175,6 +1279,8 @@ def build_handler(registry: JobRegistry) -> type:
                     str(payload.get("config_file_name", "config.yaml")).strip()
                     or "config.yaml"
                 )
+                backend_profile = str(payload.get("backend_profile", "")).strip()
+                backend_profile_data = payload.get("backend_profile_data")
                 if not translator:
                     self._send_json(
                         {"error": "translator is required"},
@@ -1184,7 +1290,13 @@ def build_handler(registry: JobRegistry) -> type:
                 try:
                     result = run(
                         _check_model_availability(
-                            project_dir, translator, config_file_name
+                            project_dir,
+                            translator,
+                            config_file_name,
+                            backend_profile=backend_profile,
+                            backend_profile_data=backend_profile_data
+                            if isinstance(backend_profile_data, dict)
+                            else None,
                         )
                     )
                     self._send_json(result)
@@ -1234,6 +1346,49 @@ def build_handler(registry: JobRegistry) -> type:
                 input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
                 output_dir = os.path.join(project_dir, OUTPUT_FOLDERNAME)
                 cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                cache_files = _list_dir_entries(cache_dir, count_json_entries=True)
+                # 追加元数据文件（FileMetaData.json / BatchMetadata.json）：
+                # 它们位于 pass1_cache / pass2_cache，与平铺在 transl_cache 下的译文缓存不在同目录，
+                # 文件浏览器据此列出来供用户点开；前端按文件名 basename 隐式判定为元数据模式。
+                _meta_candidates: dict[str, list[str]] = {
+                    "FileMetaData.json": [
+                        os.path.join(CACHE_FOLDERNAME, PASS1_CACHE_DIR, "FileMetaData.json"),
+                        os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
+                    ],
+                    "BatchMetadata.json": [
+                        os.path.join(CACHE_FOLDERNAME, PASS2_CACHE_DIR, "BatchMetadata.json"),
+                        os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
+                    ],
+                }
+                for _mname, _cands in _meta_candidates.items():
+                    _found = next(
+                        (p for p in _cands if os.path.isfile(os.path.join(project_dir, p))),
+                        None,
+                    )
+                    if not _found:
+                        continue
+                    _full = os.path.join(project_dir, _found)
+                    _st = os.stat(_full)
+                    _count = 0
+                    try:
+                        with open(_full, "r", encoding="utf-8") as _f:
+                            _d = json.load(_f)
+                        if isinstance(_d, list):
+                            _count = len(_d)
+                        elif isinstance(_d, dict):
+                            _count = 1
+                    except Exception:
+                        pass
+                    cache_files.append(
+                        {
+                            "name": _mname,
+                            "is_file": True,
+                            "size": _st.st_size,
+                            "modified": datetime.fromtimestamp(_st.st_mtime).isoformat(),
+                            "entry_count": _count,
+                            "is_metadata": True,
+                        }
+                    )
                 self._send_json({
                     "project_dir": project_dir,
                     "input_dir": input_dir,
@@ -1241,7 +1396,7 @@ def build_handler(registry: JobRegistry) -> type:
                     "cache_dir": cache_dir,
                     "input_files": _list_dir_entries(input_dir),
                     "output_files": _list_dir_entries(output_dir),
-                    "cache_files": _list_dir_entries(cache_dir, count_json_entries=True),
+                    "cache_files": cache_files,
                 })
                 return
 
@@ -1295,6 +1450,13 @@ def build_handler(registry: JobRegistry) -> type:
                         try:
                             from GalTransl.ConfigHelper import CProjectConfig, initDictList
                             from GalTransl.Dictionary import CNormalDic, CGptDict
+                            # Resolve the real config file: real projects use
+                            # config.inc.yaml, but the request may default to config.yaml.
+                            if not os.path.isfile(os.path.join(project_dir, config_name)):
+                                for _cand in ("config.inc.yaml", "config.yaml"):
+                                    if os.path.isfile(os.path.join(project_dir, _cand)):
+                                        config_name = _cand
+                                        break
                             proj_config = CProjectConfig(project_dir, config_name)
                             dict_cfg = proj_config.getDictCfgSection()
                             pre_dic_list = dict_cfg.get("preDict", [])
@@ -1320,9 +1482,14 @@ def build_handler(registry: JobRegistry) -> type:
                             except Exception:
                                 tPlugins = []
                         except Exception:
-                            pass  # If config loading fails, skip dict processing
+                            proj_config = None  # config load failed; skip rebuild below
 
-                        # Build CSentense list from saved entries
+                        # If config could not be loaded, do NOT run the rebuild:
+                        # find_problems would be skipped and the update loop would
+                        # delete every existing "problem" field. Preserve them instead.
+                        if proj_config is None:
+                            self._send_json({"success": True, "filename": filename})
+                            return
                         trans_list = []
                         for e in entries:
                             speaker = e.get("name", "")
@@ -1393,6 +1560,83 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:
                     self._send_json({"error": f"failed to save cache file: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            # ── 元数据(JSON)读取/保存：FileMetaData.json / BatchMetadata.json ──
+            # 候选路径按加载优先级排列：缓存目录优先，其次输入目录(gt_input 兼容位置)。
+            _META_CANDIDATES: dict[str, list[str]] = {
+                "FileMetaData.json": [
+                    os.path.join(CACHE_FOLDERNAME, PASS1_CACHE_DIR, "FileMetaData.json"),
+                    os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
+                ],
+                "BatchMetadata.json": [
+                    os.path.join(CACHE_FOLDERNAME, PASS2_CACHE_DIR, "BatchMetadata.json"),
+                    os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
+                ],
+            }
+
+            # GET /api/projects/:id/metadata?name=FileMetaData.json
+            if sub_path == "/metadata":
+                if self.command != "GET":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                _name = parse_qs(urlparse(self.path).query).get("name", [""])[0].strip()
+                _cands = _META_CANDIDATES.get(_name)
+                if not _cands:
+                    self._send_json({"error": f"unsupported metadata file: {_name}"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                candidates = [os.path.join(project_dir, p) for p in _cands]
+                found = next((p for p in candidates if os.path.isfile(p) and os.path.getsize(p) > 0), None)
+                if not found:
+                    self._send_json({"exists": False, "name": _name, "entries": [], "path": candidates[0]})
+                    return
+                try:
+                    with open(found, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception as e:
+                    self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                if isinstance(data, dict):
+                    data = [data]
+                entries = [e for e in data if isinstance(e, dict)]
+                self._send_json({"exists": True, "name": _name, "entries": entries, "path": found})
+                return
+
+            # POST /api/projects/:id/metadata/save
+            if sub_path == "/metadata/save":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    _name = str(payload.get("name", "")).strip()
+                    entries = payload.get("entries", [])
+                    _cands = _META_CANDIDATES.get(_name)
+                    if not _cands:
+                        self._send_json({"error": f"unsupported metadata file: {_name}"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    if not isinstance(entries, list):
+                        self._send_json({"error": "entries must be a list"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    candidates = [os.path.join(project_dir, p) for p in _cands]
+                    existing = next((p for p in candidates if os.path.isfile(p)), None)
+                    write_path = existing or candidates[0]
+                    os.makedirs(os.path.dirname(write_path), exist_ok=True)
+                    clean = []
+                    for e in entries:
+                        if not isinstance(e, dict):
+                            continue
+                        item = {str(k): v for k, v in e.items()}
+                        if "id" not in item:
+                            item["id"] = ""
+                        clean.append(item)
+                    with open(write_path, "w", encoding="utf-8") as f:
+                        json.dump(clean, f, ensure_ascii=False, indent=2)
+                    self._send_json({"success": True, "name": _name, "path": write_path, "entries": clean})
+                except json.JSONDecodeError:
+                    self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:
+                    self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
             # POST /api/projects/:id/cache/delete-entry
