@@ -139,7 +139,7 @@ def clean():
     ]
     for d in dirs:
         if d.exists():
-            shutil.rmtree(d)
+            shutil.rmtree(d, ignore_errors=True)
             log_info(f"  删除 {d}")
     log_ok("清理完成")
 
@@ -191,16 +191,17 @@ def build_backend():
     venv_python = VENV_DIR / "Scripts" / "python.exe"
     venv_pip = VENV_DIR / "Scripts" / "pip.exe"
 
-    # 创建虚拟环境
-    if not venv_python.exists():
-        log_info("创建构建虚拟环境...")
-        run(f'"{sys.executable}" -m venv "{VENV_DIR}"')
+    # 强制清理旧 venv，避免复用半失败残留触发外部删除钩子（fail-closed）
+    if VENV_DIR.exists():
+        shutil.rmtree(VENV_DIR, ignore_errors=True)
+    log_info("创建构建虚拟环境...")
+    run(f'"{sys.executable}" -m venv "{VENV_DIR}" --clear')
 
-    # 安装 PyInstaller 和最低依赖
+    # 安装 PyInstaller（构建工具）与全量运行时依赖
     log_info("安装构建工具 (PyInstaller)...")
     run(f'"{venv_pip}" install pyinstaller')
-    # 确保 yaml 解析和网络请求依赖存在
-    run(f'"{venv_pip}" install pyyaml requests')
+    log_info("安装全量运行时依赖 (requirements.txt)...")
+    run(f'"{venv_pip}" install -r "{ROOT / "requirements.txt"}"')
 
     # 扫描插件的隐式导入
     auto_hidden = []
