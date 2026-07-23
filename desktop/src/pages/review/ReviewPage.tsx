@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Index, Show, For, onCleanup, onMount, createMemo } from "solid-js";
+import { createSignal, createEffect, Index, Show, onCleanup, onMount, createMemo } from "solid-js";
 import { appState, markDirty, getActiveConfigFileName } from "../../stores/appStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
 import { confirm } from "../../stores/confirmStore";
@@ -9,6 +9,153 @@ import {
   saveProjectMetadata,
 } from "../../lib/api/project";
 import type { CacheEntry, CacheFileResponse, MetadataEntry } from "../../lib/api/types";
+
+/* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
+   翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
+function toVisibleNewlines(s: unknown): string {
+  if (s == null) return "";
+  return String(s)
+    .replace(/\r\n/g, "\\r\\n")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r");
+}
+
+/* ── 角色名颜色生成（黄金角度 + 感知补偿）── */
+
+interface ThemeConfig {
+  baseColor: string;
+  mode: "light" | "dark";
+}
+
+const LIGHT_THEME: ThemeConfig = { baseColor: "#0066cc", mode: "light" };
+const DARK_THEME: ThemeConfig = { baseColor: "#0099ff", mode: "dark" };
+
+/* 前 20 种颜色（由上方算法对 index 0-19 精确计算后固化，避免每次重算并锁定观感）；
+   index >= 20 时回退到算法计算（见 generateColorAt）。 */
+const LIGHT_PALETTE_20: string[] = [
+  "#0066cc", "#cc002a", "#00cc11", "#4d00cc", "#c58e20",
+  "#00ccc4", "#e000a8", "#5fba12", "#0022cc", "#cc1a00",
+  "#00cc55", "#9f00e0", "#c5c520", "#0090cc", "#cc0055",
+  "#27ba12", "#2200cc", "#cc5e00", "#00cc99", "#e000d6",
+];
+const DARK_PALETTE_20: string[] = [
+  "#0099ff", "#ff004f", "#1ae817", "#4600ff", "#ff9100",
+  "#00f0ce", "#ff1adc", "#8ce817", "#0044ff", "#ff0700",
+  "#00ff51", "#a51aff", "#dbc924", "#00c1f0", "#ff0083",
+  "#46e817", "#1200ff", "#ff5c00", "#00ffa6", "#f21aff",
+];
+
+function hexToHsl(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0,
+    s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        break;
+      case g:
+        h = ((b - r) / d + 2) / 6;
+        break;
+      case b:
+        h = ((r - g) / d + 4) / 6;
+        break;
+    }
+  }
+  return [h * 360, s * 100, l * 100];
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  h = (((h % 360) + 360) % 360);
+  s = Math.max(0, Math.min(100, s)) / 100;
+  l = Math.max(0, Math.min(100, l)) / 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0,
+    g = 0,
+    b = 0;
+  if (h < 60) {
+    r = c;
+    g = x;
+  } else if (h < 120) {
+    r = x;
+    g = c;
+  } else if (h < 180) {
+    g = c;
+    b = x;
+  } else if (h < 240) {
+    g = x;
+    b = c;
+  } else if (h < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const toHex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hashId(id: string | number): number {
+  const str = String(id);
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+const GOLDEN_ANGLE = 137.5077640500378;
+
+function perceptualAdjust(hue: number, baseSat: number, baseLight: number, mode: "light" | "dark") {
+  const h = (((hue % 360) + 360) % 360);
+  let sat = baseSat,
+    light = baseLight;
+  if (h >= 40 && h <= 80) {
+    sat *= 0.72;
+    if (mode === "light") light = Math.min(light + 5, 65);
+  } else if (h > 80 && h <= 120) {
+    sat *= 0.82;
+  } else if (h >= 170 && h <= 200) {
+    if (mode === "dark") light = Math.max(light - 3, 35);
+  } else if (h >= 270 && h <= 320) {
+    if (mode === "light") light = Math.min(light + 4, 60);
+    if (mode === "dark") light = Math.max(light + 5, 50);
+  }
+  return { sat, light };
+}
+
+function generateColorAt(index: number, config: ThemeConfig): string {
+  // 前 20 色走固化常量，超出再调用算法（复用下方 hexToHsl/hslToHex/perceptualAdjust）
+  if (index >= 0 && index < 20) {
+    return (config.mode === "dark" ? DARK_PALETTE_20 : LIGHT_PALETTE_20)[index];
+  }
+  const [baseHue, baseSat, baseLight] = hexToHsl(config.baseColor);
+  const hue = (baseHue + index * GOLDEN_ANGLE) % 360;
+  const { sat, light } = perceptualAdjust(hue, baseSat, baseLight, config.mode);
+  return hslToHex(hue, sat, light);
+}
+
+/** 根据角色名确定性获取颜色（同一名字永远同色） */
+function getNameColor(name: string): string {
+  if (!name) return "#999";
+  const idx = hashId(name) % 10000;
+  // 检测当前主题
+  const isDark = document.documentElement.classList.contains("dark") ||
+    document.documentElement.getAttribute("data-theme") === "dark" ||
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return generateColorAt(idx, isDark ? DARK_THEME : LIGHT_THEME);
+}
 
 /* ── 单条 CacheEntry 组件 ── */
 function EntryCard(props: {
@@ -23,12 +170,29 @@ function EntryCard(props: {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
 
+  // 角色名颜色：同一名字确定性映射到同色
+  const nameColor = createMemo(() => getNameColor(String(e().name || "")));
+
+  // 译文多行文本框：随内容自动增高（单行 <input> 会吞掉换行，故改为 <textarea>）
+  let dstRef: HTMLTextAreaElement | undefined;
+  const autoGrowDst = (el: HTMLTextAreaElement | undefined) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  // 译文内容变化（键入 / 重载 / 排序切条）时重新适配高度
+  createEffect(() => {
+    void e().pre_dst;
+    autoGrowDst(dstRef);
+  });
+
   return (
     <div class={`entry-card ${hasProblem() ? "has-problem" : ""}`}>
       {/* ── 默认 3 行 ── */}
       <div class="entry-default">
         {/* 问题行 */}
         <div class="entry-problem">
+          <span class="entry-index">#{e().index}</span>
           <Show when={hasProblem()}>
             <svg
               width="14"
@@ -45,17 +209,30 @@ function EntryCard(props: {
             </svg>
             <span class="entry-problem-text">{e().problem}</span>
           </Show>
-          <span class="entry-index">#{e().index}</span>
         </div>
 
         {/* 原文行 / 译文行 — 并排 */}
         <div class="entry-text-row">
-          <div class="entry-src">{e().pre_src}</div>
-          <input
+          <div class="entry-src">
+            <Show when={e().name}>
+              <span
+                class="entry-name-badge"
+                style={{ "background-color": nameColor(), color: "#fff" }}
+              >
+                {e().name}
+              </span>
+            </Show>
+            {toVisibleNewlines(e().pre_src)}
+          </div>
+          <textarea
+            ref={dstRef}
             class="entry-dst-input"
-            type="text"
-            value={e().pre_dst}
-            onInput={(ev) => props.onFieldChange("pre_dst", ev.currentTarget.value)}
+            rows="1"
+            value={toVisibleNewlines(e().pre_dst)}
+            onInput={(ev) => {
+              props.onFieldChange("pre_dst", ev.currentTarget.value);
+              autoGrowDst(ev.currentTarget);
+            }}
             onBlur={props.onBlur}
           />
         </div>
@@ -118,14 +295,14 @@ function EntryCard(props: {
                   when={isEditable && val != null}
                   fallback={
                     <span class="field-value field-value--readonly">
-                      {val != null ? String(val) : "—"}
+                      {val != null ? toVisibleNewlines(val) : "—"}
                     </span>
                   }
                 >
-                  <input
+                  <textarea
                     class="field-value field-value--editable"
-                    type="text"
-                    value={String(val ?? "")}
+                    rows="2"
+                    value={toVisibleNewlines(val ?? "")}
                     onInput={(ev) => props.onFieldChange(field.key, ev.currentTarget.value)}
                     onBlur={props.onBlur}
                   />
@@ -139,26 +316,36 @@ function EntryCard(props: {
   );
 }
 
-/* ── 单条元数据组件（FileMetaData / BatchMetadata）── */
+/* ── 单条元数据组件（FileMetaData / BatchMetadata）──
+   简化：一个 id 小文本框 + 一个记录其余内容的大文本框（JSON）。 */
 function MetadataCard(props: {
   entry: MetadataEntry;
-  onFieldChange: (field: string, value: unknown) => void;
+  index: number;
+  onContentChange: (text: string) => void;
   onDelete: () => void;
   onBlur: () => void;
 }) {
-  const e = () => props.entry;
-  const idValue = () => String(e().id ?? "");
-  const fields = () => Object.keys(e()).filter((k) => k !== "id");
-  // 数组字段按行展示；其余按字符串展示
-  const display = (v: unknown) =>
-    Array.isArray(v) ? v.map((x) => String(x)).join("\n") : v == null ? "" : String(v);
-  const isArrayField = (v: unknown) => Array.isArray(v);
+  let taRef: HTMLTextAreaElement | undefined;
+  const restJson = () => {
+    const { id: _id, ...rest } = props.entry as Record<string, unknown>;
+    try {
+      return JSON.stringify(rest, null, 2);
+    } catch {
+      return "{}";
+    }
+  };
+  const [content, setContent] = createSignal(restJson());
+  // 外部 entry 变更（如保存后 store 更新）且文本框未聚焦时，同步显示
+  createEffect(() => {
+    void props.entry;
+    if (taRef && document.activeElement !== taRef) setContent(restJson());
+  });
 
   return (
     <div class="meta-card">
       <div class="meta-card-head">
-        <span class="meta-card-id" title="条目 id（不可编辑）">
-          id: {idValue()}
+        <span class="meta-id-text" title="条目 id（只读，不可修改）">
+          id: {String((props.entry as Record<string, unknown>).id ?? "") || "—"}
         </span>
         {/* 右上角删除按钮 */}
         <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete}>
@@ -175,43 +362,18 @@ function MetadataCard(props: {
           <span class="entry-btn-text">删除</span>
         </button>
       </div>
-      <div class="meta-fields">
-        <For each={fields()}>
-          {(field) => {
-            const val = () => e()[field];
-            return (
-              <div class="meta-field">
-                <span class="field-label">{field}</span>
-                <Show
-                  when={isArrayField(val())}
-                  fallback={
-                    <input
-                      class="meta-input"
-                      type="text"
-                      value={display(val())}
-                      onInput={(ev) => props.onFieldChange(field, ev.currentTarget.value)}
-                      onBlur={props.onBlur}
-                    />
-                  }
-                >
-                  <textarea
-                    class="meta-textarea"
-                    rows="3"
-                    value={display(val())}
-                    onInput={(ev) =>
-                      props.onFieldChange(
-                        field,
-                        ev.currentTarget.value.split("\n"),
-                      )
-                    }
-                    onBlur={props.onBlur}
-                  />
-                </Show>
-              </div>
-            );
-          }}
-        </For>
-      </div>
+      <textarea
+        ref={taRef}
+        class="meta-content-textarea"
+        rows="10"
+        value={content()}
+        spellcheck={false}
+        onInput={(e) => {
+          setContent(e.currentTarget.value);
+          props.onContentChange(e.currentTarget.value);
+        }}
+        onBlur={props.onBlur}
+      />
     </div>
   );
 }
@@ -238,30 +400,6 @@ const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
   { key: "post_dst_preview", label: "后处理译文预览" },
 ];
 
-/* 构造一条空白 CacheEntry（用于「新增条目」） */
-function createBlankEntry(index: number): CacheEntry {
-  return {
-    index,
-    name: "",
-    pre_src: "",
-    post_src: "",
-    pre_dst: "",
-    proofread_dst: "",
-    trans_by: "",
-    proofread_by: "",
-    problem: "",
-    trans_conf: 0,
-    doub_content: "",
-    unknown_proper_noun: "",
-    pre_jp: "",
-    post_jp: "",
-    pre_zh: "",
-    proofread_zh: "",
-    post_zh_preview: "",
-    post_dst_preview: "",
-  };
-}
-
 /* ── ReviewPage 主组件 ── */
 export function ReviewPage() {
   const [entries, setEntries] = createSignal<CacheEntry[]>([]);
@@ -269,26 +407,54 @@ export function ReviewPage() {
   const [expandedSet, setExpandedSet] = createSignal<Set<number>>(new Set());
   const [jumpValue, setJumpValue] = createSignal("");
 
-  // ── 模式由打开的文件路径隐式决定，无需手动切换 ──
-  // 元数据文件（FileMetaData.json / BatchMetadata.json）位于 pass1_cache / pass2_cache，
-  // 与平铺在 transl_cache 下的译文缓存不在同目录；按其文件名 basename 即可判定模式。
+  // ── 模式由打开文件所在的缓存子目录隐式决定，无需手动切换 ──
+  // 缓存目录分工（见 CLAUDE.md / GalTransl.__init__）：
+  //   pass0_cache → GlobalPrompt.json  （全局提示词，单对象）
+  //   pass1_cache → FileMetaData.json （文件级元数据）
+  //   pass2_cache → BatchMetadata.json（批次级元数据）
+  //   pass3_cache → *.txt.json        （翻译缓存，CacheEntry 数组）
+  // 规则：pass0/pass1/pass2 三个缓存目录一律按元数据模式读取；
+  //       仅 pass3_cache（翻译缓存）走翻译校对模式。
   type ReviewMode = "translate" | "metadata";
-  type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json";
-  const METADATA_FILES: readonly MetadataFileName[] = ["FileMetaData.json", "BatchMetadata.json"];
-  function metadataNameOf(path: string | null | undefined): MetadataFileName | null {
-    if (!path) return null;
-    const base = path.split(/[\\/]/).pop() ?? path;
-    return (METADATA_FILES as readonly string[]).includes(base) ? (base as MetadataFileName) : null;
+  type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json";
+  function modeInfoOf(path: string | null | undefined): {
+    mode: ReviewMode;
+    metaName: MetadataFileName;
+  } {
+    if (!path) return { mode: "translate", metaName: "FileMetaData.json" };
+    const norm = path.replace(/\\/g, "/");
+    if (norm.includes("pass0_cache/")) return { mode: "metadata", metaName: "GlobalPrompt.json" };
+    if (norm.includes("pass1_cache/")) return { mode: "metadata", metaName: "FileMetaData.json" };
+    if (norm.includes("pass2_cache/")) return { mode: "metadata", metaName: "BatchMetadata.json" };
+    // pass3_cache 及 transl_cache 根目录等 → 翻译校对模式
+    return { mode: "translate", metaName: "FileMetaData.json" };
   }
-  const reviewMode = createMemo<ReviewMode>(() =>
-    metadataNameOf(appState.activeFilePath) ? "metadata" : "translate",
-  );
+  const reviewMode = createMemo<ReviewMode>(() => modeInfoOf(appState.activeFilePath).mode);
   const metaName = createMemo<MetadataFileName>(
-    () => metadataNameOf(appState.activeFilePath) ?? "FileMetaData.json",
+    () => modeInfoOf(appState.activeFilePath).metaName,
   );
   const [metaEntries, setMetaEntries] = createSignal<MetadataEntry[]>([]);
   const [metaLoading, setMetaLoading] = createSignal(false);
   let metaSavePending = false;
+
+  // 元数据显示顺序：默认按后端返回顺序；开启后按 id 升序
+  const [metaSortAsc, setMetaSortAsc] = createSignal(false);
+  // 计算用于显示的元数据列表（带其在 store 中的真实下标，便于增删改定位）
+  const displayMeta = createMemo<Array<{ entry: MetadataEntry; storeIndex: number }>>(() => {
+    const indexed = metaEntries().map((entry, storeIndex) => ({ entry, storeIndex }));
+    if (!metaSortAsc()) return indexed;
+    const toNum = (v: unknown) => {
+      if (typeof v === "number") return v;
+      const n = parseFloat(String(v ?? ""));
+      return isNaN(n) ? null : n;
+    };
+    return indexed.slice().sort((a, b) => {
+      const na = toNum(a.entry.id);
+      const nb = toNum(b.entry.id);
+      if (na != null && nb != null) return na - nb;
+      return String(a.entry.id ?? "").localeCompare(String(b.entry.id ?? ""));
+    });
+  });
 
   // ── 文件内查找 ──
   const [findOpen, setFindOpen] = createSignal(false);
@@ -344,6 +510,14 @@ export function ReviewPage() {
     document.removeEventListener("galtransl:find-in-file", handleFindInFile);
   });
 
+  // 按 CacheEntry.index（序号）插入，保持条目按序号有序
+  function insertBySerial(next: CacheEntry[], item: CacheEntry): CacheEntry[] {
+    const pos = next.findIndex((e) => (e.index ?? 0) > (item.index ?? 0));
+    if (pos === -1) next.push(item);
+    else next.splice(pos, 0, item);
+    return next;
+  }
+
   function handleUndo() {
     const entry = undo();
     if (!entry) return;
@@ -362,9 +536,9 @@ export function ReviewPage() {
         return next;
       }
       if (idx === -1) {
-        // 被删除的条目：恢复（插入到正确位置）
-        if (Object.keys(entry.before).length > 0) {
-          next.splice(entry.index, 0, entry.before as unknown as CacheEntry);
+        // 被删除的条目：恢复（按序号插入到正确位置）
+        if (Object.keys(entry.before).length > 0 && (entry.before as Record<string, unknown>).index != null) {
+          insertBySerial(next, entry.before as unknown as CacheEntry);
         }
         return next;
       }
@@ -410,22 +584,19 @@ export function ReviewPage() {
   const [totalCount, setTotalCount] = createSignal(0);
   const [showAll, setShowAll] = createSignal(false);
 
-  createEffect(() => {
-    const pid = appState.activeProjectId;
-    const file = appState.activeFilePath;
-    // 元数据模式下不加载翻译缓存文件
-    if (reviewMode() !== "translate") return;
-    if (!pid || !file) {
-      setEntries([]);
-      setTotalCount(0);
-      setShowAll(false);
-      clearUndo();
-      return;
-    }
-
+  // 加载（或局部刷新）当前打开的翻译缓存文件
+  // loadToken：每次发起加载自增，响应回来时若已被更新的请求取代则丢弃，
+  // 同时校验 activeFilePath 仍匹配目标文件——防止 handleBlur 并发覆写后新文件响应对误丢弃。
+  let loadToken = 0;
+  let loadedFile = ""; // entries() 当前所代表的（最新一次成功加载的）文件路径
+  function loadFile(pid: string, file: string) {
+    const targetFile = file;         // 快照：本次请求的目标文件
+    const myToken = ++loadToken;
     setLoading(true);
     fetchCacheFile(pid, file)
       .then((res: CacheFileResponse) => {
+        if (myToken !== loadToken) return;                        // token 过时
+        if (appState.activeFilePath !== targetFile) return;       // 文件已切走
         const all = res.entries ?? [];
         setTotalCount(all.length);
         if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
@@ -433,35 +604,61 @@ export function ReviewPage() {
         } else {
           setEntries(all);
         }
+        loadedFile = file;                                        // 记录 entries() 当前所属文件
         setExpandedSet(new Set<number>());
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {
+        // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
+        if (myToken === loadToken && appState.activeFilePath === targetFile) {
+          setEntries([]);
+          loadedFile = "";
+          setTotalCount(0);
+        }
+      })
+      .finally(() => { if (myToken === loadToken) setLoading(false); });
+  }
+
+  // 切换文件 / 进入翻译模式时加载
+  createEffect(() => {
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (reviewMode() !== "translate") return;
+    if (!pid || !file) {
+      setEntries([]);
+      loadedFile = "";
+      setTotalCount(0);
+      setShowAll(false);
+      clearUndo();
+      return;
+    }
+    loadFile(pid, file);
+  });
+
+  // 缓存监控：当前打开文件大小变化时，局部重新拉取并渲染（不重载整个文件列表/丢失滚动）
+  createEffect(() => {
+    const v = appState.cacheVersion;
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (reviewMode() !== "translate" || !pid || !file) return;
+    if (v === 0) return; // 初始进入由上方加载 effect 处理
+    loadFile(pid, file);
   });
 
   function handleShowAll() {
     setShowAll(true);
-    // 触发重新加载
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
-    if (pid && file) {
-      setLoading(true);
-      fetchCacheFile(pid, file)
-        .then((res: CacheFileResponse) => {
-          setEntries(res.entries ?? []);
-          setExpandedSet(new Set<number>());
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    }
+    if (pid && file) loadFile(pid, file);
   }
 
   // ── 元数据加载 / 保存 / 删除 ──
   createEffect(() => {
     const pid = appState.activeProjectId;
     const name = metaName();
+    void appState.cacheVersion; // 依赖：元数据文件大小变化时自动重载
     if (reviewMode() !== "metadata" || !pid) {
       setMetaEntries([]);
+      loadedFile = "";
       return;
     }
     setMetaLoading(true);
@@ -471,10 +668,18 @@ export function ReviewPage() {
       .finally(() => setMetaLoading(false));
   });
 
-  function handleMetaFieldChange(index: number, field: string, value: unknown) {
+  function handleMetaContentChange(index: number, text: string) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return; // 解析失败暂不更新 store
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
     setMetaEntries((prev) => {
       const next = prev.slice();
-      next[index] = { ...next[index], [field]: value };
+      const id = next[index]?.id ?? "";
+      next[index] = { id, ...parsed };
       return next;
     });
   }
@@ -524,19 +729,21 @@ export function ReviewPage() {
     });
   }
 
-  function handleFieldChange(entryIndex: number, field: string, value: string) {
-    const before = { ...entries()[entryIndex] };
+  function handleFieldChange(serial: number, field: string, value: string) {
+    const pos = entries().findIndex((e) => e.index === serial);
+    if (pos === -1) return;
+    const before = { ...entries()[pos] };
     setEntries((prev) => {
       const next = [...prev];
-      next[entryIndex] = { ...next[entryIndex], [field]: value };
+      next[pos] = { ...next[pos], [field]: value };
       return next;
     });
 
-    // 记录到 undo
+    // 记录到 undo（统一以条目序号 entry.index 为身份，避免过滤/虚拟滚动下下标错位）
     pushUndo({
-      id: `${appState.activeFilePath}:${entryIndex}`,
+      id: `${appState.activeFilePath}:${serial}`,
       file: appState.activeFilePath ?? "",
-      index: entryIndex,
+      index: serial,
       before: { [field]: before[field as keyof CacheEntry] },
       after: { [field]: value },
       description: `修改 ${ALL_FIELDS.find((f) => f.key === field)?.label ?? field}`,
@@ -546,25 +753,27 @@ export function ReviewPage() {
     if (appState.activeFilePath) markDirty(appState.activeFilePath);
   }
 
-  function handleSkip(index: number) {
+  function handleSkip(serial: number) {
     // 跳过检查 = 去除 problem 标记
-    handleFieldChange(index, "problem", "");
+    handleFieldChange(serial, "problem", "");
   }
 
-  function handleDelete(index: number) {
-    const deleted = entries()[index];
-    if (!deleted) return;
+  function handleDelete(serial: number) {
+    const pos = entries().findIndex((e) => e.index === serial);
+    if (pos === -1) return;
+    const deleted = entries()[pos];
 
     pushUndo({
-      id: `${appState.activeFilePath}:${index}`,
+      id: `${appState.activeFilePath}:${serial}`,
       file: appState.activeFilePath ?? "",
-      index,
+      index: serial,
       before: deleted,
       after: {},
       description: "删除条目",
     });
 
-    setEntries((prev) => prev.filter((_, i) => i !== index));
+    // 按条目序号删除当前条目（而非数组下标，过滤/虚拟滚动下均正确）
+    setEntries((prev) => prev.filter((e) => e.index !== serial));
     if (appState.activeFilePath) markDirty(appState.activeFilePath);
   }
 
@@ -577,34 +786,6 @@ export function ReviewPage() {
     }
   }
 
-  /** 新增一条空白条目到当前文件末尾，并保存 */
-  async function handleAddEntry() {
-    const pid = appState.activeProjectId;
-    const file = appState.activeFilePath;
-    if (!pid || !file) return;
-
-    const maxIndex = entries().reduce((m, e) => Math.max(m, e.index), -1);
-    const newEntry = createBlankEntry(maxIndex + 1);
-
-    setEntries((prev) => [...prev, newEntry]);
-    pushUndo({
-      id: `${file}:add:${newEntry.index}`,
-      file,
-      index: newEntry.index,
-      before: {},
-      after: newEntry,
-      description: "新增条目",
-    });
-    markDirty(file);
-
-    await handleBlur();
-    // 滚动到新条目
-    setTimeout(() => {
-      const el = document.getElementById(`entry-${newEntry.index}`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 60);
-  }
-
   /** 失焦保存：将当前文件的所有条目保存到后端，然后重新获取以刷新问题检测 */
   let savePending = false;
 
@@ -613,17 +794,30 @@ export function ReviewPage() {
     savePending = true;
 
     const pid = appState.activeProjectId;
-    const file = appState.activeFilePath;
-    if (!pid || !file) {
+    const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
+    if (!pid || !myFile) {
+      savePending = false;
+      return;
+    }
+    // 若用户已切换到其他文件，entries() 可能已不代表 myFile，放弃保存以免用旧数据覆盖新文件
+    if (appState.activeFilePath !== myFile) {
       savePending = false;
       return;
     }
 
     try {
       // 保存所有条目到后端（传入真实配置文件名，config.inc.yaml 项目也能正确重建 problem）
-      await saveCacheFile(pid, file, entries(), getActiveConfigFileName());
-      // 重新获取（后端返回含最新 problem 数据）
-      const res = await fetchCacheFile(pid, file);
+      await saveCacheFile(pid, myFile, entries(), getActiveConfigFileName());
+      // 守卫：保存后再次校验，若期间已切到别的文件，停止并用旧数据污染界面
+      if (appState.activeFilePath !== myFile) {
+        savePending = false;
+        return;
+      }
+      const res = await fetchCacheFile(pid, myFile);
+      if (appState.activeFilePath !== myFile) {
+        savePending = false;
+        return;
+      }
       setEntries(res.entries ?? []);
     } catch {
       // 静默处理
@@ -641,31 +835,6 @@ export function ReviewPage() {
         <Show when={reviewMode() === "translate"}>
         <Show when={file()}>
           <span class="review-filename">{file()}</span>
-        </Show>
-
-        {/* 增删改快捷按钮 */}
-        <Show when={file()}>
-          <div class="review-actions">
-            <button
-              class="btn btn--sm btn--primary"
-              onClick={handleAddEntry}
-              title="在当前文件末尾新增一条空白条目"
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.4"
-                style="flex-shrink:0"
-              >
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              新增条目
-            </button>
-          </div>
         </Show>
 
         {/* 文件内查找 */}
@@ -712,6 +881,13 @@ export function ReviewPage() {
           <span class="review-filename">{metaName()}</span>
           <Show when={metaEntries().length > 0}>
             <span class="review-count">{metaEntries().length} 条</span>
+            <button
+              class="btn btn--sm review-sort-btn"
+              onClick={() => setMetaSortAsc(!metaSortAsc())}
+              title="切换元数据显示顺序：默认顺序 / 按 id 排序"
+            >
+              {metaSortAsc() ? "默认排序" : "id排序"}
+            </button>
           </Show>
         </Show>
       </div>
@@ -729,16 +905,17 @@ export function ReviewPage() {
                 </p>
               }
             >
-              <Index each={metaEntries()}>
-                {(entrySignal, i) => (
-                  <MetadataCard
-                    entry={entrySignal()}
-                    onFieldChange={(f, v) => handleMetaFieldChange(i, f, v)}
-                    onDelete={() => handleMetaDelete(i)}
-                    onBlur={saveMeta}
-                  />
-                )}
-              </Index>
+            <Index each={displayMeta()}>
+              {(itemSignal) => (
+                <MetadataCard
+                  entry={itemSignal().entry}
+                  index={itemSignal().storeIndex}
+                  onContentChange={(t) => handleMetaContentChange(itemSignal().storeIndex, t)}
+                  onDelete={() => handleMetaDelete(itemSignal().storeIndex)}
+                  onBlur={saveMeta}
+                />
+              )}
+            </Index>
             </Show>
           </Show>
         </Show>
@@ -771,17 +948,17 @@ export function ReviewPage() {
                 若用 <For>（按引用复用）会把正在编辑的那条 <input> 销毁重建，导致失焦 / IME 中断。
                 <Index> 保留节点，仅更新 props 与绑定，输入焦点不丢。 */}
             <Index each={filteredEntries()}>
-              {(entrySignal, i) => {
+              {(entrySignal) => {
                 const entry = entrySignal();
                 return (
                   <div id={`entry-${entry.index}`}>
                     <EntryCard
                       entry={entry}
-                      expanded={expandedSet().has(i)}
-                      onToggleExpand={() => toggleExpand(i)}
-                      onSkip={() => handleSkip(i)}
-                      onDelete={() => handleDelete(i)}
-                      onFieldChange={(field, value) => handleFieldChange(i, field, value)}
+                      expanded={expandedSet().has(entry.index)}
+                      onToggleExpand={() => toggleExpand(entry.index)}
+                      onSkip={() => handleSkip(entry.index)}
+                      onDelete={() => handleDelete(entry.index)}
+                      onFieldChange={(field, value) => handleFieldChange(entry.index, field, value)}
                       onBlur={handleBlur}
                     />
                   </div>
