@@ -133,7 +133,7 @@ export async function deleteCacheEntry(projectId: string, filename: string, inde
 
 export async function fetchProjectMetadata(
   projectId: string,
-  name: "FileMetaData.json" | "BatchMetadata.json",
+  name: "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json",
 ) {
   return apiRequest<MetadataResponse>(
     `/api/projects/${projectId}/metadata?name=${encodeURIComponent(name)}`,
@@ -142,7 +142,7 @@ export async function fetchProjectMetadata(
 
 export async function saveProjectMetadata(
   projectId: string,
-  name: "FileMetaData.json" | "BatchMetadata.json",
+  name: "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json",
   entries: MetadataEntry[],
 ) {
   return apiRequest<MetadataSaveResponse>(
@@ -306,8 +306,9 @@ export async function deleteCommonDictionaryFile(payload: { filename: string }) 
 
 // ---- Project problems ----
 
-export async function fetchProjectProblems(projectId: string) {
-  return apiRequest<ProjectProblemsResponse>(`/api/projects/${projectId}/problems`);
+export async function fetchProjectProblems(projectId: string, file?: string) {
+  const q = file ? `?file=${encodeURIComponent(file)}` : "";
+  return apiRequest<ProjectProblemsResponse>(`/api/projects/${projectId}/problems${q}`);
 }
 
 // ---- Name table ----

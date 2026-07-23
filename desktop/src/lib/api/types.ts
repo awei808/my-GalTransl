@@ -102,6 +102,18 @@ export type FileEntry = {
   is_metadata?: boolean;
 };
 
+/** 缓存目录树节点（递归）。path 为相对缓存根目录的路径，使用 '/' 分隔。 */
+export type FileNode = {
+  name: string;
+  path: string;
+  is_file: boolean;
+  size: number;
+  modified: string;
+  is_metadata?: boolean;
+  entry_count?: number;
+  children?: FileNode[];
+};
+
 export type ProjectFilesResponse = {
   project_dir: string;
   input_dir: string;
@@ -109,7 +121,7 @@ export type ProjectFilesResponse = {
   cache_dir: string;
   input_files: FileEntry[];
   output_files: FileEntry[];
-  cache_files: FileEntry[];
+  cache_files: FileNode[];
 };
 
 export type CacheFileResponse = {
@@ -118,13 +130,14 @@ export type CacheFileResponse = {
   entries: CacheEntry[];
 };
 
-/* 元数据 JSON（FileMetaData.json / BatchMetadata.json）：不定结构，按对象数组处理 */
+/* 元数据 JSON（FileMetaData.json / BatchMetadata.json / GlobalPrompt.json）：不定结构，按对象数组处理；GlobalPrompt 为单对象 */
 export type MetadataEntry = Record<string, unknown>;
 export type MetadataResponse = {
   exists: boolean;
   name: string;
   entries: MetadataEntry[];
   path?: string;
+  single?: boolean;
 };
 export type MetadataSaveResponse = {
   success: boolean;
@@ -132,7 +145,7 @@ export type MetadataSaveResponse = {
   path?: string;
   entries?: MetadataEntry[];
 };
-export type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json";
+export type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json";
 
 export type CacheEntry = {
   index: number;
@@ -270,6 +283,10 @@ export type ProjectRuntimeResponse = {
   stage_index: number;
   stage_total: number;
   current_file: string;
+  /** 当前文件被切分的 chunk/批次序号（翻译阶段有效，第 N 批） */
+  current_batch: number;
+  /** 当前文件的总批次数 */
+  batch_total: number;
   latest_prompt_preview: string;
   latest_assembled_preview: string;
   recent_errors: ProjectRuntimeErrorEntry[];
