@@ -1,5 +1,5 @@
 import { createSignal, onMount, Show, For } from "solid-js";
-import { navigateTo } from "../../stores/appStore";
+import { appState, navigateTo } from "../../stores/appStore";
 import {
   getThemeModePreference,
   setThemeModePreference,
@@ -213,8 +213,11 @@ export function SettingsPage() {
           </div>
           <div
             class="settings-field"
+            classList={{ "settings-field--disabled": !appState.activeProjectId }}
             style="cursor:pointer; border-bottom:none"
-            onClick={() => navigateTo("project-config")}
+            onClick={() => {
+              if (appState.activeProjectId) navigateTo("project-config");
+            }}
           >
             <span class="settings-label">编辑项目配置</span>
             <span class="settings-about-value settings-about-link">后端、插件、字典等参数 →</span>

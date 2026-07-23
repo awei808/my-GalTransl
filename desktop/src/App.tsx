@@ -1,6 +1,6 @@
 import "./styles/styles.css";
 
-import { onMount, onCleanup } from "solid-js";
+import { onMount, onCleanup, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-shell";
 import { TitleBar } from "./components/TitleBar";
 import { ActivityBar } from "./components/ActivityBar";
@@ -47,6 +47,10 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
 
 export function App() {
   const sidebarOpen = () => appState.sidebarOpen;
+  // 翻译控制台为只读监控页，不渲染文件浏览器/查找/问题侧边栏
+  const showSidebar = () => appState.activeView !== "translate";
+  // 应用栏类名：translate 视图收为两列（仅 ActivityBar + 主区）；其余视图按 sidebarOpen 折叠/展开
+  const bodyClass = () => (showSidebar() ? (!sidebarOpen() ? "sidebar-collapsed" : "") : "no-sidebar");
 
   onMount(() => {
     document.addEventListener("keydown", handleGlobalKeyDown);
@@ -60,11 +64,13 @@ export function App() {
   return (
     <>
       <TitleBar />
-      <div class={`app-body ${!sidebarOpen() ? "sidebar-collapsed" : ""}`}>
+      <div class={`app-body ${bodyClass()}`}>
         <ActivityBar />
-        <div class="sidebar-column">
-          <SidebarPanel />
-        </div>
+        <Show when={showSidebar()}>
+          <div class="sidebar-column">
+            <SidebarPanel />
+          </div>
+        </Show>
         <MainArea />
       </div>
       <StatusBar />

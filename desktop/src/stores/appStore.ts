@@ -1,5 +1,16 @@
 import { createStore } from "solid-js/store";
 import { fetchProjectConfigName } from "../lib/api/client";
+import type { FileNode, ModelCheckResult } from "../lib/api/types";
+
+// 模型可用性检测状态（与 TranslateConsole 共用，全局持久以避免组件重挂后重复检测）
+export type ModelCheckState = "idle" | "checking" | "ok" | "error" | "na";
+
+export interface ModelCheckSnapshot {
+  state: ModelCheckState;
+  result: ModelCheckResult | null;
+  backend: string;
+  projectId: string | null;
+}
 
 // ── 类型 ──
 
@@ -40,6 +51,16 @@ export interface AppState {
 
   // 后端
   backendOnline: boolean;
+  /** 翻译控制台当前选中的后端（全局持久，避免组件重挂丢失/切项目后失效） */
+  selectedBackend: string;
+  /** 缓存目录树（由 cacheWatcher 轮询刷新，供文件浏览器渲染） */
+  cacheTree: FileNode[];
+  /** 缓存树版本：监控发现“当前打开文件”大小变化时自增，驱动 ReviewPage 局部刷新 */
+  cacheVersion: number;
+  /** 模型可用性检测快照（全局持久，避免翻译控制台组件重挂后重复检测/丢失结果） */
+  modelCheck: ModelCheckSnapshot;
+  /** 上一轮 /runtime 轮询到的任务状态（全局持久，避免切回页面时把“运行中”误判为“刚开始”而重复弹窗） */
+  prevJobStatus: string;
 }
 
 // ── 默认状态 ──
@@ -56,6 +77,11 @@ export const defaultState: AppState = {
   connectionPhase: "offline",
   connectionTimeoutMs: 20000,
   backendOnline: false,
+  selectedBackend: "",
+  cacheTree: [],
+  cacheVersion: 0,
+  modelCheck: { state: "idle", result: null, backend: "", projectId: null },
+  prevJobStatus: "",
 };
 
 // ── Store ──
@@ -124,6 +150,8 @@ export function closeProject() {
     sidebarTab: null,
     activeFilePath: null,
     dirtyFiles: [],
+    prevJobStatus: "",
+    modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   });
 }
 

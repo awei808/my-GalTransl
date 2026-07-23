@@ -115,19 +115,19 @@ export function PromptTemplatesPage() {
                 </div>
               </div>
 
-              <div class="pt-field">
+              <div class="pt-field pt-field--system">
                 <label class="pt-label">System Prompt（系统提示词）</label>
                 <textarea
-                  class="pt-textarea"
+                  class="pt-textarea pt-textarea--system"
                   value={systemPrompt()}
                   onInput={(e) => setSystemPrompt(e.currentTarget.value)}
                   spellcheck={false}
                 />
               </div>
-              <div class="pt-field">
+              <div class="pt-field pt-field--user">
                 <label class="pt-label">User Prompt（用户提示词）</label>
                 <textarea
-                  class="pt-textarea"
+                  class="pt-textarea pt-textarea--user"
                   value={userPrompt()}
                   onInput={(e) => setUserPrompt(e.currentTarget.value)}
                   spellcheck={false}

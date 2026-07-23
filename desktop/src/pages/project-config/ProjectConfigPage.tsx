@@ -3,6 +3,7 @@ import { appState, getActiveConfigFileName, navigateTo } from "../../stores/appS
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
+import { fetchTranslationGuidelines } from "../../lib/api/general";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
 type ConfigValue =
@@ -23,6 +24,21 @@ interface FieldUI {
  * 检测 / 调用统一走全局后端配置，避免与项目自身 config.yaml 的 tokens 产生歧义。
  */
 const MANAGED_GLOBAL_PREFIX = "backendSpecific.OpenAI-Compatible.";
+// 动态句数调整：仅暴露“是否启用”开关，句数由后端按 上限/4 自动管理，以下子项不再让用户手填
+const DYNAMIC_NUM_KEY = "common.gpt.dynamicNumPerRequestTranslate";
+const DYNAMIC_MAX_KEY = "common.gpt.dynamicNumPerRequestTranslate.max";
+// 翻译规范文件：改为下拉选择，选项来自 translation_guidelines 目录文件名。
+// 注意：后端 BaseTranslate 只读「gpt.translation_guideline」（见 GalTransl/Backend/BaseTranslate.py），
+// 因此此处必须用无 common. 前缀的规范键，否则选择会被后端忽略。
+const GUIDELINE_KEY = "gpt.translation_guideline";
+const HIDDEN_CONFIG_KEYS = new Set<string>([
+  "common.gpt.dynamicNumPerRequestTranslate.min",
+  "common.gpt.dynamicNumPerRequestTranslate.max",
+  // 改为专用多行「游戏外部信息」输入框（见页面顶部卡片），不再以单行英文框出现在通用列表
+  "externals.gameInfo",
+  // 旧版本误写到此处的翻译规范键（后端只读 gpt.translation_guideline），隐藏避免重复行
+  "common.gpt.translation_guideline",
+]);
 const FIELD_UI: Record<string, FieldUI> = {
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
     label: "令牌轮询策略",
@@ -58,7 +74,10 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "每次请求句数",
     hint: "单次发送给模型的句子数，建议不超过 16。",
   },
-  "common.gpt.dynamicNumPerRequestTranslate": { label: "动态句数调整" },
+  "common.gpt.dynamicNumPerRequestTranslate": {
+    label: "是否启用动态句数调整",
+    hint: "启用后初始每次请求句数 = 上限/4，并根据解析错误自动调节，无需手填。",
+  },
   "common.gpt.dynamicNumPerRequestTranslate.min": { label: "动态句数下限" },
   "common.gpt.dynamicNumPerRequestTranslate.max": { label: "动态句数上限" },
   "common.workersPerProject": {
@@ -105,7 +124,7 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "前文句数",
     hint: "每次请求附带的前文句数；越大上下文越强、成本越高（常用 8）。",
   },
-  "common.gpt.translation_guideline": {
+  "gpt.translation_guideline": {
     label: "翻译规范文件",
     hint: "位于 translation_guidelines 目录，影响文风与措辞。",
   },
@@ -148,6 +167,44 @@ const FIELD_UI: Record<string, FieldUI> = {
   "dictionary.sortDict": { label: "字典按词长排序" },
 };
 
+/**
+ * 这些键不进入「通用配置列表」（在展平阶段直接跳过），改为专用卡片或隐藏行：
+ * - 后端全局管理前缀：交全局后端配置页维护
+ * - HIDDEN_CONFIG_KEYS：旧版本残留/由专用卡片接管的键
+ * - GUIDELINE_KEY：改为顶部固定「翻译规范文件」卡片渲染（见页面卡片），
+ *   不再依赖扁平键列表里是否存在该键，避免「旧键被隐藏、新键不存在 → 整行消失」
+ * 注意：DYNAMIC_NUM_KEY 不在此列——它仍在通用列表里由专用开关渲染。
+ */
+function isOmittedFromList(key: string): boolean {
+  if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return true;
+  if (HIDDEN_CONFIG_KEYS.has(key)) return true;
+  if (key === GUIDELINE_KEY) return true;
+  return false;
+}
+
+/**
+ * 旧版曾把翻译规范误写到 common.gpt.translation_guideline，而后端只读 gpt.translation_guideline。
+ * 该旧键会被 HIDDEN_CONFIG_KEYS 隐藏，新键又可能不存在 → 配置项整行消失。
+ * 加载时把旧键值归一化到新键（仅在内存，保存时由 handleSave 清理旧键），保证下拉框始终能显示当前选择。
+ */
+function migrateGuidelineKey(obj: Record<string, ConfigValue>): Record<string, ConfigValue> {
+  const common = obj.common as Record<string, ConfigValue> | undefined;
+  const oldVal =
+    common && typeof common === "object" ? common["gpt.translation_guideline"] : undefined;
+  const gpt = obj.gpt as Record<string, ConfigValue> | undefined;
+  const hasNew = !!gpt && typeof gpt === "object" && "translation_guideline" in gpt;
+  if (oldVal === undefined || oldVal === null || hasNew) return obj;
+  const next: Record<string, ConfigValue> = { ...obj };
+  next.gpt = {
+    ...(gpt as Record<string, ConfigValue> | {}),
+    translation_guideline: oldVal,
+  } as Record<string, ConfigValue>;
+  const commonCopy = { ...(common as Record<string, ConfigValue>) };
+  delete commonCopy["gpt.translation_guideline"];
+  next.common = commonCopy;
+  return next;
+}
+
 /** 枚举关键字的友好显示（仅用于混合/枚举控件的选项文案） */
 const KEYWORD_LABELS: Record<string, string> = {
   auto: "自动适应 (auto)",
@@ -158,12 +215,21 @@ export function ProjectConfigPage() {
   const [schemaDesc, setSchemaDesc] = createSignal<Record<string, string>>({});
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
+  // 翻译规范文件下拉选项（translation_guidelines 目录下的文件名）
+  const [guidelines, setGuidelines] = createSignal<string[]>([]);
+  // 当前翻译规范值（响应式读取，供固定卡片展示）
+  const guidelineCurrent = () => String(getValue(GUIDELINE_KEY) ?? "");
 
   const pid = () => appState.activeProjectId;
 
   // 等真实配置名探测完成后再加载，避免用回退名 config.yaml 提前请求导致 404
   createEffect(() => {
-    if (pid() && !appState.configNameDetecting) loadData();
+    if (!pid()) {
+      // 无打开项目时不发请求，且需主动取消 loading，否则页面会永久卡在“加载中…”
+      setLoading(false);
+      return;
+    }
+    if (!appState.configNameDetecting) loadData();
   });
 
   async function loadData() {
@@ -177,8 +243,12 @@ export function ProjectConfigPage() {
         fetchProjectConfig(pid()!, getActiveConfigFileName()),
         fetchConfigSchema(pid()!).catch(() => ({ parameters: {} })),
       ]);
-      setConfig({ ...(cfg.config as Record<string, ConfigValue>) });
+      setConfig({ ...migrateGuidelineKey(cfg.config as Record<string, ConfigValue>) });
       setSchemaDesc(sch?.parameters || {});
+      // 翻译规范文件下拉选项（与配置加载并行，失败不阻塞主配置）
+      fetchTranslationGuidelines()
+        .then((list) => setGuidelines(list))
+        .catch(() => setGuidelines([]));
     } catch (e) {
       toast.error(`加载配置失败: ${getErrorMessage(e)}`);
     } finally {
@@ -220,6 +290,8 @@ export function ProjectConfigPage() {
     function walk(obj: Record<string, ConfigValue>, prefix: string) {
       for (const [k, v] of Object.entries(obj)) {
         const key = prefix ? `${prefix}.${k}` : k;
+        // 这些键不进入通用列表（专用卡片/隐藏行），直接跳过，避免空分组标题
+        if (isOmittedFromList(key)) continue;
         if (v !== null && typeof v === "object" && !Array.isArray(v)) {
           walk(v as Record<string, ConfigValue>, key);
         } else {
@@ -245,7 +317,10 @@ export function ProjectConfigPage() {
       if (!groups.has(group)) groups.set(group, []);
       groups.get(group)!.push(item);
     }
-    _groupedCache = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+    // 丢弃没有任何可见项的空分组（如 gpt 组在规范键移出后可能只剩被隐藏项）
+    _groupedCache = [...groups.entries()]
+      .filter(([, items]) => items.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b));
     _groupedSig = sig;
     return _groupedCache;
   };
@@ -410,8 +485,18 @@ export function ProjectConfigPage() {
     if (!pid()) return;
     setSaving(true);
     try {
+      // 清理旧版本误写到 common.gpt.translation_guideline 的残留键：
+      // 后端只读 gpt.translation_guideline，残留键会在通用配置列表里显示成多余文本框。
+      const cleaned = { ...config() } as Record<string, ConfigValue>;
+      const commonObj = cleaned.common as Record<string, ConfigValue> | undefined;
+      if (commonObj && typeof commonObj === "object" && "gpt.translation_guideline" in commonObj) {
+        const commonClean = { ...commonObj };
+        delete commonClean["gpt.translation_guideline"];
+        cleaned.common = commonClean;
+        setConfig(cleaned);
+      }
       await updateProjectConfig(pid()!, {
-        config: config(),
+        config: cleaned,
         config_file_name: getActiveConfigFileName(),
       });
       toast.success("配置已保存");
@@ -443,6 +528,63 @@ export function ProjectConfigPage() {
           when={pid() && groupedKeys().length > 0}
           fallback={<p class="pc-status">{!pid() ? "请先打开一个项目" : "暂无可编辑的配置参数"}</p>}
         >
+          {/* 游戏外部信息（ForGlobalPrompt 外部信息接口）：多行文本，绑定 externals.gameInfo，
+              由页面底部「保存配置」统一写回 config.yaml，流水线/独立后端均会读取 */}
+          <div class="pc-external-info">
+            <div class="pc-row-label">
+              <span class="pc-label">游戏外部信息</span>
+              <div class="pc-key-hint">
+                <code class="pc-key">externals.gameInfo</code>
+              </div>
+              <p class="pc-desc">
+                提供给「全局分析（ForGlobalPrompt）」的外部背景资料——游戏名称、简介、制作公司、世界观、已有角色等自由文本。
+                生成全局提示词时会注入 [ExternalInfo] 占位符，帮助模型产出更准确的游戏概况与角色档案。
+                留空则提示词显示「（未提供外部信息）」。
+              </p>
+            </div>
+            <textarea
+              class="pc-external-info__textarea"
+              value={String(getValue("externals.gameInfo") ?? "")}
+              onInput={(e) => setValue("externals.gameInfo", e.currentTarget.value)}
+              placeholder={"例如：\n游戏名：星之轨迹\n类型：科幻 ADV\n制作：某社\n简介：……"}
+              spellcheck={false}
+            />
+          </div>
+
+          {/* 翻译规范文件：顶部固定卡片，无条件渲染（不再依赖扁平键列表里是否存在该键），
+              修复「旧键 common.gpt.translation_guideline 被隐藏、新键 gpt.translation_guideline 不存在
+              → 配置项整行消失」的 bug。选项来自 translation_guidelines 目录文件名。 */}
+          <div class="pc-external-info">
+            <div class="pc-row-label">
+              <span class="pc-label">翻译规范文件</span>
+              <div class="pc-key-hint">
+                <code class="pc-key">{GUIDELINE_KEY}</code>
+              </div>
+              <p class="pc-desc">
+                位于 translation_guidelines 目录，影响文风与措辞。运行对应后端或完整流水线时，
+                该文件内容会被注入到翻译提示词中。
+              </p>
+            </div>
+            <div class="pc-row-control" style="margin-top: 4px">
+              <select
+                class="field__input pc-input pc-select"
+                value={guidelineCurrent()}
+                onChange={(e) => setValue(GUIDELINE_KEY, e.currentTarget.value)}
+              >
+                <Show when={guidelines().length === 0 && !guidelineCurrent()}>
+                  <option value="">（未找到翻译规范文件）</option>
+                </Show>
+                {/* 当前值不在目录下（如历史遗留/自定义），保留一个可选项避免丢失 */}
+                <Show when={guidelineCurrent() && !guidelines().includes(guidelineCurrent())}>
+                  <option value={guidelineCurrent()}>{guidelineCurrent()}</option>
+                </Show>
+                <For each={guidelines()}>
+                  {(g) => <option value={g}>{g}</option>}
+                </For>
+              </select>
+            </div>
+          </div>
+
           <div class="pc-field-list">
             <For each={groupedKeys()}>
               {([group, items]) => (
@@ -466,6 +608,43 @@ export function ProjectConfigPage() {
                       const [key, , dtype] = item;
                       // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
                       if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
+                      // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理
+                      if (HIDDEN_CONFIG_KEYS.has(key)) return <></>;
+                      // 动态句数调整：仅暴露“是否启用”开关（开→存 上限/4，关→存 0；后端 _coerce_bool 照常识别启用/禁用）
+                      if (key === DYNAMIC_NUM_KEY) {
+                        const enabled = !!getValue(DYNAMIC_NUM_KEY);
+                        const maxVal = Number(getValue(DYNAMIC_MAX_KEY)) || 64;
+                        const defaultPerRequest = Math.floor(maxVal / 4);
+                        return (
+                          <div class="pc-row">
+                            <div class="pc-row-label">
+                              <span class="pc-label">是否启用动态句数调整</span>
+                              <div class="pc-key-hint">
+                                <code class="pc-key">{key}</code>
+                              </div>
+                              <p class="pc-desc">
+                                启用后初始每次请求句数 = 上限/4（当前 {defaultPerRequest}
+                                ），并根据解析错误自动调节，无需手填。
+                              </p>
+                            </div>
+                            <div class="pc-row-control">
+                              <label class="settings-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={enabled}
+                                  onChange={(e) =>
+                                    setValue(
+                                      DYNAMIC_NUM_KEY,
+                                      e.currentTarget.checked ? defaultPerRequest : 0,
+                                    )
+                                  }
+                                />
+                                <span class="settings-toggle-knob" />
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      }
                       const type = inferType(key);
                       const val = getValue(key);
                       const isNonScalar = dtype === "object-array" || dtype === "array";

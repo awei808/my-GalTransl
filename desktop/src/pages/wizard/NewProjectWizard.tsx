@@ -255,12 +255,21 @@ export function NewProjectWizard() {
         workersPerProject: workersPerProject(),
         language: language(),
         "gpt.numPerRequestTranslate": numPerRequest(),
-        "gpt.dynamicNumPerRequestTranslate": false,
+        // 动态句数调整默认开启：值 = 上限(64)/4 = 16（前端“是否启用动态句数调整”开关据此判断启用）
+        "gpt.dynamicNumPerRequestTranslate": 16,
         "gpt.contextNum": 8,
       };
+      // 翻译规范文件：写入 config.gpt.translation_guideline（后端 BaseTranslate 读取的规范位置，
+      // 而非 common.gpt.translation_guideline，否则选择会被后端忽略）。
+      const gptSection: Record<string, unknown> = {
+        ...((config.gpt as Record<string, unknown>) || {}),
+      };
       if (translationGuideline()) {
-        common["gpt.translation_guideline"] = translationGuideline();
+        gptSection["translation_guideline"] = translationGuideline();
+      } else {
+        delete gptSection["translation_guideline"];
       }
+      config.gpt = gptSection;
       config.common = common;
       config.plugin = {
         ...((config.plugin as Record<string, unknown>) || {}),
