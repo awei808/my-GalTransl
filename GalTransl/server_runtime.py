@@ -123,6 +123,8 @@ class RuntimeState:
     stage_index: int = -1
     stage_total: int = PIPELINE_STAGE_TOTAL
     current_file: str = ""
+    current_batch: int = 0
+    batch_total: int = 0
     latest_prompt_preview: str = ""
     latest_assembled_preview: str = ""
     updated_at: str = field(default_factory=_utcnow_text)
@@ -162,6 +164,8 @@ class RuntimeRegistry:
         *,
         stage: str | None = None,
         current_file: str | None = None,
+        current_batch: int | None = None,
+        batch_total: int | None = None,
         workers_active: int | None = None,
         workers_configured: int | None = None,
         file_totals: dict[str, int] | None = None,
@@ -176,6 +180,10 @@ class RuntimeRegistry:
                 state.stage = stage
             if current_file is not None:
                 state.current_file = current_file
+            if current_batch is not None:
+                state.current_batch = max(0, int(current_batch))
+            if batch_total is not None:
+                state.batch_total = max(0, int(batch_total))
             if workers_active is not None:
                 state.workers_active = max(0, workers_active)
             if workers_configured is not None:
@@ -317,6 +325,8 @@ class RuntimeRegistry:
                     "stage_index": -1,
                     "stage_total": PIPELINE_STAGE_TOTAL,
                     "current_file": "",
+                    "current_batch": 0,
+                    "batch_total": 0,
                     "latest_prompt_preview": "",
                     "latest_assembled_preview": "",
                     "workers_active": 0,
@@ -343,6 +353,8 @@ class RuntimeRegistry:
                 "stage_index": _compute_stage_index(state.stage),
                 "stage_total": PIPELINE_STAGE_TOTAL,
                 "current_file": state.current_file,
+                "current_batch": state.current_batch,
+                "batch_total": state.batch_total,
                 "latest_prompt_preview": state.latest_prompt_preview,
                 "latest_assembled_preview": state.latest_assembled_preview,
                 "workers_active": state.workers_active,
@@ -377,7 +389,7 @@ def set_live_snippets(project_dir: str, prompt_preview: str = "", assembled_prev
     由 ForGalJsonMulitChat.translate() 在每轮 LLM 调用前后调用。
     确保前端轮询 /runtime 时可以获取到最新提示词和译文拼接内容。
     """
-    max_len = 600  # 每段预览最大字符数
+    max_len = 4000  # 每段预览最大字符数（当前提示词/译文拼接面板用；过大仅截断，不影响翻译）
     with RUNTIME_REGISTRY._lock:
         state = RUNTIME_REGISTRY._states.get(_normalize_project_dir(project_dir))
         if state is None:
@@ -521,180 +533,185 @@ class RuntimeProgressCache:
             seen_files: set[str] = set()
 
             if os.path.isdir(cache_dir):
-                for entry in os.scandir(cache_dir):
-                    if not entry.is_file():
-                        continue
-                    if not (
-                        entry.name.endswith(".json")
-                        or entry.name.endswith(_CACHE_APPEND_SUFFIX)
-                    ):
-                        continue
-
-                    name = entry.name
-                    seen_files.add(name)
-
-                    try:
-                        stat = entry.stat()
-                    except OSError:
-                        continue
-
-                    cached = project_stats.get(name)
-                    if (
-                        cached is not None
-                        and cached.mtime_ns == int(stat.st_mtime_ns)
-                        and cached.size == int(stat.st_size)
-                        and cached.retran_terms_signature == retran_terms_signature
-                    ):
-                        continue
-
-                    translated_keys: set[str] = set()
-                    problem_keys: set[str] = set()
-                    failed_keys: set[str] = set()
-                    retran_hit_keys: dict[str, set[str]] = {term: set() for term in retran_terms}
-
-                    def _name_src(items: list[Any], idx: int) -> str:
-                        if idx < 0 or idx >= len(items):
-                            return ""
-                        item = items[idx]
-                        if not isinstance(item, dict):
-                            return ""
-                        name = str(item.get("name", "") or "")
-                        pre_src = str(item.get("pre_src", item.get("pre_jp", "")) or "")
-                        return f"{name}{pre_src}"
-
-                    def _entry_signature(items: list[Any], idx: int) -> str:
-                        line_now = _name_src(items, idx)
-                        row = items[idx] if 0 <= idx < len(items) else {}
-                        row_index = str(row.get("index", "")) if isinstance(row, dict) else ""
-                        if not line_now:
-                            if isinstance(row, dict):
-                                row_src = str(
-                                    row.get("pre_src", row.get("pre_jp", row.get("post_src", "")))
-                                    or ""
-                                )
-                                row_name = str(row.get("name", "") or "")
-                                return f"__row__:{idx}:{row_index}:{row_name}:{row_src}"
-                            return f"__row__:{idx}"
-
-                        line_prev = "None"
-                        j = idx - 1
-                        while j >= 0:
-                            candidate = _name_src(items, j)
-                            if candidate:
-                                line_prev = candidate
-                                break
-                            j -= 1
-
-                        line_next = "None"
-                        j = idx + 1
-                        while j < len(items):
-                            candidate = _name_src(items, j)
-                            if candidate:
-                                line_next = candidate
-                                break
-                            j += 1
-
-                        # 在 context key 前拼接 index，使不同位置的相同上下文生成不同 key，避免进度少计
-                        context_key = f"{line_prev}{line_now}{line_next}"
-                        if row_index:
-                            return f"{row_index}:{context_key}"
-                        return context_key
-
-                    entries: list[Any] = []
-                    try:
-                        import orjson
-                        with open(entry.path, "rb") as f:
-                            raw = f.read()
-                        if entry.name.endswith(_CACHE_APPEND_SUFFIX):
-                            for line in raw.splitlines():
-                                if not line:
-                                    continue
-                                try:
-                                    row = orjson.loads(line)
-                                except Exception:
-                                    continue
-                                if isinstance(row, dict):
-                                    entries.append(row)
-                        else:
-                            loaded = orjson.loads(raw)
-                            if isinstance(loaded, list):
-                                entries = loaded
-                    except Exception:
-                        continue
-
-                    for idx, item in enumerate(entries):
-                        if not isinstance(item, dict):
+                # 递归扫描：缓存文件可能位于 pass3_cache/ 等子目录中（如翻译阶段写
+                # 入 transl_cache/pass3_cache/*.json）。os.scandir 只列直接子项，
+                # 改用 os.walk 以覆盖所有子目录。
+                for dirpath, _dirnames, filenames in os.walk(cache_dir):
+                    for name in filenames:
+                        if not (
+                            name.endswith(".json")
+                            or name.endswith(_CACHE_APPEND_SUFFIX)
+                        ):
                             continue
 
-                        entry_key = str(item.get("__cache_key", "")).strip()
-                        if entry_key:
-                            # 同 _entry_signature：以 index 为前缀使不同位置的同文本条目
-                            # 在 set 中各占一席，同时保持与 .json 快照 key 的一致性。
-                            item_index = str(item.get("index", ""))
-                            if item_index:
-                                entry_key = f"{item_index}:{entry_key}"
-                        else:
-                            entry_key = _entry_signature(entries, idx)
+                        # 用相对于 cache_dir 的路径作为 key，避免不同子目录下同名文件冲突
+                        rel_dir = os.path.relpath(dirpath, cache_dir)
+                        rel_key = os.path.join(rel_dir, name) if rel_dir != "." else name
+                        seen_files.add(rel_key)
 
-                        is_translated = bool(item.get("pre_dst", "") or item.get("pre_zh", ""))
-                        is_problem = bool(item.get("problem", ""))
-                        is_failed = (
-                            "翻译失败" in str(item.get("problem", ""))
-                            or "(Failed)" in str(item.get("pre_dst", "") or item.get("pre_zh", ""))
-                            or "(翻译失败)" in str(item.get("pre_dst", "") or item.get("pre_zh", ""))
-                        )
+                        full_path = os.path.join(dirpath, name)
+                        try:
+                            stat = os.stat(full_path)
+                        except OSError:
+                            continue
 
-                        no_proofread = str(item.get("proofread_dst", "") or "") == ""
-
-                        # retran_hit_keys 统计不受 retran_key 过滤影响，确保新旧文件统计口径一致
+                        cached = project_stats.get(rel_key)
                         if (
-                            not entry.name.endswith(_CACHE_APPEND_SUFFIX)
-                            and retran_hit_keys
+                            cached is not None
+                            and cached.mtime_ns == int(stat.st_mtime_ns)
+                            and cached.size == int(stat.st_size)
+                            and cached.retran_terms_signature == retran_terms_signature
                         ):
-                            source_text = item.get("pre_src", item.get("pre_jp", ""))
-                            problem_text = item.get("problem", "")
-                            for term in retran_terms:
-                                if _check_retran_key(term, source_text) or _check_retran_key(term, problem_text):
-                                    retran_hit_keys[term].add(entry_key)
+                            continue
 
-                        should_apply_retransl_filter = not entry.name.endswith(_CACHE_APPEND_SUFFIX)
-                        if (
-                            should_apply_retransl_filter
-                            and current_job_started_at_ns is not None
-                            and int(stat.st_mtime_ns) >= int(current_job_started_at_ns)
-                        ):
-                            should_apply_retransl_filter = False
-                        if (
-                            is_translated
-                            and should_apply_retransl_filter
-                            and retran_key
-                            and no_proofread
-                            and (
-                                _check_retran_key(retran_key, item.get("pre_src", item.get("pre_jp", "")))
-                                or _check_retran_key(retran_key, item.get("problem", ""))
+                        translated_keys: set[str] = set()
+                        problem_keys: set[str] = set()
+                        failed_keys: set[str] = set()
+                        retran_hit_keys: dict[str, set[str]] = {term: set() for term in retran_terms}
+
+                        def _name_src(items: list[Any], idx: int) -> str:
+                            if idx < 0 or idx >= len(items):
+                                return ""
+                            item = items[idx]
+                            if not isinstance(item, dict):
+                                return ""
+                            name = str(item.get("name", "") or "")
+                            pre_src = str(item.get("pre_src", item.get("pre_jp", "")) or "")
+                            return f"{name}{pre_src}"
+
+                        def _entry_signature(items: list[Any], idx: int) -> str:
+                            line_now = _name_src(items, idx)
+                            row = items[idx] if 0 <= idx < len(items) else {}
+                            row_index = str(row.get("index", "")) if isinstance(row, dict) else ""
+                            if not line_now:
+                                if isinstance(row, dict):
+                                    row_src = str(
+                                        row.get("pre_src", row.get("pre_jp", row.get("post_src", "")))
+                                        or ""
+                                    )
+                                    row_name = str(row.get("name", "") or "")
+                                    return f"__row__:{idx}:{row_index}:{row_name}:{row_src}"
+                                return f"__row__:{idx}"
+
+                            line_prev = "None"
+                            j = idx - 1
+                            while j >= 0:
+                                candidate = _name_src(items, j)
+                                if candidate:
+                                    line_prev = candidate
+                                    break
+                                j -= 1
+
+                            line_next = "None"
+                            j = idx + 1
+                            while j < len(items):
+                                candidate = _name_src(items, j)
+                                if candidate:
+                                    line_next = candidate
+                                    break
+                                j += 1
+
+                            # 在 context key 前拼接 index，使不同位置的相同上下文生成不同 key，避免进度少计
+                            context_key = f"{line_prev}{line_now}{line_next}"
+                            if row_index:
+                                return f"{row_index}:{context_key}"
+                            return context_key
+
+                        entries: list[Any] = []
+                        try:
+                            import orjson
+                            with open(full_path, "rb") as f:
+                                raw = f.read()
+                            if name.endswith(_CACHE_APPEND_SUFFIX):
+                                for line in raw.splitlines():
+                                    if not line:
+                                        continue
+                                    try:
+                                        row = orjson.loads(line)
+                                    except Exception:
+                                        continue
+                                    if isinstance(row, dict):
+                                        entries.append(row)
+                            else:
+                                loaded = orjson.loads(raw)
+                                if isinstance(loaded, list):
+                                    entries = loaded
+                        except Exception:
+                            continue
+
+                        for idx, item in enumerate(entries):
+                            if not isinstance(item, dict):
+                                continue
+
+                            entry_key = str(item.get("__cache_key", "")).strip()
+                            if entry_key:
+                                # 同 _entry_signature：以 index 为前缀使不同位置的同文本条目
+                                # 在 set 中各占一席，同时保持与 .json 快照 key 的一致性。
+                                item_index = str(item.get("index", ""))
+                                if item_index:
+                                    entry_key = f"{item_index}:{entry_key}"
+                            else:
+                                entry_key = _entry_signature(entries, idx)
+
+                            is_translated = bool(item.get("pre_dst", "") or item.get("pre_zh", ""))
+                            is_problem = bool(item.get("problem", ""))
+                            is_failed = (
+                                "翻译失败" in str(item.get("problem", ""))
+                                or "(Failed)" in str(item.get("pre_dst", "") or item.get("pre_zh", ""))
+                                or "(翻译失败)" in str(item.get("pre_dst", "") or item.get("pre_zh", ""))
                             )
-                        ):
-                            is_translated = False
 
-                        if is_translated:
-                            translated_keys.add(entry_key)
-                        if is_problem:
-                            problem_keys.add(entry_key)
-                        if is_failed:
-                            failed_keys.add(entry_key)
+                            no_proofread = str(item.get("proofread_dst", "") or "") == ""
 
-                    project_stats[name] = _CacheProgressFileStat(
-                        mtime_ns=int(stat.st_mtime_ns),
-                        size=int(stat.st_size),
-                        translated_keys=frozenset(translated_keys),
-                        problem_keys=frozenset(problem_keys),
-                        failed_keys=frozenset(failed_keys),
-                        retran_terms_signature=retran_terms_signature,
-                        retran_hit_keys={
-                            term: frozenset(hit_keys)
-                            for term, hit_keys in retran_hit_keys.items()
-                        },
-                    )
+                            # retran_hit_keys 统计不受 retran_key 过滤影响，确保新旧文件统计口径一致
+                            if (
+                                not name.endswith(_CACHE_APPEND_SUFFIX)
+                                and retran_hit_keys
+                            ):
+                                source_text = item.get("pre_src", item.get("pre_jp", ""))
+                                problem_text = item.get("problem", "")
+                                for term in retran_terms:
+                                    if _check_retran_key(term, source_text) or _check_retran_key(term, problem_text):
+                                        retran_hit_keys[term].add(entry_key)
+
+                            should_apply_retransl_filter = not name.endswith(_CACHE_APPEND_SUFFIX)
+                            if (
+                                should_apply_retransl_filter
+                                and current_job_started_at_ns is not None
+                                and int(stat.st_mtime_ns) >= int(current_job_started_at_ns)
+                            ):
+                                should_apply_retransl_filter = False
+                            if (
+                                is_translated
+                                and should_apply_retransl_filter
+                                and retran_key
+                                and no_proofread
+                                and (
+                                    _check_retran_key(retran_key, item.get("pre_src", item.get("pre_jp", "")))
+                                    or _check_retran_key(retran_key, item.get("problem", ""))
+                                )
+                            ):
+                                is_translated = False
+
+                            if is_translated:
+                                translated_keys.add(entry_key)
+                            if is_problem:
+                                problem_keys.add(entry_key)
+                            if is_failed:
+                                failed_keys.add(entry_key)
+
+                        project_stats[rel_key] = _CacheProgressFileStat(
+                            mtime_ns=int(stat.st_mtime_ns),
+                            size=int(stat.st_size),
+                            translated_keys=frozenset(translated_keys),
+                            problem_keys=frozenset(problem_keys),
+                            failed_keys=frozenset(failed_keys),
+                            retran_terms_signature=retran_terms_signature,
+                            retran_hit_keys={
+                                term: frozenset(hit_keys)
+                                for term, hit_keys in retran_hit_keys.items()
+                            },
+                        )
 
             stale_files = [name for name in project_stats if name not in seen_files]
             for name in stale_files:
@@ -703,11 +720,14 @@ class RuntimeProgressCache:
             file_progress_map: dict[str, dict[str, Any]] = {}
             retran_counts: dict[str, set[str]] = {term: set() for term in retran_terms}
 
-            for name, stat in project_stats.items():
+            for rel_key, stat in project_stats.items():
+                # rel_key 可能是 "pass3_cache/xxx.json" 或仅 "xxx.json"；
+                # cache_file_display_map 的键总是纯文件名，故取 basename 做映射。
+                base_name = os.path.basename(rel_key)
                 canonical_name = (
-                    name[: -len(_CACHE_APPEND_SUFFIX)]
-                    if name.endswith(_CACHE_APPEND_SUFFIX)
-                    else name
+                    base_name[: -len(_CACHE_APPEND_SUFFIX)]
+                    if base_name.endswith(_CACHE_APPEND_SUFFIX)
+                    else base_name
                 )
                 display_name = cache_file_display_map.get(canonical_name, canonical_name)
                 if file_totals and display_name not in file_totals:
@@ -789,6 +809,8 @@ def update_runtime_status(
     *,
     stage: str | None = None,
     current_file: str | None = None,
+    current_batch: int | None = None,
+    batch_total: int | None = None,
     workers_active: int | None = None,
     workers_configured: int | None = None,
     file_totals: dict[str, int] | None = None,
@@ -798,6 +820,8 @@ def update_runtime_status(
         project_dir,
         stage=stage,
         current_file=current_file,
+        current_batch=current_batch,
+        batch_total=batch_total,
         workers_active=workers_active,
         workers_configured=workers_configured,
         file_totals=file_totals,

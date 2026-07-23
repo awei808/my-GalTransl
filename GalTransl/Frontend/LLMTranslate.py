@@ -339,7 +339,9 @@ async def doLLMTranslate(
     post_dic_list = projectConfig.getDictCfgSection()["postDict"]
     gpt_dic_list = projectConfig.getDictCfgSection()["gpt.dict"]
     default_dic_dir = projectConfig.getDictCfgSection()["defaultDictFolder"]
-    workersPerProject = projectConfig.getKey("workersPerProject") or 1
+    # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
+    _workers_raw = projectConfig.getKey("workersPerProject")
+    workersPerProject = int(_workers_raw) if _workers_raw is not None else 1
     semaphore = asyncio.Semaphore(workersPerProject)
     adaptive_state = AdaptiveWorkerState(
         max_workers=max(1, workersPerProject),
@@ -535,6 +537,86 @@ async def doLLMTranslate(
             )
 
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
+        return True
+
+    # ---- 2.7 独立引擎：仅生成全局游戏分析（ForGlobalPrompt）----
+    if eng_type == "ForGlobalPrompt":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+
+        from GalTransl.TextCompressor import TextCompressor
+        from GalTransl.DataValidator import (
+            validate_input_json,
+            validate_global_prompt,
+        )
+        from GalTransl.Backend.ForGlobalPrompt import (
+            ForGlobalPrompt,
+            load_global_prompt,
+        )
+
+        # 阶段 0：输入数据校验
+        LOGGER.info("[GlobalPrompt] 阶段 0/2：输入数据校验")
+        _update_runtime(projectConfig, stage="输入数据校验")
+        all_valid = True
+        for file_path, json_list in file_json_lists.items():
+            result = validate_input_json(json_list, file_path)
+            if not result["valid"]:
+                for err in result["errors"]:
+                    LOGGER.error(f"[校验失败] {file_path}: {err}")
+                all_valid = False
+            for warn in result["warnings"]:
+                LOGGER.warning(f"[校验警告] {file_path}: {warn}")
+        if not all_valid:
+            raise RuntimeError(
+                "输入数据校验失败，全局分析中止。请修复上述错误后重试。"
+            )
+        LOGGER.info("[GlobalPrompt] 阶段 0 完成：所有输入文件校验通过")
+
+        # 阶段 1：文本压缩（产出 {file_path: compressed_text} 字典）
+        LOGGER.info("[GlobalPrompt] 阶段 1/2：文本无损压缩")
+        _update_runtime(projectConfig, stage="文本无损压缩")
+        max_chars = projectConfig.getKey(
+            "internals.pipeline.maxInputChars", 80000
+        )
+        compressor = TextCompressor(max_chars=max_chars)
+        compressed_texts: Dict[str, str] = {}
+        for file_path, json_list in file_json_lists.items():
+            compressed = compressor.compress({file_path: json_list})
+            compressed_texts[file_path] = compressed
+
+        # 阶段 2：全局游戏分析
+        LOGGER.info("[GlobalPrompt] 阶段 2/2：全局游戏分析")
+        _update_runtime(projectConfig, stage="生成全局游戏分析")
+        gptapi_global = ForGlobalPrompt(
+            projectConfig, "ForGlobalPrompt",
+            projectConfig.proxyPool, projectConfig.tokenPool,
+        )
+        external_info = projectConfig.getKey("externals.gameInfo", "") or ""
+        success = await gptapi_global.batch_translate(
+            compressed_texts, external_info=external_info
+        )
+        if not success:
+            LOGGER.error("[GlobalPrompt] 全局游戏分析生成失败")
+            raise RuntimeError("全局游戏分析生成失败")
+
+        # 校验 GlobalPrompt.json
+        global_prompt = load_global_prompt(projectConfig)
+        if global_prompt is None:
+            raise RuntimeError("GlobalPrompt.json 不存在或格式错误")
+        gp_validation = validate_global_prompt(global_prompt)
+        if not gp_validation["valid"]:
+            for err in gp_validation["errors"]:
+                LOGGER.error(f"[GlobalPrompt] 内容校验失败: {err}")
+            raise RuntimeError("GlobalPrompt 内容校验失败")
+        for warn in gp_validation.get("warnings", []):
+            LOGGER.warning(f"[GlobalPrompt] 警告: {warn}")
+
+        char_count = len(global_prompt.get("角色列表", []))
+        LOGGER.info(
+            f"[GlobalPrompt] 全局分析已生成，{char_count} 个角色，"
+            f"已写入 transl_cache/pass0_cache/GlobalPrompt.json"
+        )
+        _update_runtime(projectConfig, stage="全局游戏分析生成完毕")
         return True
 
     # 3. 根据 sortBy 决定 chunk 顺序：name（文件名自然序）或 size（大 chunk 优先）
@@ -747,9 +829,9 @@ async def _run_full_pipeline(
       1. TextCompressor 压缩全文
       2. ForGlobalPrompt 生成全局游戏分析
       3. GenDic 构建术语表（可跳过，如果已有）
-      4. ForFileMetaData 逐文件生成文件级元数据
-      5. ForBatchMetaData 逐文件划分翻译区间
-      6. ForGalJsonMulitChat 翻译
+      4. ForFileMetaData 逐文件生成文件级元数据（可跳过，如果已有）
+      5. ForBatchMetaData 逐文件划分翻译区间（可跳过，如果已有）
+      6. ForGalJsonMulitChat 翻译（按 chunk 缓存命中跳过）
     """
     import os
 
@@ -840,22 +922,32 @@ async def _run_full_pipeline(
     from GalTransl.Backend.ForGlobalPrompt import (
         ForGlobalPrompt,
         load_global_prompt,
+        _find_global_prompt_path,
     )
     from GalTransl.DataValidator import validate_global_prompt
 
-    gptapi_global = ForGlobalPrompt(
-        projectConfig, "ForGlobalPrompt",
-        projectConfig.proxyPool, projectConfig.tokenPool,
+    gp_path = _find_global_prompt_path(projectConfig)
+    force_regen_gp = projectConfig.getKey(
+        "internals.pipeline.forceRegenGlobal", False
     )
-    external_info = projectConfig.getKey("externals.gameInfo", "") or ""
-    success = await gptapi_global.batch_translate(
-        compressed_texts, external_info=external_info
-    )
-    if not success:
-        LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
-        raise RuntimeError("全局游戏分析生成失败")
 
-    # 校验 GlobalPrompt.json
+    if os.path.exists(gp_path) and not force_regen_gp:
+        LOGGER.info("[流水线] 阶段 2 跳过：全局分析已存在")
+        success = True
+    else:
+        gptapi_global = ForGlobalPrompt(
+            projectConfig, "ForGlobalPrompt",
+            projectConfig.proxyPool, projectConfig.tokenPool,
+        )
+        external_info = projectConfig.getKey("externals.gameInfo", "") or ""
+        success = await gptapi_global.batch_translate(
+            compressed_texts, external_info=external_info
+        )
+        if not success:
+            LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
+            raise RuntimeError("全局游戏分析生成失败")
+
+    # 校验 GlobalPrompt.json（跳过或重新生成后均需读取，供后续阶段复用）
     global_prompt = load_global_prompt(projectConfig)
     if global_prompt is None:
         LOGGER.error(
@@ -919,7 +1011,13 @@ async def _run_full_pipeline(
         projectConfig.proxyPool, projectConfig.tokenPool,
     )
     # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
+    # 已存在的文件级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
+    existing_fm_map = load_file_metadata_map(projectConfig)
+    force_regen_fm = projectConfig.getKey(
+        "internals.pipeline.forceRegenFileMeta", False
+    )
     total_files = len(file_json_lists)
+    skipped_files = 0
     for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
         fname = os.path.basename(file_path)
         LOGGER.info(f"[FileMetaData] ({i}/{total_files}) {fname}")
@@ -927,6 +1025,13 @@ async def _run_full_pipeline(
             projectConfig, current_file=fname,
             stage=f"文件级元数据 ({i}/{total_files})"
         )
+        # 该文件产物已存在且未强制重生成 → 跳过，避免覆盖
+        if fname in existing_fm_map and not force_regen_fm:
+            LOGGER.info(
+                f"[流水线] 阶段 4 跳过：{fname} 文件级元数据已存在"
+            )
+            skipped_files += 1
+            continue
         await gptapi_filemeta.batch_translate(jsons, filename=fname)
 
     # 交叉验证 FileMetaData 条目数
@@ -940,6 +1045,10 @@ async def _run_full_pipeline(
     else:
         LOGGER.info(
             f"[流水线] 阶段 4 完成：{fm_count}/{total_files} 个文件"
+        )
+    if skipped_files:
+        LOGGER.info(
+            f"[流水线] 阶段 4 跳过 {skipped_files} 个已存在文件级元数据的文件"
         )
     # 同时关闭 ForFileMetaData 后端
     if hasattr(gptapi_filemeta, "shutdown"):
@@ -956,6 +1065,13 @@ async def _run_full_pipeline(
         projectConfig, "ForBatchMetaData",
         projectConfig.proxyPool, projectConfig.tokenPool,
     )
+    # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
+    # 已存在的批次级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
+    existing_bm_map = load_batch_metadata_map(projectConfig)
+    force_regen_bm = projectConfig.getKey(
+        "internals.pipeline.forceRegenBatchMeta", False
+    )
+    skipped_batches = 0
     for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
         fname = os.path.basename(file_path)
         LOGGER.info(f"[BatchMetaData] ({i}/{total_files}) {fname}")
@@ -963,6 +1079,13 @@ async def _run_full_pipeline(
             projectConfig, current_file=fname,
             stage=f"批次划分 ({i}/{total_files})"
         )
+        # 该文件产物已存在且未强制重生成 → 跳过，避免覆盖
+        if fname in existing_bm_map and not force_regen_bm:
+            LOGGER.info(
+                f"[流水线] 阶段 5 跳过：{fname} 批次级元数据已存在"
+            )
+            skipped_batches += 1
+            continue
         await gptapi_batchmeta.batch_translate(jsons, filename=fname)
 
     # 交叉验证 BatchMetadata 条目数
@@ -976,6 +1099,10 @@ async def _run_full_pipeline(
     else:
         LOGGER.info(
             f"[流水线] 阶段 5 完成：{bm_count}/{total_files} 个文件"
+        )
+    if skipped_batches:
+        LOGGER.info(
+            f"[流水线] 阶段 5 跳过 {skipped_batches} 个已存在批次级元数据的文件"
         )
     if hasattr(gptapi_batchmeta, "shutdown"):
         await gptapi_batchmeta.shutdown()
@@ -1025,7 +1152,9 @@ async def _run_translation_phase(
     fPlugins = projectConfig.fPlugins
     tPlugins = projectConfig.tPlugins
     input_splitter = projectConfig.input_splitter
-    workersPerProject = projectConfig.getKey("workersPerProject") or 1
+    # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
+    _workers_raw = projectConfig.getKey("workersPerProject")
+    workersPerProject = int(_workers_raw) if _workers_raw is not None else 1
 
     pre_dic_list = projectConfig.getDictCfgSection()["preDict"]
     post_dic_list = projectConfig.getDictCfgSection()["postDict"]
@@ -1306,6 +1435,9 @@ async def doLLMTranslSingleChunk(
         _update_runtime(
             projectConfig,
             current_file=file_name,
+            # 当前文件被切分的 chunk/批次序号，供前端 toast 显示“第 N/M 批次”
+            current_batch=file_index + 1,
+            batch_total=total_splits,
         )
         LOGGER.info(f">>> 开始翻译 (project_dir){split_chunk.file_path.replace(proj_dir,'')}")
         LOGGER.debug(f"文件 {file_name} 分块 {file_index+1}/{total_splits}:")

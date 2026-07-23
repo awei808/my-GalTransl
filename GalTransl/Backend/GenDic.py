@@ -1,7 +1,7 @@
 import json, time, asyncio, os, traceback, re
 from turtle import title
 from opencc import OpenCC
-from typing import List, Set, Dict, Optional, Tuple
+from typing import List, Set, Dict, Optional, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor
 
 from alive_progress import alive_bar
@@ -58,15 +58,19 @@ class GenDic(BaseTranslate):
         self.dic_counter = collections.Counter()
         self.dic_list = []
         self.dic_votes = collections.defaultdict(collections.Counter)
-        self.wokers = config.getKey("workersPerProject")
+        # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
+        _w = config.getKey("workersPerProject")
+        self.wokers = int(_w) if _w is not None else 1
         self.counter_lock = Lock()
         self.list_lock = Lock()
         self.progress_lock = Lock()
         self.progress_display_name = "GenDic 术语提取"
         self.progress_cache_key = "gendic_progress"
         self.progress_append_path = ""
-        self.trans_prompt = ""
+        self.trans_prompt = GENDIC_PROMPT
+        self.system_prompt = GENDIC_SYSTEM
         self.init_chatbot(eng_type, config)
+        self._apply_internal_prompt_template_overrides()
         backend_cfg = config.getBackendConfigSection("OpenAI-Compatible")
         raw_retry = backend_cfg.get("genDicMaxApiRetries", 6)
         try:
@@ -121,7 +125,6 @@ class GenDic(BaseTranslate):
         model: str = "",
         level: str = "error",
     ) -> None:
-    ):
         try:
             from GalTransl.server import record_runtime_error
 
@@ -307,13 +310,17 @@ class GenDic(BaseTranslate):
         if parts:
             hint = "\n\n".join(parts)
 
-        prompt = GENDIC_PROMPT.format(input=text, hint=hint)
+        prompt = self.trans_prompt
+        if "{input}" in prompt:
+            prompt = prompt.replace("{input}", text)
+        if "{hint}" in prompt:
+            prompt = prompt.replace("{hint}", hint)
 
         self._raise_if_stop_requested()
         try:
             rsp, token = await self.ask_chatbot(
                 prompt=prompt,
-                system=GENDIC_SYSTEM,
+                system=self.system_prompt,
                 file_name=self.progress_display_name,
                 max_retry_count=self.gendic_max_api_retries,
             )
@@ -584,6 +591,14 @@ class GenDic(BaseTranslate):
             raise cancelled_error
 
         LOGGER.info(f"字典生成完成，新增{added_count}条，重复{duplicates}条，保存到{result_path}")
+
+        # 登记到 config.yaml 的 dictionary.gpt.dict，使字典界面可显示、后续翻译阶段会加载。
+        # 异常绝不影响已生成的字典结果。
+        try:
+            self.pj_config.register_gpt_dict_file("项目GPT字典-生成.txt")
+        except Exception as _reg_err:
+            LOGGER.warning(f"GenDic 字典登记到配置失败（界面可能看不到）: {_reg_err}")
+
         self._update_runtime(stage="", current_file="", workers_active=0)
         return True
 

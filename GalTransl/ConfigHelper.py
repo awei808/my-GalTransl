@@ -14,6 +14,8 @@ from asyncio import gather
 from tenacity import retry, stop_after_attempt, wait_fixed
 import httpx
 import inspect
+import os
+import yaml
 from httpx import AsyncClient, TimeoutException
 from time import time
 from typing import Optional
@@ -157,6 +159,7 @@ class CProjectConfig:
         self.translation_guideline=""
         self.non_interactive: bool = False  # 非交互模式（前端启动时为True）
         self.runtime_project_dir: str = projectPath
+        self.config_name: str = config_name  # 配置文件名（用于写回）
         
 
     def getProjectConfig(self) -> dict:
@@ -245,6 +248,45 @@ class CProjectConfig:
         self.keyValues["internals.enableProxy"] = has_usable_proxy_config(
             self.projectConfig.get("proxy", {})
         )
+
+    def register_gpt_dict_file(self, filename: str) -> None:
+        """将 GenDic 生成的 GPT 字典文件登记进 config.yaml 的 dictionary.gpt.dict。
+
+        作用：
+        - 字典管理界面（读取 gpt.dict 列表）能显示该字典；
+        - 同一次流水线后续的翻译阶段（ForGalJsonMulitChat）会从内存中的
+          projectConfig["dictionary"]["gpt.dict"] 读取并加载该字典。
+
+        仅在确实新增条目时才写回磁盘，避免无谓重写。与 server 端
+        _ensure_project_dict_file_configured 行为保持一致。
+        """
+        marker = "(project_dir)"
+        file_key = f"{marker}{filename}"
+        config = self.projectConfig
+        dict_section = config.setdefault("dictionary", {})
+        list_key = "gpt.dict"
+        current_raw = dict_section.get(list_key, [])
+        if isinstance(current_raw, list):
+            current = [str(x) for x in current_raw]
+        elif current_raw in (None, ""):
+            current = []
+        else:
+            current = [str(current_raw)]
+
+        if file_key in current:
+            return  # 已登记，跳过
+
+        current.append(file_key)
+        dict_section[list_key] = current
+
+        # 写回磁盘（原子替换，与 server 写 config 方式一致）
+        cfg_path = os.path.join(self.projectDir, self.config_name)
+        tmp = cfg_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                config, f, allow_unicode=True, default_flow_style=False, sort_keys=False
+            )
+        os.replace(tmp, cfg_path)
 
 
 class CProxyPool:

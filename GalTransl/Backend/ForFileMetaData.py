@@ -356,7 +356,10 @@ class ForFileMetaData(BaseTranslate):
                 max_retry_count=3,
             )
         except Exception as e:
-            LOGGER.error(f"[FileMetaData] {filename} LLM 请求失败：{e}")
+            LOGGER.error(
+                f"[FileMetaData] {filename} LLM 请求失败：{type(e).__name__}: {e}",
+                exc_info=True,
+            )
             return False
 
         meta = self._parse_meta(rsp or "", filename)

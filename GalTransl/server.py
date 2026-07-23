@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS1_CACHE_DIR, PASS2_CACHE_DIR
+from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
@@ -27,6 +27,9 @@ from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
     FORFILEMETA_PROMPT,
     FORBATCHMETA_PROMPT,
+    FORGLOBAL_PROMPT,
+    GENDIC_PROMPT,
+    GENDIC_SYSTEM,
 )
 
 
@@ -398,6 +401,54 @@ def _list_dir_entries(dir_path: str, *, count_json_entries: bool = False) -> lis
     return entries
 
 
+def _build_cache_tree(dir_path: str, prefix: str = "", count_entries: bool = True) -> list[dict[str, Any]]:
+    """递归构建缓存目录树（含子目录 pass1_cache / pass2_cache 等）。
+
+    返回节点列表，每个节点:
+      - 文件: {name, path(相对缓存根, '/'分隔), is_file:True, size, modified, is_metadata?, entry_count?}
+      - 目录: {name, path, is_file:False, size:0, modified:"", children:[...]}
+    """
+    nodes: list[dict[str, Any]] = []
+    if not os.path.isdir(dir_path):
+        return nodes
+    for name in sorted(os.listdir(dir_path)):
+        full = os.path.join(dir_path, name)
+        rel = os.path.join(prefix, name) if prefix else name
+        rel = rel.replace(os.sep, "/")
+        if os.path.isfile(full):
+            st = os.stat(full)
+            node: dict[str, Any] = {
+                "name": name,
+                "path": rel,
+                "is_file": True,
+                "size": st.st_size,
+                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                "is_metadata": any(
+                    rel == d or rel.startswith(d + "/")
+                    for d in ("pass0_cache", "pass1_cache", "pass2_cache")
+                ),
+            }
+            if count_entries and name.endswith(".json"):
+                try:
+                    with open(full, "r", encoding="utf-8") as _f:
+                        _d = json.load(_f)
+                    if isinstance(_d, list):
+                        node["entry_count"] = len(_d)
+                except Exception:
+                    pass
+            nodes.append(node)
+        elif os.path.isdir(full):
+            nodes.append({
+                "name": name,
+                "path": rel,
+                "is_file": False,
+                "size": 0,
+                "modified": "",
+                "children": _build_cache_tree(full, rel, count_entries),
+            })
+    return nodes
+
+
 DICT_PROJECT_MARKER = "(project_dir)"
 COMMON_DICT_CATEGORY_MAP = ".category_map.json"
 
@@ -680,6 +731,14 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForBatchMetaData": {
         "system_prompt": "",
         "user_prompt": FORBATCHMETA_PROMPT,
+    },
+    "ForGlobalPrompt": {
+        "system_prompt": "",
+        "user_prompt": FORGLOBAL_PROMPT,
+    },
+    "GenDic": {
+        "system_prompt": GENDIC_SYSTEM,
+        "user_prompt": GENDIC_PROMPT,
     },
 }
 
@@ -1346,42 +1405,40 @@ def build_handler(registry: JobRegistry) -> type:
                 input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
                 output_dir = os.path.join(project_dir, OUTPUT_FOLDERNAME)
                 cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
-                cache_files = _list_dir_entries(cache_dir, count_json_entries=True)
-                # 追加元数据文件（FileMetaData.json / BatchMetadata.json）：
-                # 它们位于 pass1_cache / pass2_cache，与平铺在 transl_cache 下的译文缓存不在同目录，
-                # 文件浏览器据此列出来供用户点开；前端按文件名 basename 隐式判定为元数据模式。
-                _meta_candidates: dict[str, list[str]] = {
-                    "FileMetaData.json": [
-                        os.path.join(CACHE_FOLDERNAME, PASS1_CACHE_DIR, "FileMetaData.json"),
-                        os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
-                    ],
-                    "BatchMetadata.json": [
-                        os.path.join(CACHE_FOLDERNAME, PASS2_CACHE_DIR, "BatchMetadata.json"),
-                        os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
-                    ],
-                }
-                for _mname, _cands in _meta_candidates.items():
-                    _found = next(
-                        (p for p in _cands if os.path.isfile(os.path.join(project_dir, p))),
-                        None,
-                    )
-                    if not _found:
+                cache_files = _build_cache_tree(cache_dir)
+                # 兼容：若 gt_input 下存在元数据文件而缓存树（pass1_cache/pass2_cache）中未包含，
+                # 则作为顶层节点追加，保证用户总能点开元数据文件。
+                def _tree_has(name: str) -> bool:
+                    def _walk(ns: list[dict[str, Any]]) -> bool:
+                        for n in ns:
+                            if n.get("is_file") and n.get("name") == name:
+                                return True
+                            if not n.get("is_file") and _walk(n.get("children", [])):
+                                return True
+                        return False
+                    return _walk(cache_files)
+
+                for _mname, _cand in {
+                    "FileMetaData.json": os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
+                    "BatchMetadata.json": os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
+                }.items():
+                    if _tree_has(_mname):
                         continue
-                    _full = os.path.join(project_dir, _found)
+                    _full = os.path.join(project_dir, _cand)
+                    if not os.path.isfile(_full):
+                        continue
                     _st = os.stat(_full)
                     _count = 0
                     try:
                         with open(_full, "r", encoding="utf-8") as _f:
                             _d = json.load(_f)
-                        if isinstance(_d, list):
-                            _count = len(_d)
-                        elif isinstance(_d, dict):
-                            _count = 1
+                        _count = len(_d) if isinstance(_d, list) else (1 if isinstance(_d, dict) else 0)
                     except Exception:
                         pass
                     cache_files.append(
                         {
                             "name": _mname,
+                            "path": _mname,
                             "is_file": True,
                             "size": _st.st_size,
                             "modified": datetime.fromtimestamp(_st.st_mtime).isoformat(),
@@ -1562,17 +1619,31 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": f"failed to save cache file: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
-            # ── 元数据(JSON)读取/保存：FileMetaData.json / BatchMetadata.json ──
+            # ── 元数据(JSON)读取/保存 ──
             # 候选路径按加载优先级排列：缓存目录优先，其次输入目录(gt_input 兼容位置)。
-            _META_CANDIDATES: dict[str, list[str]] = {
-                "FileMetaData.json": [
-                    os.path.join(CACHE_FOLDERNAME, PASS1_CACHE_DIR, "FileMetaData.json"),
-                    os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
-                ],
-                "BatchMetadata.json": [
-                    os.path.join(CACHE_FOLDERNAME, PASS2_CACHE_DIR, "BatchMetadata.json"),
-                    os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
-                ],
+            # single=True 表示该元数据文件是「单对象」（如 GlobalPrompt.json）：
+            #   读取时整体作为一个条目返回，保存时按对象(非数组)写回，且不注入 id 字段。
+            _META_CANDIDATES: dict[str, dict[str, Any]] = {
+                "FileMetaData.json": {
+                    "paths": [
+                        os.path.join(CACHE_FOLDERNAME, PASS1_CACHE_DIR, "FileMetaData.json"),
+                        os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
+                    ],
+                    "single": False,
+                },
+                "BatchMetadata.json": {
+                    "paths": [
+                        os.path.join(CACHE_FOLDERNAME, PASS2_CACHE_DIR, "BatchMetadata.json"),
+                        os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
+                    ],
+                    "single": False,
+                },
+                "GlobalPrompt.json": {
+                    "paths": [
+                        os.path.join(CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json"),
+                    ],
+                    "single": True,
+                },
             }
 
             # GET /api/projects/:id/metadata?name=FileMetaData.json
@@ -1581,14 +1652,14 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
                     return
                 _name = parse_qs(urlparse(self.path).query).get("name", [""])[0].strip()
-                _cands = _META_CANDIDATES.get(_name)
-                if not _cands:
+                _meta = _META_CANDIDATES.get(_name)
+                if not _meta:
                     self._send_json({"error": f"unsupported metadata file: {_name}"}, status=HTTPStatus.BAD_REQUEST)
                     return
-                candidates = [os.path.join(project_dir, p) for p in _cands]
+                candidates = [os.path.join(project_dir, p) for p in _meta["paths"]]
                 found = next((p for p in candidates if os.path.isfile(p) and os.path.getsize(p) > 0), None)
                 if not found:
-                    self._send_json({"exists": False, "name": _name, "entries": [], "path": candidates[0]})
+                    self._send_json({"exists": False, "name": _name, "single": _meta["single"], "entries": [], "path": candidates[0]})
                     return
                 try:
                     with open(found, "r", encoding="utf-8") as f:
@@ -1596,10 +1667,14 @@ def build_handler(registry: JobRegistry) -> type:
                 except Exception as e:
                     self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                     return
-                if isinstance(data, dict):
-                    data = [data]
-                entries = [e for e in data if isinstance(e, dict)]
-                self._send_json({"exists": True, "name": _name, "entries": entries, "path": found})
+                if _meta["single"]:
+                    # 单对象：整体作为一个条目返回（前端 MetadataCard 按数组渲染）
+                    entries = [data] if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                else:
+                    if isinstance(data, dict):
+                        data = [data]
+                    entries = [e for e in data if isinstance(e, dict)]
+                self._send_json({"exists": True, "name": _name, "single": _meta["single"], "entries": entries, "path": found})
                 return
 
             # POST /api/projects/:id/metadata/save
@@ -1611,17 +1686,25 @@ def build_handler(registry: JobRegistry) -> type:
                     payload = self._read_json_body()
                     _name = str(payload.get("name", "")).strip()
                     entries = payload.get("entries", [])
-                    _cands = _META_CANDIDATES.get(_name)
-                    if not _cands:
+                    _meta = _META_CANDIDATES.get(_name)
+                    if not _meta:
                         self._send_json({"error": f"unsupported metadata file: {_name}"}, status=HTTPStatus.BAD_REQUEST)
                         return
                     if not isinstance(entries, list):
                         self._send_json({"error": "entries must be a list"}, status=HTTPStatus.BAD_REQUEST)
                         return
-                    candidates = [os.path.join(project_dir, p) for p in _cands]
+                    candidates = [os.path.join(project_dir, p) for p in _meta["paths"]]
                     existing = next((p for p in candidates if os.path.isfile(p)), None)
                     write_path = existing or candidates[0]
                     os.makedirs(os.path.dirname(write_path), exist_ok=True)
+                    if _meta["single"]:
+                        # 单对象：取首个 dict 写回为对象（不包数组、不注入 id）
+                        obj = next((e for e in entries if isinstance(e, dict)), {})
+                        obj = {str(k): v for k, v in obj.items() if k != "id"}
+                        with open(write_path, "w", encoding="utf-8") as f:
+                            json.dump(obj, f, ensure_ascii=False, indent=2)
+                        self._send_json({"success": True, "name": _name, "path": write_path, "entries": [obj]})
+                        return
                     clean = []
                     for e in entries:
                         if not isinstance(e, dict):
@@ -1637,7 +1720,7 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:
                     self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-                return
+                    return
 
             # POST /api/projects/:id/cache/delete-entry
             if sub_path == "/cache/delete-entry":
@@ -1688,22 +1771,29 @@ def build_handler(registry: JobRegistry) -> type:
                         return
 
                     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                    abs_cache = os.path.abspath(cache_dir)
                     deleted_files = []
                     not_found_files = []
-                    for fname in filenames:
-                        fname = str(fname).strip()
-                        if not fname or fname != os.path.basename(fname):
-                            not_found_files.append(fname)
+                    for rel in filenames:
+                        rel = str(rel).strip()
+                        if not rel:
+                            not_found_files.append(rel)
                             continue
-                        file_path = os.path.join(cache_dir, fname)
-                        if not os.path.isfile(file_path):
-                            not_found_files.append(fname)
+                        # 允许相对缓存根的子目录路径（如 pass1_cache/FileMetaData.json），
+                        # 但禁止任何路径穿越（../、绝对路径等），确保只删除缓存目录内的文件。
+                        file_path = os.path.join(cache_dir, rel)
+                        abs_target = os.path.abspath(file_path)
+                        if abs_target != abs_cache and not abs_target.startswith(abs_cache + os.sep):
+                            not_found_files.append(rel)
+                            continue
+                        if not os.path.isfile(abs_target):
+                            not_found_files.append(rel)
                             continue
                         try:
-                            os.remove(file_path)
-                            deleted_files.append(fname)
+                            os.remove(abs_target)
+                            deleted_files.append(rel)
                         except OSError:
-                            not_found_files.append(fname)
+                            not_found_files.append(rel)
                     self._send_json({"success": True, "deleted_files": deleted_files, "not_found_files": not_found_files})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
@@ -1864,11 +1954,21 @@ def build_handler(registry: JobRegistry) -> type:
             # GET /api/projects/:id/cache/:filename (catch-all, must be after specific /cache/* routes)
             if sub_path.startswith("/cache/"):
                 filename = unquote(sub_path[len("/cache/"):])
-                if not filename or filename != os.path.basename(filename):
+                if not filename:
                     self._send_json({"error": "invalid cache filename"}, status=HTTPStatus.BAD_REQUEST)
                     return
+                # 允许相对子路径（如 pass1_cache/FileMetaData.json），但禁止路径穿越
+                norm = os.path.normpath(filename.replace("\\", "/"))
+                if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+                    self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
                 cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
-                file_path = os.path.join(cache_dir, filename)
+                file_path = os.path.join(cache_dir, norm)
+                abs_cache = os.path.abspath(cache_dir)
+                abs_file = os.path.abspath(file_path)
+                if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
+                    self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
                 if not os.path.isfile(file_path):
                     self._send_json({"error": f"cache file not found: {filename}"}, status=HTTPStatus.NOT_FOUND)
                     return
@@ -1876,10 +1976,10 @@ def build_handler(registry: JobRegistry) -> type:
                     import orjson
                     with open(file_path, "rb") as f:
                         data = orjson.loads(f.read())
-                    self._send_json({"project_dir": project_dir, "filename": filename, "entries": data})
+                    self._send_json({"project_dir": project_dir, "filename": norm, "entries": data})
                 except Exception as exc:
                     self._send_json({"error": f"failed to read cache: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-                return
+                    return
 
             # GET /api/projects/:id/progress
             if sub_path == "/progress":
@@ -2569,29 +2669,49 @@ def build_handler(registry: JobRegistry) -> type:
             # GET /api/projects/:id/problems
             if sub_path == "/problems":
                 cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                # 支持 ?file=<相对于 transl_cache 的路径> 仅查单个文件（右键/切换文件时跟随当前文件）
+                query = parse_qs(urlparse(self.path).query)
+                file_filter = (query.get("file", [""])[0] or "").strip()
                 all_problems = []
-                if os.path.isdir(cache_dir):
-                    for name in sorted(os.listdir(cache_dir)):
-                        fp = os.path.join(cache_dir, name)
-                        if not os.path.isfile(fp) or not fp.endswith(".json"):
-                            continue
-                        try:
-                            import orjson
-                            with open(fp, "rb") as f:
-                                entries = orjson.loads(f.read())
-                            for e in entries:
-                                if isinstance(e, dict) and e.get("problem", ""):
-                                    all_problems.append({
-                                        "filename": name,
-                                        "index": e.get("index", 0),
-                                        "speaker": e.get("name", ""),
-                                        "post_src": e.get("post_src", "") or e.get("post_jp", ""),
-                                        "pre_dst": e.get("pre_dst", "") or e.get("pre_zh", ""),
-                                        "problem": e.get("problem", ""),
-                                        "trans_by": e.get("trans_by", ""),
-                                    })
-                        except Exception:
-                            continue
+                abs_cache = os.path.abspath(cache_dir)
+
+                def _collect(fp_rel: str) -> None:
+                    fp = os.path.join(cache_dir, fp_rel)
+                    if not os.path.isfile(fp) or not fp.endswith(".json"):
+                        return
+                    try:
+                        import orjson
+                        with open(fp, "rb") as f:
+                            entries = orjson.loads(f.read())
+                        if not isinstance(entries, list):
+                            return
+                        for e in entries:
+                            if isinstance(e, dict) and e.get("problem", ""):
+                                all_problems.append({
+                                    "filename": fp_rel,
+                                    "index": e.get("index", 0),
+                                    "speaker": e.get("name", ""),
+                                    "post_src": e.get("post_src", "") or e.get("post_jp", ""),
+                                    "pre_dst": e.get("pre_dst", "") or e.get("pre_zh", ""),
+                                    "problem": e.get("problem", ""),
+                                    "trans_by": e.get("trans_by", ""),
+                                })
+                    except Exception:
+                        return
+
+                if file_filter:
+                    # 仅收集指定文件（需做路径穿越防护）
+                    norm = os.path.normpath(file_filter.replace("\\", "/"))
+                    if norm != ".." and not norm.startswith(".." + os.sep) and not os.path.isabs(norm):
+                        _collect(norm)
+                elif os.path.isdir(cache_dir):
+                    # 递归遍历整个 transl_cache（翻译缓存位于 pass3_cache 子目录，顶层 listdir 会漏掉）
+                    for root, _dirs, files in os.walk(cache_dir):
+                        for name in sorted(files):
+                            if name.endswith(".json"):
+                                fp = os.path.join(root, name)
+                                rel = os.path.relpath(fp, cache_dir).replace("\\", "/")
+                                _collect(rel)
                 self._send_json({"project_dir": project_dir, "problems": all_problems, "total": len(all_problems)})
                 return
 

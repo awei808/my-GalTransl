@@ -407,6 +407,32 @@ class ForBatchMetaData(BaseTranslate):
             cleaned[merge_idx] = merged
             del cleaned[merge_idx + 1]
 
+        # ── 间隙检测 ──
+        if not cleaned:
+            LOGGER.warning(
+                f"[BatchMetaData] {filename} 无有效区间，全文（第 1～{max_index} 行）"
+                f"均无批次覆盖"
+            )
+        else:
+            expected = 1
+            gaps = []
+            for b in cleaned:
+                lo = b["区间"][0]
+                if lo > expected:
+                    gaps.append((expected, lo - 1))
+                expected = max(expected, b["区间"][1] + 1)
+            if expected <= max_index:
+                gaps.append((expected, max_index))
+            if gaps:
+                gap_desc = "、".join(
+                    f"第 {g[0]}～{g[1]} 行" if g[0] != g[1] else f"第 {g[0]} 行"
+                    for g in gaps
+                )
+                LOGGER.warning(
+                    f"[BatchMetaData] {filename} 区间存在间隙：{gap_desc} 无批次覆盖。"
+                    f"这可能导致对应句子的翻译缺少批次级指导（视角/氛围/用词色彩）"
+                )
+
         return {"id": filename, "批次": cleaned}
 
     # 4. 合并写入 BatchMetadata.json

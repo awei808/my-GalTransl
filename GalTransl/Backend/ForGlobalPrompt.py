@@ -501,7 +501,10 @@ class ForGlobalPrompt(BaseTranslate):
                 max_retry_count=3,
             )
         except Exception as e:
-            LOGGER.error(f"[GlobalPrompt] LLM 请求失败：{e}")
+            LOGGER.error(
+                f"[GlobalPrompt] LLM 请求失败：{type(e).__name__}: {e}",
+                exc_info=True,
+            )
             return False
 
         # ── 解析响应 ──

@@ -23,6 +23,7 @@ import re
 import time
 from contextlib import suppress
 from GalTransl.TerminalOutput import should_print_translation_logs
+from GalTransl.server_runtime import set_live_snippets
 
 try:
     from pyreqwest.compatibility.httpx import HttpxTransport
@@ -780,6 +781,28 @@ class BaseTranslate:
                 {"role": "user", "content": prompt},
             ]
 
+        # 实时推送「当前提示词」预览，使翻译控制台的提示词面板
+        # 在执行任何后端时都能显示（不再局限于多轮对话后端）。
+        # 取最后一条 user 消息内容作为“当前提示词”；多轮对话后端已在
+        # ForGalJsonMulitChat 中显式推送同一内容，此处为其他后端补齐。
+        try:
+            _runtime_dir = getattr(self.pj_config, "runtime_project_dir", None) or getattr(
+                self.pj_config, "getProjectDir", lambda: ""
+            )()
+            _user_content = ""
+            if messages:
+                for _m in reversed(messages):
+                    if _m.get("role") == "user":
+                        _user_content = _m.get("content") or ""
+                        break
+            else:
+                _user_content = prompt
+            if _runtime_dir and _user_content:
+                set_live_snippets(_runtime_dir, prompt_preview=_user_content)
+        except Exception:
+            # 预览仅用于 UI 展示，任何异常都不应影响翻译主流程
+            pass
+
         if "gemini" in token.model_name:
             temperature = NOT_GIVEN
 
@@ -932,7 +955,8 @@ class BaseTranslate:
                 api_try_count += 1
                 if max_retry_count is not None and api_try_count >= max_retry_count:
                     raise RuntimeError(
-                        f"ask_chatbot reached retry limit ({max_retry_count})"
+                        f"ask_chatbot reached retry limit ({max_retry_count}): "
+                        f"{type(e).__name__}: {e}"
                     ) from e
 
                 # gemini no_candidates
