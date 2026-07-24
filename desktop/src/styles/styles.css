@@ -165,6 +165,12 @@ textarea {
   margin-left: 32px;
 }
 
+/* 快捷键提示（独立使用） */
+.shortcut {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+}
+
 .titlebar-dropdown-item.disabled {
   color: var(--color-text-disabled);
   cursor: default;
@@ -383,6 +389,12 @@ textarea {
   color: var(--color-brand-primary);
 }
 
+/* 文件树节点容器 */
+.tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
 .tree-twisty {
   width: 12px;
   flex-shrink: 0;
@@ -546,6 +558,19 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.status-project {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-view {
+  font-size: var(--font-sm);
 }
 
 .status-indicator {
@@ -990,6 +1015,12 @@ textarea {
   margin-left: var(--space-1);
   font-size: var(--font-sm);
   white-space: nowrap;
+}
+
+/* 模型检测状态文字 */
+.model-check__text {
+  font-size: var(--font-sm);
+  line-height: 1;
 }
 
 @keyframes model-check-pulse {
@@ -2171,6 +2202,18 @@ textarea {
   color: var(--color-text-primary);
 }
 
+/* 幽灵按钮：透明底，hover 时显示边框与底色 */
+.btn--ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+}
+.btn--ghost:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-default);
+}
+
 /* ── Links ── */
 a {
   color: var(--color-text-link);
@@ -2299,6 +2342,11 @@ a:hover {
   box-shadow: var(--shadow-lg);
   min-width: 360px;
   max-width: 560px;
+  animation: confirm-dialog-in 0.25s ease;
+}
+
+/* 弹窗入场动画状态 */
+.confirm-dialog--enter {
   animation: confirm-dialog-in 0.25s ease;
 }
 
@@ -2934,6 +2982,52 @@ a:hover {
   min-height: 0;
 }
 
+/* ── 字典卡片 ── */
+.dict-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+}
+
+.dict-card-arrow {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-05);
+}
+
+.dict-card-comment {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dict-card-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  font-size: var(--font-base);
+  background: transparent;
+  padding: 2px 0;
+}
+
+.dict-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+}
+
+.dict-card-add {
+  align-self: flex-start;
+}
+
 /* 左侧文件列表 */
 .dict-file-list {
   width: 220px;
@@ -3127,6 +3221,18 @@ a:hover {
   border-bottom: 1px solid var(--color-border-default);
 }
 
+/* 姓名表列头对齐 */
+.name-col-src {
+  grid-column: 1;
+}
+.name-col-dst {
+  grid-column: 3;
+}
+.name-col-count {
+  grid-column: 4;
+  text-align: right;
+}
+
 .name-table-body {
   flex: 1;
   overflow-y: auto;
@@ -3144,6 +3250,11 @@ a:hover {
 
 .name-entry-row.editable:hover {
   background: var(--color-bg-hover);
+}
+
+/* 可编辑状态 */
+.editable {
+  cursor: text;
 }
 
 .name-entry-src {
