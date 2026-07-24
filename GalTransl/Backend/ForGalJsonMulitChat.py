@@ -661,11 +661,14 @@ class ForGalJsonMulitChat(BaseTranslate):
             prompt_req = self._apply_history_result(prompt_req, filename)
             user_content = prompt_req
         else:
-            # 后续轮次：主要只发送待翻译句子（带 sig 的 jsonline），复用多轮上下文。
+            # 后续轮次：复用多轮上下文；本批注入本批涉及的剧情区间指导 + 术语表，再发待译句子
+            parts = []
+            if batch_metadata_block:
+                parts.append(batch_metadata_block)
             if gptdict:
-                user_content = gptdict + "\n以下是本批次待翻译内容：\n" + input_src
-            else:
-                user_content = input_src
+                parts.append(gptdict + "\n以下是本批次待翻译内容：")
+            parts.append(input_src)
+            user_content = "\n".join(parts)
         LOGGER.debug(
             f"[{filename}] 本轮 user 提示词（{'首轮' if is_first_round else '续轮'}）:\n{user_content}"
         )
@@ -1260,6 +1263,61 @@ class ForGalJsonMulitChat(BaseTranslate):
             return self._batch_metadata_by_file.get(m.group(1))
         return None
 
+    def _group_by_batch_metadata(
+        self, translist_unhit: CTransList, filename: str
+    ) -> List[CTransList]:
+        """按批次级元数据语义段边界对句子分组。
+
+        每组句子 ``runtime_index`` 同属一个语义段（边界对齐、不跨段），段外句入尾组。
+        无/空元数据或零有效段时返回 ``[translist_unhit]``（调用方退化为原固定切片）。
+        有元数据时每段作单一翻译单元发送，大段不二次切割（Option A：共用文件对话）。
+        """
+        bm = self._resolve_batch_metadata(filename)
+        if bm is None or not getattr(bm, "batches", None):
+            return [list(translist_unhit)]
+
+        segs = []
+        for b in bm.batches:
+            if not isinstance(b, dict):
+                continue
+            iv = b.get("区间") or b.get("interval") or []
+            try:
+                s_lo, s_hi = int(iv[0]), int(iv[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if s_lo > s_hi:
+                s_lo, s_hi = s_hi, s_lo
+            segs.append((s_lo, s_hi, b))
+        segs.sort(key=lambda x: (x[0], x[1]))
+        if not segs:
+            return [list(translist_unhit)]
+
+        def _gi(t):
+            gi = getattr(t, "runtime_index", None)
+            if not isinstance(gi, int):
+                gi = getattr(t, "index", None)
+            return gi if isinstance(gi, int) else None
+
+        seg_lists = [[] for _ in segs]
+        ungrouped = []
+        for t in translist_unhit:
+            gi = _gi(t)
+            if gi is None:
+                ungrouped.append(t)
+                continue
+            placed = False
+            for i, (s_lo, s_hi, _b) in enumerate(segs):
+                if s_lo <= gi <= s_hi:
+                    seg_lists[i].append(t)
+                    placed = True
+                    break
+            if not placed:
+                ungrouped.append(t)
+        groups = [lst for lst in seg_lists if lst]
+        if ungrouped:
+            groups.append(ungrouped)
+        return groups if groups else [list(translist_unhit)]
+
     @staticmethod
     def _trans_global_range(trans_list: CTransList) -> tuple:
         """取本批句子的**全局行号**闭区间 [lo, hi]。
@@ -1319,8 +1377,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             "</batch_metadata>\n"
             "请依据每句所处区间，采用对应的视角、氛围与用词色彩进行翻译："
             "H 区间可放开露骨的感官描写，非 H 区间保持相应的克制；"
-            "保持区间内风格统一、区间之间自然过渡。"
-            "后续轮次将只提供待翻译句子，无需重复上述要求。\n"
+            "每批次仅提供本批涉及的区间指导，请结合上下文保持区间内风格统一、区间之间自然过渡。\n"
         )
 
     def _ensure_conversation(self, filename: str) -> list:
@@ -1567,18 +1624,46 @@ class ForGalJsonMulitChat(BaseTranslate):
         if self.last_file_name != filename:
             self.reset_conversation(filename)
             self.last_file_name = filename
-        return await self._batch_translate_common(
-            filename=filename,
-            cache_file_path=cache_file_path,
-            translist_unhit=translist_unhit,
-            num_pre_request=num_pre_request,
-            gpt_dic=gpt_dic,
-            proofread=proofread,
-            glossary_style="gpt",
-            failed_markers=("(Failed)", "(翻译失败)"),
-            h_words_list=H_WORDS_LIST,
-            ensure_last_translations=True,
-        )
+
+        # 按批次级元数据语义段边界分组（无元数据时退化为单组）
+        groups = self._group_by_batch_metadata(translist_unhit, filename)
+
+        # 有元数据时每段作单一翻译单元（大段不二次切割）；无元数据走原固定切片
+        bm = self._resolve_batch_metadata(filename)
+        if bm is None or not getattr(bm, "batches", None):
+            return await self._batch_translate_common(
+                filename=filename,
+                cache_file_path=cache_file_path,
+                translist_unhit=translist_unhit,
+                num_pre_request=num_pre_request,
+                gpt_dic=gpt_dic,
+                proofread=proofread,
+                glossary_style="gpt",
+                failed_markers=("(Failed)", "(翻译失败)"),
+                h_words_list=H_WORDS_LIST,
+                ensure_last_translations=True,
+            )
+
+        # 有批次元数据：每段作为单一翻译单元，组间共用同一文件对话（Option A，不重置）
+        # 以保持跨段剧情/人设连续性；该段元数据在对应单元注入（_build_round_user_content 每轮均注入）。
+        merged: CTransList = []
+        for group in groups:
+            if not group:
+                continue
+            res = await self._batch_translate_common(
+                filename=filename,
+                cache_file_path=cache_file_path,
+                translist_unhit=group,
+                num_pre_request=len(group),
+                gpt_dic=gpt_dic,
+                proofread=proofread,
+                glossary_style="gpt",
+                failed_markers=("(Failed)", "(翻译失败)"),
+                h_words_list=H_WORDS_LIST,
+                ensure_last_translations=True,
+            )
+            merged.extend(res)
+        return merged
 
 
 """
