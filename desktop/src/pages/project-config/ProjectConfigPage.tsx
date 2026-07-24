@@ -3,7 +3,7 @@ import { appState, getActiveConfigFileName, navigateTo } from "../../stores/appS
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
-import { fetchTranslationGuidelines } from "../../lib/api/general";
+import { fetchTranslationGuidelines, fetchPlugins } from "../../lib/api/general";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
 type ConfigValue =
@@ -38,6 +38,21 @@ const HIDDEN_CONFIG_KEYS = new Set<string>([
   "externals.gameInfo",
   // 旧版本误写到此处的翻译规范键（后端只读 gpt.translation_guideline），隐藏避免重复行
   "common.gpt.translation_guideline",
+  // problemAnalyze 功能已在程序全局设置中有更完善的配置项，项目设置中不再暴露
+  "problemAnalyze.problemList",
+]);
+// 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口
+const REMOVED_CONFIG_KEYS = new Set<string>([
+  "common.gpt.contextNum",
+]);
+// 「仅在无批次级元数据时启用」板块：这些项在有批次级元数据（ForBatchMetaData）时
+// 被 force_static 等逻辑强制忽略，仅无元数据的退化分支生效
+const CONDITIONAL_SECTION_KEYS = new Set<string>([
+  "common.gpt.numPerRequestTranslate",
+  "common.gpt.dynamicNumPerRequestTranslate",
+  "common.splitFile",
+  "common.splitFileNum",
+  "common.splitFileCrossNum",
 ]);
 const FIELD_UI: Record<string, FieldUI> = {
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
@@ -63,7 +78,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "backendSpecific.SakuraLLM.rewriteModelName": {
     label: "自定义模型名（Sakura）",
-    hint: "使用 ollama 等本地模型时需修改。",
+    hint: "使用 ollama 等本地模型时需修改。仅 Sakura 引擎。",
   },
   "plugin.filePlugin": {
     label: "文件格式插件",
@@ -136,7 +151,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   "common.gpt.prompt_content": { label: "提示词自定义内容" },
   "common.gpt.token_limit": {
     label: "单轮 Token 上限（Sakura）",
-    hint: "0 表示不限制，用于避免上下文溢出。",
+    hint: "0 表示不限制，用于避免上下文溢出。仅 Sakura 引擎。",
   },
   "common.loggingLevel": {
     label: "日志级别",
@@ -145,17 +160,26 @@ const FIELD_UI: Record<string, FieldUI> = {
   "common.saveLog": { label: "日志写入文件" },
   "internals.pipeline.maxInputChars": {
     label: "全局分析最大字符数",
-    hint: "压缩后发送给大模型的最大字符数。",
+    hint: "压缩后发送给大模型的最大字符数，默认 0.95M（约 95 万字符）。",
   },
   "internals.pipeline.forceRegenDic": { label: "强制重新生成术语表" },
   "internals.pipeline.abortOnDicFailure": { label: "术语表失败即中止" },
-  "internals.forglobalprompt.inject_guideline": { label: "注入翻译规范（全局分析）" },
+  "internals.forglobalprompt.inject_guideline": {
+    label: "全局分析参考翻译规范",
+    hint: "开启后，生成游戏概况与角色档案时参考翻译规范，影响描写风格与措辞。",
+  },
+  "internals.forbatchmeta.inject_guideline": {
+    label: "批次划分参考翻译规范",
+    hint: "开启后，划分翻译区间批次时参考翻译规范，使各批次翻译风格一致。",
+  },
+  "internals.forfilemeta.inject_guideline": {
+    label: "文件元数据参考翻译规范",
+    hint: "开启后，各文件元数据生成参考翻译规范，保持多文件风格统一。",
+  },
   "internals.forbatchmeta.max_batches": {
     label: "批次最大数量",
     hint: "翻译区间最大数量，超过将自动合并相邻区间。",
   },
-  "internals.forbatchmeta.inject_guideline": { label: "注入翻译规范（批次划分）" },
-  "internals.forfilemeta.inject_guideline": { label: "注入翻译规范（文件元数据）" },
   "proxy.enableProxy": { label: "启用代理" },
   "dictionary.defaultDictFolder": {
     label: "通用字典文件夹",
@@ -168,16 +192,18 @@ const FIELD_UI: Record<string, FieldUI> = {
 };
 
 /**
- * 这些键不进入「通用配置列表」（在展平阶段直接跳过），改为专用卡片或隐藏行：
+ * 这些键不进入「通用配置列表」（在展平阶段直接跳过），改为专用卡片、隐藏行或条件板块：
  * - 后端全局管理前缀：交全局后端配置页维护
  * - HIDDEN_CONFIG_KEYS：旧版本残留/由专用卡片接管的键
- * - GUIDELINE_KEY：改为顶部固定「翻译规范文件」卡片渲染（见页面卡片），
- *   不再依赖扁平键列表里是否存在该键，避免「旧键被隐藏、新键不存在 → 整行消失」
- * 注意：DYNAMIC_NUM_KEY 不在此列——它仍在通用列表里由专用开关渲染。
+ * - REMOVED_CONFIG_KEYS：暂不在前端暴露的键（如 contextNum）
+ * - GUIDELINE_KEY：改为顶部固定「翻译规范文件」卡片渲染
+ * - CONDITIONAL_SECTION_KEYS：移入「仅在无批次级元数据时启用」板块（见页面）
+ * 注意：DYNAMIC_NUM_KEY 不在通用列表，而在「仅在无批次级元数据时启用」板块由专用开关渲染。
  */
 function isOmittedFromList(key: string): boolean {
   if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return true;
   if (HIDDEN_CONFIG_KEYS.has(key)) return true;
+  if (REMOVED_CONFIG_KEYS.has(key)) return true;
   if (key === GUIDELINE_KEY) return true;
   return false;
 }
@@ -210,6 +236,19 @@ const KEYWORD_LABELS: Record<string, string> = {
   auto: "自动适应 (auto)",
 };
 
+/** 分组标题英→中映射 */
+const GROUP_LABELS: Record<string, string> = {
+  backendSpecific: "后端配置",
+  plugin: "插件",
+  common: "通用设置",
+  gpt: "GPT 参数",
+  proxy: "代理",
+  dictionary: "字典",
+  internals: "内部参数",
+  _root: "其他",
+  externals: "外部信息",
+};
+
 export function ProjectConfigPage() {
   const [config, setConfig] = createSignal<Record<string, ConfigValue>>({});
   const [schemaDesc, setSchemaDesc] = createSignal<Record<string, string>>({});
@@ -217,6 +256,8 @@ export function ProjectConfigPage() {
   const [saving, setSaving] = createSignal(false);
   // 翻译规范文件下拉选项（translation_guidelines 目录下的文件名）
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
+  // 文件格式插件下拉选项（plugins 目录下 type 为 file 的插件名）
+  const [filePlugins, setFilePlugins] = createSignal<string[]>([]);
   // 当前翻译规范值（响应式读取，供固定卡片展示）
   const guidelineCurrent = () => String(getValue(GUIDELINE_KEY) ?? "");
 
@@ -249,6 +290,17 @@ export function ProjectConfigPage() {
       fetchTranslationGuidelines()
         .then((list) => setGuidelines(list))
         .catch(() => setGuidelines([]));
+      // 文件格式插件下拉选项（与配置加载并行，失败不阻塞主配置）
+      fetchPlugins()
+        .then((plugins) =>
+          setFilePlugins(
+            plugins
+              .filter((p) => p.type === "file")
+              .map((p) => p.name)
+              .sort(),
+          ),
+        )
+        .catch(() => setFilePlugins([]));
     } catch (e) {
       toast.error(`加载配置失败: ${getErrorMessage(e)}`);
     } finally {
@@ -290,8 +342,10 @@ export function ProjectConfigPage() {
     function walk(obj: Record<string, ConfigValue>, prefix: string) {
       for (const [k, v] of Object.entries(obj)) {
         const key = prefix ? `${prefix}.${k}` : k;
-        // 这些键不进入通用列表（专用卡片/隐藏行），直接跳过，避免空分组标题
+        // 这些键不进入通用列表（专用卡片/隐藏行/「仅在无批次级元数据时启用」板块），直接跳过
         if (isOmittedFromList(key)) continue;
+        // 移入「仅在无批次级元数据时启用」板块，不出现在通用分组
+        if (CONDITIONAL_SECTION_KEYS.has(key)) continue;
         if (v !== null && typeof v === "object" && !Array.isArray(v)) {
           walk(v as Record<string, ConfigValue>, key);
         } else {
@@ -324,6 +378,245 @@ export function ProjectConfigPage() {
     _groupedSig = sig;
     return _groupedCache;
   };
+
+  /**
+   * 「仅在无批次级元数据时启用」板块的项：始终列出全部 CONDITIONAL_SECTION_KEYS，
+   * 不再因“后端 config 未含该键”而跳过。这些参数属于「退化分支才生效」的可配置项，
+   * 理应始终可被编辑；若 config 未显式声明（依赖默认值/精简配置），getValue 返回空，
+   * 输入框留空、用户填写后由 setValue 写回即可。原先的 v==="" 跳过会令板块在缺键配置下
+   * 永久隐藏、无法设置，属于设计缺陷。
+   */
+  const conditionalItems = (): [string, ConfigValue, string][] => {
+    const result: [string, ConfigValue, string][] = [];
+    for (const key of CONDITIONAL_SECTION_KEYS) {
+      const v = getValue(key);
+      let dtype = "scalar";
+      if (Array.isArray(v)) {
+        dtype =
+          v.length > 0 && typeof v[0] === "object" && v[0] !== null
+            ? "object-array"
+            : "array";
+      }
+      result.push([key, v, dtype]);
+    }
+    return result;
+  };
+
+  /** 单个配置项的渲染（通用列表与「仅在无批次级元数据时启用」板块共用） */
+  function renderFieldRow(item: [string, ConfigValue, string]) {
+    const [key, , dtype] = item;
+    // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
+    if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
+    // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理
+    if (HIDDEN_CONFIG_KEYS.has(key)) return <></>;
+    // 动态句数调整：仅暴露“是否启用”开关（开→存 上限/4，关→存 0；后端 _coerce_bool 照常识别启用/禁用）
+    if (key === DYNAMIC_NUM_KEY) {
+      const enabled = !!getValue(DYNAMIC_NUM_KEY);
+      const maxVal = Number(getValue(DYNAMIC_MAX_KEY)) || 64;
+      const defaultPerRequest = Math.floor(maxVal / 4);
+      return (
+        <div class="pc-row">
+          <div class="pc-row-label">
+            <span class="pc-label">是否启用动态句数调整</span>
+            <div class="pc-key-hint">
+              <code class="pc-key">{key}</code>
+            </div>
+            <p class="pc-desc">
+              启用后初始每次请求句数 = 上限/4（当前 {defaultPerRequest}
+              ），并根据解析错误自动调节，无需手填。
+            </p>
+          </div>
+          <div class="pc-row-control">
+            <label class="settings-toggle">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) =>
+                  setValue(
+                    DYNAMIC_NUM_KEY,
+                    e.currentTarget.checked ? defaultPerRequest : 0,
+                  )
+                }
+              />
+              <span class="settings-toggle-knob" />
+            </label>
+          </div>
+        </div>
+      );
+    }
+    // 文件格式插件：从 plugins 目录读取文件名作为下拉选项
+    if (key === "plugin.filePlugin") {
+      const currentVal = String(getValue(key) ?? "");
+      return (
+        <div class="pc-row">
+          <div class="pc-row-label">
+            <span class="pc-label">{getFieldLabel(key)}</span>
+            <div class="pc-key-hint">
+              <code class="pc-key">{key}</code>
+            </div>
+            <Show when={getFieldHint(key)}>
+              <p class="pc-desc">{getFieldHint(key)}</p>
+            </Show>
+          </div>
+          <div class="pc-row-control">
+            <select
+              class="field__input pc-input pc-select"
+              value={currentVal}
+              onChange={(e) => setValue(key, e.currentTarget.value)}
+            >
+              <option value="">（无）</option>
+              <For each={filePlugins()}>
+                {(name) => <option value={name}>{name}</option>}
+              </For>
+            </select>
+          </div>
+        </div>
+      );
+    }
+    const type = inferType(key);
+    const val = getValue(key);
+    const isNonScalar = dtype === "object-array" || dtype === "array";
+    return (
+      <div class="pc-row">
+        <div class="pc-row-label">
+          <span class="pc-label">{getFieldLabel(key)}</span>
+          <div class="pc-key-hint">
+            <code class="pc-key">{key}</code>
+          </div>
+          <Show when={getFieldHint(key)}>
+            <p class="pc-desc">{getFieldHint(key)}</p>
+          </Show>
+        </div>
+        <div class="pc-row-control">
+          <Show
+            when={!isNonScalar && type !== "boolean"}
+            fallback={
+              isNonScalar ? (
+                <input
+                  class="field__input pc-input pc-input--readonly"
+                  type="text"
+                  value={formatNonScalarValue(val, dtype)}
+                  readOnly
+                  title="此字段为数组/对象，请在编辑提示词或直接编辑配置文件修改"
+                />
+              ) : (
+                <label class="settings-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!!val}
+                    onChange={(e) => setValue(key, e.currentTarget.checked)}
+                  />
+                  <span class="settings-toggle-knob" />
+                </label>
+              )
+            }
+          >
+            <Switch>
+              {/* 纯离散枚举 → 下拉选择 */}
+              <Match when={getControlType(key) === "enum"}>
+                <select
+                  class="field__input pc-input pc-select"
+                  value={String(val ?? "")}
+                  onChange={(e) => setValue(key, e.currentTarget.value)}
+                >
+                  {getEnumOptions(key).map((opt) => (
+                    <option value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </Match>
+              {/* 关键字 + 数值范围混合：如 apiErrorWait [auto/0-120] → 选 auto 或填 0–120 */}
+              <Match when={getControlType(key) === "hybrid"}>
+                <div class="pc-hybrid">
+                  <select
+                    class="field__input pc-input pc-select pc-select--sm"
+                    value={
+                      isHybridCustom(key, val)
+                        ? "__custom__"
+                        : String(val ?? "")
+                    }
+                    onChange={(e) => {
+                      const v = e.currentTarget.value;
+                      if (v === "__custom__") {
+                        setValue(key, getHybrid(key)?.min ?? 0);
+                      } else {
+                        setValue(key, v);
+                      }
+                    }}
+                  >
+                    {getHybrid(key)?.keywords.map((kw) => (
+                      <option value={kw}>{keywordLabel(kw)}</option>
+                    ))}
+                    <option value="__custom__">
+                      自定义（{getHybrid(key)?.min ?? 0}–
+                      {getHybrid(key)?.max ?? 0}）
+                    </option>
+                  </select>
+                  <Show when={isHybridCustom(key, val)}>
+                    <input
+                      class="field__input pc-input pc-input--num"
+                      type="number"
+                      min={getHybrid(key)?.min ?? 0}
+                      max={getHybrid(key)?.max ?? 0}
+                      value={Number(val ?? 0)}
+                      onInput={(e) =>
+                        setValue(
+                          key,
+                          e.currentTarget.value === ""
+                            ? 0
+                            : Number(e.currentTarget.value),
+                        )
+                      }
+                    />
+                  </Show>
+                </div>
+              </Match>
+              {/* 纯数值范围 / 数值 → 带上下限的数字框 */}
+              <Match
+                when={
+                  getControlType(key) === "range" ||
+                  getControlType(key) === "number"
+                }
+              >
+                <input
+                  class="field__input pc-input"
+                  type="number"
+                  min={getRange(key)?.min}
+                  max={getRange(key)?.max}
+                  value={String(val ?? "")}
+                  onInput={(e) =>
+                    setValue(
+                      key,
+                      e.currentTarget.value === ""
+                        ? ""
+                        : Number(e.currentTarget.value),
+                    )
+                  }
+                />
+              </Match>
+              {/* 时间范围 → 时间选择器 */}
+              <Match when={getControlType(key) === "time"}>
+                <input
+                  class="field__input pc-input"
+                  type="time"
+                  value={String(val ?? "")}
+                  onInput={(e) => setValue(key, e.currentTarget.value)}
+                />
+              </Match>
+              {/* 其余文本 */}
+              <Match when={getControlType(key) === "text"}>
+                <input
+                  class="field__input pc-input"
+                  type="text"
+                  value={String(val ?? "")}
+                  onInput={(e) => setValue(key, e.currentTarget.value)}
+                />
+              </Match>
+            </Switch>
+          </Show>
+        </div>
+      </div>
+    );
+  }
 
   /** 将后端 schema 注释拆分为「标签 + 可选值」：注释形如 "说明文字。[a/b/c]" */
   function parseComment(raw?: string): { label: string; allowed?: string } {
@@ -435,28 +728,58 @@ export function ProjectConfigPage() {
     });
   }
 
+  /**
+   * 读取点分键对应的值。config 中 common / dictionary 等段实际使用「扁平点分键」
+   * （如 common["gpt.numPerRequestTranslate"]），而非嵌套对象。遍历时若当前段不是
+   * 精确子键，则尝试把剩余路径拼成扁平点分键命中（如 common.gpt.numPerRequestTranslate
+   * → common["gpt.numPerRequestTranslate"]），从而兼容两类写法。
+   */
   function getValue(key: string): ConfigValue | "" {
     const parts = key.split(".");
-    let v: Record<string, ConfigValue> = config();
-    for (const p of parts) {
+    let v: ConfigValue = config();
+    for (let i = 0; i < parts.length; i++) {
       if (v == null || typeof v !== "object" || Array.isArray(v)) return "";
-      v = v[p] as Record<string, ConfigValue>;
+      const node = v as Record<string, ConfigValue>;
+      const seg = parts[i];
+      if (seg in node) {
+        v = node[seg];
+      } else {
+        // 兼容扁平点分键：剩余路径拼成单个键（如 gpt.numPerRequestTranslate）
+        const flat = parts.slice(i).join(".");
+        if (flat in node) {
+          v = node[flat];
+          break;
+        }
+        return "";
+      }
     }
     return v !== undefined && v !== null ? v : "";
   }
 
+  /**
+   * 写入点分键。兼容扁平点分键：遍历到某段时，若剩余路径拼成的扁平键已存在于当前层，
+   * 则直接写入该扁平键（如 common.gpt.numPerRequestTranslate → common["gpt.numPerRequestTranslate"]），
+   * 避免误建嵌套对象导致原扁平键失联、值写不到正确位置。
+   */
   function setValue(key: string, value: ConfigValue) {
     const parts = key.split(".");
     setConfig((prev) => {
       const next = { ...prev };
       let cur: Record<string, ConfigValue> = next;
       for (let i = 0; i < parts.length - 1; i++) {
-        const k = parts[i];
-        if (cur[k] == null || typeof cur[k] !== "object" || Array.isArray(cur[k])) {
-          cur[k] = {};
+        const seg = parts[i];
+        const flat = parts.slice(i).join(".");
+        if (cur[seg] != null && typeof cur[seg] === "object" && !Array.isArray(cur[seg])) {
+          cur[seg] = { ...(cur[seg] as Record<string, ConfigValue>) };
+          cur = cur[seg] as Record<string, ConfigValue>;
+        } else if (flat in cur) {
+          // 命中扁平点分键，直接整体写入剩余路径对应的键
+          cur[flat] = value;
+          return next;
+        } else {
+          cur[seg] = {};
+          cur = cur[seg] as Record<string, ConfigValue>;
         }
-        cur[k] = { ...(cur[k] as Record<string, ConfigValue>) };
-        cur = cur[k] as Record<string, ConfigValue>;
       }
       cur[parts[parts.length - 1]] = value;
       return next;
@@ -585,11 +908,25 @@ export function ProjectConfigPage() {
             </div>
           </div>
 
+          {/* 「仅在无批次级元数据时启用」：这些项在有批次级元数据（ForBatchMetaData）时
+              被 force_static 等逻辑强制忽略，仅无元数据的退化分支生效 */}
+          <Show when={conditionalItems().length > 0}>
+            <div class="pc-group">
+              <h3 class="pc-group-title">仅在无批次级元数据时启用</h3>
+              <p class="pc-desc">
+                以下参数仅在「无批次级元数据」的退化分支生效；使用批次级元数据（ForBatchMetaData）时将被强制忽略，由批次划分逻辑接管。
+              </p>
+              <For each={conditionalItems()}>
+                {(item) => renderFieldRow(item)}
+              </For>
+            </div>
+          </Show>
+
           <div class="pc-field-list">
             <For each={groupedKeys()}>
               {([group, items]) => (
                 <div class="pc-group">
-                  <h3 class="pc-group-title">{group}</h3>
+                  <h3 class="pc-group-title">{GROUP_LABELS[group] || group}</h3>
                   <Show when={group === "backendSpecific"}>
                     <div class="pc-global-banner">
                       <div class="pc-global-banner__text">
@@ -604,191 +941,7 @@ export function ProjectConfigPage() {
                     </div>
                   </Show>
                   <For each={items}>
-                    {(item) => {
-                      const [key, , dtype] = item;
-                      // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
-                      if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
-                      // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理
-                      if (HIDDEN_CONFIG_KEYS.has(key)) return <></>;
-                      // 动态句数调整：仅暴露“是否启用”开关（开→存 上限/4，关→存 0；后端 _coerce_bool 照常识别启用/禁用）
-                      if (key === DYNAMIC_NUM_KEY) {
-                        const enabled = !!getValue(DYNAMIC_NUM_KEY);
-                        const maxVal = Number(getValue(DYNAMIC_MAX_KEY)) || 64;
-                        const defaultPerRequest = Math.floor(maxVal / 4);
-                        return (
-                          <div class="pc-row">
-                            <div class="pc-row-label">
-                              <span class="pc-label">是否启用动态句数调整</span>
-                              <div class="pc-key-hint">
-                                <code class="pc-key">{key}</code>
-                              </div>
-                              <p class="pc-desc">
-                                启用后初始每次请求句数 = 上限/4（当前 {defaultPerRequest}
-                                ），并根据解析错误自动调节，无需手填。
-                              </p>
-                            </div>
-                            <div class="pc-row-control">
-                              <label class="settings-toggle">
-                                <input
-                                  type="checkbox"
-                                  checked={enabled}
-                                  onChange={(e) =>
-                                    setValue(
-                                      DYNAMIC_NUM_KEY,
-                                      e.currentTarget.checked ? defaultPerRequest : 0,
-                                    )
-                                  }
-                                />
-                                <span class="settings-toggle-knob" />
-                              </label>
-                            </div>
-                          </div>
-                        );
-                      }
-                      const type = inferType(key);
-                      const val = getValue(key);
-                      const isNonScalar = dtype === "object-array" || dtype === "array";
-                      return (
-                        <div class="pc-row">
-                          <div class="pc-row-label">
-                            <span class="pc-label">{getFieldLabel(key)}</span>
-                            <div class="pc-key-hint">
-                              <code class="pc-key">{key}</code>
-                            </div>
-                            <Show when={getFieldHint(key)}>
-                              <p class="pc-desc">{getFieldHint(key)}</p>
-                            </Show>
-                          </div>
-                          <div class="pc-row-control">
-                            <Show
-                              when={!isNonScalar && type !== "boolean"}
-                              fallback={
-                                isNonScalar ? (
-                                  <input
-                                    class="field__input pc-input pc-input--readonly"
-                                    type="text"
-                                    value={formatNonScalarValue(val, dtype)}
-                                    readOnly
-                                    title="此字段为数组/对象，请在编辑提示词或直接编辑配置文件修改"
-                                  />
-                                ) : (
-                                  <label class="settings-toggle">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!val}
-                                      onChange={(e) => setValue(key, e.currentTarget.checked)}
-                                    />
-                                    <span class="settings-toggle-knob" />
-                                  </label>
-                                )
-                              }
-                            >
-                              <Switch>
-                                {/* 纯离散枚举 → 下拉选择 */}
-                                <Match when={getControlType(key) === "enum"}>
-                                  <select
-                                    class="field__input pc-input pc-select"
-                                    value={String(val ?? "")}
-                                    onChange={(e) => setValue(key, e.currentTarget.value)}
-                                  >
-                                    {getEnumOptions(key).map((opt) => (
-                                      <option value={opt.value}>{opt.label}</option>
-                                    ))}
-                                  </select>
-                                </Match>
-                                {/* 关键字 + 数值范围混合：如 apiErrorWait [auto/0-120] → 选 auto 或填 0–120 */}
-                                <Match when={getControlType(key) === "hybrid"}>
-                                  <div class="pc-hybrid">
-                                    <select
-                                      class="field__input pc-input pc-select pc-select--sm"
-                                      value={
-                                        isHybridCustom(key, val)
-                                          ? "__custom__"
-                                          : String(val ?? "")
-                                      }
-                                      onChange={(e) => {
-                                        const v = e.currentTarget.value;
-                                        if (v === "__custom__") {
-                                          setValue(key, getHybrid(key)?.min ?? 0);
-                                        } else {
-                                          setValue(key, v);
-                                        }
-                                      }}
-                                    >
-                                      {getHybrid(key)?.keywords.map((kw) => (
-                                        <option value={kw}>{keywordLabel(kw)}</option>
-                                      ))}
-                                      <option value="__custom__">
-                                        自定义（{getHybrid(key)?.min ?? 0}–
-                                        {getHybrid(key)?.max ?? 0}）
-                                      </option>
-                                    </select>
-                                    <Show when={isHybridCustom(key, val)}>
-                                      <input
-                                        class="field__input pc-input pc-input--num"
-                                        type="number"
-                                        min={getHybrid(key)?.min ?? 0}
-                                        max={getHybrid(key)?.max ?? 0}
-                                        value={Number(val ?? 0)}
-                                        onInput={(e) =>
-                                          setValue(
-                                            key,
-                                            e.currentTarget.value === ""
-                                              ? 0
-                                              : Number(e.currentTarget.value),
-                                          )
-                                        }
-                                      />
-                                    </Show>
-                                  </div>
-                                </Match>
-                                {/* 纯数值范围 / 数值 → 带上下限的数字框 */}
-                                <Match
-                                  when={
-                                    getControlType(key) === "range" ||
-                                    getControlType(key) === "number"
-                                  }
-                                >
-                                  <input
-                                    class="field__input pc-input"
-                                    type="number"
-                                    min={getRange(key)?.min}
-                                    max={getRange(key)?.max}
-                                    value={String(val ?? "")}
-                                    onInput={(e) =>
-                                      setValue(
-                                        key,
-                                        e.currentTarget.value === ""
-                                          ? ""
-                                          : Number(e.currentTarget.value),
-                                      )
-                                    }
-                                  />
-                                </Match>
-                                {/* 时间范围 → 时间选择器 */}
-                                <Match when={getControlType(key) === "time"}>
-                                  <input
-                                    class="field__input pc-input"
-                                    type="time"
-                                    value={String(val ?? "")}
-                                    onInput={(e) => setValue(key, e.currentTarget.value)}
-                                  />
-                                </Match>
-                                {/* 其余文本 */}
-                                <Match when={getControlType(key) === "text"}>
-                                  <input
-                                    class="field__input pc-input"
-                                    type="text"
-                                    value={String(val ?? "")}
-                                    onInput={(e) => setValue(key, e.currentTarget.value)}
-                                  />
-                                </Match>
-                              </Switch>
-                            </Show>
-                          </div>
-                        </div>
-                      );
-                    }}
+                    {(item) => renderFieldRow(item)}
                   </For>
                 </div>
               )}

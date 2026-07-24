@@ -178,10 +178,7 @@ class CProjectConfig:
             return self.projectConfig["plugin"]["textPlugins"]
 
     def getFilePlugin(self) -> str:
-        if "plugin" not in self.projectConfig:
-            return "file_galtransl_json"
-        else:
-            return self.projectConfig["plugin"]["filePlugin"]
+        return self.projectConfig.get("plugin", {}).get("filePlugin", "file_galtransl_json")
 
     def getInputPath(self) -> str:
         return self.inputPath
