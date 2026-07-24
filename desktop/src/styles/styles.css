@@ -1693,6 +1693,7 @@ textarea {
   overflow: hidden;
   resize: none;
   max-height: 280px;
+  field-sizing: content;
   /* 隐藏滚动条 */
   scrollbar-width: none;
 }

@@ -150,18 +150,19 @@ function generateColorAt(index: number, config: ThemeConfig): string {
 function getNameColor(name: string): string {
   if (!name) return "#999";
   const idx = hashId(name) % 10000;
-  // 检测当前主题
-  const isDark = document.documentElement.classList.contains("dark") ||
-    document.documentElement.getAttribute("data-theme") === "dark" ||
-    window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return generateColorAt(idx, isDark ? DARK_THEME : LIGHT_THEME);
+  return generateColorAt(idx, _IS_DARK_THEME ? DARK_THEME : LIGHT_THEME);
 }
+
+// 模块级主题缓存——避免每次调用 getNameColor 都查 DOM
+const _IS_DARK_THEME =
+  typeof document !== "undefined" &&
+  (document.documentElement.classList.contains("dark") ||
+    document.documentElement.getAttribute("data-theme") === "dark" ||
+    window.matchMedia("(prefers-color-scheme: dark)").matches);
 
 /* ── 单条 CacheEntry 组件 ── */
 function EntryCard(props: {
   entry: CacheEntry;
-  expanded: boolean;
-  onToggleExpand: () => void;
   onSkip: () => void;
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
@@ -173,17 +174,13 @@ function EntryCard(props: {
   // 角色名颜色：同一名字确定性映射到同色
   const nameColor = createMemo(() => getNameColor(String(e().name || "")));
 
-  // 译文多行文本框：随内容自动增高（单行 <input> 会吞掉换行，故改为 <textarea>）
-  let dstRef: HTMLTextAreaElement | undefined;
-  const autoGrowDst = (el: HTMLTextAreaElement | undefined) => {
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  };
-  // 译文内容变化（键入 / 重载 / 排序切条）时重新适配高度
+  // 本地展开状态——仅影响自身，不再触发全量重算
+  const [expanded, setExpanded] = createSignal(false);
+
+  // 本地译文草稿——键入时只更新此信号，不触发父级 entries 级联重算，仅在失焦时提交
+  const [draftDst, setDraftDst] = createSignal(e().pre_dst ?? "");
   createEffect(() => {
-    void e().pre_dst;
-    autoGrowDst(dstRef);
+    setDraftDst(() => e().pre_dst ?? "");
   });
 
   return (
@@ -225,21 +222,22 @@ function EntryCard(props: {
             {toVisibleNewlines(e().pre_src)}
           </div>
           <textarea
-            ref={dstRef}
             class="entry-dst-input"
             rows="1"
-            value={toVisibleNewlines(e().pre_dst)}
+            value={toVisibleNewlines(draftDst())}
             onInput={(ev) => {
-              props.onFieldChange("pre_dst", ev.currentTarget.value);
-              autoGrowDst(ev.currentTarget);
+              setDraftDst(ev.currentTarget.value);
             }}
-            onBlur={props.onBlur}
+            onBlur={() => {
+              props.onFieldChange("pre_dst", draftDst());
+              props.onBlur();
+            }}
           />
         </div>
 
         {/* 右侧操作按钮 */}
         <div class="entry-actions">
-          <button class="entry-btn" title="展开/收起全部字段" onClick={props.onToggleExpand}>
+          <button class="entry-btn" title="展开/收起全部字段" onClick={() => setExpanded((v) => !v)}>
             <svg
               width="14"
               height="14"
@@ -248,7 +246,7 @@ function EntryCard(props: {
               stroke="currentColor"
               stroke-width="2"
             >
-              <path d={props.expanded ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+              <path d={expanded() ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
             </svg>
             <span class="entry-btn-text">展开</span>
           </button>
@@ -283,7 +281,7 @@ function EntryCard(props: {
       </div>
 
       {/* ── 展开全部字段 ── */}
-      <Show when={props.expanded}>
+      <Show when={expanded()}>
         <div class="entry-expanded">
           {ALL_FIELDS.map((field) => {
             const val = e()[field.key];
@@ -404,7 +402,6 @@ const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
 export function ReviewPage() {
   const [entries, setEntries] = createSignal<CacheEntry[]>([]);
   const [loading, setLoading] = createSignal(false);
-  const [expandedSet, setExpandedSet] = createSignal<Set<number>>(new Set());
   const [jumpValue, setJumpValue] = createSignal("");
 
   // ── 模式由打开文件所在的缓存子目录隐式决定，无需手动切换 ──
@@ -460,8 +457,8 @@ export function ReviewPage() {
   const [findOpen, setFindOpen] = createSignal(false);
   const [findQuery, setFindQuery] = createSignal("");
 
-  // 根据查找条件过滤条目
-  const filteredEntries = () => {
+  // 根据查找条件过滤条目（createMemo 避免模板中三次调用重复遍历）
+  const filteredEntries = createMemo(() => {
     const q = findQuery().toLowerCase().trim();
     if (!q) return entries();
     return entries().filter(
@@ -470,7 +467,7 @@ export function ReviewPage() {
         (e.pre_dst && e.pre_dst.toLowerCase().includes(q)) ||
         (e.problem && e.problem.toLowerCase().includes(q)),
     );
-  };
+  });
 
   function handleFindInFile() {
     setFindOpen(!findOpen());
@@ -605,7 +602,6 @@ export function ReviewPage() {
           setEntries(all);
         }
         loadedFile = file;                                        // 记录 entries() 当前所属文件
-        setExpandedSet(new Set<number>());
       })
       .catch(() => {
         // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
@@ -718,15 +714,6 @@ export function ReviewPage() {
           saveMeta();
         }
       });
-  }
-
-  function toggleExpand(index: number) {
-    setExpandedSet((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
   }
 
   function handleFieldChange(serial: number, field: string, value: string) {
@@ -954,8 +941,6 @@ export function ReviewPage() {
                   <div id={`entry-${entry.index}`}>
                     <EntryCard
                       entry={entry}
-                      expanded={expandedSet().has(entry.index)}
-                      onToggleExpand={() => toggleExpand(entry.index)}
                       onSkip={() => handleSkip(entry.index)}
                       onDelete={() => handleDelete(entry.index)}
                       onFieldChange={(field, value) => handleFieldChange(entry.index, field, value)}
