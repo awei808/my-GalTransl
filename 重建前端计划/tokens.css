@@ -1,7 +1,10 @@
 /* ==========================================
-   GalTransl Desktop — Design Tokens
+   GalTransl Desktop — Design Tokens（规划稿，⚠️ 已落地为 desktop/src/styles/styles.css）
    基于 VSCode 风格，适配翻译工作流
    8px 网格系统 · 双主题 @media + data-theme
+   ---
+   2026-07-23 修订：本文件为重建前规划稿，实际设计系统已落地于
+   desktop/src/styles/styles.css（变量名/取值以该文件为准）。此文件仅作历史参考。
    ========================================== */
 
 /* ==========================================

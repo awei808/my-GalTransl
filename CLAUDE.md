@@ -35,6 +35,8 @@ python build_release.py --skip-be    # 仅前端（跳过后端）
 python build_release.py --clean      # 构建前清理旧产物
 python build_release.py --no-zip     # 不创建 zip 压缩包
 
+注意：构建脚本会在 `.venv-build` 目录下**强制清理并重建虚拟环境**、重装全量依赖（`requirements.txt`，含 PyInstaller），即每次构建都从干净环境开始，避免复用半失败残留触发外部删除钩子。因此即使不带 `--clean`，venv 也会被重建；`--clean` 仅额外清理其他构建产物。
+
 # 桌面端开发
 cd desktop && npm install && npm run tauri dev
 # 或使用批处理一键启动（Windows）：run_desktop_dev.bat
@@ -93,7 +95,7 @@ cd desktop && npm run format         # Prettier 格式化
 | `GalTransl/Problem.py` | 翻译后问题检测：词频、标点错误、日文残留、换行问题、长度不匹配、字典合规性、编码问题。 |
 | `GalTransl/Loader.py` | 将输入 JSON（文件路径、JSON 字符串或列表）解析为 `CTransList`（`CSentense` 对象列表）。 |
 | `GalTransl/GTPlugin.py` | 插件基类：`GTextPlugin`（4 个钩子：before/after_src_processed、before/after_dst_processed）和 `GFilePlugin`（load_file/save_file）。 |
-| `GalTransl/server.py` | 桌面端的 HTTP REST API 服务器。`ThreadingHTTPServer` 在 127.0.0.1:12333。提供项目管理、翻译任务、运行时进度、字典编辑的端点。 |
+| `GalTransl/server.py` | 桌面端的 HTTP REST API 服务器。`ThreadingHTTPServer` 在 127.0.0.1:12333。提供项目管理、翻译任务、运行时进度、字典编辑的端点；另含 `GET /api/projects/:id/config-schema`（配置参数路径→注释描述映射，供前端设置界面显示参数解释）与 `GET /api/projects/:id/problems`（返回问题检测结果列表）、`GET /api/problem-types`（支持的问题类型清单）。 |
 | `GalTransl/server_runtime.py` | 运行时状态追踪：`RuntimeRegistry`（服务端模式下每个项目的状态）、`RuntimeProgressCache`（缓存文件进度解析）、retranslKey 感知的进度计算。 |
 | `GalTransl/i18n.py` | 通过 `get_text()` 提供国际化字符串（zh-cn、en）。 |
 
@@ -211,7 +213,7 @@ desktop/src/
     review/ReviewPage.tsx   # 校对页面
     dictionary/DictionaryPage.tsx   # 字典编辑器
     settings/SettingsPage.tsx       # 全局设置
-    project-config/ProjectConfigPage.tsx  # 项目配置编辑
+    project-config/ProjectConfigPage.tsx  # 项目配置编辑（AI 令牌等 OpenAI 兼容参数已隐藏，显示横幅引导至「后端配置」页统一管理，避免与 config.yaml 的 tokens 产生歧义）
     wizard/NewProjectWizard.tsx     # 新建项目向导（5 步骤）
     backends/BackendProfilesPage.tsx # 后端配置管理
     plugins/PluginsPage.tsx  # 插件管理
@@ -229,9 +231,12 @@ desktop/src/
 
 ### 全局快捷键
 
-| 快捷键 | 功能 |
-|---|---|
-| Ctrl+F | 在文件中查找 |
-| Ctrl+H | 打开查找替换侧边栏 |
-| Ctrl+B | 切换侧边栏 |
-| Ctrl+S | 保存当前文件 |
+> 以下快捷键在 `App.tsx` 的 `handleGlobalKeyDown` 全局监听中处理。其中 `Ctrl+Z/Y` 仅在校对审核页（`ReviewPage.tsx`）内生效（依赖 `undoStore` 撤销/重做栈），其余为全局生效。
+
+| 快捷键 | 功能 | 作用域 |
+|---|---|---|
+| Ctrl+F | 在当前文件内查找（弹出查找浮层，校对页监听 `galtransl:find-in-file` 事件） | 全局（浮层在校对页内呈现） |
+| Ctrl+H | 打开查找替换侧边栏 | 全局 |
+| Ctrl+B | 切换侧边栏 | 全局 |
+| Ctrl+S | 保存当前文件（dispatch `galtransl:save` 事件） | 全局 |
+| Ctrl+Z / Ctrl+Y | 在校对审核页撤销 / 重做 | 仅校对审核页 |
