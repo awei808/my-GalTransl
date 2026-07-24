@@ -430,15 +430,13 @@ function ProblemList() {
 
   createEffect(() => {
     const pid = appState.activeProjectId;
-    const file = appState.activeFilePath;
-    void appState.cacheVersion; // 依赖：文件切换 / 编辑保存后缓存变化 → 刷新问题列表
+    void appState.cacheVersion; // 依赖：缓存变化 → 刷新问题列表
     if (!pid || appState.sidebarTab !== "problems") {
       setProblems([]);
       return;
     }
-    // 当前打开了翻译文件则只查该文件（跟随文件），否则查整个项目
-    const filter = file && file.includes("pass3_cache") ? file : undefined;
-    fetchProjectProblems(pid, filter)
+    // 查整个项目的问题，不按当前文件过滤（问题列表按文件名分组，已足够区分）
+    fetchProjectProblems(pid)
       .then((res) => {
         setProblems(res.problems ?? []);
       })
@@ -460,7 +458,8 @@ function ProblemList() {
     setAppState({
       activeView: "review",
       activeFilePath: filename,
-      sidebarTab: "explorer",
+      // 不切换 sidebarTab：用户点击问题条目后应留在问题面板继续查阅，
+      // 而非被强制切到文件浏览器。文件浏览器可在需要时手动切换。
     });
     // TODO: navigate to specific index
   }

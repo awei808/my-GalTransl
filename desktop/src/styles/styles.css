@@ -276,7 +276,15 @@ textarea {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  /* overflow 不设：剪裁由外层 .sidebar-column 的 overflow:hidden 负责，
+     子元素 .sidebar-content 需要 overflow-y:auto 来显示垂直滚动条，
+     父级设 overflow:hidden 会剪裁掉滚动条。 */
+}
+
+/* SidebarPanel 拖拽 wrapper：继承父级 .sidebar-column 的高度，
+   否则 .sidebar-panel 的 height:100% 会失效导致子元素无法滚动。 */
+.sidebar-wrapper {
+  height: 100%;
 }
 
 .sidebar-header {
@@ -294,6 +302,53 @@ textarea {
   padding: var(--space-1);
   overflow-y: auto;
   flex: 1;
+}
+
+/* 问题检测列表 */
+.problem-group {
+  margin-bottom: var(--space-2);
+}
+
+.problem-filename {
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  padding: var(--space-05) var(--space-1);
+  border-bottom: 1px solid var(--color-border-default);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.problem-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-05) var(--space-1);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.problem-entry:hover {
+  background: var(--color-bg-panel);
+}
+
+.problem-index {
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  min-width: 2.5em;
+}
+
+.problem-desc {
+  flex: 1;
+  font-size: var(--font-sm);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 文件树（类 VSCode） ── */
