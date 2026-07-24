@@ -1661,6 +1661,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 failed_markers=("(Failed)", "(翻译失败)"),
                 h_words_list=H_WORDS_LIST,
                 ensure_last_translations=True,
+                force_static=True,  # 有元数据：禁用动态模式，段内不沿 numPerRequestTranslate 切
             )
             merged.extend(res)
         return merged

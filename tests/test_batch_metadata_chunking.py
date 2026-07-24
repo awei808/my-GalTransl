@@ -7,6 +7,9 @@
    「每批次仅提供本批涉及的区间指导」（不再声称后续轮次不重复）。
 3. _build_round_user_content：续轮（is_first_round=False）也会把 batch_metadata_block
    前置注入（CP3 去门控）。
+4. 动态模式隔离：动态句数调整（dynamic_num_per_request）只在「无批次级元数据」的
+   退化分支启用；有元数据时强制 force_static 禁用动态，大段不沿 numPerRequestTranslate
+   子切，且不应污染全局动态状态。
 
 不依赖网络/API；通过 unbound 调用真实方法 + MagicMock 提供 self 完成测试。
 """
@@ -19,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 REPO_ROOT = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, REPO_ROOT)
 
+from GalTransl.Backend.BaseTranslate import BaseTranslate  # noqa: E402
 from GalTransl.Backend.ForGalJsonMulitChat import (  # noqa: E402
     BatchMetadata,
     ForGalJsonMulitChat,
@@ -311,6 +315,137 @@ class TestBatchTranslateGrouping(unittest.IsolatedAsyncioTestCase):
             for c in inst._batch_translate_common.await_args_list
         ]
         self.assertEqual(groups_seen, groups)
+
+    async def test_grouped_segments_pass_force_static_true(self) -> None:
+        # 有批次元数据 → 调用 _batch_translate_common 应带 force_static=True（禁用动态）
+        bm = BatchMetadata(
+            id="f",
+            batches=[{"区间": [1, 99], "视角": "创", "h": False, "用词色彩": "y"}],
+        )
+        inst = _make_inst(bm)
+        inst._batch_translate_common = AsyncMock(return_value=["a"])
+        inst._group_by_batch_metadata.return_value = [["a", "b"]]
+        await ForGalJsonMulitChat.batch_translate(
+            inst,
+            filename="f",
+            cache_file_path="",
+            trans_list=[],
+            num_pre_request=16,
+            translist_unhit=["a", "b"],
+        )
+        inst._batch_translate_common.assert_awaited()
+        self.assertTrue(inst._batch_translate_common.call_args.kwargs["force_static"])
+
+    async def test_no_metadata_passes_force_static_false(self) -> None:
+        # 无批次元数据 → 退化分支应带 force_static=False（保留动态模式）
+        inst = _make_inst(None)
+        inst._batch_translate_common = AsyncMock(return_value=["a"])
+        await ForGalJsonMulitChat.batch_translate(
+            inst,
+            filename="f",
+            cache_file_path="",
+            trans_list=[],
+            num_pre_request=16,
+            translist_unhit=["a", "b"],
+        )
+        # 未显式传 force_static 即取默认 False（退化分支仍走动态模式）
+        self.assertFalse(
+            inst._batch_translate_common.call_args.kwargs.get("force_static", False)
+        )
+
+
+class TestDynamicModeOnlyWithoutMetadata(unittest.IsolatedAsyncioTestCase):
+    def _make_common_inst(self, dynamic: bool, dmax: int = 4, dmin: int = 1):
+        # 构造可真实调用 _batch_translate_common 的替身（绑定基类真实动态逻辑）
+        inst = MagicMock(spec=ForGalJsonMulitChat)
+        inst.dynamic_num_per_request = dynamic
+        inst.dynamic_num_per_request_max = dmax
+        inst.dynamic_num_per_request_min = dmin
+        inst._dynamic_num_per_request_current = None
+        inst._dynamic_num_per_request_success_streak = 0
+        inst.skipH = False
+        inst.save_steps = 10 ** 9
+        inst.pj_config = MagicMock()
+        inst.pj_config.bar = lambda n: None
+        inst._check_stop_requested = lambda: None
+        inst._record_runtime_success = lambda *a, **k: None
+        inst._coerce_positive_int = lambda v, d=1: max(d, int(v))
+
+        async def _translate(trans_list_split, dic_prompt, proofread=False, filename=""):
+            out = []
+            for t in trans_list_split:
+                t.pre_dst = ""
+                t.trans_by = ""
+                out.append(t)
+            return len(trans_list_split), out
+
+        inst.translate = AsyncMock(side_effect=_translate)
+        # 绑定基类真实方法，验证 force_static 对动态切片的实际影响
+        inst._get_effective_num_per_request = (
+            BaseTranslate._get_effective_num_per_request.__get__(inst)
+        )
+        inst._update_dynamic_num_per_request = (
+            BaseTranslate._update_dynamic_num_per_request.__get__(inst)
+        )
+        return inst
+
+    async def test_force_static_keeps_large_group_unsplit(self) -> None:
+        # 有元数据场景（force_static=True）：即便 dynamic 开启且 max=4，
+        # 10 行大段应作为单一单元（切片=10），且全局动态状态不被污染
+        inst = self._make_common_inst(dynamic=True, dmax=4)
+        trans = [_FakeTrans(i) for i in range(1, 11)]
+        await BaseTranslate._batch_translate_common(
+            inst,
+            filename="f",
+            cache_file_path="",
+            translist_unhit=trans,
+            num_pre_request=len(trans),
+            force_static=True,
+        )
+        self.assertEqual(inst.translate.await_count, 1)
+        split = inst.translate.call_args.args[0]
+        self.assertEqual(len(split), 10)
+        self.assertIsNone(inst._dynamic_num_per_request_current)
+
+    async def test_no_force_static_splits_under_dynamic(self) -> None:
+        # 对照：无 force_static（即无元数据退化分支）时，dynamic 开启会按 max 子切
+        inst = self._make_common_inst(dynamic=True, dmax=4)
+        trans = [_FakeTrans(i) for i in range(1, 11)]
+        await BaseTranslate._batch_translate_common(
+            inst,
+            filename="f",
+            cache_file_path="",
+            translist_unhit=trans,
+            num_pre_request=len(trans),
+        )
+        self.assertGreater(inst.translate.await_count, 1)
+
+
+class TestGetEffectiveNumPerRequest(unittest.TestCase):
+    def _make(self, dynamic: bool, dmax: int = 4, dmin: int = 1):
+        m = MagicMock()
+        m._coerce_positive_int = lambda v, d=1: max(d, int(v))
+        m.dynamic_num_per_request = dynamic
+        m.dynamic_num_per_request_max = dmax
+        m.dynamic_num_per_request_min = dmin
+        m._dynamic_num_per_request_current = None
+        return m
+
+    def test_dynamic_enabled_clamps_without_force(self) -> None:
+        # 无 force_static：dynamic 开启时大值被 clamp 到 max
+        m = self._make(dynamic=True, dmax=4)
+        self.assertEqual(BaseTranslate._get_effective_num_per_request(m, 10), 4)
+
+    def test_force_static_overrides_dynamic(self) -> None:
+        # 有 force_static：即便 dynamic 开启也返回配置值（大段不切）
+        m = self._make(dynamic=True, dmax=4)
+        self.assertEqual(
+            BaseTranslate._get_effective_num_per_request(m, 10, force_static=True), 10
+        )
+
+    def test_dynamic_disabled_returns_configured(self) -> None:
+        m = self._make(dynamic=False)
+        self.assertEqual(BaseTranslate._get_effective_num_per_request(m, 10), 10)
 
 
 if __name__ == "__main__":

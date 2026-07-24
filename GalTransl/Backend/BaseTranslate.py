@@ -212,9 +212,11 @@ class BaseTranslate:
             result = default
         return max(1, result)
 
-    def _get_effective_num_per_request(self, configured_value: int, proofread: bool = False) -> int:
+    def _get_effective_num_per_request(
+        self, configured_value: int, proofread: bool = False, force_static: bool = False
+    ) -> int:
         configured = self._coerce_positive_int(configured_value, 1)
-        if proofread or not self.dynamic_num_per_request:
+        if proofread or not self.dynamic_num_per_request or force_static:
             return configured
 
         if self._dynamic_num_per_request_current is None:
@@ -231,8 +233,9 @@ class BaseTranslate:
         trans_result: CTransList,
         filename: str,
         proofread: bool = False,
+        force_static: bool = False,
     ) -> None:
-        if proofread or not self.dynamic_num_per_request:
+        if proofread or not self.dynamic_num_per_request or force_static:
             return
 
         current = self._get_effective_num_per_request(requested_count, proofread=False)
@@ -590,6 +593,7 @@ class BaseTranslate:
         failed_markers: tuple[str, ...] = ("(Failed)",),
         h_words_list: Optional[List[str]] = None,
         ensure_last_translations: bool = False,
+        force_static: bool = False,
     ) -> CTransList:
         if len(translist_unhit) == 0:
             return []
@@ -615,6 +619,7 @@ class BaseTranslate:
             effective_num_pre_request = self._get_effective_num_per_request(
                 num_pre_request,
                 proofread=proofread,
+                force_static=force_static,
             )
             trans_list_split = (
                 translist_unhit[i : i + effective_num_pre_request]
@@ -678,6 +683,7 @@ class BaseTranslate:
                 trans_result=trans_result,
                 filename=filename,
                 proofread=proofread,
+                force_static=force_static,
             )
 
             result_output = ""
