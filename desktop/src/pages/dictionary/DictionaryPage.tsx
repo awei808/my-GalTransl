@@ -27,6 +27,7 @@ import {
   parseRows,
   rowsToText,
   getFieldLabels,
+  stripProjectDirMarker,
 } from "../../components/dict/dictUtils";
 import type { DictTab } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
@@ -52,7 +53,9 @@ export function DictionaryPage() {
   const [nameEntries, setNameEntries] = createSignal<NameEntry[]>([]);
   const [generating, setGenerating] = createSignal(false);
 
-  onCleanup(() => {});
+  onCleanup(() => {
+    doAutoSave();
+  });
 
   function onDictChange(value: string) {
     setDraftText(value);
@@ -62,13 +65,26 @@ export function DictionaryPage() {
     const key = selectedFile();
     if (!key || !pid()) return;
     try {
+      // 剥离 "{tab}_dict:" 前缀: "gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"
+      const fileKey = key.includes(":") ? key.split(":")[1] : key;
       await saveProjectDictionaryFile(pid()!, {
         config_file_name: getActiveConfigFileName(),
-        file_key: key,
+        file_key: fileKey,
         content: draftText(),
       });
+      // 保存成功后原地更新 data 中的 dict_contents，避免后续切文件读到旧快照
+      const snapshot = data();
+      if (snapshot && snapshot.dict_contents) {
+        const lookupKey = key.includes(":") ? key.split(":")[1] : key;
+        const saved = draftText().split("\n");
+        const entry = snapshot.dict_contents[lookupKey];
+        if (entry) {
+          entry.lines = saved;
+          entry.count = saved.length;
+        }
+      }
     } catch (e) {
-      console.error("自动保存字典失败", e);
+      toast.error(`自动保存失败: ${getErrorMessage(e)}`);
     }
   }
 
@@ -128,6 +144,7 @@ export function DictionaryPage() {
   }
 
   async function loadData() {
+    await doAutoSave();
     setLoading(true);
     try {
       if (!pid()) {
@@ -245,7 +262,9 @@ export function DictionaryPage() {
 
   function selectFile(fileKey: string) {
     setSelectedFile(fileKey);
-    const content = data()?.dict_contents?.[fileKey];
+    // dict_contents 的 key 不带 "{tab}_dict:" 前缀，查表前剥离
+    const lookupKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+    const content = data()?.dict_contents?.[lookupKey];
     setDraftText(content ? content.lines.join("\n") : "");
   }
 
@@ -271,6 +290,7 @@ export function DictionaryPage() {
   });
 
   async function handleCreate() {
+    await doAutoSave();
     const name = newFilename().trim();
     if (!name) return;
     setCreating(true);
@@ -303,18 +323,27 @@ export function DictionaryPage() {
     }
   }
 
+  function displayFileName(fileKey: string): string {
+    // fileKey 格式: "gpt_dict:(project_dir)文件名.txt" 或 "gpt_dict:文件名.txt"
+    const fileName = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+    return stripProjectDirMarker(fileName);
+  }
+
   async function handleDelete(fileKey: string) {
+    await doAutoSave();
     const result = await confirm.show({
       title: "删除字典文件",
-      message: `确定要删除「${fileKey}」吗？`,
+      message: `确定要删除「${displayFileName(fileKey)}」吗？`,
       tone: "danger",
     });
     if (!result.confirmed) return;
     try {
       if (pid()) {
+        // 剥离 "{tab}_dict:" 前缀: "gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"
+        const bareKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
         await deleteProjectDictionaryFile(pid()!, {
           config_file_name: getActiveConfigFileName(),
-          file_key: fileKey,
+          file_key: bareKey,
           delete_file: true,
         });
       } else {
@@ -343,7 +372,7 @@ export function DictionaryPage() {
           {(t) => (
             <button
               class={`dict-tab ${activeTab() === t.key ? "active" : ""}`}
-              onClick={() => setActiveTab(t.key)}
+              onClick={async () => { await doAutoSave(); setActiveTab(t.key); }}
             >
               {t.label}
             </button>
@@ -436,9 +465,9 @@ export function DictionaryPage() {
                   <div class="dict-file-item">
                     <div
                       class={`dict-file-name ${selectedFile() === key ? "selected" : ""}`}
-                      onClick={() => selectFile(key)}
+                      onClick={async () => { await doAutoSave(); selectFile(key); }}
                     >
-                      {f}
+                      {stripProjectDirMarker(f)}
                     </div>
                     <button class="dict-file-del" onClick={() => handleDelete(key)} title="删除此字典文件">
                       删除
@@ -475,7 +504,7 @@ export function DictionaryPage() {
               fallback={<div class="dict-editor-empty">请选择一个字典文件</div>}
             >
               <div class="dict-editor-header">
-                <span class="dict-editor-filename">{selectedFile()}</span>
+                <span class="dict-editor-filename">{displayFileName(selectedFile()!)}</span>
                 <div class="dict-editor-actions">
                   <button
                     class={`btn btn--sm ${viewMode() === "text" ? "btn--primary" : ""}`}
