@@ -9,6 +9,7 @@ import {
   deleteProjectDictionaryFile,
   fetchCommonDictionaryManager,
   createCommonDictionaryFile,
+  saveCommonDictionaryFile,
   deleteCommonDictionaryFile,
   fetchNameDict,
   fetchNameTable,
@@ -28,6 +29,7 @@ import {
   rowsToText,
   getFieldLabels,
   stripProjectDirMarker,
+  PROJECT_DIR_MARKER,
 } from "../../components/dict/dictUtils";
 import type { DictTab } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
@@ -40,7 +42,8 @@ const TABS: { key: string; label: string }[] = [
 ];
 
 export function DictionaryPage() {
-  const [data, setData] = createSignal<ProjectDictionaryManagerResponse | CommonDictionaryManagerResponse | null>(null);
+  const [data, setData] = createSignal<ProjectDictionaryManagerResponse | null>(null);
+  const [commonData, setCommonData] = createSignal<CommonDictionaryManagerResponse | null>(null);
   const [, setLoading] = createSignal(false);
   const [activeTab, setActiveTab] = createSignal<string>("gpt");
   const [selectedFile, setSelectedFile] = createSignal<string | null>(null);
@@ -63,17 +66,26 @@ export function DictionaryPage() {
 
   async function doAutoSave() {
     const key = selectedFile();
-    if (!key || !pid()) return;
+    if (!key) return;
     try {
       // 剥离 "{tab}_dict:" 前缀: "gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"
+      // 公共字典: "gpt_dict:文件名.txt" → "文件名.txt"
       const fileKey = key.includes(":") ? key.split(":")[1] : key;
-      await saveProjectDictionaryFile(pid()!, {
-        config_file_name: getActiveConfigFileName(),
-        file_key: fileKey,
-        content: draftText(),
-      });
-      // 保存成功后原地更新 data 中的 dict_contents，避免后续切文件读到旧快照
-      const snapshot = data();
+      const isProjectFile = fileKey.includes(PROJECT_DIR_MARKER);
+      if (pid() && isProjectFile) {
+        await saveProjectDictionaryFile(pid()!, {
+          config_file_name: getActiveConfigFileName(),
+          file_key: fileKey,
+          content: draftText(),
+        });
+      } else {
+        await saveCommonDictionaryFile({
+          filename: fileKey,
+          content: draftText(),
+        });
+      }
+      // 保存成功后原地更新对应 data 中的 dict_contents，避免后续切文件读到旧快照
+      const snapshot = isProjectFile ? data() : commonData();
       if (snapshot && snapshot.dict_contents) {
         const lookupKey = key.includes(":") ? key.split(":")[1] : key;
         const saved = draftText().split("\n");
@@ -149,7 +161,8 @@ export function DictionaryPage() {
     try {
       if (!pid()) {
         const res = await fetchCommonDictionaryManager();
-        setData(res);
+        setData(null);
+        setCommonData(res);
         return;
       }
 
@@ -159,12 +172,18 @@ export function DictionaryPage() {
         return;
       }
 
-      const res = await fetchProjectDictionaryManager(pid()!, getActiveConfigFileName());
-      setData(res);
+      const [projRes, commRes] = await Promise.all([
+        fetchProjectDictionaryManager(pid()!, getActiveConfigFileName()),
+        fetchCommonDictionaryManager().catch(() => null),
+      ]);
+      setData(projRes);
+      setCommonData(commRes);
       // 自动选择第一个文件
-      const files = getFilesByTab(res, activeTab() as DictTab);
-      if (files.length > 0 && !selectedFile()) {
-        const firstKey = `${activeTab()}_dict:${files[0]}`;
+      const files = getFilesByTab(projRes, activeTab() as DictTab);
+      const commFiles = commRes ? getFilesByTab(commRes, activeTab() as DictTab) : [];
+      if ((files.length > 0 || commFiles.length > 0) && !selectedFile()) {
+        const first = files.length > 0 ? files[0] : commFiles[0];
+        const firstKey = `${activeTab()}_dict:${first}`;
         setSelectedFile(firstKey);
         selectFile(firstKey);
       }
@@ -264,24 +283,40 @@ export function DictionaryPage() {
     setSelectedFile(fileKey);
     // dict_contents 的 key 不带 "{tab}_dict:" 前缀，查表前剥离
     const lookupKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
-    const content = data()?.dict_contents?.[lookupKey];
-    setDraftText(content ? content.lines.join("\n") : "");
+    const content = data()?.dict_contents?.[lookupKey]
+      ?? commonData()?.dict_contents?.[lookupKey];
+    const text = content ? content.lines.join("\n") : "";
+    setDraftText(text);
+    // 切换文件后让 textarea 重获焦点，光标置顶
+    if (_taRef) {
+      _taRef.focus();
+      _taRef.selectionStart = _taRef.selectionEnd = 0;
+    }
   }
 
   // 切换 tab 时更新选中文件
+  let _prevTab: string = activeTab();
   createEffect(() => {
     const tab = activeTab();
+    const tabChanged = tab !== _prevTab;
+    _prevTab = tab;
+
     if (tab === "names") {
-      // 人名替换不需要文件选择
       setSelectedFile(null);
       setDraftText("");
       loadNameData();
       return;
     }
-    if (!data()) return;
-    const files = getFilesByTab(data(), tab as DictTab);
-    if (files.length > 0) {
-      const key = `${tab}_dict:${files[0]}`;
+    if (!data() && !commonData()) return;
+    // 仅当切 Tab 或当前无选中文件时才自动选择第一个
+    if (!tabChanged && selectedFile()) return;
+    const projFiles = getFilesByTab(data(), tab as DictTab);
+    const commFiles = getFilesByTab(commonData(), tab as DictTab);
+    if (projFiles.length > 0) {
+      const key = `${tab}_dict:${projFiles[0]}`;
+      selectFile(key);
+    } else if (commFiles.length > 0) {
+      const key = `${tab}_dict:${commFiles[0]}`;
       selectFile(key);
     } else {
       setSelectedFile(null);
@@ -289,20 +324,24 @@ export function DictionaryPage() {
     }
   });
 
+  let _taRef: HTMLTextAreaElement | undefined;
+
+  const [createSource, setCreateSource] = createSignal<"project" | "common">("project");
+
   async function handleCreate() {
     await doAutoSave();
     const name = newFilename().trim();
     if (!name) return;
     setCreating(true);
     try {
-      if (pid()) {
+      if (pid() && createSource() === "project") {
         const res = await createProjectDictionaryFile(pid()!, {
           config_file_name: getActiveConfigFileName(),
           category: activeTab() as DictionaryCategory,
           filename: name,
         });
         setNewFilename("");
-        toast.success("文件已创建");
+        toast.success("项目字典文件已创建");
         await loadData();
         selectFile(res.file_key);
       } else {
@@ -311,7 +350,7 @@ export function DictionaryPage() {
           filename: name,
         });
         setNewFilename("");
-        toast.success("文件已创建");
+        toast.success("公共字典文件已创建");
         await loadData();
         const key = `${activeTab()}_dict:${res.filename}`;
         selectFile(key);
@@ -338,16 +377,16 @@ export function DictionaryPage() {
     });
     if (!result.confirmed) return;
     try {
-      if (pid()) {
-        // 剥离 "{tab}_dict:" 前缀: "gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"
-        const bareKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+      const bareKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+      const isProjectFile = bareKey.includes(PROJECT_DIR_MARKER);
+      if (pid() && isProjectFile) {
         await deleteProjectDictionaryFile(pid()!, {
           config_file_name: getActiveConfigFileName(),
           file_key: bareKey,
           delete_file: true,
         });
       } else {
-        const fileName = fileKey.split(":")[1];
+        const fileName = bareKey;
         await deleteCommonDictionaryFile({ filename: fileName });
       }
       toast.success("文件已删除");
@@ -359,7 +398,18 @@ export function DictionaryPage() {
     }
   }
 
-  const activeFiles = () => getFilesByTab(data(), activeTab() as DictTab);
+  type FileEntry = { name: string; source: "project" | "common" };
+  const activeFiles = (): FileEntry[] => {
+    const tab = activeTab() as DictTab;
+    const proj = getFilesByTab(data(), tab);
+    const comm = getFilesByTab(commonData(), tab);
+    return [
+      ...proj.map((f) => ({ name: f, source: "project" as const })),
+      ...comm.map((f) => ({ name: f, source: "common" as const })),
+    ];
+  };
+
+
 
   return (
     <div class="page page-dict">
@@ -459,15 +509,18 @@ export function DictionaryPage() {
           <div class="dict-file-list">
             <div class="dict-file-header">文件 ({activeFiles().length})</div>
             <For each={activeFiles()}>
-              {(f) => {
-                const key = `${activeTab()}_dict:${f}`;
+              {(entry) => {
+                const key = `${activeTab()}_dict:${entry.name}`;
+                const displayName = stripProjectDirMarker(entry.name);
+                const badge = entry.source === "project" ? "项目" : "公共";
                 return (
                   <div class="dict-file-item">
                     <div
                       class={`dict-file-name ${selectedFile() === key ? "selected" : ""}`}
                       onClick={async () => { await doAutoSave(); selectFile(key); }}
                     >
-                      {stripProjectDirMarker(f)}
+                      <span class="dict-file-badge">{badge}</span>
+                      {displayName}
                     </div>
                     <button class="dict-file-del" onClick={() => handleDelete(key)} title="删除此字典文件">
                       删除
@@ -480,6 +533,16 @@ export function DictionaryPage() {
 
             {/* ── 新建文件 ── */}
             <div class="dict-create">
+              <Show when={pid()}>
+                <select
+                  class="find-select"
+                  value={createSource()}
+                  onChange={(e) => setCreateSource(e.currentTarget.value as "project" | "common")}
+                >
+                  <option value="project">项目</option>
+                  <option value="common">公共</option>
+                </select>
+              </Show>
               <input
                 class="find-input"
                 placeholder="新文件名"
@@ -581,8 +644,22 @@ export function DictionaryPage() {
               >
                 <textarea
                   class="dict-textarea"
+                  ref={(el) => (_taRef = el)}
                   value={draftText()}
                   onInput={(e) => onDictChange(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    const ta = e.currentTarget as HTMLTextAreaElement;
+                    const pos = ta.selectionStart;
+                    const before = ta.value.slice(0, pos);
+                    const after = ta.value.slice(ta.selectionEnd);
+                    const newVal = before + "\n" + after;
+                    setDraftText(newVal);
+                    requestAnimationFrame(() => {
+                      ta.selectionStart = ta.selectionEnd = pos + 1;
+                    });
+                  }}
                   onBlur={doAutoSave}
                   spellcheck={false}
                 />

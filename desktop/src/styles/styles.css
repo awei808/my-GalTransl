@@ -3076,6 +3076,18 @@ a:hover {
   color: var(--color-brand-primary);
 }
 
+.dict-file-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+  vertical-align: middle;
+}
+
 .dict-file-del {
   width: auto;
   height: auto;
@@ -3118,6 +3130,18 @@ a:hover {
 .dict-create .find-input {
   flex: 1;
   min-width: 0;
+}
+
+.dict-create .find-select {
+  width: 56px;
+  height: 30px;
+  padding: 0 4px;
+  font-size: var(--font-sm);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  cursor: pointer;
 }
 
 /* 右侧编辑器 */
