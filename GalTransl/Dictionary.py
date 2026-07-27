@@ -91,7 +91,7 @@ class CBasicDicElement:
             return
         elif line.startswith("\\\\") or line.startswith("//"):  # 注释行跳过
             return
-        sp = line.rstrip("\r\n").split("\t")  # 去多余换行符，Tab分割
+        sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
         len_sp = len(sp)
         if len_sp < 2:  # 至少是2个元素
             return None
@@ -162,10 +162,11 @@ class CNormalDic:
             # elif line.startswith("\\\\") or line.startswith("//"):  # 注释行跳过
             #     continue
 
-            # 四个空格换成Tab
+            # 四个空格和Tab兼容为|分隔符
             line = line.replace("    ", "\t")
+            line = line.replace("\t", "|")
 
-            sp = line.rstrip("\r\n").split("\t")  # 去多余换行符，Tab分割
+            sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
             len_sp = len(sp)
             if len_sp < 2:  # 至少是2个元素
                 continue
@@ -355,13 +356,14 @@ class CGptDict:
             if line.startswith("\n"):
                 continue
 
-            # 兼容四个空格
+            # 兼容四个空格和Tab
             line = line.replace("    ", "\t")
+            line = line.replace("\t", "|")
             # 兼容src->dst #note
             if "->" in line:
-                line = line.replace("->", "\t").replace("#", "\t")
+                line = line.replace("->", "|").replace("#", "|")
 
-            sp = line.rstrip("\r\n").split("\t")  # 去多余换行符，Tab分割
+            sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
             len_sp = len(sp)
 
             if len_sp < 2:  # 至少是2个元素
