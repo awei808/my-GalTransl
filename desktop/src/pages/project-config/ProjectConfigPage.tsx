@@ -867,8 +867,20 @@ export function ProjectConfigPage() {
             </div>
             <textarea
               class="pc-external-info__textarea"
+              rows="6"
               value={String(getValue("externals.gameInfo") ?? "")}
               onInput={(e) => setValue("externals.gameInfo", e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                const ta = e.currentTarget as HTMLTextAreaElement;
+                const pos = ta.selectionStart;
+                const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+                setValue("externals.gameInfo", newVal);
+                requestAnimationFrame(() => {
+                  ta.selectionStart = ta.selectionEnd = pos + 1;
+                });
+              }}
               placeholder={"例如：\n游戏名：星之轨迹\n类型：科幻 ADV\n制作：某社\n简介：……"}
               spellcheck={false}
             />

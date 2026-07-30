@@ -1619,108 +1619,130 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": f"failed to save cache file: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
-            # ── 元数据(JSON)读取/保存 ──
-            # 候选路径按加载优先级排列：缓存目录优先，其次输入目录(gt_input 兼容位置)。
-            # single=True 表示该元数据文件是「单对象」（如 GlobalPrompt.json）：
-            #   读取时整体作为一个条目返回，保存时按对象(非数组)写回，且不注入 id 字段。
-            _META_CANDIDATES: dict[str, dict[str, Any]] = {
-                "FileMetaData.json": {
-                    "paths": [
-                        os.path.join(CACHE_FOLDERNAME, PASS1_CACHE_DIR, "FileMetaData.json"),
-                        os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
-                    ],
-                    "single": False,
-                },
-                "BatchMetadata.json": {
-                    "paths": [
-                        os.path.join(CACHE_FOLDERNAME, PASS2_CACHE_DIR, "BatchMetadata.json"),
-                        os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
-                    ],
-                    "single": False,
-                },
-                "GlobalPrompt.json": {
-                    "paths": [
-                        os.path.join(CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json"),
-                    ],
-                    "single": True,
-                },
-            }
+            # ── 元数据(JSON)读取/保存（per-file 模式）──
+            # 文件级元数据存储为 pass1_cache/{filename}.meta.json
+            # 批次级元数据存储为 pass2_cache/{filename}.batch.json
+            # 全局提示词仍为 pass0_cache/GlobalPrompt.json
 
-            # GET /api/projects/:id/metadata?name=FileMetaData.json
-            if sub_path == "/metadata":
-                if self.command != "GET":
-                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+            # GET/POST /api/projects/:id/metadata/filemeta/:filename
+            if sub_path.startswith("/metadata/filemeta/"):
+                _filename = unquote(sub_path[len("/metadata/filemeta/"):])
+                if not _filename:
+                    self._send_json({"error": "filename required"}, status=HTTPStatus.BAD_REQUEST)
                     return
-                _name = parse_qs(urlparse(self.path).query).get("name", [""])[0].strip()
-                _meta = _META_CANDIDATES.get(_name)
-                if not _meta:
-                    self._send_json({"error": f"unsupported metadata file: {_name}"}, status=HTTPStatus.BAD_REQUEST)
+                _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS1_CACHE_DIR, f"{_filename}.meta.json")
+
+                if self.command == "GET":
+                    if not os.path.isfile(_meta_path):
+                        self._send_json({"exists": False, "type": "filemeta", "filename": _filename, "entry": None, "path": _meta_path})
+                        return
+                    try:
+                        with open(_meta_path, "r", encoding="utf-8") as f:
+                            entry = json.load(f)
+                    except Exception as e:
+                        self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                        return
+                    self._send_json({"exists": True, "type": "filemeta", "filename": _filename, "entry": entry, "path": _meta_path})
                     return
-                candidates = [os.path.join(project_dir, p) for p in _meta["paths"]]
-                found = next((p for p in candidates if os.path.isfile(p) and os.path.getsize(p) > 0), None)
-                if not found:
-                    self._send_json({"exists": False, "name": _name, "single": _meta["single"], "entries": [], "path": candidates[0]})
+
+                if self.command == "POST":
+                    try:
+                        payload = self._read_json_body()
+                        entry = payload.get("entry", payload)
+                        if not isinstance(entry, dict):
+                            self._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
+                        with open(_meta_path, "w", encoding="utf-8") as f:
+                            json.dump(entry, f, ensure_ascii=False, indent=2)
+                        self._send_json({"success": True, "type": "filemeta", "filename": _filename, "path": _meta_path})
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                    except Exception as exc:
+                        self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                     return
-                try:
-                    with open(found, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception as e:
-                    self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-                    return
-                if _meta["single"]:
-                    # 单对象：整体作为一个条目返回（前端 MetadataCard 按数组渲染）
-                    entries = [data] if isinstance(data, dict) else (data if isinstance(data, list) else [])
-                else:
-                    if isinstance(data, dict):
-                        data = [data]
-                    entries = [e for e in data if isinstance(e, dict)]
-                self._send_json({"exists": True, "name": _name, "single": _meta["single"], "entries": entries, "path": found})
+
+                self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
                 return
 
-            # POST /api/projects/:id/metadata/save
-            if sub_path == "/metadata/save":
-                if self.command != "POST":
-                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+            # GET/POST /api/projects/:id/metadata/batchmeta/:filename
+            if sub_path.startswith("/metadata/batchmeta/"):
+                _filename = unquote(sub_path[len("/metadata/batchmeta/"):])
+                if not _filename:
+                    self._send_json({"error": "filename required"}, status=HTTPStatus.BAD_REQUEST)
                     return
-                try:
-                    payload = self._read_json_body()
-                    _name = str(payload.get("name", "")).strip()
-                    entries = payload.get("entries", [])
-                    _meta = _META_CANDIDATES.get(_name)
-                    if not _meta:
-                        self._send_json({"error": f"unsupported metadata file: {_name}"}, status=HTTPStatus.BAD_REQUEST)
+                _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR, f"{_filename}.batch.json")
+
+                if self.command == "GET":
+                    if not os.path.isfile(_meta_path):
+                        self._send_json({"exists": False, "type": "batchmeta", "filename": _filename, "entry": None, "path": _meta_path})
                         return
-                    if not isinstance(entries, list):
-                        self._send_json({"error": "entries must be a list"}, status=HTTPStatus.BAD_REQUEST)
+                    try:
+                        with open(_meta_path, "r", encoding="utf-8") as f:
+                            entry = json.load(f)
+                    except Exception as e:
+                        self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                         return
-                    candidates = [os.path.join(project_dir, p) for p in _meta["paths"]]
-                    existing = next((p for p in candidates if os.path.isfile(p)), None)
-                    write_path = existing or candidates[0]
-                    os.makedirs(os.path.dirname(write_path), exist_ok=True)
-                    if _meta["single"]:
-                        # 单对象：取首个 dict 写回为对象（不包数组、不注入 id）
-                        obj = next((e for e in entries if isinstance(e, dict)), {})
-                        obj = {str(k): v for k, v in obj.items() if k != "id"}
-                        with open(write_path, "w", encoding="utf-8") as f:
-                            json.dump(obj, f, ensure_ascii=False, indent=2)
-                        self._send_json({"success": True, "name": _name, "path": write_path, "entries": [obj]})
-                        return
-                    clean = []
-                    for e in entries:
-                        if not isinstance(e, dict):
-                            continue
-                        item = {str(k): v for k, v in e.items()}
-                        if "id" not in item:
-                            item["id"] = ""
-                        clean.append(item)
-                    with open(write_path, "w", encoding="utf-8") as f:
-                        json.dump(clean, f, ensure_ascii=False, indent=2)
-                    self._send_json({"success": True, "name": _name, "path": write_path, "entries": clean})
-                except json.JSONDecodeError:
-                    self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
-                except Exception as exc:
-                    self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    self._send_json({"exists": True, "type": "batchmeta", "filename": _filename, "entry": entry, "path": _meta_path})
                     return
+
+                if self.command == "POST":
+                    try:
+                        payload = self._read_json_body()
+                        entry = payload.get("entry", payload)
+                        if not isinstance(entry, dict):
+                            self._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
+                        with open(_meta_path, "w", encoding="utf-8") as f:
+                            json.dump(entry, f, ensure_ascii=False, indent=2)
+                        self._send_json({"success": True, "type": "batchmeta", "filename": _filename, "path": _meta_path})
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                    except Exception as exc:
+                        self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+
+                self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                return
+
+            # GET/POST /api/projects/:id/metadata/globalprompt  （GlobalPrompt 保留原有行为）
+            if sub_path == "/metadata/globalprompt" or sub_path == "/metadata/globalprompt/":
+                _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json")
+
+                if self.command == "GET":
+                    if not os.path.isfile(_meta_path):
+                        self._send_json({"exists": False, "type": "globalprompt", "entry": None, "path": _meta_path})
+                        return
+                    try:
+                        with open(_meta_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception as e:
+                        self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                        return
+                    entry = data if isinstance(data, dict) else {}
+                    self._send_json({"exists": True, "type": "globalprompt", "entry": entry, "path": _meta_path})
+                    return
+
+                if self.command == "POST":
+                    try:
+                        payload = self._read_json_body()
+                        entry = payload.get("entry", payload)
+                        if not isinstance(entry, dict):
+                            self._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
+                        with open(_meta_path, "w", encoding="utf-8") as f:
+                            json.dump(entry, f, ensure_ascii=False, indent=2)
+                        self._send_json({"success": True, "type": "globalprompt", "path": _meta_path})
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                    except Exception as exc:
+                        self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+
+                self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                return
 
             # POST /api/projects/:id/cache/delete-entry
             if sub_path == "/cache/delete-entry":

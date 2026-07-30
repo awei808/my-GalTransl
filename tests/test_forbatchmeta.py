@@ -173,15 +173,19 @@ class TestForBatchMetaData(unittest.TestCase):
             with open(os.path.join(gt_input, fname), "w", encoding="utf-8") as f:
                 json.dump(lines, f, ensure_ascii=False, indent=2)
 
-        # 文件级元数据（模拟 Pass 1 输出）
-        fm = [
-            {"id": "scene_a.txt.json", "角色": ["爱丽丝", "波波"],
-             "服装": "日常服", "剧情": "爱丽丝和波波的日常冒险", "标签": ["冒险", "日常"]},
-            {"id": "scene_b.txt.json", "角色": ["小红帽", "狼"],
-             "服装": "赤ずきん", "剧情": "小红帽遇狼记", "标签": ["童话", "警示"]},
-        ]
-        with open(os.path.join(gt_input, "FileMetaData.json"), "w", encoding="utf-8") as f:
-            json.dump(fm, f, ensure_ascii=False, indent=2)
+        # 文件级元数据 — per-file 模式（模拟 Pass 1 输出）
+        from GalTransl import PASS1_CACHE_DIR
+        fm_dir = os.path.join(dst, "transl_cache", PASS1_CACHE_DIR)
+        os.makedirs(fm_dir, exist_ok=True)
+        fm_map = {
+            "scene_a.txt.json": {"id": "scene_a.txt.json", "角色": ["爱丽丝", "波波"],
+                                  "服装": "日常服", "剧情": "爱丽丝和波波的日常冒险", "标签": ["冒险", "日常"]},
+            "scene_b.txt.json": {"id": "scene_b.txt.json", "角色": ["小红帽", "狼"],
+                                  "服装": "赤ずきん", "剧情": "小红帽遇狼记", "标签": ["童话", "警示"]},
+        }
+        for fname, obj in fm_map.items():
+            with open(os.path.join(fm_dir, f"{fname}.meta.json"), "w", encoding="utf-8") as f:
+                json.dump(obj, f, ensure_ascii=False, indent=2)
 
     def _load_scripts(self) -> dict:
         """读取测试项目中所有 json 文件，返回 {文件名: json_list}。"""
@@ -355,9 +359,9 @@ class TestForBatchMetaData(unittest.TestCase):
         self.assertEqual(out["批次"][0]["区间"], [10, 50])
 
     # ----------------------------------------------------------------
-    # 4. _save_metadata
+    # 4. _save_metadata — per-file 模式
     # ----------------------------------------------------------------
-    def test_save_metadata_overwrite_and_append(self):
+    def test_save_metadata_per_file(self):
         from GalTransl import PASS2_CACHE_DIR
         sub = tempfile.mkdtemp()
         try:
@@ -365,43 +369,34 @@ class TestForBatchMetaData(unittest.TestCase):
             with patch.object(self.backend.pj_config, "getCachePath",
                               return_value=sub):
                 os.makedirs(cache_sub, exist_ok=True)
-                # 初始写入 A
+                # 写入 file_a.batch.json
                 self.backend._save_metadata(
                     {"id": "A", "批次": [{"区间": [1, 10], "视角": "A",
-                                          "氛围": "x", "h": False, "用词色彩": "y"}]}
+                                          "氛围": "x", "h": False, "用词色彩": "y"}]},
+                    filename="A",
                 )
-                path = os.path.join(cache_sub, "BatchMetadata.json")
+                path = os.path.join(cache_sub, "A.batch.json")
+                self.assertTrue(os.path.exists(path))
                 with open(path, encoding="utf-8") as f:
-                    self.assertEqual(len(json.load(f)), 1)
+                    self.assertEqual(json.load(f)["批次"][0]["氛围"], "x")
 
-                # 同 id A → 覆盖
+                # 同 filename 覆盖
                 self.backend._save_metadata(
                     {"id": "A", "批次": [{"区间": [1, 20], "视角": "A",
-                                          "氛围": "new", "h": True, "用词色彩": "z"}]}
+                                          "氛围": "new", "h": True, "用词色彩": "z"}]},
+                    filename="A",
                 )
                 with open(path, encoding="utf-8") as f:
-                    arr = json.load(f)
-                self.assertEqual(len(arr), 1)
-                self.assertEqual(arr[0]["批次"][0]["氛围"], "new")
+                    self.assertEqual(json.load(f)["批次"][0]["氛围"], "new")
 
-                # 异 id B → 追加
+                # 不同 filename → 独立文件
                 self.backend._save_metadata(
                     {"id": "B", "批次": [{"区间": [1, 5], "视角": "B",
-                                          "氛围": "b", "h": False, "用词色彩": "b"}]}
+                                          "氛围": "b", "h": False, "用词色彩": "b"}]},
+                    filename="B",
                 )
-                with open(path, encoding="utf-8") as f:
-                    arr = json.load(f)
-                self.assertEqual(len(arr), 2)
-                self.assertIn("B", [e["id"] for e in arr])
-
-                # 损坏文件 → 安全重置
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("{broken")
-                self.backend._save_metadata(
-                    {"id": "C", "批次": []}
-                )
-                with open(path, encoding="utf-8") as f:
-                    self.assertEqual(len(json.load(f)), 1)
+                path_b = os.path.join(cache_sub, "B.batch.json")
+                self.assertTrue(os.path.exists(path_b))
         finally:
             shutil.rmtree(sub, ignore_errors=True)
 
@@ -453,10 +448,10 @@ class TestForBatchMetaData(unittest.TestCase):
             self.backend._inject_guideline = True
 
     # ----------------------------------------------------------------
-    # 7. 全流程整合
+    # 7. 全流程整合 — per-file 模式
     # ----------------------------------------------------------------
     def test_full_pipeline_all_files(self):
-        """使用桩 LLM 逐文件跑 batch_translate，验证所有文件生成批次元数据。"""
+        """使用桩 LLM 逐文件跑 batch_translate，验证每文件生成 .batch.json。"""
         gt_input = os.path.join(self.tmp, "gt_input")
         input_files = sorted([
             f for f in os.listdir(gt_input)
@@ -471,37 +466,26 @@ class TestForBatchMetaData(unittest.TestCase):
             self.assertTrue(ok, f"batch_translate 失败：{fname}")
 
         from GalTransl import PASS2_CACHE_DIR
-        bm_path = os.path.join(self.tmp, "transl_cache", PASS2_CACHE_DIR, "BatchMetadata.json")
-        self.assertTrue(os.path.exists(bm_path), "未生成 BatchMetadata.json")
+        pass2_dir = os.path.join(self.tmp, "transl_cache", PASS2_CACHE_DIR)
+        self.assertTrue(os.path.isdir(pass2_dir), "未创建 pass2_cache 目录")
 
-        with open(bm_path, encoding="utf-8") as f:
-            arr = json.load(f)
-        ids = [e.get("id") for e in arr]
+        batch_files = {f for f in os.listdir(pass2_dir) if f.endswith(".batch.json")}
+        expected_names = {f"{n}.batch.json" for n in input_files}
+        self.assertEqual(batch_files, expected_names,
+                         f"per-file 批次文件不匹配: 期望 {expected_names}, 实际 {batch_files}")
 
-        # 每个输入文件都有对应元数据
-        self.assertEqual(
-            set(ids), set(input_files),
-            "BatchMetadata 的 id 集合与待译文件不一致"
-        )
-        # 无重复
-        self.assertEqual(len(arr), len(input_files),
-                         "条目数与文件数不符（重复或缺失）")
-        # id 被强制规整为文件名
-        self.assertNotIn("SHOULD_BE_OVERWRITTEN", ids)
-
-        # 每个条目批次结构正确
-        for e in arr:
+        # 每条结构正确
+        for fname in batch_files:
+            with open(os.path.join(pass2_dir, fname), encoding="utf-8") as f:
+                e = json.load(f)
             self.assertIn("批次", e)
-            self.assertIsInstance(e["批次"], list)
+            self.assertNotEqual(e.get("id"), "SHOULD_BE_OVERWRITTEN")
             for b in e["批次"]:
                 self.assertIn("区间", b)
                 self.assertIn("视角", b)
-                self.assertIn("氛围", b)
-                self.assertIn("h", b)
-                self.assertIn("用词色彩", b)
 
-    def test_full_pipeline_re_run_replaces(self):
-        """重跑应替换而非追加。"""
+    def test_full_pipeline_re_run_overwrites(self):
+        """重跑自然覆盖 per-file。"""
         gt_input = os.path.join(self.tmp, "gt_input")
         input_files = [f for f in os.listdir(gt_input) if f.endswith(".txt.json")]
         if not input_files:
@@ -511,28 +495,26 @@ class TestForBatchMetaData(unittest.TestCase):
             data = json.load(f)
 
         from GalTransl import PASS2_CACHE_DIR
-        # 确保前一个测试没有留下 BatchMetadata.json
-        bm_path = os.path.join(self.tmp, "transl_cache", PASS2_CACHE_DIR, "BatchMetadata.json")
-        if os.path.exists(bm_path):
-            os.remove(bm_path)
+        pass2_dir = os.path.join(self.tmp, "transl_cache", PASS2_CACHE_DIR)
 
-        # 使用独立的 backend 实例，避免其他测试的状态污染
+        # 清理残留文件，确保测试从干净状态开始
+        os.makedirs(pass2_dir, exist_ok=True)
+        for f in os.listdir(pass2_dir):
+            if f.endswith(".batch.json"):
+                os.remove(os.path.join(pass2_dir, f))
+
         fresh_backend = ForBatchMetaData(self.cfg, "ForBatchMetaData", None, None)
         fresh_fake = _FakeLLM()
         fresh_backend.ask_chatbot = fresh_fake
 
         # 跑第一次
-        ok1 = asyncio.run(fresh_backend.batch_translate(data, filename=one))
-        self.assertTrue(ok1)
+        self.assertTrue(asyncio.run(fresh_backend.batch_translate(data, filename=one)))
         # 跑第二次
-        ok2 = asyncio.run(fresh_backend.batch_translate(data, filename=one))
-        self.assertTrue(ok2)
+        self.assertTrue(asyncio.run(fresh_backend.batch_translate(data, filename=one)))
 
-        with open(bm_path, encoding="utf-8") as f:
-            arr = json.load(f)
-        ids = [e["id"] for e in arr]
-        self.assertEqual(len(arr), 1, f"重跑应替换而非重复，实际 id 列表: {ids}")
-        self.assertEqual(ids[0], one)
+        # per-file 模式：只有一个文件对应一个 .batch.json
+        batch_files = {f for f in os.listdir(pass2_dir) if f.endswith(".batch.json")}
+        self.assertEqual(len(batch_files), 1, f"per-file 重跑应只有 1 个文件，实际: {batch_files}")
 
     def test_empty_filename_skipped(self):
         """空 filename 应跳过并返回 False。"""

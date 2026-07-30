@@ -29,8 +29,8 @@ import type {
   ProjectProgressResponse,
   ProjectRuntimeResponse,
   MetadataEntry,
-  MetadataResponse,
-  MetadataSaveResponse,
+  MetadataType,
+  PerFileMetadataResponse,
   StopProjectResponse,
   CommonDictionaryManagerResponse,
 } from "./types";
@@ -129,28 +129,30 @@ export async function deleteCacheEntry(projectId: string, filename: string, inde
   );
 }
 
-// ---- 项目元数据 (FileMetaData.json / BatchMetadata.json) ----
+// ---- 项目元数据 — per-file 模式 ----
 
-export async function fetchProjectMetadata(
+export async function fetchPerFileMetadata(
   projectId: string,
-  name: "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json",
+  type: MetadataType,
+  filename: string,
 ) {
-  return apiRequest<MetadataResponse>(
-    `/api/projects/${projectId}/metadata?name=${encodeURIComponent(name)}`,
+  return apiRequest<PerFileMetadataResponse>(
+    `/api/projects/${projectId}/metadata/${type}/${encodeURIComponent(filename)}`,
   );
 }
 
-export async function saveProjectMetadata(
+export async function savePerFileMetadata(
   projectId: string,
-  name: "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json",
-  entries: MetadataEntry[],
+  type: MetadataType,
+  filename: string,
+  entry: MetadataEntry,
 ) {
-  return apiRequest<MetadataSaveResponse>(
-    `/api/projects/${projectId}/metadata/save`,
+  return apiRequest<{ success: boolean; type: string; filename: string; path: string }>(
+    `/api/projects/${projectId}/metadata/${type}/${encodeURIComponent(filename)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, entries }),
+      body: JSON.stringify({ entry }),
     },
   );
 }

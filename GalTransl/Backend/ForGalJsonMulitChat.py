@@ -128,47 +128,33 @@ class FileMetaData:
         )
 
 
-def load_file_metadata(projectConfig: "CProjectConfig") -> Optional[FileMetaData]:
-    """从缓存或输入目录载入文件级元数据。
+def load_file_metadata(projectConfig: "CProjectConfig", filename: str = "") -> Optional[FileMetaData]:
+    """从 per-file 缓存载入单个文件级元数据。
 
-    FileMetaData.json 由 ForFileMetaData 后端生成，格式为 JSON 数组，
-    每项 ``id`` 对应一个待翻译文件名。查找优先级：
+    每个源文件的元数据独立存储在 ``{filename}.meta.json`` 中（由 ForFileMetaData
+    后端生成），路径为 ``transl_cache/pass1_cache/{filename}.meta.json``。
 
-    1. ``transl_cache/pass1_cache/FileMetaData.json``（标准缓存位置）
-    2. ``gt_input/FileMetaData.json``（旧版/兼容位置）
-
-    本函数兼容数组和单对象两种格式：
-
-    - **数组格式（推荐）**：JSON 数组 → 返回首项作为全局默认元数据
-      （完整多文件映射由 :func:`load_file_metadata_map` 提供）
-    - **单对象格式（兼容）**：JSON 对象 → 直接解析为单条元数据
-
-    文件不存在或解析失败时返回 None；缺失字段按空值处理。
-    「角色」「标签」允许是字符串或字符串列表，「服装」「剧情」「id」为字符串（可空）。
-
-    注意：当文件为数组格式时，仅返回首项（作为全局默认）；各文件的
-    精确元数据由 ``load_file_metadata_map()`` 提供按文件名的映射，
-    该函数在 ForGalJsonMulitChat._ensure_file_metadata_loaded 中惰性调用。
+    文件不存在或解析失败时返回 None。
     """
     from GalTransl import PASS1_CACHE_DIR
 
-    # 优先从缓存读取，其次兼容旧版 gt_input 位置
-    candidate_paths = [
-        os.path.join(projectConfig.getCachePath(), PASS1_CACHE_DIR, "FileMetaData.json"),
-        os.path.join(projectConfig.getInputPath(), "FileMetaData.json"),
-    ]
-    path = None
-    for p in candidate_paths:
-        if os.path.exists(p):
-            path = p
-            break
-    if path is None:
+    if not filename:
         return None
+
+    path = os.path.join(
+        projectConfig.getCachePath(), PASS1_CACHE_DIR, f"{filename}.meta.json"
+    )
+    if not os.path.exists(path):
+        return None
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        LOGGER.warning(f"读取 FileMetaData.json 失败，已忽略文件级元数据：{e}")
+        LOGGER.warning(f"读取 {filename}.meta.json 失败：{e}")
+        return None
+
+    if not isinstance(data, dict):
         return None
 
     def _to_list(value):
@@ -178,32 +164,13 @@ def load_file_metadata(projectConfig: "CProjectConfig") -> Optional[FileMetaData
             return [str(x) for x in value]
         return [str(value)]
 
-    # 新格式：数组 → 取首项作为全局默认
-    if isinstance(data, list):
-        if not data:
-            LOGGER.warning("FileMetaData.json 为空数组，忽略文件级元数据")
-            return None
-        first = data[0]
-        return FileMetaData(
-            id=first.get("id") or "",
-            character=_to_list(first.get("角色")),
-            costume=first.get("服装") or "",
-            plot=first.get("剧情") or "",
-            tags=_to_list(first.get("标签")),
-        )
-
-    # 旧格式：单对象
-    if isinstance(data, dict):
-        return FileMetaData(
-            id=data.get("id") or "",
-            character=_to_list(data.get("角色")),
-            costume=data.get("服装") or "",
-            plot=data.get("剧情") or "",
-            tags=_to_list(data.get("标签")),
-        )
-
-    LOGGER.warning("FileMetaData.json 根元素类型异常，忽略文件级元数据")
-    return None
+    return FileMetaData(
+        id=data.get("id") or "",
+        character=_to_list(data.get("角色")),
+        costume=data.get("服装") or "",
+        plot=data.get("剧情") or "",
+        tags=_to_list(data.get("标签")),
+    )
 
 
 def _find_metadata_file(input_dir: str, name: str) -> Optional[str]:
@@ -264,28 +231,16 @@ def _find_file_metadata_file(input_dir: str) -> Optional[str]:
 
 
 def load_file_metadata_map(projectConfig: "CProjectConfig") -> dict:
-    """从翻译项目的 FileMetaData.json 载入「文件名 -> 文件级元数据」映射。
+    """遍历 pass1_cache/*.meta.json，载入「文件名 -> 文件级元数据」映射。
 
-    FileMetaData.json 位于**翻译项目根目录**（即 gt_input 的父目录，与 gt_input
-    同级），由「新建翻译项目」生成。文件本身为 **JSON 数组**，每个元素形如
-    ``{"id": "文件名", "角色": [...], "服装": "...", "剧情": "...", "标签": [...]}``，
-    其中 ``id`` 对应 gt_input 中的一个待翻译文件名（如 ``02_kar_god01.txt.json``）。
-    本函数将其解析为 ``{文件名: FileMetaData}`` 字典，供后端按文件注入对应文件级元数据。
-
-    兼容单对象格式（旧 schema）：此时以 ``id`` 或空串为键，得到只含一项的字典。
-    文件不存在、解析失败、或根元素既非对象也非数组时返回空字典。
-
-    注意：``id`` 可能带分批后缀干扰（如 ``file_0``），匹配时由调用方负责剥离，
-    本函数仅原样以 ``id`` 为键。
+    每个源文件的元数据独立存储在 ``{filename}.meta.json`` 中。本函数遍历
+    ``transl_cache/pass1_cache/`` 下所有 ``.meta.json`` 文件，解析为
+    ``{id: FileMetaData}`` 字典。
     """
-    path = _find_file_metadata_file(projectConfig.getInputPath())
-    if path is None:
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        LOGGER.warning(f"读取 FileMetaData.json 失败，已忽略文件级元数据：{e}")
+    from GalTransl import PASS1_CACHE_DIR
+
+    pass1_dir = os.path.join(projectConfig.getCachePath(), PASS1_CACHE_DIR)
+    if not os.path.isdir(pass1_dir):
         return {}
 
     def _to_list(value):
@@ -296,22 +251,21 @@ def load_file_metadata_map(projectConfig: "CProjectConfig") -> dict:
         return [str(value)]
 
     result: dict = {}
-    if isinstance(data, dict):
-        # 旧 schema：单对象，作为仅含一项的映射
-        fid = data.get("id") or ""
-        result[fid] = FileMetaData(
-            id=fid,
-            character=_to_list(data.get("角色")),
-            costume=data.get("服装") or "",
-            plot=data.get("剧情") or "",
-            tags=_to_list(data.get("标签")),
-        )
-    elif isinstance(data, list):
-        for item in data:
+    try:
+        for entry in os.listdir(pass1_dir):
+            if not entry.endswith(".meta.json"):
+                continue
+            fpath = os.path.join(pass1_dir, entry)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    item = json.load(f)
+            except Exception as e:
+                LOGGER.warning(f"读取 {entry} 失败，跳过：{e}")
+                continue
             if not isinstance(item, dict):
                 continue
             fid = item.get("id") or ""
-            if not fid:  # 无 id 无法与文件对应，跳过
+            if not fid:
                 continue
             result[fid] = FileMetaData(
                 id=fid,
@@ -320,8 +274,9 @@ def load_file_metadata_map(projectConfig: "CProjectConfig") -> dict:
                 plot=item.get("剧情") or "",
                 tags=_to_list(item.get("标签")),
             )
-    else:
-        LOGGER.warning("FileMetaData.json 根元素既非对象也非数组，已忽略文件级元数据")
+    except OSError as e:
+        LOGGER.warning(f"遍历 pass1_cache 失败：{e}")
+
     return result
 
 
@@ -380,34 +335,29 @@ class BatchMetadata:
 
 
 def load_batch_metadata_map(projectConfig: "CProjectConfig") -> dict:
-    """从翻译项目的 BatchMetadata.json 载入「文件名 -> 批次级元数据」映射。
+    """遍历 pass2_cache/*.batch.json，载入「文件名 -> 批次级元数据」映射。
 
-    BatchMetadata.json 由第二次启动后端（ForBatchMetaData）生成，位于翻译项目
-    根目录（与 gt_input 同级），为 **JSON 数组**，每个元素形如
-    ``{"id": "文件名", "批次": [{"区间":[lo,hi], "视角":..., "氛围":..., "h":bool, "用词色彩":...}, ...]}``。
-    本函数解析为 ``{文件名: BatchMetadata}`` 字典，供后端按文件注入。
-
-    兼容单对象格式；文件不存在、解析失败或根元素类型异常时返回空字典。
+    每个源文件的批次元数据独立存储在 ``{filename}.batch.json`` 中。本函数遍历
+    ``transl_cache/pass2_cache/`` 下所有 ``.batch.json`` 文件。
     """
-    path = _find_metadata_file(projectConfig.getInputPath(), "BatchMetadata.json")
-    if path is None:
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        LOGGER.warning(f"读取 BatchMetadata.json 失败，已忽略批次元数据：{e}")
+    from GalTransl import PASS2_CACHE_DIR
+
+    pass2_dir = os.path.join(projectConfig.getCachePath(), PASS2_CACHE_DIR)
+    if not os.path.isdir(pass2_dir):
         return {}
 
     result: dict = {}
-    if isinstance(data, dict):
-        fid = data.get("id") or ""
-        batches = data.get("批次") or data.get("batches") or []
-        result[fid] = BatchMetadata(
-            id=fid, batches=batches if isinstance(batches, list) else []
-        )
-    elif isinstance(data, list):
-        for item in data:
+    try:
+        for entry in os.listdir(pass2_dir):
+            if not entry.endswith(".batch.json"):
+                continue
+            fpath = os.path.join(pass2_dir, entry)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    item = json.load(f)
+            except Exception as e:
+                LOGGER.warning(f"读取 {entry} 失败，跳过：{e}")
+                continue
             if not isinstance(item, dict):
                 continue
             fid = item.get("id") or ""
@@ -417,8 +367,9 @@ def load_batch_metadata_map(projectConfig: "CProjectConfig") -> dict:
             result[fid] = BatchMetadata(
                 id=fid, batches=batches if isinstance(batches, list) else []
             )
-    else:
-        LOGGER.warning("BatchMetadata.json 根元素既非对象也非数组，已忽略批次元数据")
+    except OSError as e:
+        LOGGER.warning(f"遍历 pass2_cache 失败：{e}")
+
     return result
 
 

@@ -5,10 +5,10 @@ import { confirm } from "../../stores/confirmStore";
 import {
   fetchCacheFile,
   saveCacheFile,
-  fetchProjectMetadata,
-  saveProjectMetadata,
+  fetchPerFileMetadata,
+  savePerFileMetadata,
 } from "../../lib/api/project";
-import type { CacheEntry, CacheFileResponse, MetadataEntry } from "../../lib/api/types";
+import type { CacheEntry, CacheFileResponse, MetadataEntry, MetadataType } from "../../lib/api/types";
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -223,8 +223,8 @@ function EntryCard(props: {
           </div>
           <textarea
             class="entry-dst-input"
-            rows="1"
-            value={toVisibleNewlines(draftDst())}
+            rows="2"
+            value={draftDst()}
             onInput={(ev) => {
               setDraftDst(ev.currentTarget.value);
             }}
@@ -300,7 +300,7 @@ function EntryCard(props: {
                   <textarea
                     class="field-value field-value--editable"
                     rows="2"
-                    value={toVisibleNewlines(val ?? "")}
+                    value={val ?? ""}
                     onInput={(ev) => props.onFieldChange(field.key, ev.currentTarget.value)}
                     onBlur={props.onBlur}
                   />
@@ -320,7 +320,7 @@ function MetadataCard(props: {
   entry: MetadataEntry;
   index: number;
   onContentChange: (text: string) => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   onBlur: () => void;
 }) {
   let taRef: HTMLTextAreaElement | undefined;
@@ -345,20 +345,22 @@ function MetadataCard(props: {
         <span class="meta-id-text" title="条目 id（只读，不可修改）">
           id: {String((props.entry as Record<string, unknown>).id ?? "") || "—"}
         </span>
-        {/* 右上角删除按钮 */}
-        <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
-          </svg>
-          <span class="entry-btn-text">删除</span>
-        </button>
+        {/* 右上角删除按钮（仅多条目模式显示） */}
+        <Show when={props.onDelete}>
+          <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete!}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+            </svg>
+            <span class="entry-btn-text">删除</span>
+          </button>
+        </Show>
       </div>
       <textarea
         ref={taRef}
@@ -369,6 +371,18 @@ function MetadataCard(props: {
         onInput={(e) => {
           setContent(e.currentTarget.value);
           props.onContentChange(e.currentTarget.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          const ta = e.currentTarget as HTMLTextAreaElement;
+          const pos = ta.selectionStart;
+          const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+          setContent(newVal);
+          props.onContentChange(newVal);
+          requestAnimationFrame(() => {
+            ta.selectionStart = ta.selectionEnd = pos + 1;
+          });
         }}
         onBlur={props.onBlur}
       />
@@ -407,51 +421,38 @@ export function ReviewPage() {
   // ── 模式由打开文件所在的缓存子目录隐式决定，无需手动切换 ──
   // 缓存目录分工（见 CLAUDE.md / GalTransl.__init__）：
   //   pass0_cache → GlobalPrompt.json  （全局提示词，单对象）
-  //   pass1_cache → FileMetaData.json （文件级元数据）
-  //   pass2_cache → BatchMetadata.json（批次级元数据）
+  //   pass0_cache → GlobalPrompt     （单对象全局提示词）
+  //   pass1_cache → *.meta.json       （per-file 文件级元数据）
+  //   pass2_cache → *.batch.json      （per-file 批次级元数据）
   //   pass3_cache → *.txt.json        （翻译缓存，CacheEntry 数组）
-  // 规则：pass0/pass1/pass2 三个缓存目录一律按元数据模式读取；
-  //       仅 pass3_cache（翻译缓存）走翻译校对模式。
   type ReviewMode = "translate" | "metadata";
-  type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json";
   function modeInfoOf(path: string | null | undefined): {
     mode: ReviewMode;
-    metaName: MetadataFileName;
+    metaType: MetadataType;
+    sourceFile: string;
   } {
-    if (!path) return { mode: "translate", metaName: "FileMetaData.json" };
+    if (!path) return { mode: "translate", metaType: "filemeta", sourceFile: "" };
     const norm = path.replace(/\\/g, "/");
-    if (norm.includes("pass0_cache/")) return { mode: "metadata", metaName: "GlobalPrompt.json" };
-    if (norm.includes("pass1_cache/")) return { mode: "metadata", metaName: "FileMetaData.json" };
-    if (norm.includes("pass2_cache/")) return { mode: "metadata", metaName: "BatchMetadata.json" };
-    // pass3_cache 及 transl_cache 根目录等 → 翻译校对模式
-    return { mode: "translate", metaName: "FileMetaData.json" };
+    const base = norm.split("/").pop() ?? "";
+    if (norm.includes("pass0_cache/"))
+      return { mode: "metadata", metaType: "globalprompt", sourceFile: "" };
+    if (norm.includes("pass1_cache/")) {
+      // 从 {filename}.meta.json 提取源文件名
+      const src = base.replace(/\.meta\.json$/, "");
+      return { mode: "metadata", metaType: "filemeta", sourceFile: src };
+    }
+    if (norm.includes("pass2_cache/")) {
+      const src = base.replace(/\.batch\.json$/, "");
+      return { mode: "metadata", metaType: "batchmeta", sourceFile: src };
+    }
+    return { mode: "translate", metaType: "filemeta", sourceFile: "" };
   }
   const reviewMode = createMemo<ReviewMode>(() => modeInfoOf(appState.activeFilePath).mode);
-  const metaName = createMemo<MetadataFileName>(
-    () => modeInfoOf(appState.activeFilePath).metaName,
-  );
-  const [metaEntries, setMetaEntries] = createSignal<MetadataEntry[]>([]);
+  const metaType = createMemo<MetadataType>(() => modeInfoOf(appState.activeFilePath).metaType);
+  const metaSourceFile = createMemo(() => modeInfoOf(appState.activeFilePath).sourceFile);
+  const [metaEntry, setMetaEntry] = createSignal<MetadataEntry | null>(null);
   const [metaLoading, setMetaLoading] = createSignal(false);
   let metaSavePending = false;
-
-  // 元数据显示顺序：默认按后端返回顺序；开启后按 id 升序
-  const [metaSortAsc, setMetaSortAsc] = createSignal(false);
-  // 计算用于显示的元数据列表（带其在 store 中的真实下标，便于增删改定位）
-  const displayMeta = createMemo<Array<{ entry: MetadataEntry; storeIndex: number }>>(() => {
-    const indexed = metaEntries().map((entry, storeIndex) => ({ entry, storeIndex }));
-    if (!metaSortAsc()) return indexed;
-    const toNum = (v: unknown) => {
-      if (typeof v === "number") return v;
-      const n = parseFloat(String(v ?? ""));
-      return isNaN(n) ? null : n;
-    };
-    return indexed.slice().sort((a, b) => {
-      const na = toNum(a.entry.id);
-      const nb = toNum(b.entry.id);
-      if (na != null && nb != null) return na - nb;
-      return String(a.entry.id ?? "").localeCompare(String(b.entry.id ?? ""));
-    });
-  });
 
   // ── 文件内查找 ──
   const [findOpen, setFindOpen] = createSignal(false);
@@ -627,6 +628,15 @@ export function ReviewPage() {
       clearUndo();
       return;
     }
+    // 切换文件前保存当前文件（fire-and-forget，避免丢数据）
+    const prevFile = loadedFile;
+    if (prevFile && prevFile !== file) {
+      const snapshot = entries().slice();
+      if (snapshot.length > 0) {
+        saveCacheFile(pid, prevFile, snapshot, getActiveConfigFileName())
+          .catch(() => {});
+      }
+    }
     loadFile(pid, file);
   });
 
@@ -647,36 +657,45 @@ export function ReviewPage() {
     if (pid && file) loadFile(pid, file);
   }
 
-  // ── 元数据加载 / 保存 / 删除 ──
+  // ── 元数据加载 / 保存（per-file 模式）──
   createEffect(() => {
     const pid = appState.activeProjectId;
-    const name = metaName();
-    void appState.cacheVersion; // 依赖：元数据文件大小变化时自动重载
+    const type = metaType();
+    const srcFile = metaSourceFile();
+    void appState.cacheVersion;
     if (reviewMode() !== "metadata" || !pid) {
-      setMetaEntries([]);
+      setMetaEntry(null);
       loadedFile = "";
       return;
     }
+    // 切换元数据文件前保存当前条目（fire-and-forget）
+    if (loadedFile && loadedFile !== srcFile) {
+      const prevEntry = metaEntry();
+      if (prevEntry) {
+        savePerFileMetadata(pid, metaType(), loadedFile, prevEntry)
+          .catch(() => {});
+      }
+    }
+    loadedFile = srcFile;
     setMetaLoading(true);
-    fetchProjectMetadata(pid, name)
-      .then((res) => setMetaEntries(res.entries ?? []))
-      .catch(() => setMetaEntries([]))
+    fetchPerFileMetadata(pid, type, srcFile)
+      .then((res) => setMetaEntry(res.entry ?? null))
+      .catch(() => setMetaEntry(null))
       .finally(() => setMetaLoading(false));
   });
 
-  function handleMetaContentChange(index: number, text: string) {
+  function handleMetaContentChange(_index: number, text: string) {
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(text);
     } catch {
-      return; // 解析失败暂不更新 store
+      return;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-    setMetaEntries((prev) => {
-      const next = prev.slice();
-      const id = next[index]?.id ?? "";
-      next[index] = { id, ...parsed };
-      return next;
+    setMetaEntry((prev) => {
+      if (!prev) return parsed;
+      const id = prev.id ?? "";
+      return { ...parsed, id };
     });
   }
 
@@ -684,36 +703,19 @@ export function ReviewPage() {
     if (metaSavePending) return;
     metaSavePending = true;
     const pid = appState.activeProjectId;
-    if (!pid) {
+    const srcFile = metaSourceFile();
+    const entry = metaEntry();
+    if (!pid || !entry) {
       metaSavePending = false;
       return;
     }
     try {
-      await saveProjectMetadata(pid, metaName(), metaEntries());
+      await savePerFileMetadata(pid, metaType(), srcFile, entry);
     } catch {
       // 静默处理
     } finally {
       metaSavePending = false;
     }
-  }
-
-  function handleMetaDelete(index: number) {
-    const entry = metaEntries()[index];
-    if (!entry) return;
-    const idLabel = entry.id ? `id 为「${String(entry.id)}」` : `第 ${index + 1} 条`;
-    confirm
-      .show({
-        title: "删除元数据条目",
-        message: `确定要删除${idLabel}的元数据条目吗？此操作不可撤销。`,
-        tone: "danger",
-        confirmText: "删除",
-      })
-      .then((r) => {
-        if (r.confirmed) {
-          setMetaEntries((prev) => prev.filter((_, i) => i !== index));
-          saveMeta();
-        }
-      });
   }
 
   function handleFieldChange(serial: number, field: string, value: string) {
@@ -865,44 +867,34 @@ export function ReviewPage() {
         </Show>{/* /translate mode */}
 
         <Show when={reviewMode() === "metadata"}>
-          <span class="review-filename">{metaName()}</span>
-          <Show when={metaEntries().length > 0}>
-            <span class="review-count">{metaEntries().length} 条</span>
-            <button
-              class="btn btn--sm review-sort-btn"
-              onClick={() => setMetaSortAsc(!metaSortAsc())}
-              title="切换元数据显示顺序：默认顺序 / 按 id 排序"
-            >
-              {metaSortAsc() ? "默认排序" : "id排序"}
-            </button>
+          <span class="review-filename">
+            {metaType() === "globalprompt" ? "GlobalPrompt" : metaSourceFile()}
+          </span>
+          <Show when={metaEntry()}>
+            <span class="review-count">1 条</span>
           </Show>
         </Show>
       </div>
 
       {/* ── 条目列表 ── */}
       <div class="review-list">
-        {/* 元数据模式：渲染元数据 JSON 条目 */}
+        {/* 元数据模式：渲染 per-file 元数据 JSON 条目 */}
         <Show when={reviewMode() === "metadata"}>
           <Show when={!metaLoading()} fallback={<p class="review-placeholder">加载中…</p>}>
             <Show
-              when={metaEntries().length > 0}
+              when={metaEntry() != null}
               fallback={
                 <p class="review-placeholder">
-                  {appState.activeProjectId ? "该元数据文件暂无条目" : "请先打开翻译项目"}
+                  {appState.activeProjectId ? "该文件没有元数据条目" : "请先打开翻译项目"}
                 </p>
               }
             >
-            <Index each={displayMeta()}>
-              {(itemSignal) => (
-                <MetadataCard
-                  entry={itemSignal().entry}
-                  index={itemSignal().storeIndex}
-                  onContentChange={(t) => handleMetaContentChange(itemSignal().storeIndex, t)}
-                  onDelete={() => handleMetaDelete(itemSignal().storeIndex)}
-                  onBlur={saveMeta}
-                />
-              )}
-            </Index>
+              <MetadataCard
+                entry={metaEntry()!}
+                index={0}
+                onContentChange={(t) => handleMetaContentChange(0, t)}
+                onBlur={saveMeta}
+              />
             </Show>
           </Show>
         </Show>

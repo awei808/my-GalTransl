@@ -86,7 +86,7 @@ class TestForFileMetaData(unittest.TestCase):
         shutil.copytree(TEST_PROJECT, cls.tmp, dirs_exist_ok=True)
         pm = os.path.join(cls.tmp, "gt_input", "FileMetaData.json")
         if os.path.exists(pm):
-            os.remove(pm)  # 从零开始，验证“全量生成”
+            os.remove(pm)  # 从零开始，验证"全量生成"
 
         cls.cfg = CProjectConfig(cls.tmp)
 
@@ -142,49 +142,42 @@ class TestForFileMetaData(unittest.TestCase):
         self.assertEqual(out2["剧情"], "")
 
     # ---------------------------------------------------------------- 3
-    def test_save_metadata_merge_and_corruption(self):
+    def test_save_metadata_per_file(self):
+        """per-file 模式：写入独立文件，同 filename 直接覆盖。"""
         sub = tempfile.mkdtemp()
         try:
-            # _save_metadata 写入 projectConfig.getCachePath() + "/pass1_cache/"
             cache_sub = os.path.join(sub, "pass1_cache")
             with patch.object(
                 self.backend.pj_config, "getCachePath", return_value=sub
             ):
                 os.makedirs(cache_sub, exist_ok=True)
-                # 预置一条 id=A 的旧数据
-                with open(os.path.join(cache_sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                    json.dump(
-                        [{"id": "A", "角色": [], "服装": "", "剧情": "old", "标签": []}],
-                        f, ensure_ascii=False,
-                    )
-                # 同 id 替换
+                # 写入 file_a
                 self.backend._save_metadata(
-                    {"id": "A", "角色": ["創"], "服装": "", "剧情": "new", "标签": ["t"]}
+                    {"id": "file_a", "角色": ["創"], "服装": "", "剧情": "a", "标签": ["t"]},
+                    filename="file_a",
                 )
-                with open(os.path.join(cache_sub, "FileMetaData.json"), encoding="utf-8") as f:
-                    arr = json.load(f)
-                self.assertEqual(len(arr), 1)
-                self.assertEqual(arr[0]["剧情"], "new")
+                path_a = os.path.join(cache_sub, "file_a.meta.json")
+                self.assertTrue(os.path.exists(path_a))
+                with open(path_a, encoding="utf-8") as f:
+                    self.assertEqual(json.load(f)["剧情"], "a")
 
-                # 异 id 追加
+                # 同 filename 覆盖写入
                 self.backend._save_metadata(
-                    {"id": "B", "角色": [], "服装": "", "剧情": "b", "标签": []}
+                    {"id": "file_a", "角色": [], "服装": "", "剧情": "overwritten", "标签": []},
+                    filename="file_a",
                 )
-                with open(os.path.join(cache_sub, "FileMetaData.json"), encoding="utf-8") as f:
-                    arr = json.load(f)
-                self.assertEqual(len(arr), 2)
-                self.assertIn("B", [e["id"] for e in arr])
+                with open(path_a, encoding="utf-8") as f:
+                    self.assertEqual(json.load(f)["剧情"], "overwritten")
 
-                # 损坏文件：应安全重置为 [meta]，不崩溃
-                with open(os.path.join(cache_sub, "FileMetaData.json"), "w", encoding="utf-8") as f:
-                    f.write("{ this is not valid json ")
+                # 不同 filename 写入独立文件
                 self.backend._save_metadata(
-                    {"id": "C", "角色": [], "服装": "", "剧情": "c", "标签": []}
+                    {"id": "file_b", "角色": [], "服装": "", "剧情": "b", "标签": []},
+                    filename="file_b",
                 )
-                with open(os.path.join(cache_sub, "FileMetaData.json"), encoding="utf-8") as f:
-                    arr = json.load(f)
-                self.assertEqual(len(arr), 1)
-                self.assertEqual(arr[0]["id"], "C")
+                path_b = os.path.join(cache_sub, "file_b.meta.json")
+                self.assertTrue(os.path.exists(path_b))
+                with open(path_b, encoding="utf-8") as f:
+                    self.assertEqual(json.load(f)["剧情"], "b")
         finally:
             shutil.rmtree(sub, ignore_errors=True)
 
@@ -216,37 +209,35 @@ class TestForFileMetaData(unittest.TestCase):
             ok = asyncio.run(self.backend.batch_translate(data, filename=base))
             self.assertTrue(ok, f"batch_translate 失败：{base}")
 
+        # per-file 验证：每个输入文件都应有对应的 .meta.json
         from GalTransl import PASS1_CACHE_DIR
-        pm_path = os.path.join(self.tmp, "transl_cache", PASS1_CACHE_DIR, "FileMetaData.json")
-        self.assertTrue(os.path.exists(pm_path), "未生成 FileMetaData.json")
-        with open(pm_path, encoding="utf-8") as f:
-            arr = json.load(f)
-        ids = [e.get("id") for e in arr]
+        pass1_dir = os.path.join(self.tmp, "transl_cache", PASS1_CACHE_DIR)
+        self.assertTrue(os.path.isdir(pass1_dir), "未创建 pass1_cache 目录")
 
-        # 每条输入文件都有对应元数据
-        self.assertEqual(
-            set(ids), set(self.input_names), "FileMetaData 的 id 集合与待译文件不一致"
-        )
-        # 无重复、无遗漏
-        self.assertEqual(len(arr), len(self.input_names), "条目数与文件数不符（重复或缺失）")
-        # id 被强制规整为文件名（含日文名），而非 LLM 返回的错误 id
-        self.assertNotIn("SHOULD_BE_OVERWRITTEN", ids)
-        self.assertIn("00_01_アバンタイトル.txt.json", ids)
+        meta_files = {f for f in os.listdir(pass1_dir) if f.endswith(".meta.json")}
+        expected_names = {f"{n}.meta.json" for n in self.input_names}
+        self.assertEqual(meta_files, expected_names,
+                         f"per-file 元数据文件不匹配: 期望 {expected_names}, 实际 {meta_files}")
 
-        # 每条结构正确
-        for e in arr:
+        # 每条 per-file 结构正确，id 被强制规整为文件名
+        for fname in meta_files:
+            with open(os.path.join(pass1_dir, fname), encoding="utf-8") as f:
+                e = json.load(f)
             self.assertIsInstance(e["角色"], list)
             self.assertIsInstance(e["标签"], list)
             self.assertIsInstance(e["剧情"], str)
+            expected_id = fname.replace(".meta.json", "")
+            self.assertEqual(e["id"], expected_id)
+            self.assertNotEqual(e["id"], "SHOULD_BE_OVERWRITTEN")
 
-        # 重新跑其中一个文件：应“替换”而非“追加”
+        # 重新跑其中一个文件：自然覆盖（per-file 无"追加"概念）
         one = self.input_names[0]
         with open(os.path.join(self.gt_input, one), encoding="utf-8") as f:
             one_data = json.load(f)
         asyncio.run(self.backend.batch_translate(one_data, filename=one))
-        with open(pm_path, encoding="utf-8") as f:
-            arr2 = json.load(f)
-        self.assertEqual(len(arr2), len(self.input_names), "重跑应替换而非重复")
+        # 文件数不变
+        meta_files2 = {f for f in os.listdir(pass1_dir) if f.endswith(".meta.json")}
+        self.assertEqual(len(meta_files2), len(self.input_names), "重跑应覆盖不增不减")
 
     # ---------------------------------------------------------------- 6
     def test_prompt_no_leaked_placeholders(self):

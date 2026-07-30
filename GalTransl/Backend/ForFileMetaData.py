@@ -4,7 +4,6 @@ import asyncio
 import re
 import traceback
 from typing import Optional, List, Dict, Any
-from threading import Lock
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
@@ -62,9 +61,6 @@ class ForFileMetaData(BaseTranslate):
             self._inject_guideline = (
                 str(raw).strip().lower() not in ("false", "0", "no", "")
             )
-
-        # 跨文件（可能的并发 worker）写 FileMetaData.json 时的互斥锁
-        self._fm_lock = Lock()
 
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
@@ -262,54 +258,15 @@ class ForFileMetaData(BaseTranslate):
             "标签": tags,
         }
 
-    # 3. 合并写入 FileMetaData.json
+    # 3. 写入 per-file 元数据文件（无锁、不合并，每文件独立存储）
     def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS1_CACHE_DIR
         out_dir = os.path.join(self.pj_config.getCachePath(), PASS1_CACHE_DIR)
         os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, "FileMetaData.json")
-        with self._fm_lock:
-            existing: List[dict] = []
-            if os.path.exists(path) and os.path.getsize(path) > 0:
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if isinstance(data, list):
-                        existing = data
-                    LOGGER.debug(
-                        f"[FileMetaData] 读取已有 FileMetaData.json，"
-                        f"共 {len(existing)} 条记录"
-                    )
-                except Exception as e:
-                    LOGGER.warning(
-                        f"[FileMetaData] 读取 FileMetaData.json 失败，"
-                        f"将重置为仅包含当前文件：{e}"
-                    )
-                    existing = []
-            else:
-                LOGGER.debug(
-                    f"[FileMetaData] 新建 FileMetaData.json"
-                )
-            replaced = False
-            for i, e in enumerate(existing):
-                if isinstance(e, dict) and e.get("id") == meta["id"]:
-                    existing[i] = meta
-                    replaced = True
-                    LOGGER.debug(
-                        f"[FileMetaData] {filename} 替换已有条目"
-                    )
-                    break
-            if not replaced:
-                existing.append(meta)
-                LOGGER.debug(
-                    f"[FileMetaData] {filename} 追加新条目，"
-                    f"总条目数：{len(existing)}"
-                )
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(existing, f, ensure_ascii=False, indent=2)
-            LOGGER.debug(
-                f"[FileMetaData] 已保存 {path}（{len(existing)} 条记录）"
-            )
+        path = os.path.join(out_dir, f"{filename}.meta.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        LOGGER.debug(f"[FileMetaData] 已保存 {path}")
 
     # 4. 入口
     async def batch_translate(

@@ -119,8 +119,20 @@ export function PromptTemplatesPage() {
                 <label class="pt-label">System Prompt（系统提示词）</label>
                 <textarea
                   class="pt-textarea pt-textarea--system"
+                  rows="12"
                   value={systemPrompt()}
                   onInput={(e) => setSystemPrompt(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    const ta = e.currentTarget as HTMLTextAreaElement;
+                    const pos = ta.selectionStart;
+                    const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+                    setSystemPrompt(newVal);
+                    requestAnimationFrame(() => {
+                      ta.selectionStart = ta.selectionEnd = pos + 1;
+                    });
+                  }}
                   spellcheck={false}
                 />
               </div>
@@ -128,8 +140,20 @@ export function PromptTemplatesPage() {
                 <label class="pt-label">User Prompt（用户提示词）</label>
                 <textarea
                   class="pt-textarea pt-textarea--user"
+                  rows="12"
                   value={userPrompt()}
                   onInput={(e) => setUserPrompt(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    const ta = e.currentTarget as HTMLTextAreaElement;
+                    const pos = ta.selectionStart;
+                    const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+                    setUserPrompt(newVal);
+                    requestAnimationFrame(() => {
+                      ta.selectionStart = ta.selectionEnd = pos + 1;
+                    });
+                  }}
                   spellcheck={false}
                 />
               </div>

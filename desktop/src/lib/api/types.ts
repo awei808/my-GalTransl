@@ -130,22 +130,16 @@ export type CacheFileResponse = {
   entries: CacheEntry[];
 };
 
-/* 元数据 JSON（FileMetaData.json / BatchMetadata.json / GlobalPrompt.json）：不定结构，按对象数组处理；GlobalPrompt 为单对象 */
+/* 元数据 — per-file 模式（filemeta/batchmeta/globalprompt），每文件独立 JSON */
 export type MetadataEntry = Record<string, unknown>;
-export type MetadataResponse = {
+export type MetadataType = "filemeta" | "batchmeta" | "globalprompt";
+export type PerFileMetadataResponse = {
   exists: boolean;
-  name: string;
-  entries: MetadataEntry[];
+  type: MetadataType;
+  filename?: string;
+  entry: MetadataEntry | null;
   path?: string;
-  single?: boolean;
 };
-export type MetadataSaveResponse = {
-  success: boolean;
-  name: string;
-  path?: string;
-  entries?: MetadataEntry[];
-};
-export type MetadataFileName = "FileMetaData.json" | "BatchMetadata.json" | "GlobalPrompt.json";
 
 export type CacheEntry = {
   index: number;
