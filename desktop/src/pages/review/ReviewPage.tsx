@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Index, Show, onCleanup, onMount, createMemo } from "solid-js";
-import { appState, markDirty, getActiveConfigFileName } from "../../stores/appStore";
+import { appState, setAppState, markDirty, getActiveConfigFileName } from "../../stores/appStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
 import {
   fetchCacheFile,
@@ -505,6 +505,8 @@ export function ReviewPage() {
     document.removeEventListener("galtransl:undo", handleMenuUndo);
     document.removeEventListener("galtransl:redo", handleMenuRedo);
     document.removeEventListener("galtransl:find-in-file", handleFindInFile);
+    // 组件卸载时清除跳转标记，避免残留
+    setAppState("reviewJumpToIndex", null);
   });
 
   // 按 CacheEntry.index（序号）插入，保持条目按序号有序
@@ -647,6 +649,25 @@ export function ReviewPage() {
     if (reviewMode() !== "translate" || !pid || !file) return;
     if (v === 0) return; // 初始进入由上方加载 effect 处理
     loadFile(pid, file);
+  });
+
+  // 侧边栏问题列表跳转：文件加载完成后自动滚动到具体条目
+  createEffect(() => {
+    const idx = appState.reviewJumpToIndex;
+    if (idx === null) return;
+    // 文件尚未加载完成：等下一轮（loadedFile 在 loadFile 成功后更新）
+    if (entries().length === 0 || loadedFile !== appState.activeFilePath) return;
+    // 强制展开全部条目，确保目标在 DOM 中
+    setShowAll(true);
+    // 推迟到 DOM 渲染完成后执行滚动
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`entry-${idx}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      // 无论是否找到元素，只要尝试过就清除标记，防止重入
+      setAppState("reviewJumpToIndex", null);
+    });
   });
 
   function handleShowAll() {

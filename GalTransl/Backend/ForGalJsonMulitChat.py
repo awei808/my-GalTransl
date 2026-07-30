@@ -22,6 +22,7 @@ from GalTransl.Backend.Prompts import (
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.server_runtime import set_live_snippets
+from GalTransl.Service import JobCancelledError
 from openai._types import NOT_GIVEN
 
 
@@ -1673,6 +1674,11 @@ class ForGalJsonMulitChat(BaseTranslate):
                     call_messages, filename, idx_tip, stream_callback
                 )
             except Exception as e:
+                # 取消信号不上抛时不应被本地截获——让它沿调用栈继续上抛到
+                # Service.run_job_async 的 except JobCancelledError 处正常结束任务，
+                # 避免被误记成 LLM 调用失败导致"最近错误"面板出现冗余 cancel 报错。
+                if isinstance(e, JobCancelledError):
+                    raise
                 LOGGER.error(
                     f"[LLM调用失败][{filename}:{idx_tip}] {type(e).__name__}: {e}",
                     exc_info=True,

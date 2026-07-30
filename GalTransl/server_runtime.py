@@ -388,8 +388,12 @@ def set_live_snippets(project_dir: str, prompt_preview: str = "", assembled_prev
 
     由 ForGalJsonMulitChat.translate() 在每轮 LLM 调用前后调用。
     确保前端轮询 /runtime 时可以获取到最新提示词和译文拼接内容。
+
+    提示词预览（prompt_preview）：覆盖式更新，限 8000 字符。
+    译文拼接（assembled_preview）：累积式追加，无截断，
+    保留所有历史增量数据保证连续性与完整性。
     """
-    max_len = 8000  # 每段预览最大字符数（当前提示词/译文拼接面板用；过大仅截断，不影响翻译）
+    max_len = 8000  # 仅提示词预览限制长度
     with RUNTIME_REGISTRY._lock:
         state = RUNTIME_REGISTRY._states.get(_normalize_project_dir(project_dir))
         if state is None:
@@ -397,7 +401,8 @@ def set_live_snippets(project_dir: str, prompt_preview: str = "", assembled_prev
         if prompt_preview:
             state.latest_prompt_preview = prompt_preview[:max_len] if len(prompt_preview) > max_len else prompt_preview
         if assembled_preview:
-            state.latest_assembled_preview = assembled_preview[:max_len] if len(assembled_preview) > max_len else assembled_preview
+            # 累积追加而非替换：保留并叠加所有历史批次/文件的译文片段
+            state.latest_assembled_preview += assembled_preview
         state.updated_at = _utcnow_text()
 
 

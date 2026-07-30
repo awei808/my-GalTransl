@@ -454,14 +454,16 @@ function ProblemList() {
     return [...map.entries()];
   };
 
-  function jumpToEntry(filename: string) {
-    setAppState({
+  function jumpToEntry(filename: string, index: number) {
+    const patch: Record<string, unknown> = {
       activeView: "review",
-      activeFilePath: filename,
-      // 不切换 sidebarTab：用户点击问题条目后应留在问题面板继续查阅，
-      // 而非被强制切到文件浏览器。文件浏览器可在需要时手动切换。
-    });
-    // TODO: navigate to specific index
+      reviewJumpToIndex: index,
+    };
+    // 仅当切换文件时才设 activeFilePath，同文件跳转不用重载
+    if (filename !== appState.activeFilePath) {
+      patch.activeFilePath = filename;
+    }
+    setAppState(patch as any);
   }
 
   return (
@@ -475,7 +477,7 @@ function ProblemList() {
                 <div class="problem-filename">{filename}</div>
                 <For each={entries}>
                   {(entry) => (
-                    <div class="problem-entry" onClick={() => jumpToEntry(entry.filename)}>
+                    <div class="problem-entry" onClick={() => jumpToEntry(entry.filename, entry.index)}>
                       <span class="problem-index">#{entry.index}</span>
                       <span class="problem-desc">{entry.problem?.slice(0, 50)}</span>
                     </div>

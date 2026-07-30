@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, For, Switch, Match } from "solid-js";
+import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, For, Switch, Match, untrack } from "solid-js";
 import { appState, setAppState, getActiveConfigFileName, navigateTo, type ModelCheckState } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
@@ -197,7 +197,8 @@ export function TranslateConsole() {
         }
 
         // ── 任务级 toast：状态变更通知；失败时主动停止任务 ──
-        if (status && appState.prevJobStatus !== status) {
+        // 用 untrack 读 prevJobStatus 避免隐式依赖导致 effect 重跑、timer 泄漏
+        if (status && untrack(() => appState.prevJobStatus) !== status) {
           if (status === "running") {
             toast.info(`【${taskType}】翻译任务已开始`);
           } else if (status === "completed") {
@@ -223,6 +224,11 @@ export function TranslateConsole() {
 
     poll();
     pollTimer = setInterval(poll, 3000);
+    // 效应重跑前清理旧闹钟，保证 timer 唯一
+    onCleanup(() => {
+      clearInterval(pollTimer);
+      pollTimer = undefined;
+    });
 
     // 翻译器列表只加载一次
     if (translators().length === 0) {

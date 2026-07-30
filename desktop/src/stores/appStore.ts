@@ -55,12 +55,14 @@ export interface AppState {
   selectedBackend: string;
   /** 缓存目录树（由 cacheWatcher 轮询刷新，供文件浏览器渲染） */
   cacheTree: FileNode[];
-  /** 缓存树版本：监控发现“当前打开文件”大小变化时自增，驱动 ReviewPage 局部刷新 */
+  /** 缓存树版本：监控发现"当前打开文件"大小变化时自增，驱动 ReviewPage 局部刷新 */
   cacheVersion: number;
   /** 模型可用性检测快照（全局持久，避免翻译控制台组件重挂后重复检测/丢失结果） */
   modelCheck: ModelCheckSnapshot;
-  /** 上一轮 /runtime 轮询到的任务状态（全局持久，避免切回页面时把“运行中”误判为“刚开始”而重复弹窗） */
+  /** 上一轮 /runtime 轮询到的任务状态（全局持久，避免切回页面时把"运行中"误判为"刚开始"而重复弹窗） */
   prevJobStatus: string;
+  /** 侧边栏问题列表请求跳转到的条目索引（ReviewPage 加载文件后执行滚动，完成后自动清空） */
+  reviewJumpToIndex: number | null;
 }
 
 // ── 默认状态 ──
@@ -82,6 +84,7 @@ export const defaultState: AppState = {
   cacheVersion: 0,
   modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   prevJobStatus: "",
+  reviewJumpToIndex: null,
 };
 
 // ── Store ──
@@ -91,12 +94,13 @@ export const [appState, setAppState] = createStore<AppState>(defaultState);
 // ── Actions ──
 
 export function navigateTo(view: ActiveView) {
-  setAppState("activeView", view);
-  if (view === "settings") {
+  setAppState({ activeView: view });
+  if (view === "settings" || view === "new-project") {
     setAppState({ sidebarOpen: false, sidebarTab: null });
   }
-  if (view === "new-project") {
-    setAppState({ sidebarOpen: false, sidebarTab: null });
+  if (view !== "review") {
+    // 离开 review 视图时清除残留的跳转标记，避免切回时误触发滚动
+    setAppState("reviewJumpToIndex", null);
   }
 }
 
@@ -127,7 +131,7 @@ export async function openProject(projectId: string, opts?: { configFileName?: s
     } catch {
       // 探测失败则保持 null，调用方回退到 config.yaml 默认
     } finally {
-      // 仅当仍是同一项目时才清除“探测中”标志，避免快速切换项目时误清新项目的标志
+      // 仅当仍是同一项目时才清除"探测中"标志，避免快速切换项目时误清新项目的标志
       if (appState.activeProjectId === projectId) {
         setAppState("configNameDetecting", false);
       }
