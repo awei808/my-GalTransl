@@ -188,10 +188,12 @@ class TestForFileMetaData(unittest.TestCase):
             with open(os.path.join(gdir, "GPT字典.txt"), "w", encoding="utf-8") as f:
                 f.write("華恋\t华恋\n創\t创\n")
             fake_dict_cfg = {"gpt.dict": ["GPT字典.txt"], "defaultDictFolder": gdir}
+            # 提供含字典 search_word 的 json_list 以供 gen_prompt 按需匹配
+            test_data = [{"message": "創と華恋の会話", "name": "創"}]
             with patch.object(
                 self.backend.pj_config, "getDictCfgSection", return_value=fake_dict_cfg
             ):
-                text = self.backend._build_glossary_text()
+                text = self.backend._build_glossary_text(test_data)
             self.assertIn("# Glossary", text)
             self.assertIn("華恋", text)
             self.assertIn("华恋", text)
@@ -244,7 +246,7 @@ class TestForFileMetaData(unittest.TestCase):
         with open(self.input_files[0], encoding="utf-8") as fh:
             data = json.load(fh)
         script = self.backend._build_script_text(data)
-        glossary = self.backend._build_glossary_text()
+        glossary = self.backend._build_glossary_text(data)
         prompt = self.backend._build_prompt_request(script, glossary)
         self.assertNotIn("[Input]", prompt)
         self.assertNotIn("[Glossary]", prompt)

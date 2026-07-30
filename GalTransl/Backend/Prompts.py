@@ -105,7 +105,7 @@ Properly adjust the word order and polish the wording of the inline sentence to 
 Your output start with "Rivision: ",
 then write a short basic summary like `Rivised id <id>, for <goals and rules>; id <id2>,...`.
 after that, write the whole result jsonlines in a code block(```jsonline), in each line:
-copy the hash anchor(3 char + |) and the `id` [NamePrompt3]directly, remove origin `src` and `dst`,
+copy the hash anchor(3 char + |) and the `id` directly, remove origin `src` and `dst`,
 follow the rules and goals, add `newdst` and fill your [TargetLang] proofreading result,
 each object in one line without any explanation or comments, then end.
 [Glossary]
@@ -165,7 +165,7 @@ NULL	NULL	NULL
 
 # ForFileMetaData Prompt
 
-FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 Galgame 剧本文件（JSON-line 格式，每行一个 JSON 对象，含 name 与 message 字段）。请阅读全文，概括总结该文件的剧情，并将「剧情」字段压缩至 200 字以内的中文。
+FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 Galgame 剧本文件（JSON-line 格式，每行一个 JSON 对象，含 name 与 message 字段）。请阅读全文，概括总结该文件的剧情，并将「剧情」字段压缩至 大约[max_chars] 字的中文。
 
 # 要求
 1. 只输出一个 JSON 对象
@@ -173,7 +173,7 @@ FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 G
    - id：待分析文件的文件名。
    - 角色：本文件中出现的主要角色名（使用中文译名，数组形式）。
    - 服装：本文件中角色所穿的 Cosplay 服装/装扮；若无明显服装则填空字符串 ""。
-   - 剧情：对剧情的概括总结，200 字以内中文。
+   - 剧情：对剧情的概括总结，大约[max_chars] 字中文。
    - 标签：描述本文件场景/行为的关键词数组（如 教学、道具、足交、正常位 等，按内容自行归纳 2~6 个）。
 3. 角色名、服装名、标签中的专名必须与下方 <glossary> 的译名保持一致。
 

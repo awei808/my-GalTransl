@@ -5,6 +5,7 @@ from typing import Optional, List
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
 from GalTransl import LOGGER
+from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseTranslate import BaseTranslate
@@ -245,8 +246,14 @@ class ForBatchMetaData(BaseTranslate):
             )
         return "\n".join(out), max_index
 
-    def _build_glossary_text(self) -> str:
-        """把项目的 gpt.dict 全量格式化为 Markdown 译表，供模型遵循专名译法。"""
+    def _build_glossary_text(self, json_list: list) -> str:
+        """按需注入 GPT 字典：仅将当前文件中实际出现的条目格式化为 Markdown 译表。
+
+        与多轮翻译后端策略一致：先用 json_list 构造 CTransList，再通过
+        CGptDict.gen_prompt 检测哪些字典条目实际出现在原文中，只注入命中条目。
+        """
+        if not json_list:
+            return ""
         dict_cfg = self.pj_config.getDictCfgSection()
         if not dict_cfg:
             return ""
@@ -263,18 +270,26 @@ class ForBatchMetaData(BaseTranslate):
             LOGGER.warning(f"[BatchMetaData] 载入 GPT 字典失败，批次元数据将不含专名译表：{e}")
             return ""
 
-        lines = [
-            "# Glossary",
-            "| Src | Dst(/Dst2/..) | Note |",
-            "| --- | --- | --- |",
-        ]
-        for dic in getattr(gpt_dic, "_dic_list", []):
-            note = getattr(dic, "note", "") or ""
-            lines.append(f"| {dic.search_word} | {dic.replace_word} | {note} |")
-        LOGGER.debug(
-            f"[BatchMetaData] 已载入 GPT 字典，共 {len(lines) - 3} 条"
-        )
-        return "\n".join(lines)
+        # 从 json_list 构造临时 CTransList
+        trans_list = []
+        for item in json_list:
+            if not isinstance(item, dict):
+                continue
+            msg = str(item.get("message", ""))
+            if not msg:
+                continue
+            tran = CSentense(msg, speaker=str(item.get("name", "") or ""))
+            tran.post_src = tran.pre_src
+            trans_list.append(tran)
+
+        glossary = gpt_dic.gen_prompt(trans_list) if trans_list else ""
+        if glossary:
+            LOGGER.debug(
+                f"[BatchMetaData] 按需注入 GPT 字典，命中 {glossary.count(chr(10)) - 3} 条"
+            )
+        else:
+            LOGGER.debug("[BatchMetaData] 当前文件无命中 GPT 字典条目")
+        return glossary
 
     # 3. 解析与规整 LLM 返回的 JSON
     @staticmethod
@@ -471,7 +486,7 @@ class ForBatchMetaData(BaseTranslate):
                 f"[BatchMetaData] {filename} 剧本正文为空，跳过"
             )
             return False
-        glossary_text = self._build_glossary_text()
+        glossary_text = self._build_glossary_text(json_list)
         file_meta_block = self._build_file_metadata_block(filename)
         prompt = self._build_prompt_request(
             script_text, glossary_text, file_metadata=file_meta_block
@@ -491,7 +506,7 @@ class ForBatchMetaData(BaseTranslate):
                 max_retry_count=3,
             )
         except Exception as e:
-            LOGGER.error(f"[BatchMetaData] {filename} LLM 请求失败：{e}")
+            LOGGER.error(f"[BatchMetaData] {filename} LLM 请求失败：{type(e).__name__}: {e}", exc_info=True)
             return False
 
         meta = self._parse_meta(rsp or "", filename)

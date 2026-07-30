@@ -1,15 +1,13 @@
 import json
 import os
-import asyncio
-import re
-import traceback
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
 from GalTransl import LOGGER
+from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Utils import extract_code_blocks, fix_quotes
+from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT
 
@@ -101,7 +99,7 @@ class ForFileMetaData(BaseTranslate):
         return _format_global_prompt_as_context(self._global_prompt)
 
     # 0. 可控注入翻译规范
-    def _build_prompt_request(self, input_src: str, gptdict: str) -> str:
+    def _build_prompt_request(self, input_src: str, gptdict: str, max_chars: int = 200) -> str:
         """
         在基类占位符替换的基础上，增加 translation_guideline 的可控注入：
 
@@ -109,7 +107,10 @@ class ForFileMetaData(BaseTranslate):
         - 关闭（config 设 internals.forfilemeta.inject_guideline=false）或
           规范为空时，占位段被替换为空，不会留下悬挂的标题。
 
-        其余占位符（[Input]/[Glossary]/[SourceLang]/[TargetLang]）沿用基类行为。
+        其余占位符（[Input]/[Glossary]/[SourceLang]/[TargetLang]/[max_chars]）沿用基类行为。
+
+        Args:
+            max_chars: 剧情概括字数上限，按公式 min(300, max(80, 句数//2+50)) 自动计算
         """
         prompt_req = self.trans_prompt
         if self._inject_guideline:
@@ -127,6 +128,7 @@ class ForFileMetaData(BaseTranslate):
         prompt_req = prompt_req.replace("[Glossary]", gptdict)
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
+        prompt_req = prompt_req.replace("[max_chars]", str(max_chars))
         return prompt_req
 
     # 1. 准备输入
@@ -175,8 +177,14 @@ class ForFileMetaData(BaseTranslate):
             )
         return "\n".join(out)
 
-    def _build_glossary_text(self) -> str:
-        """把项目的 gpt.dict 全量格式化为 Markdown 译表，供模型遵循专名译法。"""
+    def _build_glossary_text(self, json_list: list) -> str:
+        """按需注入 GPT 字典：仅将当前文件中实际出现的条目格式化为 Markdown 译表。
+
+        与多轮翻译后端策略一致：先用 json_list 构造 CTransList，再通过
+        CGptDict.gen_prompt 检测哪些字典条目实际出现在原文中，只注入命中条目。
+        """
+        if not json_list:
+            return ""
         dict_cfg = self.pj_config.getDictCfgSection()
         if not dict_cfg:
             return ""
@@ -193,18 +201,26 @@ class ForFileMetaData(BaseTranslate):
             LOGGER.warning(f"[FileMetaData] 载入 GPT 字典失败，文件级元数据将不含专名译表：{e}")
             return ""
 
-        lines = [
-            "# Glossary",
-            "| Src | Dst(/Dst2/..) | Note |",
-            "| --- | --- | --- |",
-        ]
-        for dic in getattr(gpt_dic, "_dic_list", []):
-            note = getattr(dic, "note", "") or ""
-            lines.append(f"| {dic.search_word} | {dic.replace_word} | {note} |")
-        LOGGER.debug(
-            f"[FileMetaData] 已载入 GPT 字典，共 {len(lines) - 3} 条"
-        )
-        return "\n".join(lines)
+        # 从 json_list 构造临时 CTransList（metadata 阶段 post_src 未计算，用 pre_src 代替）
+        trans_list = []
+        for item in json_list:
+            if not isinstance(item, dict):
+                continue
+            msg = str(item.get("message", ""))
+            if not msg:
+                continue
+            tran = CSentense(msg, speaker=str(item.get("name", "") or ""))
+            tran.post_src = tran.pre_src
+            trans_list.append(tran)
+
+        glossary = gpt_dic.gen_prompt(trans_list) if trans_list else ""
+        if glossary:
+            LOGGER.debug(
+                f"[FileMetaData] 按需注入 GPT 字典，命中 {glossary.count(chr(10)) - 3} 条"
+            )
+        else:
+            LOGGER.debug("[FileMetaData] 当前文件无命中 GPT 字典条目")
+        return glossary
 
     # 2. 解析与规整 LLM 返回的 JSON
     @staticmethod
@@ -296,13 +312,17 @@ class ForFileMetaData(BaseTranslate):
                 f"[FileMetaData] {filename} 剧本正文为空，跳过"
             )
             return False
-        glossary_text = self._build_glossary_text()
-        prompt = self._build_prompt_request(script_text, glossary_text)
+        glossary_text = self._build_glossary_text(json_list)
+
+        # 根据文件句数动态计算剧情概括字数上限：下限 80，上限 300
+        _num_lines = len(json_list)
+        max_chars = min(300, max(80, int(_num_lines // 2) + 50))
+        prompt = self._build_prompt_request(script_text, glossary_text, max_chars=max_chars)
 
         LOGGER.info(f"[FileMetaData] 正在为 {filename} 生成文件级元数据…")
         LOGGER.debug(
             f"[FileMetaData] {filename} 提示词长度：{len(prompt)} 字符，"
-            f"脚本 {len(json_list)} 句"
+            f"脚本 {_num_lines} 句，剧情上限 {max_chars} 字"
         )
         try:
             # 不使用系统提示词：直接以 user 消息发送，不附带任何 system 角色

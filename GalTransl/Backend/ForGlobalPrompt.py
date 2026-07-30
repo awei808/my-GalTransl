@@ -256,22 +256,31 @@ class ForGlobalPrompt(BaseTranslate):
 
     # 2. 构建术语表文本
     def _build_glossary_text(self) -> str:
-        """把项目的 gpt.dict 全量格式化为 Markdown 译表，供模型遵循专名译法。"""
+        """仅把项目的 gpt.dict 中项目专属字典格式化为 Markdown 译表。
+
+        全局提示词阶段只注入项目级字典（(project_dir) 前缀），
+        不注入公共字典，避免无关术语干扰全局分析。
+        """
         dict_cfg = self.pj_config.getDictCfgSection()
         if not dict_cfg:
             return ""
         gpt_dic_list = dict_cfg.get("gpt.dict", [])
         if not gpt_dic_list:
             return ""
+        # 仅保留项目专属字典条目
+        project_only = [e for e in gpt_dic_list if str(e).startswith("(project_dir)")]
+        if not project_only:
+            LOGGER.debug("[GlobalPrompt] 无项目专属字典，跳过 GPT 字典注入")
+            return ""
         default_dic_dir = dict_cfg.get("defaultDictFolder", "")
         try:
             paths = initDictList(
-                gpt_dic_list, default_dic_dir, self.pj_config.getProjectDir()
+                project_only, default_dic_dir, self.pj_config.getProjectDir()
             )
             gpt_dic = CGptDict(paths)
         except Exception as e:
             LOGGER.warning(
-                f"[GlobalPrompt] 载入 GPT 字典失败，"
+                f"[GlobalPrompt] 载入项目 GPT 字典失败，"
                 f"全局分析将不含专名译表：{e}"
             )
             return ""
@@ -287,7 +296,7 @@ class ForGlobalPrompt(BaseTranslate):
                 f"| {dic.search_word} | {dic.replace_word} | {note} |"
             )
         LOGGER.debug(
-            f"[GlobalPrompt] 已载入 GPT 字典，共 {len(lines) - 3} 条"
+            f"[GlobalPrompt] 已载入项目 GPT 字典，共 {len(lines) - 3} 条"
         )
         return "\n".join(lines)
 
