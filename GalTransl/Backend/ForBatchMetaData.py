@@ -372,6 +372,15 @@ class ForBatchMetaData(BaseTranslate):
             LOGGER.warning(f"[BatchMetaData] {filename} json_list 为空，跳过")
             return False
 
+        # 缓存命中：pass2_cache 中已有该文件的批次元数据则跳过 LLM 调用
+        from GalTransl import PASS2_CACHE_DIR
+        cache_path = os.path.join(
+            self.pj_config.getCachePath(), PASS2_CACHE_DIR, f"{filename}.batch.json"
+        )
+        if os.path.isfile(cache_path):
+            LOGGER.debug(f"[BatchMetaData] 缓存命中，跳过 LLM 调用: {filename}")
+            return True
+
         script_text, max_index = self._build_script_text(json_list, filename)
         if not script_text:
             LOGGER.warning(

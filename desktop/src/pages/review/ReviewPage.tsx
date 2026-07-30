@@ -364,7 +364,7 @@ function MetadataCard(props: {
       <textarea
         ref={taRef}
         class="meta-content-textarea"
-        rows="10"
+        rows="20"
         value={content()}
         spellcheck={false}
         onInput={(e) => {

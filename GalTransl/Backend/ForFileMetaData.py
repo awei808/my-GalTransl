@@ -306,6 +306,15 @@ class ForFileMetaData(BaseTranslate):
             LOGGER.warning(f"[FileMetaData] {filename} json_list 为空，跳过")
             return False
 
+        # 缓存命中：pass1_cache 中已有该文件的元数据则跳过 LLM 调用
+        from GalTransl import PASS1_CACHE_DIR
+        cache_path = os.path.join(
+            self.pj_config.getCachePath(), PASS1_CACHE_DIR, f"{filename}.meta.json"
+        )
+        if os.path.isfile(cache_path):
+            LOGGER.debug(f"[FileMetaData] 缓存命中，跳过 LLM 调用: {filename}")
+            return True
+
         script_text = self._build_script_text(json_list, filename)
         if not script_text:
             LOGGER.warning(

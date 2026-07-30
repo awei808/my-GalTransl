@@ -460,8 +460,19 @@ async def doLLMTranslate(
             f"[FileMetaData] 开始为 {total} 个文件生成文件级元数据"
         )
         _update_runtime(projectConfig, stage="生成文件级元数据")
+        # 载入已有缓存映射，跳过已生成元数据的文件
+        existing_fm_map = {}
+        try:
+            from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+            existing_fm_map = load_file_metadata_map(projectConfig)
+        except Exception as exc:
+            LOGGER.debug(f"[FileMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
+
         for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
             fname = os_basename(file_path)
+            if fname in existing_fm_map:
+                LOGGER.debug(f"[FileMetaData] 跳过已有缓存: {fname}")
+                continue
             LOGGER.debug(
                 f"[FileMetaData] ({i}/{total}) 开始处理 {fname}，"
                 f"共 {len(jsons)} 句"
@@ -505,8 +516,19 @@ async def doLLMTranslate(
             f"[BatchMetaData] 开始为 {total} 个文件划分翻译区间"
         )
         _update_runtime(projectConfig, stage="划分翻译区间")
+        # 载入已有缓存映射，跳过已划分批次的文件
+        existing_bm_map = {}
+        try:
+            from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
+            existing_bm_map = load_batch_metadata_map(projectConfig)
+        except Exception as exc:
+            LOGGER.debug(f"[BatchMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
+
         for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
             fname = os_basename(file_path)
+            if fname in existing_bm_map:
+                LOGGER.debug(f"[BatchMetaData] 跳过已有缓存: {fname}")
+                continue
             LOGGER.debug(
                 f"[BatchMetaData] ({i}/{total}) 开始处理 {fname}，"
                 f"共 {len(jsons)} 句"
