@@ -316,7 +316,7 @@ class ForFileMetaData(BaseTranslate):
 
         # 根据文件句数动态计算剧情概括字数上限：下限 80，上限 300
         _num_lines = len(json_list)
-        max_chars = min(300, max(80, int(_num_lines // 2) + 50))
+        max_chars = min(300, max(20, int(_num_lines // 2) + 50))
         prompt = self._build_prompt_request(script_text, glossary_text, max_chars=max_chars)
 
         LOGGER.info(f"[FileMetaData] 正在为 {filename} 生成文件级元数据…")

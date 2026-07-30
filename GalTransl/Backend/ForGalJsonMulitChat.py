@@ -621,7 +621,14 @@ class ForGalJsonMulitChat(BaseTranslate):
             parts.append(input_src)
             user_content = "\n".join(parts)
         LOGGER.debug(
-            f"[{filename}] 本轮 user 提示词（{'首轮' if is_first_round else '续轮'}）:\n{user_content}"
+            f"[{filename}] {'首轮' if is_first_round else '续轮'}翻译 | "
+            f"backend={self.eng_type} | "
+            f"guideline={self.pj_config.getKey('gpt.translation_guideline') or '-'} | "
+            f"global={'✓' if self._global_prompt else '✗'} | "
+            f"filemeta={'✓' if filename in self._file_metadata_by_file else '✗'} | "
+            f"batchmeta={'✓' if filename in self._batch_metadata_by_file else '✗'} | "
+            f"sentences={len(conv) if is_first_round else input_src.count(chr(10))+1} | "
+            f"gptdict={'✗' if not gptdict else f'{gptdict.count(chr(124))}条'}"
         )
         return user_content
 
@@ -1470,13 +1477,22 @@ class ForGalJsonMulitChat(BaseTranslate):
 
             self._check_stop_requested()
 
-            # 单 worker 模式下打印翻译输入输出日志，方便调试
+            # 单 worker 模式下打印翻译上下文摘要，方便调试
             if self.pj_config.active_workers == 1:
+                _label = '校对' if proofread else '翻译'
+                _round = '首轮' if is_first_round else '续轮'
+                _retry = f' 重试{attempt}' if attempt > 0 else ''
+                _global = '✓' if self._global_prompt else '✗'
+                _fm = '✓' if filename in self._file_metadata_by_file else '✗'
+                _bm = '✓' if filename in self._batch_metadata_by_file else '✗'
+                _gl = '✗' if not gptdict else f'{gptdict.count(chr(124))}条'
+                _bc = self.eng_type
+                _glname = self.pj_config.getKey('gpt.translation_guideline') or '-'
                 LOGGER.info(
-                    f"->{'翻译输入' if not proofread else '校对输入'}"
-                    f"{'[多轮-首轮]' if is_first_round else '[多轮-续轮]'}"
-                    f"{f'[重试{attempt}]' if attempt > 0 else ''}：\n"
-                    f"{gptdict}\n{user_content}\n"
+                    f"-> {_label}输入[{_round}{_retry}] | "
+                    f"backend={_bc} | guideline={_glname} | "
+                    f"global={_global} filemeta={_fm} batchmeta={_bm} | "
+                    f"gptdict={_gl}"
                 )
                 LOGGER.info("->输出：")
 

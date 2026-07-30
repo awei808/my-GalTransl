@@ -244,6 +244,12 @@ class TestFormatBatchMetadataBlock(unittest.TestCase):
 class TestBuildRoundUserContentSubseqInject(unittest.TestCase):
     def test_subseq_round_injects_batch_metadata(self) -> None:
         inst = MagicMock(spec=ForGalJsonMulitChat)
+        inst.eng_type = "gpt4"
+        inst.pj_config = MagicMock()
+        inst.pj_config.getKey.return_value = "-"
+        inst._global_prompt = None
+        inst._file_metadata_by_file = {}
+        inst._batch_metadata_by_file = {"f": True}
         block = "<batch_metadata>\n区间[1-8] 视角:创\n</batch_metadata>\n"
         out = ForGalJsonMulitChat._build_round_user_content(
             inst,

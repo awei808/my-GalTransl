@@ -24,6 +24,7 @@ import time
 from contextlib import suppress
 from GalTransl.TerminalOutput import should_print_translation_logs
 from GalTransl.server_runtime import set_live_snippets
+from GalTransl.ApiLogger import api_logger
 
 try:
     from pyreqwest.compatibility.httpx import HttpxTransport
@@ -833,6 +834,29 @@ class BaseTranslate:
                 self._last_chatbot_model_name = getattr(token, "model_name", "")
                 LOGGER.debug(f"Call {token.domain} withs token {token.maskToken()}")
 
+                # ── API 调用日志：记录请求信息 ──
+                _call_trace = ""
+                try:
+                    _pj_dir = getattr(self.pj_config, "runtime_project_dir",
+                                      self.pj_config.getProjectDir())
+                except Exception:
+                    _pj_dir = ""
+                if _pj_dir:
+                    _prompt_snip = ""
+                    try:
+                        _prompt_snip = str(messages[-1]["content"]) if messages else str(prompt)
+                    except Exception:
+                        pass
+                    _call_trace = api_logger.begin(
+                        _pj_dir,
+                        backend=self.eng_type,
+                        file=file_name,
+                        model=token.model_name,
+                        endpoint=token.domain,
+                        stream=bool(is_stream),
+                        prompt_preview=_prompt_snip,
+                    )
+
                 await self._wait_for_global_rpm_slot()
 
                 # Create the API call as a task so we can cancel it if
@@ -946,6 +970,23 @@ class BaseTranslate:
                     time.monotonic() - request_started,
                     is_rate_limited=False,
                 )
+                # ── API 调用日志：成功 ──
+                if _call_trace:
+                    _lat = (time.monotonic() - request_started) * 1000
+                    _pt, _ct = 0, 0
+                    try:
+                        _usage = getattr(response, "usage", None)
+                        if _usage:
+                            _pt = getattr(_usage, "prompt_tokens", 0) or 0
+                            _ct = getattr(_usage, "completion_tokens", 0) or 0
+                    except Exception:
+                        pass
+                    api_logger.record(
+                        _call_trace, status="success", latency_ms=_lat,
+                        retry_count=api_try_count, prompt_tokens=_pt,
+                        completion_tokens=_ct,
+                        response_preview=(result or "")[:500],
+                    )
                 return result, token
             except Exception as e:
                 is_rate_limited = isinstance(e, RateLimitError)
@@ -956,10 +997,24 @@ class BaseTranslate:
 
                 from GalTransl.Service import JobCancelledError
                 if isinstance(e, JobCancelledError):
+                    # ── API 调用日志：取消 ──
+                    if _call_trace:
+                        _lat = (time.monotonic() - request_started) * 1000
+                        api_logger.record(
+                            _call_trace, status="cancelled", latency_ms=_lat,
+                            retry_count=api_try_count, error=str(e),
+                        )
                     raise
 
                 api_try_count += 1
                 if max_retry_count is not None and api_try_count >= max_retry_count:
+                    # ── API 调用日志：达到重试上限 ──
+                    if _call_trace:
+                        _lat = (time.monotonic() - request_started) * 1000
+                        api_logger.record(
+                            _call_trace, status="failed", latency_ms=_lat,
+                            retry_count=api_try_count, error=str(e),
+                        )
                     raise RuntimeError(
                         f"ask_chatbot reached retry limit ({max_retry_count}): "
                         f"{type(e).__name__}: {e}"
@@ -967,6 +1022,13 @@ class BaseTranslate:
 
                 # gemini no_candidates
                 if "candidates" in str(e) and api_try_count > 1:
+                    # ── API 调用日志：Gemini 空响应 ──
+                    if _call_trace:
+                        _lat = (time.monotonic() - request_started) * 1000
+                        api_logger.record(
+                            _call_trace, status="failed", latency_ms=_lat,
+                            retry_count=api_try_count, error=str(e),
+                        )
                     return "", token
                 if self.apiErrorWait >= 0:
                     sleep_time = self.apiErrorWait + random.random()
@@ -1015,6 +1077,14 @@ class BaseTranslate:
 
                     message_text = " | ".join(part for part in error_parts if part)
                     message_text = f"{message_text} | sleeping {sleep_time:.3f}s"
+                    # ── API 调用日志：可重试错误 ──
+                    if _call_trace:
+                        _lat = (time.monotonic() - request_started) * 1000
+                        api_logger.record(
+                            _call_trace, status="error", latency_ms=_lat,
+                            retry_count=api_try_count,
+                            error=(str(e) or "")[:2000],
+                        )
                     LOGGER.warning(
                         f"[API Error]{token_info}{file_name} {message_text}"
                     )

@@ -165,7 +165,7 @@ NULL	NULL	NULL
 
 # ForFileMetaData Prompt
 
-FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 Galgame 剧本文件（JSON-line 格式，每行一个 JSON 对象，含 name 与 message 字段）。请阅读全文，概括总结该文件的剧情，并将「剧情」字段压缩至 大约[max_chars] 字的中文。
+FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 Galgame 剧本文件（JSON-line 格式，每行一个 JSON 对象，含 name 与 message 字段）。请阅读全文，概括总结该文件的剧情，并将「剧情」字段压缩至 20–[max_chars] 字之间的中文（太短的剧本允许接近 20 字下限，但不得少于 20 字）。
 
 # 要求
 1. 只输出一个 JSON 对象
@@ -173,7 +173,7 @@ FORFILEMETA_PROMPT = """你是 Galgame 剧本分析助手。下面给出一段 G
    - id：待分析文件的文件名。
    - 角色：本文件中出现的主要角色名（使用中文译名，数组形式）。
    - 服装：本文件中角色所穿的 Cosplay 服装/装扮；若无明显服装则填空字符串 ""。
-   - 剧情：对剧情的概括总结，大约[max_chars] 字中文。
+   - 剧情：对剧情的概括总结，20–[max_chars] 字中文。
    - 标签：描述本文件场景/行为的关键词数组（如 教学、道具、足交、正常位 等，按内容自行归纳 2~6 个）。
 3. 角色名、服装名、标签中的专名必须与下方 <glossary> 的译名保持一致。
 
