@@ -1,14 +1,9 @@
-import { createSignal, For, Show, onMount } from "solid-js";
-import { getLogs, clearLogs, getLogsByLevel, loadLogsFromFile } from "../../stores/logStore";
+import { createSignal, For, Show } from "solid-js";
+import { getLogs, clearLogs, getLogsByLevel } from "../../stores/logStore";
 import type { LogLevel } from "../../stores/logStore";
 
 export function LogViewer() {
   const [filter, setFilter] = createSignal<LogLevel | "all">("all");
-
-  // 挂载时加载文件日志
-  onMount(() => {
-    loadLogsFromFile();
-  });
 
   function handleClear() {
     clearLogs();
@@ -70,7 +65,7 @@ export function LogViewer() {
         fallback={
           <div class="logs-empty">
             <p>暂无操作日志</p>
-            <p class="logs-empty-hint">所有操作记录将自动保存到文件。</p>
+            <p class="logs-empty-hint">所有操作记录将自动上报后端统一保存。</p>
           </div>
         }
       >

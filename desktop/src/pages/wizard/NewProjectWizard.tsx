@@ -7,14 +7,18 @@ import { confirm } from "../../stores/confirmStore";
 import { getErrorMessage } from "../../lib/errors";
 import { Icon } from "../../components/icons/Icon";
 import {
-  fetchDefaultProjectConfigTemplate,
   fetchPlugins,
   fetchTranslationGuidelines,
   submitJob,
   fetchJob,
 } from "../../lib/api/general";
-import { fetchProjectConfig, updateProjectConfig } from "../../lib/api/project";
-import { encodeProjectDir, ensureDesktopBackendReady } from "../../lib/api/client";
+import {
+  fetchProjectConfig,
+  updateProjectConfig,
+  initProject,
+  importProjectFiles,
+} from "../../lib/api/project";
+import { ensureDesktopBackendReady, ApiError } from "../../lib/api/client";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
 import type { PluginInfo, Job } from "../../lib/api/types";
 import { StepProjectInfo } from "./StepProjectInfo";
@@ -24,62 +28,6 @@ import { StepSettings } from "./StepSettings";
 import { StepExtractNames } from "./StepExtractNames";
 
 const STEPS = ["项目位置", "导入文件", "翻译后端", "常用设置", "提取人名"];
-const LAST_PARENT_DIR_KEY = "galtransl-new-project-last-parent-dir";
-
-// pass3_cache 示例文件内容（新建项目时随目录一起创建，供用户参考缓存格式）
-const SAMPLE_CACHE_JSON = JSON.stringify(
-  [
-    {
-      _field_guide: true,
-      _说明: "以下为翻译缓存条目，每个 JSON 对象对应一句原文的翻译结果。字段含义：",
-      index: "序号 — 该句在文件中的位置编号",
-      name: "说话人 — 该句的说话角色（空表示旁白/独白）",
-      pre_src: "原文 — 未经任何处理的原始日文文本",
-      post_src: "预处理后原文 — 经对话符号剥离、译前字典替换后的文本（实际发送给 AI 的原文）",
-      pre_dst: "译文 — AI 返回的原始翻译结果",
-      proofread_dst: "校对后译文 — 启用校对时，经二次校对后的翻译（空表示未校对）",
-      trans_by: "翻译引擎 — 执行本次翻译的 AI 模型名称",
-      proofread_by: "校对引擎 — 执行校对的 AI 模型名称",
-      problem: "问题 — 自动检测到的翻译问题（如 残留日文、丢换行 等），空表示无问题",
-      trans_conf: "翻译置信度 — AI 对翻译结果的置信度评分（0~1，部分模型不支持则为 0）",
-      doub_content: "疑问内容 — AI 对翻译中存在疑问的部分",
-      unknown_proper_noun: "未知专有名词 — AI 无法确定的专有名词",
-      post_dst_preview: "后处理后译文 — 经译后字典替换、对话符号恢复后的最终输出预览",
-    },
-    {
-      index: 0,
-      name: "爱丽丝",
-      pre_src: "こんにちは、今日はいい天気ですね。",
-      post_src: "こんにちは、今日はいい天気ですね。",
-      pre_dst: "你好，今天天气真好啊。",
-      proofread_dst: "",
-      trans_by: "gpt-4o",
-      proofread_by: "",
-      problem: "",
-      trans_conf: 0.95,
-      doub_content: "",
-      unknown_proper_noun: "",
-      post_dst_preview: "你好，今天天气真好啊。",
-    },
-    {
-      index: 1,
-      name: "",
-      pre_src: "……そうですね。",
-      post_src: "……そうですね。",
-      pre_dst: "……是啊。",
-      proofread_dst: "",
-      trans_by: "gpt-4o",
-      proofread_by: "",
-      problem: "",
-      trans_conf: 0.92,
-      doub_content: "",
-      unknown_proper_noun: "",
-      post_dst_preview: "……是啊。",
-    },
-  ],
-  null,
-  2,
-);
 
 /* 等待任务结束（completed/failed/cancelled），带超时保护 */
 const JOB_POLL_INTERVAL = 2000;
@@ -120,9 +68,10 @@ export function NewProjectWizard() {
   } | null>(null);
 
   // Step 1
-  const [parentDir, setParentDir] = createSignal(localStorage.getItem(LAST_PARENT_DIR_KEY) || "");
   const [projectName, setProjectName] = createSignal("");
   const [projectCreated, setProjectCreated] = createSignal(false);
+  const [projectDir, setProjectDir] = createSignal("");
+  const [projectId, setProjectId] = createSignal("");
 
   // Step 2
   const [importedFiles, setImportedFiles] = createSignal<string[]>([]);
@@ -149,13 +98,6 @@ export function NewProjectWizard() {
   // 完成阶段是否正在等待后端/提取（用于禁用按钮、显示进度）
   const [finishing, setFinishing] = createSignal(false);
 
-  const projectDir = createMemo(() => {
-    const p = parentDir();
-    const n = projectName();
-    if (!p || !n) return "";
-    const sep = p.includes("/") ? "/" : "\\";
-    return `${p}${sep}${n}`;
-  });
   const gtInputDir = createMemo(() => {
     const d = projectDir();
     if (!d) return "";
@@ -163,97 +105,77 @@ export function NewProjectWizard() {
     return `${d}${sep}gt_input`;
   });
 
-  // 选择父目录
-  async function handleSelectParentDir() {
-    const s = await open({ directory: true });
-    if (s) {
-      const path = typeof s === "string" ? s.replace(/\//g, "\\") : s;
-      setParentDir(path);
-    }
-  }
-
-  // 创建项目
+  // 创建项目（全部走后端 /api/projects/init，含目录布局、config.yaml 与示例缓存）
   async function handleCreateProject() {
-    const dir = projectDir();
-    if (!dir) {
-      setFeedback({ type: "error", message: "请选择目录并输入项目名称" });
+    const name = projectName();
+    if (!name.trim()) {
+      setFeedback({ type: "error", message: "请输入项目名称" });
       return;
     }
-    // 探测目标文件夹是否已存在，避免静默覆盖已有配置
-    let dirExists = false;
+    // 后端守卫：激活失败明确提示，而非静默报错
     try {
-      dirExists = await invoke("path_exists", { path: dir });
+      await ensureDesktopBackendReady({ timeoutMs: 25000 });
     } catch {
-      dirExists = false;
-    }
-    if (dirExists) {
-      const result = await confirm.show({
-        title: "目标文件夹已存在",
-        message: `文件夹已存在：\n${dir}\n\n点击「覆盖」将重新生成 config.yaml（已有的译文、缓存等文件会保留）；点击「取消」可返回修改项目名。`,
-        confirmText: "覆盖",
-        cancelText: "取消",
-        tone: "warning",
-      });
-      if (!result.confirmed) return;
+      toast.error("无法启动后端服务，请先手动运行 run_backend.py 后再试");
+      return;
     }
     try {
-      const sep = dir.includes("/") ? "/" : "\\";
-      const template = await fetchDefaultProjectConfigTemplate();
-      // 先创建目录，再写入文件
-      await invoke("create_dir", { path: dir });
-      await invoke("create_dir", { path: `${dir}${sep}gt_input` });
-      await invoke("create_dir", { path: `${dir}${sep}gt_output` });
-      await invoke("create_dir", { path: `${dir}${sep}transl_cache` });
-      // 预建批次缓存子文件夹（后端翻译流程各阶段使用）
-      for (const sub of ["pass0_cache", "pass1_cache", "pass2_cache", "pass3_cache"]) {
-        await invoke("create_dir", { path: `${dir}${sep}transl_cache${sep}${sub}` }).catch(
-          () => {},
-        );
-      }
-      await invoke("write_text_file", {
-        path: `${dir}${sep}config.yaml`,
-        content: template,
-      });
-      // 预建批次缓存子文件夹后，写入示例缓存文件以便用户了解格式
-      await invoke("write_text_file", {
-        path: `${dir}${sep}transl_cache${sep}pass3_cache${sep}_示例缓存文件.json`,
-        content: SAMPLE_CACHE_JSON,
-      }).catch(() => {});
-      setProjectCreated(true);
-      setFeedback({ type: "success", message: "项目创建成功！" });
+      const res = await initProject(name, false);
+      applyInitResult(res);
     } catch (err) {
-      setFeedback({
-        type: "error",
-        message: `创建失败: ${getErrorMessage(err)}`,
-      });
+      // 项目已存在：征询是否覆盖（覆盖仅重建布局与 config.yaml，保留译文/缓存）
+      if (err instanceof ApiError && err.status === 409) {
+        const result = await confirm.show({
+          title: "目标项目已存在",
+          message: `项目「${name}」已存在于后端工作区。\n\n点击「覆盖」将重新生成 config.yaml（已有的译文、缓存等文件会保留）；点击「取消」可返回修改项目名。`,
+          confirmText: "覆盖",
+          cancelText: "取消",
+          tone: "warning",
+        });
+        if (!result.confirmed) return;
+        try {
+          const res = await initProject(name, true);
+          applyInitResult(res);
+        } catch (err2) {
+          setFeedback({ type: "error", message: `覆盖失败: ${getErrorMessage(err2)}` });
+        }
+      } else {
+        setFeedback({ type: "error", message: `创建失败: ${getErrorMessage(err)}` });
+      }
     }
   }
 
-  // 导入文件（文件或文件夹均可；文件夹会被递归展开）
+  function applyInitResult(res: { project_id: string; project_dir: string }) {
+    setProjectDir(res.project_dir);
+    setProjectId(res.project_id);
+    setProjectCreated(true);
+    setFeedback({ type: "success", message: "项目创建成功！" });
+  }
+
+  // 导入文件（文件或文件夹均可；文件夹会被递归展开，交由后端读取写入 gt_input）
   async function importPathsToInput(paths: string[]) {
-    const inputDir = gtInputDir();
-    if (!inputDir || paths.length === 0) return;
+    const pid = projectId();
+    if (!pid || paths.length === 0) return;
     try {
-      const copied: string[] = await invoke("copy_files", {
-        sources: paths,
-        destinationDir: inputDir,
-      });
-      if (!copied || copied.length === 0) {
-        setFeedback({ type: "info", message: "没有可导入的文件。" });
+      const res = await importProjectFiles(pid, paths);
+      const imported = res.imported || [];
+      const skipped = res.skipped || [];
+      if (imported.length === 0) {
+        setFeedback({
+          type: "info",
+          message: skipped.length > 0 ? "所选文件已存在，跳过导入。" : "没有可导入的文件。",
+        });
         return;
       }
       // 去重：过滤掉本次会话已导入的同名条目（保留首次出现）
-      const seen = new Set<string>();
-      const unique = copied.filter((c) => {
-        const k = c.toLowerCase();
-        if (seen.has(k)) return false;
-        seen.add(k);
+      const existing = new Set(importedFiles().map((n) => n.toLowerCase()));
+      const unique = imported.filter((n) => {
+        const k = n.toLowerCase();
+        if (existing.has(k)) return false;
+        existing.add(k);
         return true;
       });
-      setImportedFiles((prev) => {
-        const existing = new Set(prev.map((n) => n.toLowerCase()));
-        return [...prev, ...unique.filter((n) => !existing.has(n.toLowerCase()))];
-      });
+      setImportedFiles((prev) => [...prev, ...unique]);
       setFeedback({
         type: "success",
         message: `已导入 ${unique.length} 个文件`,
@@ -296,7 +218,8 @@ export function NewProjectWizard() {
   // 保存设置
   async function handleSaveSettings() {
     const dir = projectDir();
-    if (!dir) return;
+    const pid = projectId();
+    if (!dir || !pid) return;
 
     // 后端守卫：激活失败明确提示，而非静默报错
     try {
@@ -307,7 +230,6 @@ export function NewProjectWizard() {
     }
 
     try {
-      const pid = encodeProjectDir(dir);
       const res = await fetchProjectConfig(pid, "config.yaml");
       const config = { ...res.config };
       const common: Record<string, unknown> = {
@@ -357,7 +279,8 @@ export function NewProjectWizard() {
   // 完成：提取人名 + 打开项目
   async function handleFinish() {
     const dir = projectDir();
-    if (!dir || finishing()) return;
+    const pid = projectId();
+    if (!dir || !pid || finishing()) return;
 
     // 后端守卫：激活失败明确提示，而非静默报错
     try {
@@ -366,8 +289,6 @@ export function NewProjectWizard() {
       toast.error("无法启动后端服务，请先手动运行 run_backend.py 后再试");
       return;
     }
-
-    const pid = encodeProjectDir(dir);
 
     // 若有文件，先提交 dump-name 任务并等待完成，再打开项目
     // （保证向导卸载前页面始终可见提取进度，避免无声后台运行）
@@ -409,12 +330,6 @@ export function NewProjectWizard() {
     openProject(pid, { configFileName: "config.yaml" });
     toast.success("项目已创建并打开");
   }
-
-  // 保存父目录到 localStorage
-  createEffect(() => {
-    const p = parentDir();
-    if (p.trim()) localStorage.setItem(LAST_PARENT_DIR_KEY, p);
-  });
 
   // 第3步：加载后端配置
   createEffect(() => {
@@ -493,12 +408,9 @@ export function NewProjectWizard() {
         <div class="wizard-step-stage">
           {currentStep() === 0 && (
             <StepProjectInfo
-              parentDir={parentDir()}
               projectName={projectName()}
               projectDir={projectDir()}
               projectCreated={projectCreated()}
-              onSelectParentDir={handleSelectParentDir}
-              onParentDirChange={setParentDir}
               onProjectNameChange={setProjectName}
               onProjectCreatedChange={setProjectCreated}
               onCreateProject={handleCreateProject}

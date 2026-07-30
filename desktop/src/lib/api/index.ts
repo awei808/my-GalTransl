@@ -97,7 +97,6 @@ export {
   fetchTranslationGuidelines,
   fetchAppSettings,
   updateAppSettings,
-  fetchDefaultProjectConfigTemplate,
   fetchPromptTemplates,
   fetchOpenAIModels,
 } from "./general";

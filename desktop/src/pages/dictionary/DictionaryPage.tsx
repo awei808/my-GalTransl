@@ -1,4 +1,5 @@
 import { createSignal, createEffect, For, Index, Show, onCleanup } from "solid-js";
+import { sendLog } from "../../lib/api/log";
 import { appState, getActiveConfigFileName } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
@@ -25,13 +26,13 @@ import type {
 } from "../../lib/api/types";
 import {
   getFilesByTab,
-  parseRows,
+  parseDictContent,
   rowsToText,
   getFieldLabels,
   stripProjectDirMarker,
   PROJECT_DIR_MARKER,
 } from "../../components/dict/dictUtils";
-import type { DictTab } from "../../components/dict/dictUtils";
+import type { DictRow, DictTab } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
 
 const TABS: { key: string; label: string }[] = [
@@ -48,6 +49,7 @@ export function DictionaryPage() {
   const [activeTab, setActiveTab] = createSignal<string>("gpt");
   const [selectedFile, setSelectedFile] = createSignal<string | null>(null);
   const [draftText, setDraftText] = createSignal("");
+  const [parsedRows, setParsedRows] = createSignal<DictRow[]>([]);
   const [creating, setCreating] = createSignal(false);
   const [newFilename, setNewFilename] = createSignal("");
 
@@ -105,7 +107,7 @@ export function DictionaryPage() {
     try {
       await saveNameTable(pid()!, nameEntries());
     } catch (e) {
-      console.error("自动保存人名失败", e);
+      sendLog(`自动保存人名失败: ${e}`, "error");
     }
   }
 
@@ -115,8 +117,20 @@ export function DictionaryPage() {
   // 视图模式：card（卡片）| text（纯文本）
   const [viewMode, setViewMode] = createSignal<"card" | "text">("text");
 
-  // 使用 dictUtils 解析当前字典文本为结构化行
-  const parsedRows = () => parseRows(draftText(), activeTab() as DictTab);
+  // 解析请求序列号：仅接受最新一次解析结果，避免异步竞态覆盖编辑态
+  let parseSeq = 0;
+
+  // 解析当前字典文本为结构化行（走后端，本地不再解析）
+  async function refreshParsed(): Promise<void> {
+    const seq = ++parseSeq;
+    try {
+      const rows = await parseDictContent(draftText(), activeTab() as DictTab);
+      if (seq !== parseSeq) return;  // 丢弃过期响应，避免覆盖最新编辑/切换结果
+      setParsedRows(rows);
+    } catch {
+      // 解析失败保留上一次结果，避免编辑态崩溃
+    }
+  }
 
   // 输入法组合状态：组合中（isComposing）不回写 draftText。
   // 否则每次按键都重序列化整篇文本并重置受控 value，会打断中文 / 日文等 IME。
@@ -124,16 +138,16 @@ export function DictionaryPage() {
 
   /** 更新某行的某个字段值 */
   function updateRowValue(ri: number, colIndex: number, value: string) {
+    parseSeq++;  // 本地已编辑，作废飞行中的解析响应，避免其返回后覆盖本次按键
     const rows = parsedRows();
     if (ri < 0 || ri >= rows.length) return;
     const row = rows[ri];
     if (row.type === "blank" || row.type === "comment") return;
     const vals = [...row.values];
     vals[colIndex] = value;
-    row.values = vals;
-    // 利用 rowsToText 序列化
-    const all = [...parsedRows()];
-    all[ri] = row;
+    const all = [...rows];
+    all[ri] = { ...row, values: vals };
+    setParsedRows(all);
     setDraftText(rowsToText(all));
   }
 
@@ -152,6 +166,9 @@ export function DictionaryPage() {
       setDraftText(text ? text + "\n||" : "||");
     } else {
       setDraftText(text ? text + "\n|" : "|");
+    }
+    if (viewMode() === "card") {
+      refreshParsed();
     }
   }
 
@@ -287,6 +304,7 @@ export function DictionaryPage() {
       ?? commonData()?.dict_contents?.[lookupKey];
     const text = content ? content.lines.join("\n") : "";
     setDraftText(text);
+    refreshParsed();
     // 切换文件后让 textarea 重获焦点，光标置顶
     if (_taRef) {
       _taRef.focus();
@@ -321,6 +339,13 @@ export function DictionaryPage() {
     } else {
       setSelectedFile(null);
       setDraftText("");
+    }
+  });
+
+  // 切到卡片模式时基于当前文本重新解析（text 模式编辑后切换需刷新）
+  createEffect(() => {
+    if (viewMode() === "card") {
+      refreshParsed();
     }
   });
 

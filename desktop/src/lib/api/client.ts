@@ -22,13 +22,31 @@ export class ApiError extends Error {
 
 // ---- Internal ----
 
+// ---- API Token (SEC-1 可选写端点鉴权) ----
+let runtimeApiToken: string | null = null;
+
+export function setApiToken(token: string | null): void {
+  runtimeApiToken = token ? token.trim() : null;
+}
+
+function getApiToken(): string | null {
+  if (runtimeApiToken) return runtimeApiToken;
+  const fromEnv = import.meta.env.VITE_API_TOKEN?.trim();
+  return fromEnv ? fromEnv : null;
+}
+
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const baseUrl = getBackendBaseUrl();
 
   // 30 秒超时，防止请求挂死
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
-  const mergedInit: RequestInit = { ...init, signal: controller.signal };
+  const reqHeaders = new Headers(init?.headers as HeadersInit | undefined);
+  const token = getApiToken();
+  if (token) {
+    reqHeaders.set("Authorization", `Bearer ${token}`);
+  }
+  const mergedInit: RequestInit = { ...init, signal: controller.signal, headers: reqHeaders };
 
   let response: Response;
   try {

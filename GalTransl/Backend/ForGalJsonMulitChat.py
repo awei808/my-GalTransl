@@ -5,7 +5,7 @@ import os
 import asyncio
 import re
 from random import choice
-from typing import Any, Optional, List, Set
+from typing import Any, Optional, List, Set, Tuple
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
@@ -77,6 +77,173 @@ def detect_batch_line_break_symbol(post_src_list: List[str]) -> str:
         if s:
             return s
     return ""
+
+
+# ── 共享区间工具（批次级元数据生成与多轮翻译分组复用）──
+# 历史实现中，ForBatchMetaData 与 ForGalJsonMulitChat 各自重复实现区间解析，
+# 对脏数据（非整数、长度不足、lo>hi 写反）的处理方式不一致且均静默丢弃。
+# 下方函数统一收口，确保两模块对 LLM 产出区间的处理行为一致。
+
+
+def parse_interval(raw: object) -> Optional[Tuple[int, int]]:
+    """把区间字段（支持「区间」/interval，list 或 tuple）解析为 (lo, hi) 闭区间。
+
+    统一处理两类常见情况：
+      - 字段缺失 / 非 list·tuple / 长度不足 2 → 返回 None（调用方跳过该区间）
+      - lo > hi（方向写反）→ 自动交换为 lo <= hi
+    端点解析失败（非整数）时返回 None，调用方应跳过该区间并（可选）告警，
+    而不是抛出未捕获异常。
+    """
+    if not isinstance(raw, (list, tuple)):
+        return None
+    if len(raw) < 2:
+        return None
+    try:
+        lo = int(raw[0])
+        hi = int(raw[1])
+    except (TypeError, ValueError):
+        return None
+    if lo > hi:
+        lo, hi = hi, lo
+    return lo, hi
+
+
+def _to_bool_meta(v: object) -> bool:
+    """把多种表示的布尔字段规整为 bool（与批次元数据生成保持一致）。"""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "是", "y")
+    return False
+
+
+def strip_chunk_suffix(filename: str) -> str:
+    """剥离分批后缀 ``_<数字>``（如 ``file.txt.json_0`` -> ``file.txt.json``）。
+
+    文件级/批次级元数据按原始文件名 id 存放，而翻译阶段文件可能被切成
+    ``file_0`` 之类的分片。两处元数据解析都应先剥离后缀再匹配，
+    避免分片文件拿不到剧情/批次背景。
+    """
+    m = re.match(r"^(.*)_\d+$", filename)
+    return m.group(1) if m else filename
+
+
+def normalize_batch_intervals(
+    raw_batches: object,
+    filename: str,
+    max_index: int,
+    max_batches: int,
+    tag: str = "BatchMetaData",
+) -> List[dict]:
+    """规整批次数组：清洗字段、裁剪并排序区间、重叠修复、最大批次数限制、间隙检测。
+
+    把 ForBatchMetaData._normalize_meta 的区间处理逻辑收口为共享函数，供批次级
+    元数据生成与多轮翻译分组复用，确保对脏数据/边界的处理行为一致。返回
+    ``[{"区间":[lo,hi], "视角":str, "氛围":str, "h":bool, "用词色彩":str}, ...]``。
+    """
+    if not isinstance(raw_batches, list):
+        raw_batches = []
+
+    batches: List[dict] = []
+    for b in raw_batches:
+        if not isinstance(b, dict):
+            continue
+        rng = parse_interval(b.get("区间", b.get("interval", None)))
+        if rng is None:
+            LOGGER.debug(f"[{tag}] {filename} 区间字段非法，已跳过：{b.get('区间', b.get('interval'))!r}")
+            continue
+        lo, hi = rng
+        lo = max(1, lo)
+        if max_index > 0:
+            hi = min(hi, max_index)
+        if hi < lo:
+            continue
+        batches.append(
+            {
+                "区间": [lo, hi],
+                "视角": str(b.get("视角", b.get("perspective", "")) or ""),
+                "氛围": str(b.get("氛围", b.get("atmosphere", "")) or ""),
+                "h": _to_bool_meta(b.get("h", b.get("H", False))),
+                "用词色彩": str(b.get("用词色彩", b.get("tone", "")) or ""),
+            }
+        )
+
+    batches.sort(key=lambda x: (x["区间"][0], x["区间"][1]))
+
+    # 重叠修复：与相邻区间取并后的非重叠起点
+    cleaned: List[dict] = []
+    for b in batches:
+        if not cleaned:
+            cleaned.append(b)
+            continue
+        prev = cleaned[-1]
+        cur_lo, cur_hi = b["区间"]
+        prev_lo, prev_hi = prev["区间"]
+        if cur_lo <= prev_hi:
+            new_lo = prev_hi + 1
+            if new_lo > cur_hi:
+                LOGGER.warning(
+                    f"[{tag}] {filename} 区间 [{prev_lo},{prev_hi}] "
+                    f"与 [{cur_lo},{cur_hi}] 重叠，收缩后为空，已丢弃"
+                )
+                continue
+            LOGGER.debug(
+                f"[{tag}] {filename} 区间 [{cur_lo},{cur_hi}] "
+                f"与 [{prev_lo},{prev_hi}] 重叠，收缩为 [{new_lo},{cur_hi}]"
+            )
+            b["区间"] = [new_lo, cur_hi]
+        cleaned.append(b)
+
+    # 最大批次数限制：反复合并间距最小的两个相邻区间
+    while len(cleaned) > max_batches:
+        min_gap = float("inf")
+        merge_idx = 0
+        for i in range(len(cleaned) - 1):
+            cur_lo, cur_hi = cleaned[i]["区间"]
+            nxt_lo, nxt_hi = cleaned[i + 1]["区间"]
+            gap = nxt_lo - cur_hi
+            if gap < min_gap:
+                min_gap = gap
+                merge_idx = i
+        merged = dict(cleaned[merge_idx])
+        merged["区间"] = [merged["区间"][0], cleaned[merge_idx + 1]["区间"][1]]
+        LOGGER.debug(
+            f"[{tag}] {filename} 合并区间 "
+            f"[{cleaned[merge_idx]['区间'][0]},{cleaned[merge_idx]['区间'][1]}] + "
+            f"[{cleaned[merge_idx + 1]['区间'][0]},{cleaned[merge_idx + 1]['区间'][1]}] "
+            f"→ [{merged['区间'][0]},{merged['区间'][1]}]"
+        )
+        cleaned[merge_idx] = merged
+        del cleaned[merge_idx + 1]
+
+    # 间隙检测：提示未覆盖的句子区间
+    if not cleaned:
+        LOGGER.warning(
+            f"[{tag}] {filename} 无有效区间，全文（第 1～{max_index} 行）均无批次覆盖"
+        )
+    else:
+        expected = 1
+        gaps = []
+        for b in cleaned:
+            lo = b["区间"][0]
+            if lo > expected:
+                gaps.append((expected, lo - 1))
+            expected = max(expected, b["区间"][1] + 1)
+        if expected <= max_index:
+            gaps.append((expected, max_index))
+        if gaps:
+            gap_desc = "、".join(
+                f"第 {g[0]}～{g[1]} 行" if g[0] != g[1] else f"第 {g[0]} 行"
+                for g in gaps
+            )
+            LOGGER.warning(
+                f"[{tag}] {filename} 区间存在间隙：{gap_desc} 无批次覆盖。"
+                f"这可能导致对应句子的翻译缺少批次级指导"
+            )
+
+    return cleaned
 
 
 class FileMetaData:
@@ -309,16 +476,10 @@ class BatchMetadata:
         for b in self.batches:
             if not isinstance(b, dict):
                 continue
-            interval = b.get("区间") or b.get("interval") or []
-            if not isinstance(interval, (list, tuple)) or len(interval) < 2:
+            rng = parse_interval(b.get("区间") or b.get("interval"))
+            if rng is None:
                 continue
-            try:
-                b_lo = int(interval[0])
-                b_hi = int(interval[1])
-            except (TypeError, ValueError):
-                continue
-            if b_lo > b_hi:
-                b_lo, b_hi = b_hi, b_lo
+            b_lo, b_hi = rng
             # 判定两闭区间是否相交
             if b_hi >= lo and b_lo <= hi:
                 result.append(b)
@@ -1179,10 +1340,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         if md is not None:
             return md
         # 处理分批后缀：file_0 -> file
-        m = re.match(r"^(.*)_\d+$", filename)
-        if m:
-            return self._file_metadata_by_file.get(m.group(1))
-        return None
+        return self._file_metadata_by_file.get(strip_chunk_suffix(filename))
 
     def set_batch_metadata(
         self, batch_metadata: BatchMetadata, filename: str = ""
@@ -1216,10 +1374,8 @@ class ForGalJsonMulitChat(BaseTranslate):
         bm = self._batch_metadata_by_file.get(filename)
         if bm is not None:
             return bm
-        m = re.match(r"^(.*)_\d+$", filename)
-        if m:
-            return self._batch_metadata_by_file.get(m.group(1))
-        return None
+        # 处理分批后缀：file_0 -> file
+        return self._batch_metadata_by_file.get(strip_chunk_suffix(filename))
 
     def _group_by_batch_metadata(
         self, translist_unhit: CTransList, filename: str
@@ -1238,14 +1394,10 @@ class ForGalJsonMulitChat(BaseTranslate):
         for b in bm.batches:
             if not isinstance(b, dict):
                 continue
-            iv = b.get("区间") or b.get("interval") or []
-            try:
-                s_lo, s_hi = int(iv[0]), int(iv[1])
-            except (TypeError, ValueError, IndexError):
+            rng = parse_interval(b.get("区间") or b.get("interval"))
+            if rng is None:
                 continue
-            if s_lo > s_hi:
-                s_lo, s_hi = s_hi, s_lo
-            segs.append((s_lo, s_hi, b))
+            segs.append((rng[0], rng[1], b))
         segs.sort(key=lambda x: (x[0], x[1]))
         if not segs:
             return [list(translist_unhit)]
@@ -1310,11 +1462,10 @@ class ForGalJsonMulitChat(BaseTranslate):
 
         lines = []
         for b in segments:
-            interval = b.get("区间") or b.get("interval") or []
-            try:
-                b_lo, b_hi = int(interval[0]), int(interval[1])
-            except (TypeError, ValueError, IndexError):
+            rng = parse_interval(b.get("区间") or b.get("interval"))
+            if rng is None:
                 continue
+            b_lo, b_hi = rng
             view = str(b.get("视角", "") or "").strip() or "未标注"
             atmos = str(b.get("氛围", "") or "").strip() or "未标注"
             is_h = "是" if b.get("h") else "否"
@@ -1515,9 +1666,37 @@ class ForGalJsonMulitChat(BaseTranslate):
                 parsed_result_trans_list=parsed_result_trans_list,
                 cursor=stream_cursor,
             )
-            raw_resp, token = await self._call_llm(
-                call_messages, filename, idx_tip, stream_callback
-            )
+            # 与 ForBatchMetaData 一致：LLM 调用异常本地兜底，记录运行时错误后
+            # 走统一解析失败分支（标 (Failed)），不再直接上抛依赖上游 job runner。
+            try:
+                raw_resp, token = await self._call_llm(
+                    call_messages, filename, idx_tip, stream_callback
+                )
+            except Exception as e:
+                LOGGER.error(
+                    f"[LLM调用失败][{filename}:{idx_tip}] {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                try:
+                    from GalTransl.server import record_runtime_error
+
+                    record_runtime_error(
+                        getattr(
+                            self.pj_config,
+                            "runtime_project_dir",
+                            self.pj_config.getProjectDir(),
+                        ),
+                        kind="llm",
+                        message=f"{type(e).__name__}: {e}",
+                        filename=filename,
+                        index_range=str(idx_tip),
+                        model=getattr(self, "_last_chatbot_model_name", ""),
+                        level="error",
+                    )
+                except Exception:
+                    pass
+                # 空响应交给 _handle_parse_result 走失败兜底（标 (Failed)）
+                raw_resp, token = "", None
 
             # 流程 4：解析结果
             stream_error_msg = stream_cursor.get("error", "")

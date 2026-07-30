@@ -43,6 +43,32 @@ export async function fetchProjectConfig(projectId: string, configFileName = "co
   );
 }
 
+/** 在服务端 workspace 根下按名称创建项目；已存在且 overwrite=false 时回 409。 */
+export async function initProject(name: string, overwrite = false) {
+  return apiRequest<{
+    project_id: string;
+    project_dir: string;
+    created: string[];
+    config_file_name: string;
+  }>("/api/projects/init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, overwrite }),
+  });
+}
+
+/** 将用户选中的本地源路径交给后端读取并导入 gt_input（所有磁盘 IO 走后端）。 */
+export async function importProjectFiles(projectId: string, sourcePaths: string[]) {
+  return apiRequest<{ imported: string[]; skipped: string[] }>(
+    `/api/projects/${projectId}/import`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_paths: sourcePaths }),
+    },
+  );
+}
+
 export async function updateProjectConfig(projectId: string, payload: ProjectConfigUpdatePayload) {
   return apiRequest<{ success: boolean; project_dir: string; config_file_name: string }>(
     `/api/projects/${projectId}/config`,

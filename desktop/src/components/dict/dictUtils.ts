@@ -2,6 +2,7 @@
  * Dictionary utility functions — row parsing, formatting, tab/file helpers.
  */
 import type { DictFileContent, DictionaryCategory } from "../../lib/api";
+import { apiRequest } from "../../lib/api/client";
 
 export type DictRowType = "normal" | "conditional" | "situation" | "gpt" | "comment" | "blank";
 
@@ -53,45 +54,21 @@ export function getFilesByTab(
   });
 }
 
-export function parseRows(text: string, tab: DictTab): DictRow[] {
-  const lines = text.split("\n");
-  return lines.map((line) => {
-    if (!line.trim() && !line.includes("|")) return { type: "blank", values: [], raw: line };
-    if (line.startsWith("//") || line.startsWith("#") || line.startsWith("\\\\")) {
-      return { type: "comment", values: [line], raw: line };
-    }
-    const parts = line.split("|");
-    if (tab === "gpt") {
-      const [src = "", dst = "", ...notes] = parts;
-      return { type: "gpt", values: [src, dst, notes.join("|")], raw: line };
-    }
-    if (
-      parts.length >= 4 &&
-      [
-        "pre_jp",
-        "post_jp",
-        "pre_zh",
-        "post_zh",
-        "pre_src",
-        "post_src",
-        "pre_dst",
-        "post_dst",
-      ].includes(parts[0])
-    ) {
-      const [target = "", cond = "", search = "", replace = "", ...rest] = parts;
-      return {
-        type: "conditional",
-        values: [target, cond, search, replace, rest.join("|")],
-        raw: line,
-      };
-    }
-    if (parts.length >= 3 && ["diag", "mono"].includes(parts[0])) {
-      const [scene = "", search = "", ...replace] = parts;
-      return { type: "situation", values: [scene, search, replace.join("|")], raw: line };
-    }
-    const [search = "", replace = "", ...rest] = parts;
-    return { type: "normal", values: [search, replace, rest.join("|")], raw: line };
+/**
+ * 解析字典文本为结构化行。本地解析逻辑已彻底删除，统一调用后端
+ * POST /api/dictionaries/parse（实现见 GalTransl.Dictionary.parse_dict_line），
+ * 保证前后端解析行为一致。
+ */
+export async function parseDictContent(
+  content: string,
+  category: DictTab,
+): Promise<DictRow[]> {
+  const data = await apiRequest<{ rows: DictRow[] }>("/api/dictionaries/parse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, category }),
   });
+  return data.rows ?? [];
 }
 
 export function rowsToText(rows: DictRow[]): string {

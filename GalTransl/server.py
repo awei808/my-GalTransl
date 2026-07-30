@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import email
 import json
 import threading
+import time
 from asyncio import run
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,7 +20,8 @@ import os
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR
+from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
+from GalTransl.Dictionary import parse_dict_line, DictRow
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
@@ -55,6 +60,16 @@ from GalTransl.server_runtime import (
 )
 
 from GalTransl.CSerialize import save_json
+from GalTransl.backend_security import (
+    load_allowed_origins,
+    origin_allowed,
+    load_api_token,
+    token_ok,
+    safe_under_project,
+)
+
+_ALLOWED_ORIGINS = load_allowed_origins()
+_API_TOKEN = load_api_token()
 
 
 async def _check_model_availability(
@@ -425,7 +440,7 @@ def _build_cache_tree(dir_path: str, prefix: str = "", count_entries: bool = Tru
                 "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
                 "is_metadata": any(
                     rel == d or rel.startswith(d + "/")
-                    for d in ("pass0_cache", "pass1_cache", "pass2_cache")
+                    for d in ("pass0_cache", "pass1_cache", "pass2_cache", "pass3_cache")
                 ),
             }
             if count_entries and name.endswith(".json"):
@@ -458,6 +473,10 @@ def _is_safe_dict_filename(filename: str) -> bool:
         return False
     trimmed = filename.strip()
     if not trimmed:
+        return False
+    # 拒绝 . 与 .. 段：basename("..") == ".." 不含分隔符会被放过，
+    # 拼接后会解析到字典目录的父级，造成路径穿越
+    if trimmed in (".", ".."):
         return False
     if trimmed != os.path.basename(trimmed):
         return False
@@ -1268,12 +1287,108 @@ class JobRegistry:
             self.clear_project_stop(spec.project_dir)
 
 
+# 新建项目目录布局（A-1）：与桌面向导 NewProjectWizard 创建的 4 类子目录保持一致
+_SAMPLE_CACHE_FILENAME = "_示例缓存文件.json"
+_SAMPLE_CACHE_JSON_CONTENT = json.dumps(
+    [
+        {
+            "index": 1,
+            "name": "",
+            "pre_src": "これはサンプルの原文です。",
+            "post_src": "これはサンプルの原文です。",
+            "pre_dst": "这是示例原文。",
+            "proofread_dst": "",
+            "trans_by": "",
+            "proofread_by": "",
+            "problem": "",
+            "trans_conf": 0,
+            "doub_content": "",
+            "unknown_proper_noun": "",
+            "post_dst_preview": "这是示例原文。",
+        }
+    ],
+    ensure_ascii=False,
+    indent=2,
+)
+
+
+def _workspace_root() -> str:
+    """init 端点的项目根：由服务端配置，不接受客户端原始路径。"""
+    root = (os.environ.get("GALTRANSL_WORKSPACE_ROOT") or "").strip()
+    return os.path.normpath(root) if root else os.getcwd()
+
+
+def _resolve_new_project_dir(name: str) -> str:
+    """将客户端提供的项目名解析为服务端根下的绝对目录，越界则抛错。
+
+    仅接受单一路径段（不含分隔符）；含分隔符或 `..` 一律拒绝，杜绝路径注入。
+    """
+    candidate = name.strip()
+    if not candidate or candidate in (".", ".."):
+        raise ValueError("非法的项目名")
+    if any(sep in candidate for sep in ("/", "\\")):
+        raise ValueError("项目名不能包含路径分隔符")
+    return safe_under_project(_workspace_root(), candidate)
+
+
+def _create_project_layout(project_dir: str, force: bool = False) -> list[str]:
+    """创建项目目录布局，返回所有已创建项的绝对路径。
+
+    force=True 时覆盖 config.yaml 与示例缓存文件（用于向导「覆盖」已存在项目），
+    目录本身始终以 exist_ok 创建，不删除既有译文/缓存。
+    """
+    created: list[str] = []
+    os.makedirs(project_dir, exist_ok=True)
+    created.append(project_dir)
+
+    input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+    output_dir = os.path.join(project_dir, OUTPUT_FOLDERNAME)
+    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+    for d in (input_dir, output_dir, cache_dir):
+        os.makedirs(d, exist_ok=True)
+        created.append(d)
+
+    for sub in (PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR):
+        sub_dir = os.path.join(cache_dir, sub)
+        os.makedirs(sub_dir, exist_ok=True)
+        created.append(sub_dir)
+
+    config_path = os.path.join(project_dir, "config.yaml")
+    if force or not os.path.isfile(config_path):
+        with open(config_path, "w", encoding="utf-8") as _f:
+            _f.write(DEFAULT_PROJECT_CONFIG_YAML)
+    created.append(config_path)
+
+    sample_path = os.path.join(cache_dir, PASS3_CACHE_DIR, _SAMPLE_CACHE_FILENAME)
+    if force or not os.path.isfile(sample_path):
+        with open(sample_path, "w", encoding="utf-8") as _f:
+            _f.write(_SAMPLE_CACHE_JSON_CONTENT)
+    created.append(sample_path)
+    return created
+
+
+# 日志字段白名单与清洗：防止通过 level/source 注入伪造日志行
+_LOG_STRIP_TABLE = {i: None for i in range(0x20)}
+_LOG_STRIP_TABLE[0x7F] = None  # DEL 一并移除
+_VALID_LOG_LEVELS = frozenset({"debug", "info", "warn", "warning", "error"})
+
+
+def _sanitize_log_field(value: str, max_len: int = 64) -> str:
+    """剥离不可打印控制字符（含换行/回车）并限制长度，防止伪造日志行。"""
+    return value.translate(_LOG_STRIP_TABLE).strip()[:max_len]
+
+
 def build_handler(registry: JobRegistry) -> type:
     class RequestHandler(BaseHTTPRequestHandler):
         def end_headers(self) -> None:
-            self.send_header("Access-Control-Allow-Origin", "*")
+            origin = self.headers.get("Origin")
+            if origin and origin_allowed(origin, _ALLOWED_ORIGINS):
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                # Web 模式（公网前端访问本机服务）的私有网络预检需要此头
+                self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             super().end_headers()
 
         def do_OPTIONS(self) -> None:
@@ -1398,6 +1513,12 @@ def build_handler(registry: JobRegistry) -> type:
                     return
                 result = _build_project_output(project_dir, filenames=[filename])
                 self._send_json(result)
+                return
+
+            # POST /api/projects/:id/import
+            # 导入源文件到 gt_input；已存在的同名文件跳过并返回 skipped（去重，避免磁盘覆盖）
+            if sub_path == "/import":
+                self._handle_import_files(project_dir)
                 return
 
             # GET /api/projects/:id/files
@@ -1630,6 +1751,11 @@ def build_handler(registry: JobRegistry) -> type:
                 if not _filename:
                     self._send_json({"error": "filename required"}, status=HTTPStatus.BAD_REQUEST)
                     return
+                # 与字典端点一致的路径穿越防护：拒绝 . / .. / 含分隔符的文件名，
+                # 否则 os.path.join 会把 .meta.json 写到 pass1_cache 之外
+                if not _is_safe_dict_filename(_filename):
+                    self._send_json({"error": "invalid metadata filename"}, status=HTTPStatus.BAD_REQUEST)
+                    return
                 _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS1_CACHE_DIR, f"{_filename}.meta.json")
 
                 if self.command == "GET":
@@ -1670,6 +1796,10 @@ def build_handler(registry: JobRegistry) -> type:
                 _filename = unquote(sub_path[len("/metadata/batchmeta/"):])
                 if not _filename:
                     self._send_json({"error": "filename required"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                # 与字典端点一致的路径穿越防护：拒绝 . / .. / 含分隔符的文件名
+                if not _is_safe_dict_filename(_filename):
+                    self._send_json({"error": "invalid metadata filename"}, status=HTTPStatus.BAD_REQUEST)
                     return
                 _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR, f"{_filename}.batch.json")
 
@@ -2737,23 +2867,54 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"project_dir": project_dir, "problems": all_problems, "total": len(all_problems)})
                 return
 
-            # GET /api/projects/:id/logs
+            # GET /api/projects/:id/logs?source=engine|frontend
+            # source 默认 engine 以保持向后兼容；engine 读项目级 GalTransl.log，
+            # frontend 读由 POST /api/log 统一收集的前端日志（全局 frontend.log）。
             if sub_path == "/logs":
-                log_path = os.path.join(project_dir, "GalTransl.log")
+                query = parse_qs(urlparse(self.path).query)
+                source = (query.get("source", ["engine"]) or ["engine"])[0] or "engine"
+                if source not in ("engine", "frontend"):
+                    self._send_json(
+                        {"error": f"unsupported log source: {source}"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                # tail 校验前置：非法/负数直接 400（与日志文件是否存在无关）
+                tail_raw = query.get("tail", ["2000"])[0]
+                try:
+                    tail = int(tail_raw)
+                except (ValueError, TypeError):
+                    self._send_json(
+                        {"error": f"invalid tail parameter: {tail_raw}"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                if tail < 0:
+                    self._send_json(
+                        {"error": f"tail must be non-negative: {tail}"},
+                        status=HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                if source == "engine":
+                    log_path = os.path.join(project_dir, "GalTransl.log")
+                else:
+                    log_path = os.path.join(_workspace_root(), "frontend.log")
                 if not os.path.isfile(log_path):
-                    self._send_json({"project_dir": project_dir, "exists": False, "lines": []})
+                    self._send_json(
+                        {"project_dir": project_dir, "source": source, "exists": False, "lines": []}
+                    )
                     return
                 try:
                     with open(log_path, "r", encoding="utf-8", errors="replace") as f:
                         lines = f.read().splitlines()
-                    # Return last 2000 lines by default
-                    query = parse_qs(urlparse(self.path).query)
-                    tail = int(query.get("tail", ["2000"])[0])
+                    # 默认返回最后 2000 行；tail=0 返回空（而非全部）
+                    tail_lines = lines[-tail:] if tail > 0 else []
                     self._send_json({
                         "project_dir": project_dir,
+                        "source": source,
                         "exists": True,
                         "total_lines": len(lines),
-                        "lines": lines[-tail:],
+                        "lines": tail_lines,
                     })
                 except Exception as exc:
                     self._send_json({"error": f"failed to read log: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -2864,8 +3025,24 @@ def build_handler(registry: JobRegistry) -> type:
             self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
+            if not self._require_write_auth():
+                return
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if path == "/api/projects/init":
+                self._handle_init_project()
+                return
+
+            # POST /api/log — 前端日志统一入口，由单一 handler 收集
+            if path == "/api/log":
+                self._handle_log_receive()
+                return
+
+            # POST /api/dictionaries/parse — 将字典文本解析为结构化行（纯计算）
+            if path == "/api/dictionaries/parse":
+                self._handle_parse_dictionary()
+                return
 
             if path.startswith("/api/projects/"):
                 parts = path.split("/", 4)
@@ -3078,6 +3255,8 @@ def build_handler(registry: JobRegistry) -> type:
             self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_PUT(self) -> None:
+            if not self._require_write_auth():
+                return
             parsed = urlparse(self.path)
             path = parsed.path
 
@@ -3150,6 +3329,8 @@ def build_handler(registry: JobRegistry) -> type:
             self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
         def do_DELETE(self) -> None:
+            if not self._require_write_auth():
+                return
             parsed = urlparse(self.path)
             path = parsed.path
 
@@ -3181,6 +3362,234 @@ def build_handler(registry: JobRegistry) -> type:
             if not isinstance(data, dict):
                 raise ValueError("json body must be an object")
             return data
+
+        def _read_raw_body(self) -> bytes:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0:
+                return b""
+            return self.rfile.read(content_length)
+
+        def _handle_init_project(self) -> None:
+            """POST /api/projects/init：在服务端 workspace 根下按客户端给定名称创建项目。"""
+            try:
+                payload = self._read_json_body()
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            name = payload.get("name")
+            if not isinstance(name, str) or not name.strip():
+                self._send_json({"error": "name is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                project_dir = _resolve_new_project_dir(name.strip())
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            overwrite = bool(payload.get("overwrite", False))
+            if os.path.exists(project_dir) and not overwrite:
+                self._send_json(
+                    {"error": f"项目已存在: {project_dir}"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
+            try:
+                created = _create_project_layout(project_dir, force=overwrite)
+            except OSError as exc:
+                self._send_json({"error": f"创建项目失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self._send_json(
+                {
+                    "project_id": encode_project_dir(project_dir),
+                    "project_dir": project_dir,
+                    "created": created,
+                    "config_file_name": "config.yaml",
+                },
+                status=HTTPStatus.CREATED,
+            )
+
+        def _handle_import_files(self, project_dir: str) -> None:
+            """POST /api/projects/:id/import：接收上传字节流或本地源路径写入 gt_input，已存在则跳过。
+
+            支持三种来源：
+            - multipart/form-data：浏览器/Web 回退，逐文件上传；
+            - JSON files/base64：便于测试与 Web 回退；
+            - JSON source_paths：桌面端把用户经系统对话框选中的真实路径交给后端读取，
+              所有磁盘 IO 收敛到后端，避免前端直接操作文件（绕过后端安全校验）。
+            """
+            content_type = self.headers.get("Content-Type", "")
+            try:
+                if content_type.startswith("multipart/form-data"):
+                    files = self._parse_multipart_files()
+                else:
+                    payload = self._read_json_body()
+                    files = self._parse_json_import_files(payload)
+                    source_paths = payload.get("source_paths")
+                    if isinstance(source_paths, list):
+                        files.extend(self._collect_files_from_source_paths(source_paths))
+            except (ValueError, TypeError, base64.binascii.Error) as exc:
+                self._send_json({"error": f"请求解析失败: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as exc:
+                self._send_json({"error": f"请求解析失败: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            imported: list[str] = []
+            skipped: list[str] = []
+            for filename, content in files:
+                if not _is_safe_dict_filename(filename):
+                    skipped.append(filename)
+                    continue
+                try:
+                    target = safe_under_project(project_dir, os.path.join(INPUT_FOLDERNAME, filename))
+                except ValueError:
+                    skipped.append(filename)
+                    continue
+                if os.path.exists(target):
+                    skipped.append(filename)
+                    continue
+                try:
+                    with open(target, "wb") as _f:
+                        _f.write(content)
+                    imported.append(filename)
+                except OSError:
+                    skipped.append(filename)
+            self._send_json({"imported": imported, "skipped": skipped})
+
+        def _parse_multipart_files(self) -> list[tuple[str, bytes]]:
+            """用 email 模块稳健解析 multipart/form-data，提取带文件名的分片。"""
+            content_type = self.headers.get("Content-Type", "")
+            raw = self._read_raw_body()
+            head = b"Content-Type: " + content_type.encode("utf-8", "replace") + b"\r\n\r\n" + raw
+            msg = email.message_from_bytes(head, policy=email.policy.default)
+            files: list[tuple[str, bytes]] = []
+            for part in msg.walk():
+                filename = part.get_filename()
+                if not filename:
+                    continue
+                payload = part.get_payload(decode=True)
+                files.append((filename, payload if payload is not None else b""))
+            return files
+
+        def _parse_json_import_files(self, payload: dict[str, Any]) -> list[tuple[str, bytes]]:
+            """解析 JSON 上传（便于测试与 Web 回退）：单文件或 files 数组，内容为 base64。"""
+            files: list[tuple[str, bytes]] = []
+            single = payload.get("filename")
+            if isinstance(single, str) and "content_b64" in payload:
+                files.append((single, base64.b64decode(str(payload["content_b64"]))))
+                return files
+            file_list = payload.get("files")
+            if isinstance(file_list, list):
+                for item in file_list:
+                    if isinstance(item, dict) and isinstance(item.get("filename"), str):
+                        b64 = item.get("content_b64")
+                        if isinstance(b64, str):
+                            files.append((item["filename"], base64.b64decode(b64)))
+            return files
+
+        def _collect_files_from_source_paths(
+            self, source_paths: list[Any]
+        ) -> list[tuple[str, bytes]]:
+            """收集本地源路径下的常规文件，以 basename 为导入名扁平写入 gt_input。
+
+            目录递归展开（不跟随符号链接目录，避免环路）；符号链接文件与非常规文件跳过。
+            以 basename 去重，与既有 upload 导入端点一致：文件始终落在 gt_input 顶层。
+            """
+            out: list[tuple[str, bytes]] = []
+            seen: set[str] = set()
+            for src in source_paths:
+                if not isinstance(src, str):
+                    continue
+                path = os.path.normpath(src)
+                # 跳过符号链接源，避免借软链读取项目目录之外的内容
+                if os.path.islink(path):
+                    continue
+                if not os.path.exists(path):
+                    continue
+                candidates: list[str] = []
+                if os.path.isdir(path):
+                    for root, _dirs, fnames in os.walk(path, followlinks=False):
+                        for fn in fnames:
+                            candidates.append(os.path.join(root, fn))
+                elif os.path.isfile(path):
+                    candidates.append(path)
+                else:
+                    continue
+                for fpath in candidates:
+                    if not os.path.isfile(fpath) or os.path.islink(fpath):
+                        continue
+                    base = os.path.basename(fpath)
+                    if base in seen:
+                        continue
+                    try:
+                        with open(fpath, "rb") as _f:
+                            data = _f.read()
+                    except OSError:
+                        continue
+                    seen.add(base)
+                    out.append((base, data))
+            return out
+
+        def _handle_log_receive(self) -> None:
+            """POST /api/log：前端日志统一入口，追加写入全局 frontend.log。"""
+            try:
+                payload = self._read_json_body()
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if not isinstance(payload, dict):
+                self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            source = _sanitize_log_field(str(payload.get("source", "frontend"))) or "frontend"
+            raw_level = _sanitize_log_field(str(payload.get("level", "info"))).lower()
+            level = raw_level if raw_level in _VALID_LOG_LEVELS else "info"
+            message = payload.get("message")
+            if message is None:
+                lines = payload.get("lines")
+                message = "\n".join(str(x) for x in lines) if isinstance(lines, list) else ""
+            if not isinstance(message, str):
+                message = str(message)
+            log_path = os.path.join(_workspace_root(), "frontend.log")
+            try:
+                parent = os.path.dirname(log_path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                with open(log_path, "a", encoding="utf-8") as _f:
+                    for line in message.split("\n"):
+                        # 去掉回车，避免 CRLF 在日志中造成错位
+                        _f.write(f"[{ts}] [{level}] [{source}] {line.replace("\r", "")}\n")
+                self._send_json({"ok": True})
+            except OSError as exc:
+                self._send_json({"error": f"failed to write log: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+
+        def _handle_parse_dictionary(self) -> None:
+            """POST /api/dictionaries/parse：将字典文本解析为结构化行（纯计算，无副作用）。"""
+            try:
+                payload = self._read_json_body()
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if not isinstance(payload, dict):
+                self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            category = str(payload.get("category", "pre")).strip()
+            if category not in ("pre", "gpt", "post"):
+                self._send_json({"error": f"invalid category: {category}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            content = payload.get("content", "")
+            if not isinstance(content, str):
+                content = str(content)
+            # 与引擎 load_dic 的 line.rstrip("\r\n") 对齐：按行剥除回车符，
+            # 避免 CRLF 文本把 \r 泄漏进解析出的字段值
+            rows = [asdict(parse_dict_line(line.rstrip("\r"), category)) for line in content.split("\n")]
+            self._send_json({"rows": rows})
+
+        def _require_write_auth(self) -> bool:
+            """写端点鉴权：未配置令牌则放行；配置后须 Bearer 匹配，否则回 401。"""
+            if token_ok(self.headers.get("Authorization"), _API_TOKEN):
+                return True
+            self._send_json({"error": "未授权：写操作需要有效的 API 令牌"}, status=HTTPStatus.UNAUTHORIZED)
+            return False
 
         def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

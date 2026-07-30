@@ -49,6 +49,7 @@ def make_translator(proofread_target_lang="English"):
         stop_event=None,
         translation_guideline="",
         getProjectDir=lambda: "",
+        getKey=lambda key, default=None: default,
     )
     t.eng_type = "ForGal-json-multi-chat"
     t.enhance_jailbreak = False

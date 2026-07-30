@@ -99,13 +99,6 @@ export async function updateAppSettings(settings: AppSettings) {
   });
 }
 
-// ---- Project config template ----
-
-export async function fetchDefaultProjectConfigTemplate() {
-  const response = await apiRequest<{ content: string }>("/api/project-config-template");
-  return response.content;
-}
-
 // ---- Prompt templates ----
 
 export async function fetchPromptTemplates() {

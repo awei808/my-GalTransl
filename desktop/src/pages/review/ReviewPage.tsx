@@ -1,7 +1,6 @@
 import { createSignal, createEffect, Index, Show, onCleanup, onMount, createMemo } from "solid-js";
 import { appState, markDirty, getActiveConfigFileName } from "../../stores/appStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
-import { confirm } from "../../stores/confirmStore";
 import {
   fetchCacheFile,
   saveCacheFile,

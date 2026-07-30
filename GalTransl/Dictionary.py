@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import List, Optional
 from os import path
 from GalTransl.CSentense import CSentense, CTransList
@@ -29,6 +30,74 @@ class IfWord:
         self.startswith_flag = startswith_flag
         self.endswith_flag = endswith_flag
         self.word = if_word
+
+
+@dataclass
+class DictRow:
+    """单行字典的结构化解析结果（与前端 DictRow 字段对齐）。"""
+
+    type: str  # normal/conditional/situation/gpt/comment/blank
+    values: List[str]
+    raw: str
+
+
+# 解析用的注释前缀集合（与前端 dictUtils.parseRows 对齐），单一事实源
+_COMMENT_PREFIXES = ("//", "#", "\\")
+_CONDITIONAL_KEYS = [
+    "pre_src", "post_src", "pre_dst", "post_dst",
+    "pre_jp", "post_jp", "pre_zh", "post_zh",
+]
+_SITUATION_KEYS = ["mono", "diag"]
+
+
+def _safe_escape(text: str) -> str:
+    """对字段做转义处理；转义序列非法（如孤立的反斜杠）时回退原文，避免整行解析失败。"""
+    try:
+        return process_escape(text)
+    except (ValueError, UnicodeDecodeError):
+        return text
+
+
+def parse_dict_line(line: str, category: str) -> DictRow:
+    """纯解析：单行字典文本 -> 结构化 DictRow，不做任何 IO / 翻译副作用。
+
+    解析语义与翻译引擎 load_dic 对齐：按 | 分割、对每字段做转义处理、
+    仅在行内不含 | 时才把 // # \\ 前缀视作注释（含 | 的此类行引擎会按规则加载）。
+    Tab/四空格到 | 的转换由引擎单独负责，此处不做（保持拆分职责）。
+
+    Args:
+        line: 单行字典文本（不含换行符）。
+        category: 字典类别，pre/gpt/post 之一。
+
+    Returns:
+        DictRow: 含类型、字段值列表与原始行。
+    """
+    if not line.strip():
+        return DictRow("blank", [], line)
+    # 注释判定：仅当行内不含 | 时，// # \\ 前缀才视作注释。
+    # 含 | 的 // 行会被引擎当作有效规则加载，编辑器需保持一致，避免误判为注释。
+    if "|" not in line and any(line.startswith(p) for p in _COMMENT_PREFIXES):
+        return DictRow("comment", [line], line)
+    # 与引擎一致：按 | 分割后对每字段做转义处理
+    parts = [_safe_escape(p) for p in line.split("|")]
+    if category == "gpt":
+        src = parts[0] if len(parts) > 0 else ""
+        dst = parts[1] if len(parts) > 1 else ""
+        notes = "|".join(parts[2:]) if len(parts) > 2 else ""
+        return DictRow("gpt", [src, dst, notes], line)
+    if len(parts) >= 4 and parts[0] in _CONDITIONAL_KEYS:
+        target, cond, search, replace = parts[0], parts[1], parts[2], parts[3]
+        rest = "|".join(parts[4:]) if len(parts) > 4 else ""
+        return DictRow("conditional", [target, cond, search, replace, rest], line)
+    if len(parts) >= 3 and parts[0] in _SITUATION_KEYS:
+        scene = parts[0]
+        search = parts[1]
+        replace = "|".join(parts[2:]) if len(parts) > 2 else ""
+        return DictRow("situation", [scene, search, replace], line)
+    search = parts[0] if len(parts) > 0 else ""
+    replace = parts[1] if len(parts) > 1 else ""
+    rest = "|".join(parts[2:]) if len(parts) > 2 else ""
+    return DictRow("normal", [search, replace, rest], line)
 
 
 class CBasicDicElement:
@@ -83,34 +152,53 @@ class CBasicDicElement:
     def __repr__(self) -> str:
         return f"{self.search_word} -> {self.replace_word}"
 
-    def load_line(self, line: str, type: str = "Normal") -> Optional[CBasicDicElement]:
+    def load_line(self, line: str, category: str = "pre") -> Optional["CBasicDicElement"]:
+        """翻译入口：解析单行字典文本并应用到本元素，无效行返回 None。
+
+        复用模块级 parse_dict_line 做解析，仅负责把解析结果落为本元素字段。
+
+        Args:
+            line: 单行字典文本（不含换行符）。
+            category: 字典类别，pre/gpt/post 之一。
+
+        Returns:
+            self: 解析成功；None: 空行 / 注释 / 无替换的无效行。
         """
-        :line: 一行
-        """
-        if line.startswith("\n"):
-            return
-        elif line.startswith("\\\\") or line.startswith("//"):  # 注释行跳过
-            return
-        sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
-        len_sp = len(sp)
-        if len_sp < 2:  # 至少是2个元素
+        row = parse_dict_line(line, category)
+        if row.type in ("blank", "comment"):
             return None
-
-        is_conditionaDic_line = True if sp[0] in self.conditionaDic_key else False
-        is_situationsDic_line = True if sp[0] in self.situationsDic_key else False
-        if is_conditionaDic_line:
+        if row.type == "conditional":
+            target, cond, search, replace = row.values[0], row.values[1], row.values[2], row.values[3]
+            spl_word = "[and]" if "[and]" in cond else "[or]"
+            self.special_key = target
             self.is_conditionaDic = True
-            if_word = sp[1]
-            spl_word = "[and]" if "[and]" in if_word else "[or]"  # 判断连接字符
-            # 初始化ifWord的list
-            self.special_key = sp[0]
-            self.if_word_list = [IfWord(w.strip()) for w in if_word.split(spl_word)]
+            self.if_word_list = [IfWord(w.strip()) for w in cond.split(spl_word)]
             self.spl_word = spl_word
-            self.search_word = sp[2]
-
-        if self.search_word.startswith("^^"):  # startswith情况
+            self.search_word = search
+            self.replace_word = replace
+            return self
+        if row.type == "situation":
+            scene, search, replace = row.values[0], row.values[1], row.values[2]
+            self.special_key = scene
+            self.is_situationsDic = True
+            self.search_word = search
+            self.replace_word = replace
+            return self
+        # normal / gpt：无替换词的无效行直接丢弃
+        if len(row.values) < 2 or not row.values[1]:
+            return None
+        search = row.values[0]
+        replace = row.values[1]
+        if search.startswith("^^"):  # startswith情况
             self.startswith_flag = True
-            self.search_word = self.search_word[2:]
+            self.search_word = search[2:]
+        elif search.startswith("1^"):  # onetime情况
+            self.onetime_flag = True
+            self.search_word = search[2:]
+        else:
+            self.search_word = search
+        self.replace_word = replace
+        return self
 
 
 class CNormalDic:

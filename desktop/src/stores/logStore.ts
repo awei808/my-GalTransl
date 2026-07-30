@@ -1,7 +1,5 @@
 import { createStore } from "solid-js/store";
-import { invoke } from "@tauri-apps/api/core";
-import { appState } from "./appStore";
-import { decodeProjectDir } from "../lib/api/client";
+import { sendLog, type LogLevel as BackendLogLevel } from "../lib/api/log";
 
 export type LogLevel = "error" | "warning" | "info" | "success";
 
@@ -28,71 +26,14 @@ const [logState, setLogState] = createStore<LogState>({
   maxSize: 200,
 });
 
-// ── 文件路径缓存 ──
-let _logFilePath: string | null = null;
-
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// 后端日志级别（api/log）较前端细分，这里做映射：success->info、warning->warn
+function toBackendLevel(level: LogLevel): BackendLogLevel {
+  if (level === "warning") return "warn";
+  if (level === "success") return "info";
+  return level;
 }
 
-async function resolveLogFilePath(): Promise<string | null> {
-  if (!isTauri()) return null;
-  if (_logFilePath) return _logFilePath;
-
-  const today = todayStr();
-  let logDir: string;
-
-  // 优先：翻译项目目录（和后端日志放一起）
-  const projectDir = getProjectDirFromState();
-  if (projectDir) {
-    logDir = projectDir.replace(/\\/g, "/");
-  } else {
-    // 兜底：项目根 logs/
-    const root: string = await invoke("get_project_root");
-    logDir = `${root.replace(/\\/g, "/")}/logs`;
-  }
-
-  try {
-    await invoke("create_dir", { path: logDir });
-  } catch {
-    // 目录已存在则忽略
-  }
-
-  _logFilePath = `${logDir}/frontend-${today}.log`;
-  return _logFilePath;
-}
-
-/** 从 appState 获取当前翻译项目的真实目录 */
-function getProjectDirFromState(): string | null {
-  const encoded = appState.activeProjectId;
-  if (!encoded) return null;
-  return decodeProjectDir(encoded);
-}
-
-function todayStr(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function logLine(entry: LogEntry): string {
-  const time = entry.ts.toISOString();
-  return `[${time}][${entry.level.toUpperCase()}]${entry.source ? `[${entry.source}]` : ""} ${entry.message}`;
-}
-
-// ── 异步写入文件（fire-and-forget） ──
-function flushToFile(entry: LogEntry) {
-  resolveLogFilePath()
-    .then((path) => {
-      if (!path) return;
-      return invoke("append_text_file", { path, content: logLine(entry) });
-    })
-    .catch(() => {});
-}
-
-/** 添加一条日志（同步写入内存 + 异步写入文件） */
+/** 添加一条日志（内存留存 + 上报后端统一落盘 frontend.log） */
 export function pushLog(level: LogLevel, message: string, source?: string) {
   const entry: LogEntry = {
     id: uid(),
@@ -105,7 +46,7 @@ export function pushLog(level: LogLevel, message: string, source?: string) {
     const next = [...entries, entry];
     return next.length > logState.maxSize ? next.slice(next.length - logState.maxSize) : next;
   });
-  flushToFile(entry);
+  sendLog(message, toBackendLevel(level), source || "frontend");
   return entry;
 }
 
@@ -130,55 +71,13 @@ export function getLogs() {
   return logState.entries;
 }
 
-/** 清空日志（内存+文件） */
+/** 清空日志（仅内存；后端 frontend.log 由后端统一管理） */
 export function clearLogs() {
   setLogState("entries", []);
-  resolveLogFilePath()
-    .then((path) => {
-      if (path) invoke("write_text_file", { path, content: "" });
-    })
-    .catch(() => {});
 }
 
 /** 按级别过滤 */
 export function getLogsByLevel(level: LogLevel | "all") {
   if (level === "all") return logState.entries;
   return logState.entries.filter((e) => e.level === level);
-}
-
-/** 从文件加载今日日志到内存（去重合并） */
-export async function loadLogsFromFile() {
-  const path = await resolveLogFilePath();
-  if (!path) return;
-  try {
-    const content: string = await invoke("read_text_file", { path });
-    if (!content) return;
-    const lines = content.trim().split("\n");
-    const fileEntries: LogEntry[] = [];
-    for (const line of lines) {
-      const match = line.match(/^\[(.+?)\]\[(ERROR|WARNING|INFO|SUCCESS)\](?:\[(.+?)\])? (.+)$/);
-      if (!match) continue;
-      fileEntries.push({
-        id: `file-${fileEntries.length}`,
-        ts: new Date(match[1]),
-        level: match[2].toLowerCase() as LogLevel,
-        source: match[3] || undefined,
-        message: match[4],
-      });
-    }
-    // 合并去重
-    setLogState("entries", (existing) => {
-      const existingSet = new Set(existing.map((e) => `${e.ts.getTime()}-${e.level}-${e.message}`));
-      const toAdd = fileEntries.filter(
-        (fe) => !existingSet.has(`${fe.ts.getTime()}-${fe.level}-${fe.message}`),
-      );
-      const merged = [...existing, ...toAdd];
-      merged.sort((a, b) => a.ts.getTime() - b.ts.getTime());
-      return merged.length > logState.maxSize
-        ? merged.slice(merged.length - logState.maxSize)
-        : merged;
-    });
-  } catch {
-    // 文件不存在 -> 首次运行，正常
-  }
 }

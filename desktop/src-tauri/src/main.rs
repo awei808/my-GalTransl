@@ -400,124 +400,8 @@ fn reveal_file(path: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-fn create_dir(path: String) -> Result<(), String> {
-    std::fs::create_dir_all(&path).map_err(|e| format!("创建目录失败: {}", e))
-}
-
-#[tauri::command]
-fn get_project_root() -> Result<String, String> {
-    // 取 exe 所在目录的父目录的父目录 = 项目根
-    // exe: .../desktop/src-tauri/target/debug/galtransl-desktop.exe
-    //   ↑ desktop/  ↑ src-tauri/ ↑ target/ ...
-    // 在开发模式下（cargo run），exe 在 target/debug/
-    // 在发行版中，exe 可能直接被放在 desktop/ 下
-    let exe = std::env::current_exe().map_err(|e| format!("获取 exe 路径失败: {}", e))?;
-    let mut root = exe.parent().ok_or("无法获取 exe 父目录")?.to_path_buf();
-
-    // 向上查找直到发现 package.json（即项目根）
-    for _ in 0..6 {
-        if root.join("package.json").exists() {
-            return Ok(root.to_string_lossy().to_string());
-        }
-        if !root.pop() {
-            break;
-        }
-    }
-
-    // 兜底：exe 的上级
-    let fallback = exe
-        .parent()
-        .ok_or("无法确定项目根目录")?
-        .to_string_lossy()
-        .to_string();
-    Ok(fallback)
-}
-
-#[tauri::command]
-fn write_text_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))
-}
-
-#[tauri::command]
-fn append_text_file(path: String, content: String) -> Result<(), String> {
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("打开日志文件失败: {}", e))?;
-    writeln!(file, "{}", content).map_err(|e| format!("写入日志失败: {}", e))
-}
-
-#[tauri::command]
-fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))
-}
-
-#[tauri::command]
-fn path_exists(path: String) -> bool {
-    std::path::Path::new(&path).exists()
-}
-
-#[tauri::command]
-fn copy_files(sources: Vec<String>, destination_dir: String) -> Result<Vec<String>, String> {
-    std::fs::create_dir_all(&destination_dir).map_err(|e| format!("创建目录失败: {}", e))?;
-    let dest = std::path::Path::new(&destination_dir);
-
-    // 递归展开目录，把所有文件收集为 (源路径, 相对目标路径)
-    fn collect_files(
-        src: &std::path::Path,
-        base: &std::path::Path,
-        out: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
-    ) -> Result<(), String> {
-        let meta = std::fs::metadata(src)
-            .map_err(|e| format!("读取路径失败: {} ({})", src.display(), e))?;
-        if meta.is_file() {
-            let rel = src
-                .strip_prefix(base)
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|_| {
-                    src.file_name()
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| src.to_path_buf())
-                });
-            out.push((src.to_path_buf(), rel));
-        } else if meta.is_dir() {
-            for entry in std::fs::read_dir(src)
-                .map_err(|e| format!("读取目录失败: {} ({})", src.display(), e))?
-            {
-                let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
-                collect_files(&entry.path(), base, out)?;
-            }
-        }
-        Ok(())
-    }
-
-    let mut tasks: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
-    for src in &sources {
-        let src_path = std::path::Path::new(src);
-        let base = src_path.parent().unwrap_or(src_path).to_path_buf();
-        collect_files(src_path, &base, &mut tasks)?;
-    }
-
-    if tasks.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut copied: Vec<String> = Vec::new();
-    for (src_file, rel) in &tasks {
-        let dest_path = dest.join(rel);
-        if let Some(parent) = dest_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("创建子目录失败: {}", e))?;
-        }
-        std::fs::copy(src_file, &dest_path)
-            .map_err(|e| format!("复制文件失败: {} → {} ({})", src_file.display(), dest_path.display(), e))?;
-        copied.push(rel.to_string_lossy().to_string());
-    }
-    Ok(copied)
-}
+// 文件读写命令已移除：项目创建/导入统一走后端 /api/projects/init 与 /import，
+// 前端日志统一走 /api/log。所有磁盘 IO 收敛到后端，避免前端绕过后端安全校验。
 
 fn main() {
     tauri::Builder::default()
@@ -527,13 +411,6 @@ fn main() {
             ensure_backend_ready,
             open_folder,
             reveal_file,
-            create_dir,
-            get_project_root,
-            write_text_file,
-            append_text_file,
-            read_text_file,
-            copy_files,
-            path_exists,
         ])
         .setup(|_app| {
             // 在后台线程启动后端，不阻塞窗口显示
