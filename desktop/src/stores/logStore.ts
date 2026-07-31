@@ -21,6 +21,14 @@ function uid() {
   return `log-${Date.now()}-${++counter}`;
 }
 
+// 当前活动翻译项目的 id，由 App 在项目切换时同步；用于把前端日志归集到对应项目目录。
+let currentProjectId: string | undefined;
+
+/** 由 App 在项目切换时调用，使后续前端日志带上 project_id，归集到对应翻译项目目录。 */
+export function setLogProject(projectId: string | null | undefined): void {
+  currentProjectId = projectId || undefined;
+}
+
 const [logState, setLogState] = createStore<LogState>({
   entries: [],
   maxSize: 200,
@@ -46,7 +54,7 @@ export function pushLog(level: LogLevel, message: string, source?: string) {
     const next = [...entries, entry];
     return next.length > logState.maxSize ? next.slice(next.length - logState.maxSize) : next;
   });
-  sendLog(message, toBackendLevel(level), source || "frontend");
+  sendLog(message, toBackendLevel(level), source || "frontend", currentProjectId);
   return entry;
 }
 

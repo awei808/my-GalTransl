@@ -169,6 +169,50 @@ class LogsEndpointTests(_Base):
         self.assertEqual(status, 200)
         self.assertEqual(body["lines"], ["line2", "line3"])
 
+    def test_log_receive_with_project_id_writes_to_project_dir(self) -> None:
+        # 携带合法 project_id 时 frontend.log 归集到翻译项目目录，而非 workspace 根
+        _, init = self._init_project("lp_pid")
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        status, body = self._req(
+            "POST", "/api/log", body={"level": "info", "message": "inproject", "project_id": pid}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        proj_fe = os.path.join(pdir, "frontend.log")
+        self.assertTrue(os.path.isfile(proj_fe))
+        with open(proj_fe, encoding="utf-8") as f:
+            self.assertIn("inproject", f.read())
+        # 同一消息不应落到 workspace 根的 frontend.log
+        root_fe = os.path.join(self.root, "frontend.log")
+        if os.path.isfile(root_fe):
+            with open(root_fe, encoding="utf-8") as f:
+                self.assertNotIn("inproject", f.read())
+
+    def test_log_receive_invalid_project_id_falls_back(self) -> None:
+        # 非法 project_id 不得抛出 500，回退到 workspace 根 frontend.log
+        status, body = self._req(
+            "POST", "/api/log", body={"message": "fb", "project_id": "!!!not-valid"}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        root_fe = os.path.join(self.root, "frontend.log")
+        self.assertTrue(os.path.isfile(root_fe))
+        with open(root_fe, encoding="utf-8") as f:
+            self.assertIn("fb", f.read())
+
+    def test_logs_frontend_reads_project_dir_first(self) -> None:
+        # 项目目录存在专属 frontend.log 时，应优先读取它而非 workspace 根
+        _, init = self._init_project("lp_read")
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        with open(os.path.join(pdir, "frontend.log"), "w", encoding="utf-8") as f:
+            f.write("[2026-01-01 00:00:00] [info] [frontend] projline\n")
+        status, body = self._req("GET", f"/api/projects/{pid}/logs?source=frontend")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["exists"])
+        self.assertTrue(any("projline" in line for line in body["lines"]))
+
 
 if __name__ == "__main__":
     unittest.main()

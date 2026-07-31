@@ -2976,7 +2976,9 @@ def build_handler(registry: JobRegistry) -> type:
                 if source == "engine":
                     log_path = os.path.join(project_dir, "GalTransl.log")
                 else:
-                    log_path = os.path.join(_workspace_root(), "frontend.log")
+                    # frontend：优先翻译项目目录，回退全局（兼容历史/无项目日志）
+                    proj_fe = os.path.join(project_dir, "frontend.log")
+                    log_path = proj_fe if os.path.isfile(proj_fe) else os.path.join(_workspace_root(), "frontend.log")
                 if not os.path.isfile(log_path):
                     self._send_json(
                         {"project_dir": project_dir, "source": source, "exists": False, "lines": []}
@@ -3626,7 +3628,17 @@ def build_handler(registry: JobRegistry) -> type:
                 message = "\n".join(str(x) for x in lines) if isinstance(lines, list) else ""
             if not isinstance(message, str):
                 message = str(message)
-            log_path = os.path.join(_workspace_root(), "frontend.log")
+            # frontend.log 归集到翻译项目目录：携带合法 project_id 时写入
+            # project_dir/frontend.log，否则回退全局（如未打开项目时的日志）
+            project_id = payload.get("project_id")
+            if project_id:
+                try:
+                    pdir = _safe_project_dir(str(project_id))
+                    log_path = os.path.join(pdir, "frontend.log")
+                except ValueError:
+                    log_path = os.path.join(_workspace_root(), "frontend.log")
+            else:
+                log_path = os.path.join(_workspace_root(), "frontend.log")
             try:
                 parent = os.path.dirname(log_path)
                 if parent:

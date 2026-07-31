@@ -1,6 +1,6 @@
 import "./styles/styles.css";
 
-import { onMount, onCleanup, Show } from "solid-js";
+import { onMount, onCleanup, Show, createEffect } from "solid-js";
 import { open } from "@tauri-apps/plugin-shell";
 import { TitleBar } from "./components/TitleBar";
 import { ActivityBar } from "./components/ActivityBar";
@@ -10,6 +10,7 @@ import { StatusBar } from "./components/StatusBar";
 import { ToastHost } from "./components/toast/ToastHost";
 import { ConfirmHost } from "./components/confirm/ConfirmHost";
 import { appState, setAppState } from "./stores/appStore";
+import { setLogProject } from "./stores/logStore";
 
 function handleExternalLinkClick(e: MouseEvent) {
   const anchor = (e.target as HTMLElement | null)?.closest("a");
@@ -51,6 +52,11 @@ export function App() {
   const showSidebar = () => appState.activeView !== "translate";
   // 应用栏类名：translate 视图收为两列（仅 ActivityBar + 主区）；其余视图按 sidebarOpen 折叠/展开
   const bodyClass = () => (showSidebar() ? (!sidebarOpen() ? "sidebar-collapsed" : "") : "no-sidebar");
+
+  // 活动项目变化时同步给日志模块，使前端日志归集到对应翻译项目目录
+  createEffect(() => {
+    setLogProject(appState.activeProjectId);
+  });
 
   onMount(() => {
     document.addEventListener("keydown", handleGlobalKeyDown);
