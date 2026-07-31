@@ -1635,6 +1635,12 @@ textarea {
   white-space: nowrap;
 }
 
+.entry-skip-badge {
+  font-size: var(--font-sm);
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
 .entry-index {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);

@@ -1,5 +1,6 @@
 import { createSignal, createEffect, Index, Show, onCleanup, onMount, createMemo } from "solid-js";
-import { appState, setAppState, markDirty, getActiveConfigFileName } from "../../stores/appStore";
+import { appState, setAppState, markDirty, markClean, getActiveConfigFileName } from "../../stores/appStore";
+import { confirm } from "../../stores/confirmStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
 import {
   fetchCacheFile,
@@ -7,7 +8,7 @@ import {
   fetchPerFileMetadata,
   savePerFileMetadata,
 } from "../../lib/api/project";
-import type { CacheEntry, CacheFileResponse, MetadataEntry, MetadataType } from "../../lib/api/types";
+import type { CacheEntry, MetadataEntry, MetadataType } from "../../lib/api/types";
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -165,7 +166,7 @@ function EntryCard(props: {
   onSkip: () => void;
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
-  onBlur: () => void;
+  onSave?: () => void;
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
@@ -177,9 +178,13 @@ function EntryCard(props: {
   const [expanded, setExpanded] = createSignal(false);
 
   // 本地译文草稿——键入时只更新此信号，不触发父级 entries 级联重算，仅在失焦时提交
+  let dstRef: HTMLTextAreaElement | undefined;
   const [draftDst, setDraftDst] = createSignal(e().pre_dst ?? "");
   createEffect(() => {
-    setDraftDst(() => e().pre_dst ?? "");
+    const v = e().pre_dst ?? "";
+    // 译文框正聚焦（用户正在输入）时不覆盖草稿，避免 refetch 回填打断输入
+    if (dstRef && document.activeElement === dstRef) return;
+    setDraftDst(() => v);
   });
 
   return (
@@ -205,6 +210,9 @@ function EntryCard(props: {
             </svg>
             <span class="entry-problem-text">{e().problem}</span>
           </Show>
+          <Show when={!hasProblem() && e().skip_check}>
+            <span class="entry-skip-badge">⏭</span>
+          </Show>
         </div>
 
         {/* 原文行 / 译文行 — 并排 */}
@@ -221,6 +229,7 @@ function EntryCard(props: {
             {toVisibleNewlines(e().pre_src)}
           </div>
           <textarea
+            ref={dstRef}
             class="entry-dst-input"
             rows="2"
             value={draftDst()}
@@ -228,8 +237,8 @@ function EntryCard(props: {
               setDraftDst(ev.currentTarget.value);
             }}
             onBlur={() => {
+              // 失焦时把译文草稿提交到内存（实时进入 entries），保存由用户手动触发
               props.onFieldChange("pre_dst", draftDst());
-              props.onBlur();
             }}
           />
         </div>
@@ -299,9 +308,9 @@ function EntryCard(props: {
                   <textarea
                     class="field-value field-value--editable"
                     rows="2"
-                    value={val ?? ""}
+                    value={val != null ? String(val) : ""}
                     onInput={(ev) => props.onFieldChange(field.key, ev.currentTarget.value)}
-                    onBlur={props.onBlur}
+                    onBlur={props.onSave}
                   />
                 </Show>
               </div>
@@ -483,6 +492,10 @@ export function ReviewPage() {
     } else if (e.key === "y") {
       e.preventDefault();
       handleRedo();
+    } else if (e.key === "s") {
+      e.preventDefault(); // 阻止浏览器/系统保存网页
+      if (reviewMode() === "translate") void saveCurrentFile();
+      else void saveMeta();
     }
   }
 
@@ -545,6 +558,8 @@ export function ReviewPage() {
       next[idx] = { ...next[idx], ...entry.before };
       return next;
     });
+    entriesRev++;
+    if (appState.activeFilePath) markDirty(appState.activeFilePath);
   }
 
   function handleRedo() {
@@ -575,6 +590,8 @@ export function ReviewPage() {
       next[idx] = { ...next[idx], ...entry.after };
       return next;
     });
+    entriesRev++;
+    if (appState.activeFilePath) markDirty(appState.activeFilePath);
   }
 
   // 当 activeFilePath 变化时加载文件
@@ -588,35 +605,78 @@ export function ReviewPage() {
   // 同时校验 activeFilePath 仍匹配目标文件——防止 handleBlur 并发覆写后新文件响应对误丢弃。
   let loadToken = 0;
   let loadedFile = ""; // entries() 当前所代表的（最新一次成功加载的）文件路径
-  function loadFile(pid: string, file: string) {
+  async function loadFile(pid: string, file: string): Promise<void> {
     const targetFile = file;         // 快照：本次请求的目标文件
     const myToken = ++loadToken;
     setLoading(true);
-    fetchCacheFile(pid, file)
-      .then((res: CacheFileResponse) => {
-        if (myToken !== loadToken) return;                        // token 过时
-        if (appState.activeFilePath !== targetFile) return;       // 文件已切走
-        const all = res.entries ?? [];
-        setTotalCount(all.length);
-        if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
-          setEntries(all.slice(0, VIRTUAL_LIMIT));
-        } else {
-          setEntries(all);
-        }
-        loadedFile = file;                                        // 记录 entries() 当前所属文件
-      })
-      .catch(() => {
-        // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
-        if (myToken === loadToken && appState.activeFilePath === targetFile) {
-          setEntries([]);
-          loadedFile = "";
-          setTotalCount(0);
-        }
-      })
-      .finally(() => { if (myToken === loadToken) setLoading(false); });
+    try {
+      const res = await fetchCacheFile(pid, file);
+      if (myToken !== loadToken) return;                        // token 过时
+      if (appState.activeFilePath !== targetFile) return;       // 文件已切走
+      const all = res.entries ?? [];
+      setTotalCount(all.length);
+      if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
+        setEntries(all.slice(0, VIRTUAL_LIMIT));
+      } else {
+        setEntries(all);
+      }
+      loadedFile = file;                                        // 记录 entries() 当前所属文件
+    } catch {
+      // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
+      if (myToken === loadToken && appState.activeFilePath === targetFile) {
+        setEntries([]);
+        loadedFile = "";
+        setTotalCount(0);
+      }
+    } finally {
+      if (myToken === loadToken) setLoading(false);
+    }
   }
 
-  // 切换文件 / 进入翻译模式时加载
+  // 切换文件 / 进入翻译模式时加载；离开有未保存修改的文件前弹确认（保存/放弃/取消）
+  let switching = false;
+  async function runSwitch(pid: string): Promise<void> {
+    if (switching) return;
+    switching = true;
+    try {
+      while (true) {
+        const target = appState.activeFilePath;
+        if (!target || loadedFile === target) break;
+        const prevFile = loadedFile;
+        if (prevFile && appState.dirtyFiles.includes(prevFile)) {
+          const res = await confirm.show({
+            title: "未保存的修改",
+            message: `文件 ${prevFile} 有未保存的修改，是否保存后再切换？`,
+            confirmText: "保存",
+            cancelText: "不保存",
+            extraText: "取消",
+            tone: "warning",
+            dismissible: false,
+          });
+          // 确认期间文件又被切换：放弃本次，由循环下一轮处理最新目标
+          if (appState.activeFilePath !== target) break;
+          // 点“取消”：还原 activeFilePath，留在原文件（不保存、不切走）
+          if (res.action === "extra") {
+            setAppState("activeFilePath", prevFile);
+            break;
+          }
+          if (res.confirmed) {
+            try {
+              await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
+            } catch {
+              // 保存失败不阻塞切换
+            }
+          }
+          // 选择“不保存”：直接切走，内存修改丢弃（用户已知）
+        }
+        if (appState.activeFilePath !== target) break; // 期间又变，重新循环处理最新
+        await loadFile(pid, target);
+      }
+    } finally {
+      switching = false;
+    }
+  }
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
@@ -629,25 +689,20 @@ export function ReviewPage() {
       clearUndo();
       return;
     }
-    // 切换文件前保存当前文件（fire-and-forget，避免丢数据）
-    const prevFile = loadedFile;
-    if (prevFile && prevFile !== file) {
-      const snapshot = entries().slice();
-      if (snapshot.length > 0) {
-        saveCacheFile(pid, prevFile, snapshot, getActiveConfigFileName())
-          .catch(() => {});
-      }
-    }
-    loadFile(pid, file);
+    void runSwitch(pid);
   });
 
-  // 缓存监控：当前打开文件大小变化时，局部重新拉取并渲染（不重载整个文件列表/丢失滚动）
+  // 缓存监控：非翻译模式（如 metadata）下，当前打开文件大小变化时局部重新拉取并渲染
   createEffect(() => {
     const v = appState.cacheVersion;
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
-    if (reviewMode() !== "translate" || !pid || !file) return;
+    // 翻译校对界面完全禁用自动重载：避免保存后后端广播触发整表 loadFile 造成闪烁（改由手动「刷新」按钮）
+    if (reviewMode() === "translate") return;
+    if (!pid || !file) return;
     if (v === 0) return; // 初始进入由上方加载 effect 处理
+    // 本地有未保存修改时跳过自动刷新，避免覆盖乐观删除/编辑或复活已删条目
+    if (appState.dirtyFiles.includes(file)) return;
     loadFile(pid, file);
   });
 
@@ -760,11 +815,26 @@ export function ReviewPage() {
 
     // 标记 dirty
     if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    entriesRev++;
   }
 
   function handleSkip(serial: number) {
-    // 跳过检查 = 去除 problem 标记
-    handleFieldChange(serial, "problem", "");
+    // 切换 skip_check（布尔值），配合后端 rebuild 中的 find_problems 跳过逻辑
+    // 切到跳过时同时清除 problem 标记；取消跳过则不清除，让下次 save 时 rebuild 重新检测
+    setEntries((prev) =>
+      prev.map((e) => {
+        if (e.index !== serial) return e;
+        if (e.skip_check) {
+          // 取消跳过：删除标记，保留 problem 不变（下次 save 时 rebuild 会重新检测）
+          const { skip_check, ...rest } = e;
+          return rest;
+        }
+        // 跳过：标记 + 清除 problem
+        return { ...e, skip_check: true, problem: "" };
+      }),
+    );
+    if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    entriesRev++;
   }
 
   function handleDelete(serial: number) {
@@ -784,6 +854,7 @@ export function ReviewPage() {
     // 按条目序号删除当前条目（而非数组下标，过滤/虚拟滚动下均正确）
     setEntries((prev) => prev.filter((e) => e.index !== serial));
     if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    entriesRev++;
   }
 
   function handleJump() {
@@ -795,43 +866,46 @@ export function ReviewPage() {
     }
   }
 
-  /** 失焦保存：将当前文件的所有条目保存到后端，然后重新获取以刷新问题检测 */
-  let savePending = false;
+  /** 手动保存：把内存中的最新条目落盘（循环到无并发改动为止，确保最终一定写入），再按 index 合并后端重建的 problem */
+  let saveInFlight = false;
+  let entriesRev = 0; // 每次本地修改 entries 自增，用于判断落盘期间是否有新改动
 
-  async function handleBlur() {
-    if (savePending) return;
-    savePending = true;
-
+  async function saveCurrentFile(): Promise<void> {
     const pid = appState.activeProjectId;
     const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
-    if (!pid || !myFile) {
-      savePending = false;
-      return;
-    }
-    // 若用户已切换到其他文件，entries() 可能已不代表 myFile，放弃保存以免用旧数据覆盖新文件
-    if (appState.activeFilePath !== myFile) {
-      savePending = false;
-      return;
-    }
+    if (!pid || !myFile || appState.activeFilePath !== myFile) return;
+    // 已有保存在进行：本次直接返回，由在途保存根据其完成时的 entriesRev 决定是否再存，避免单布尔排队丢失
+    if (saveInFlight) return;
+    saveInFlight = true;
 
     try {
-      // 保存所有条目到后端（传入真实配置文件名，config.inc.yaml 项目也能正确重建 problem）
-      await saveCacheFile(pid, myFile, entries(), getActiveConfigFileName());
-      // 守卫：保存后再次校验，若期间已切到别的文件，停止并用旧数据污染界面
-      if (appState.activeFilePath !== myFile) {
-        savePending = false;
-        return;
+      // 循环落盘：每次保存最新 entries；若保存期间又有本地改动（连续删除/编辑），则以最新数据再存一次，
+      // 直到“保存瞬间与完成瞬间无新改动”，保证最终落盘的是最新状态
+      let revAfterSave = entriesRev;
+      while (true) {
+        const myRev = entriesRev;
+        await saveCacheFile(pid, myFile, entries(), getActiveConfigFileName());
+        if (appState.activeFilePath !== myFile) return;
+        revAfterSave = entriesRev;
+        if (entriesRev === myRev) break;
       }
+      markClean(myFile);
+      // 按 index 局部合并后端重建的 problem（不要求长度相等，删除后其余条目也能刷新问题），不整表替换避免闪烁
       const res = await fetchCacheFile(pid, myFile);
-      if (appState.activeFilePath !== myFile) {
-        savePending = false;
-        return;
-      }
-      setEntries(res.entries ?? []);
+      if (appState.activeFilePath !== myFile) return;
+      if (entriesRev !== revAfterSave) return; // 期间又有改动：不覆盖，交给下次保存处理
+      setEntries((prev) => {
+        const backend = res.entries ?? [];
+        const byIndex = new Map(backend.map((e) => [e.index, e]));
+        return prev.map((e) => {
+          const b = byIndex.get(e.index);
+          return b ? { ...e, problem: b.problem } : e;
+        });
+      });
     } catch {
       // 静默处理
     } finally {
-      savePending = false;
+      saveInFlight = false;
     }
   }
 
@@ -884,6 +958,24 @@ export function ReviewPage() {
         <Show when={entries().length > 0}>
           <span class="review-count">{entries().length} 条</span>
         </Show>
+        <Show when={appState.dirtyFiles.includes(appState.activeFilePath ?? "")}>
+          <span style="color:var(--color-status-warning);margin-left:8px" title="有未保存的修改">
+            ● 未保存
+          </span>
+        </Show>
+        <button class="btn btn--sm" onClick={() => void saveCurrentFile()}>
+          保存
+        </button>
+        <button
+          class="btn btn--sm"
+          onClick={() => {
+            const p = appState.activeProjectId;
+            const f = appState.activeFilePath;
+            if (p && f) void loadFile(p, f);
+          }}
+        >
+          刷新
+        </button>
         </Show>{/* /translate mode */}
 
         <Show when={reviewMode() === "metadata"}>
@@ -947,20 +1039,16 @@ export function ReviewPage() {
                 若用 <For>（按引用复用）会把正在编辑的那条 <input> 销毁重建，导致失焦 / IME 中断。
                 <Index> 保留节点，仅更新 props 与绑定，输入焦点不丢。 */}
             <Index each={filteredEntries()}>
-              {(entrySignal) => {
-                const entry = entrySignal();
-                return (
-                  <div id={`entry-${entry.index}`}>
-                    <EntryCard
-                      entry={entry}
-                      onSkip={() => handleSkip(entry.index)}
-                      onDelete={() => handleDelete(entry.index)}
-                      onFieldChange={(field, value) => handleFieldChange(entry.index, field, value)}
-                      onBlur={handleBlur}
-                    />
-                  </div>
-                );
-              }}
+              {(entrySignal) => (
+                <div id={`entry-${entrySignal().index}`}>
+                  <EntryCard
+                    entry={entrySignal()}
+                    onSkip={() => handleSkip(entrySignal().index)}
+                    onDelete={() => handleDelete(entrySignal().index)}
+                    onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
+                  />
+                </div>
+              )}
             </Index>
           </Show>
         </Show>

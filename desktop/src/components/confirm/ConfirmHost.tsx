@@ -17,6 +17,10 @@ export function ConfirmHost() {
     confirm.resolve(false);
   }
 
+  function handleExtra() {
+    confirm.resolve(false, undefined, "extra");
+  }
+
   function handleOverlayClick(e: MouseEvent) {
     if (e.target !== e.currentTarget) return;
     const dismissible = state().options?.dismissible ?? true;
@@ -88,6 +92,11 @@ export function ConfirmHost() {
             <button class="btn btn--cancel" onClick={handleCancel}>
               {state().options?.cancelText ?? "取消"}
             </button>
+            <Show when={state().options?.extraText}>
+              <button class="btn" onClick={handleExtra}>
+                {state().options!.extraText}
+              </button>
+            </Show>
             <button ref={confirmBtnRef} class={`btn ${toneClass()}`} onClick={handleConfirm}>
               {state().options?.confirmText ?? "确认"}
             </button>

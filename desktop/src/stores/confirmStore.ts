@@ -9,12 +9,17 @@ export interface ConfirmOptions {
   inputDefault?: string;
   confirmText?: string;
   cancelText?: string;
+  /** 可选的第三个按钮（位于取消与确认之间），用于"取消操作并留在原处"等场景 */
+  extraText?: string;
   tone?: "danger" | "warning" | "info" | "default";
   dismissible?: boolean;
 }
 
+export type ConfirmAction = "confirm" | "cancel" | "extra";
+
 export interface ConfirmResult {
   confirmed: boolean;
+  action?: ConfirmAction;
   inputValue?: string;
 }
 
@@ -49,9 +54,13 @@ export const confirm = {
     });
   },
 
-  resolve(confirmed: boolean, inputValue?: string) {
+  resolve(confirmed: boolean, inputValue?: string, action?: ConfirmAction) {
     if (confirmState.resolve) {
-      confirmState.resolve({ confirmed, inputValue });
+      confirmState.resolve({
+        confirmed,
+        inputValue,
+        action: action ?? (confirmed ? "confirm" : "cancel"),
+      });
     }
     setConfirmState({
       visible: false,

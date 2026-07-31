@@ -1595,18 +1595,30 @@ def build_handler(registry: JobRegistry) -> type:
                     return
                 try:
                     payload = self._read_json_body()
-                    filename = str(payload.get("filename", "")).strip()
+                    raw_filename = str(payload.get("filename", "")).strip()
                     entries = payload.get("entries", [])
                     config_name = str(payload.get("config_file_name", "config.yaml")).strip() or "config.yaml"
 
-                    if not filename or filename != os.path.basename(filename):
-                        self._send_json({"error": "invalid cache filename"}, status=HTTPStatus.BAD_REQUEST)
+                    if not raw_filename:
+                        self._send_json({"error": f"invalid cache filename (empty)"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+
+                    # 允许相对子路径（如 pass1_cache/FileMetaData.json），与 GET 行为一致
+                    norm = os.path.normpath(raw_filename.replace("\\", "/"))
+                    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
                         return
 
                     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
-                    file_path = os.path.join(cache_dir, filename)
+                    file_path = os.path.join(cache_dir, norm)
+                    abs_cache = os.path.abspath(cache_dir)
+                    abs_file = os.path.abspath(file_path)
+                    if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+
                     if not os.path.isfile(file_path):
-                        self._send_json({"error": f"cache file not found: {filename}"}, status=HTTPStatus.NOT_FOUND)
+                        self._send_json({"error": f"cache file not found: {raw_filename} (norm:{norm})"}, status=HTTPStatus.NOT_FOUND)
                         return
 
                     import orjson
@@ -1666,7 +1678,7 @@ def build_handler(registry: JobRegistry) -> type:
                         # find_problems would be skipped and the update loop would
                         # delete every existing "problem" field. Preserve them instead.
                         if proj_config is None:
-                            self._send_json({"success": True, "filename": filename})
+                            self._send_json({"success": True, "filename": raw_filename})
                             return
                         trans_list = []
                         for e in entries:
@@ -1689,6 +1701,7 @@ def build_handler(registry: JobRegistry) -> type:
                             s.trans_conf = e.get("trans_conf", 0)
                             s.doub_content = e.get("doub_content", "")
                             s.unknown_proper_noun = e.get("unknown_proper_noun", "")
+                            s.skip_check = e.get("skip_check", False)
                             trans_list.append(s)
 
                         # Link prev/next
@@ -1724,16 +1737,20 @@ def build_handler(registry: JobRegistry) -> type:
                                 elif "problem" in e:
                                     del e["problem"]
                                 e["post_dst_preview"] = tran.post_dst
+                                if tran.skip_check:
+                                    e["skip_check"] = True
+                                elif "skip_check" in e:
+                                    del e["skip_check"]
                                 idx += 1
 
                         # Re-save with updated fields
                         with open(file_path, "wb") as f:
                             f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
 
-                        self._send_json({"success": True, "filename": filename, "entries": entries})
+                        self._send_json({"success": True, "filename": norm, "entries": entries})
                     except Exception:
                         # Rebuild failed, but original save succeeded
-                        self._send_json({"success": True, "filename": filename})
+                        self._send_json({"success": True, "filename": norm})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:
