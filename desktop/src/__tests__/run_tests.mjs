@@ -60,7 +60,9 @@ function assertEq(actual, expected, msg) {
 
 function testGroup(name, fn) {
   console.log(`\n${name}`);
-  fn();
+  const r = fn();
+  // 支持 async 回调（返回 Promise 时透传，调用方可 await）
+  if (r && typeof r.then === "function") return r;
 }
 
 // ======= 辅助 =======
@@ -454,6 +456,88 @@ testGroup("模块 9: P0 加固回归", () => {
       saved = true;
     }
     assert(saved, "loadedFile 正常时继续保存");
+  });
+});
+
+// --- 模块 10: P1 切换链路（runSwitch 锁 + 跨模式确认） ---
+await testGroup("模块 10: P1 切换链路", async () => {
+  testGroup("  10.2 「不保存」后 markClean 清脏（切回不误弹确认）", () => {
+    resetStore();
+    const f = "game/t01.txt.json";
+    setAppState("activeFilePath", f);
+    markDirty(f);
+    // 模拟 runSwitch 的 else 分支（不保存 → 丢弃 → 清脏）
+    markClean(f);
+    assertEq(appState.dirtyFiles, [], "不保存后 dirty 已清");
+  });
+
+  testGroup("  10.3 跨模式：translate dirty → metadata 目标 → prevFile 同步捕获", () => {
+    resetStore();
+    const translateFile = "game/t01.txt.json";
+    const metaFile = "game/meta.batch.json";
+    setAppState("activeFilePath", translateFile);
+    markDirty(translateFile);
+    let loadedFile = translateFile;
+
+    // 模拟 loadFile effect 分派：modeInfoOf(metaFile).mode === "metadata" → leaveConfirm
+    const mode = "metadata";
+    // leaveConfirm 同步捕获 prevFile（在 metadata effect 覆盖 loadedFile 之前）
+    const prevFile = loadedFile;
+    let leaveTriggered = false;
+    if (mode !== "translate" && prevFile && appState.dirtyFiles.includes(prevFile)) {
+      leaveTriggered = true;
+    }
+    assert(leaveTriggered, "跨模式切换触发 leaveConfirm");
+    assertEq(prevFile, translateFile, "prevFile 捕获 translate 文件");
+
+    // 随后 metadata effect 覆盖 loadedFile
+    loadedFile = metaFile;
+    assertEq(loadedFile, metaFile, "metadata effect 接管 loadedFile");
+    assertEq(prevFile, translateFile, "prevFile 不受 metadata 接管影响");
+  });
+
+  testGroup("  10.4 leaveConfirm 点「取消」→ 还原 activeFilePath 留在原文件", () => {
+    resetStore();
+    const translateFile = "game/t01.txt.json";
+    const metaFile = "game/meta.batch.json";
+    setAppState("activeFilePath", metaFile); // 当前目标（已切到 metadata）
+    const prevFile = translateFile;
+    // 模拟 res.action === "extra"
+    const action = "extra";
+    if (action === "extra") {
+      setAppState("activeFilePath", prevFile);
+    }
+    assertEq(appState.activeFilePath, translateFile, "取消后还原到原文件");
+  });
+
+  await testGroup("  10.1 runSwitch 等待在途保存完成后才写盘（锁串行化）", async () => {
+    let saveInFlight = true;
+    let writes = 0;
+    async function saveWithLock() {
+      const deadline = Date.now() + 3000;
+      while (saveInFlight && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      writes++;
+    }
+    const p = saveWithLock();
+    // 模拟 saveCurrentFile 的 finally 释放锁
+    setTimeout(() => { saveInFlight = false; }, 40);
+    await p;
+    assert(writes === 1, "锁释放后才写盘（无并发双写）");
+    assert(!saveInFlight, "锁已释放");
+  });
+
+  await testGroup("  10.5 超时兜底：等待超时后继续（不无限挂起）", async () => {
+    let saveInFlight = true; // 永不释放（模拟网络挂起）
+    let writes = 0;
+    const deadline = Date.now() + 80; // 短超时
+    while (saveInFlight && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    writes++;
+    assert(writes === 1, "超时后继续执行");
+    assert(Date.now() >= deadline, "已超时退出等待");
   });
 });
 

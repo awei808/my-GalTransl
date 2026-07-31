@@ -672,12 +672,22 @@ export function ReviewPage() {
           }
           if (res.confirmed) {
             try {
+              // 等待在途手动保存完成（saveInFlight 在 saveCurrentFile 的 finally 必定释放），
+              // 带超时兜底，避免网络挂起时无限等待；防止与在途保存并发双写同一文件
+              const deadline = Date.now() + 3000;
+              while (saveInFlight && Date.now() < deadline) {
+                await new Promise((r) => setTimeout(r, 30));
+              }
+              if (appState.activeFilePath !== target) break; // 等待期间又切走
               await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
+              markClean(prevFile);
             } catch {
-              // 保存失败不阻塞切换
+              // 保存失败不阻塞切换（dirty 保留，用户可重试）
             }
+          } else {
+            // 选择“不保存”：丢弃 → 清脏，避免切回时误弹确认
+            markClean(prevFile);
           }
-          // 选择“不保存”：直接切走，内存修改丢弃（用户已知）
         }
         if (appState.activeFilePath !== target) break; // 期间又变，重新循环处理最新
         await loadFile(pid, target);
@@ -687,10 +697,51 @@ export function ReviewPage() {
     }
   }
 
+  /** 离开当前 dirty 文件前的确认（跨模式切换专用，不依赖目标模式）。加载交给对应模式的 effect */
+  async function leaveConfirm(pid: string): Promise<void> {
+    if (switching) return;
+    // 同步捕获：loadFile effect 先于 metadata effect 执行，此刻 loadedFile 仍是 translate 文件
+    const prevFile = loadedFile;
+    if (!prevFile || !appState.dirtyFiles.includes(prevFile)) return;
+    switching = true;
+    try {
+      const res = await confirm.show({
+        title: "未保存的修改",
+        message: `文件 ${prevFile} 有未保存的修改，是否保存后再切换？`,
+        confirmText: "保存",
+        cancelText: "不保存",
+        extraText: "取消",
+        tone: "warning",
+        dismissible: false,
+      });
+      if (appState.activeFilePath === prevFile) return; // 弹窗期间已切回原文件
+      if (res.action === "extra") {
+        setAppState("activeFilePath", prevFile); // 取消：留在原文件
+        return;
+      }
+      if (res.confirmed) {
+        try {
+          // 等待在途手动保存完成（带超时），防止并发双写
+          const deadline = Date.now() + 3000;
+          while (saveInFlight && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 30));
+          }
+          await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
+          markClean(prevFile);
+        } catch {
+          // 保存失败不阻塞切换（dirty 保留）
+        }
+      } else {
+        markClean(prevFile); // 不保存 → 丢弃 → 清脏
+      }
+    } finally {
+      switching = false;
+    }
+  }
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
-    if (reviewMode() !== "translate") return;
     if (!pid || !file) {
       setEntries([]);
       loadedFile = "";
@@ -700,7 +751,13 @@ export function ReviewPage() {
       clearUndo();
       return;
     }
-    void runSwitch(pid);
+    // 目标为 translate 文件：完整切换流程（离开确认 + 加载）
+    if (modeInfoOf(file).mode === "translate") {
+      void runSwitch(pid);
+    } else {
+      // 目标为 metadata 文件：仅做“离开当前 dirty translate 文件”确认（加载交给 metadata effect）
+      void leaveConfirm(pid);
+    }
   });
 
   // 缓存监控：非翻译模式（如 metadata）下，当前打开文件大小变化时局部重新拉取并渲染
