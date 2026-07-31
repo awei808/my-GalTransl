@@ -15,15 +15,14 @@ Tauri WebView2 MCP Server
 
 import asyncio
 import json
-import os
 import sys
 import tempfile
 import argparse
-from typing import Any, Dict, List
+from typing import Any
 
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, CallToolResult, TextContent, ImageContent
+from mcp.types import Tool, CallToolResult, CallToolRequestParams, ListToolsResult, TextContent
 from playwright.async_api import async_playwright
 
 
@@ -35,15 +34,16 @@ _network_requests = []
 _connected = False
 
 
-async def connect_to_webview(cdp_port: int, retries: int = 20, delay: float = 1.5) -> None:
+async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
     """
     通过 CDP 连接到 Tauri WebView2。
-    轮询重试等待 WebView2 就绪。
+    无限轮询等待 WebView2 就绪，不会因为连接失败而退出。
     """
     global _page, _browser, _console_messages, _network_requests, _connected
 
-    last_error = None
-    for attempt in range(1, retries + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             p = await async_playwright().start()
             _browser = await p.chromium.connect_over_cdp(
@@ -75,7 +75,7 @@ async def connect_to_webview(cdp_port: int, retries: int = 20, delay: float = 1.
                 "method": req.method,
                 "resource_type": req.resource_type,
                 "headers": dict(req.headers),
-                "timestamp": req.timing.start_time if req.timing else 0,
+                "timestamp": _safe_start_time(req),
             }))
             _page.on("requestfailed", lambda req: _network_requests.append({
                 "url": req.url,
@@ -89,15 +89,11 @@ async def connect_to_webview(cdp_port: int, retries: int = 20, delay: float = 1.
                   file=sys.stderr, flush=True)
             return
 
-        except Exception as e:
-            last_error = e
-            if attempt < retries:
-                await asyncio.sleep(delay)
-
-    raise ConnectionError(
-        f"无法连接到 WebView2 CDP 端口 {cdp_port} "
-        f"(重试 {retries} 次后失败): {last_error}"
-    )
+        except Exception:
+            if attempt == 1:
+                print(f"[tauri-webview-mcp] 正在等待 Tauri WebView2 (CDP 端口 {cdp_port}) 就绪...",
+                      file=sys.stderr, flush=True)
+            await asyncio.sleep(delay)
 
 
 def _require_page():
@@ -107,10 +103,25 @@ def _require_page():
     return _page
 
 
+def _safe_start_time(req) -> int:
+    """兼容 Playwright RequestTiming 对象与 CDP dict 两种形态，避免监听器抛错污染会话"""
+    try:
+        t = req.timing
+        if not t:
+            return 0
+        if isinstance(t, dict):
+            return t.get("start_time", 0) or 0
+        return getattr(t, "start_time", 0) or 0
+    except Exception:
+        return 0
+
+
 # ── Tool 处理函数 ──────────────────────────────────────────────
 
-async def handle_list_tools() -> List[Tool]:
-    return [
+async def handle_list_tools(
+    ctx: ServerRequestContext, params: Any = None
+) -> ListToolsResult:
+    return ListToolsResult(tools=[
         Tool(
             name="browser_navigate",
             description="导航到指定的 URL（如 http://127.0.0.1:1420）",
@@ -242,10 +253,14 @@ async def handle_list_tools() -> List[Tool]:
                 "required": ["script"],
             },
         ),
-    ]
+    ])
 
 
-async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> CallToolResult:
+async def handle_call_tool(
+    ctx: ServerRequestContext, params: CallToolRequestParams
+) -> CallToolResult:
+    name = params.name
+    arguments = params.arguments or {}
     page = _require_page()
 
     try:
@@ -419,28 +434,8 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    # 连接到 WebView2
-    try:
-        await connect_to_webview(args.cdp_port)
-    except ConnectionError as e:
-        print(f"[tauri-webview-mcp] 错误: {e}", file=sys.stderr, flush=True)
-        print(
-            "[tauri-webview-mcp] 提示: 请确保:",
-            file=sys.stderr, flush=True,
-        )
-        print(
-            "  1. 在启动 Tauri 前设置环境变量:",
-            file=sys.stderr, flush=True,
-        )
-        print(
-            "     set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222",
-            file=sys.stderr, flush=True,
-        )
-        print(
-            "  2. 然后启动 Tauri 应用 (npm run tauri:dev)",
-            file=sys.stderr, flush=True,
-        )
-        sys.exit(1)
+    # 连接到 WebView2（无限等待直到就绪）
+    await connect_to_webview(args.cdp_port)
 
     # 创建 MCP Server
     server = Server(
