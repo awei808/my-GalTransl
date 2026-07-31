@@ -7,6 +7,7 @@ import {
   saveCacheFile,
   fetchPerFileMetadata,
   savePerFileMetadata,
+  checkCacheProblems,
 } from "../../lib/api/project";
 import type { CacheEntry, MetadataEntry, MetadataType } from "../../lib/api/types";
 import { toast } from "../../stores/toastStore";
@@ -190,7 +191,7 @@ function EntryCard(props: {
   });
 
   return (
-    <div class={`entry-card ${hasProblem() ? "has-problem" : ""}`}>
+    <div class={`entry-card ${hasProblem() ? "has-problem" : ""} ${e().skip_check ? "skip-check" : ""}`}>
       {/* ── 默认 3 行 ── */}
       <div class="entry-default">
         {/* 问题行 */}
@@ -274,19 +275,40 @@ function EntryCard(props: {
             </svg>
             <span class="entry-btn-text">展开</span>
           </button>
-          <button class="entry-btn" title="跳过该条目的检查" onClick={props.onSkip}>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
+          <button
+            class={`entry-btn ${e().skip_check ? "entry-btn--skip-active" : ""}`}
+            title={e().skip_check ? "恢复对该条目的检查" : "跳过该条目的检查"}
+            onClick={props.onSkip}
+          >
+            <Show
+              when={e().skip_check}
+              fallback={
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              }
             >
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-            <span class="entry-btn-text">跳过</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <path d="M4 4l16 16" />
+              </svg>
+            </Show>
+            <span class="entry-btn-text">{e().skip_check ? "正常检查" : "跳过检查"}</span>
           </button>
           <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete}>
             <svg
@@ -866,6 +888,18 @@ export function ReviewPage() {
       const el = document.getElementById(`entry-${idx}`);
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // 高亮动画：先移除再强制 reflow 重加，保证重复跳转同一条目也能重新触发
+        const card = el.querySelector(".entry-card") as HTMLElement | null;
+        if (card) {
+          card.classList.remove("entry-flash");
+          void card.offsetWidth; // 强制重排重置动画
+          card.classList.add("entry-flash");
+          card.addEventListener(
+            "animationend",
+            () => card.classList.remove("entry-flash"),
+            { once: true },
+          );
+        }
       }
       // 无论是否找到元素，只要尝试过就清除标记，防止重入
       setAppState("reviewJumpToIndex", null);
@@ -1107,23 +1141,64 @@ export function ReviewPage() {
         if (entriesRev === myRev) break;
       }
       markClean(myFile);
-      // 按 index 局部合并后端重建的 problem（不要求长度相等，删除后其余条目也能刷新问题），不整表替换避免闪烁
-      const res = await fetchCacheFile(pid, myFile);
-      if (appState.activeFilePath !== myFile) return;
-      if (entriesRev !== revAfterSave) return; // 期间又有改动：不覆盖，交给下次保存处理
-      setEntries((prev) => {
-        const backend = res.entries ?? [];
-        const byIndex = new Map(backend.map((e) => [e.index, e]));
-        return prev.map((e) => {
-          const b = byIndex.get(e.index);
-          return b ? { ...e, problem: b.problem } : e;
+      // 按 index 局部合并后端重建的 problem（不要求长度相等，删除后其余条目也能刷新问题），不整表替换避免闪烁。
+      // 合并失败不影响保存结果（保存已成功），仅静默跳过，避免误报"保存失败"。
+      try {
+        const res = await fetchCacheFile(pid, myFile);
+        if (appState.activeFilePath !== myFile) return;
+        if (entriesRev !== revAfterSave) return; // 期间又有改动：不覆盖，交给下次保存处理
+        setEntries((prev) => {
+          const backend = res.entries ?? [];
+          const byIndex = new Map(backend.map((e) => [e.index, e]));
+          return prev.map((e) => {
+            const b = byIndex.get(e.index);
+            return b ? { ...e, problem: b.problem } : e;
+          });
         });
-      });
+      } catch {
+        // 合并刷新失败：保存已成功，无需报错
+      }
     } catch (e) {
       // 保存失败：提示用户（dirty 保持，markClean 未执行）
       toast.error(`保存 ${myFile} 失败：${getErrorMessage(e)}`);
     } finally {
       saveInFlight = false;
+    }
+  }
+
+  /** 刷新：先自动保存未保存的更改（若有），再强制重新运行问题检测（不落盘），确保检测结果最新而非旧缓存 */
+  async function handleRefresh() {
+    (document.activeElement as HTMLElement | null)?.blur(); // 同步主译文框草稿到 entries
+    const pid = appState.activeProjectId;
+    const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
+    if (!pid || !myFile || appState.activeFilePath !== myFile) return;
+    if (appState.dirtyFiles.includes(myFile)) {
+      await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
+    }
+    if (appState.activeFilePath !== myFile) return;
+    await recheckProblems(pid, myFile);
+  }
+
+  /** 对当前条目强制重新问题检测（POST /cache/check，不落盘），按 index 合并 problem 结果 */
+  async function recheckProblems(pid: string, myFile: string) {
+    try {
+      // 虚拟滚动截断时合并后端完整数据，保证检测覆盖全部条目
+      let full = entries();
+      if (loadedSliceIndices !== null) {
+        const res = await fetchCacheFile(pid, myFile);
+        full = mergeVirtualSlice(res.entries ?? [], entries(), loadedSliceIndices);
+      }
+      const resp = await checkCacheProblems(pid, myFile, full, getActiveConfigFileName());
+      if (!resp || !resp.success) {
+        toast.warning("重新问题检测失败，已保留原检测结果");
+        return;
+      }
+      const byIndex = new Map(resp.results.map((r) => [r.index, r.problem ?? ""]));
+      setEntries((prev) =>
+        prev.map((e) => (byIndex.has(e.index) ? { ...e, problem: byIndex.get(e.index) ?? "" } : e)),
+      );
+    } catch {
+      toast.warning("重新问题检测失败，已保留原检测结果");
     }
   }
 
@@ -1199,14 +1274,7 @@ export function ReviewPage() {
         }}>
           保存
         </button>
-        <button
-          class="btn btn--sm"
-          onClick={() => {
-            const p = appState.activeProjectId;
-            const f = appState.activeFilePath;
-            if (p && f) void loadFile(p, f);
-          }}
-        >
+        <button class="btn btn--sm" onClick={() => void handleRefresh()}>
           刷新
         </button>
         </Show>{/* /translate mode */}

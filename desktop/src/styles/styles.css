@@ -1620,6 +1620,26 @@ textarea {
   border-left: 3px solid var(--color-status-error);
 }
 
+.entry-card.skip-check {
+  border-left: 3px solid var(--color-brand-primary);
+}
+
+/* 问题侧栏跳转目标高亮：主色浅底 + 主色外圈光圈，ease 缓动 3s */
+@keyframes entry-flash-bg {
+  0%, 100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+  20% {
+    background-color: var(--color-bg-selected);
+    box-shadow: 0 0 0 2px var(--color-brand-primary);
+  }
+}
+
+.entry-card.entry-flash {
+  animation: entry-flash-bg 3s ease;
+}
+
 .entry-default {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1649,7 +1669,8 @@ textarea {
 .entry-skip-badge {
   font-size: var(--font-sm);
   flex-shrink: 0;
-  opacity: 0.6;
+  color: var(--color-brand-primary);
+  font-weight: 600;
 }
 
 .entry-index {
@@ -1767,6 +1788,17 @@ textarea {
 .entry-btn--danger:hover {
   color: var(--color-status-error);
   background: var(--color-bg-error);
+}
+
+/* 已跳过检查的条目：跳过按钮用主色调标记，醒目区分 */
+.entry-btn--skip-active {
+  color: var(--color-brand-primary);
+  background: var(--color-bg-active);
+}
+
+.entry-btn--skip-active:hover {
+  color: var(--color-brand-primary);
+  background: var(--color-bg-selected);
 }
 
 /* ── 展开字段面板 ── */

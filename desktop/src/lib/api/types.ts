@@ -360,6 +360,21 @@ export type ProjectProblemsResponse = {
   total: number;
 };
 
+/** POST /api/projects/:id/cache/check 单条目重检结果 */
+export type CacheCheckResult = {
+  index: number;
+  problem: string;
+  post_dst_preview: string | null;
+  skip_check: boolean;
+};
+
+/** POST /api/projects/:id/cache/check 响应（只检测不落盘） */
+export type CacheCheckResponse = {
+  success: boolean;
+  filename?: string;
+  results: CacheCheckResult[];
+};
+
 // ---- Name Table API types ----
 
 export type NameEntry = {

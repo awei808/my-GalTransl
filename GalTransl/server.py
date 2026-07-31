@@ -12,7 +12,7 @@ from dataclasses import dataclass, asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Tuple
 from urllib.parse import urlparse, parse_qs, unquote
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ import sys
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
+from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
 from GalTransl.Dictionary import parse_dict_line, DictRow
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
@@ -90,6 +90,136 @@ def _open_in_file_manager(path: str, is_file: bool) -> None:
     else:
         parent = os.path.dirname(path) if is_file else path
         subprocess.run(["xdg-open", parent], check=False, timeout=15)
+
+
+def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, Any, Any, list]:
+    """加载问题重建所需的项目配置与字典；任一失败时返回 (None, None, None, None, [])。
+
+    Args:
+        project_dir: 项目绝对路径。
+        config_name: 请求中的配置文件名，不存在时回退 config.inc.yaml / config.yaml。
+
+    Returns:
+        (proj_config, pre_dic, post_dic, gpt_dic, tPlugins)
+    """
+    proj_config = pre_dic = post_dic = gpt_dic = None
+    tPlugins = []
+    try:
+        from GalTransl.ConfigHelper import CProjectConfig, initDictList
+        from GalTransl.Dictionary import CNormalDic, CGptDict
+        # Resolve the real config file: real projects use config.inc.yaml,
+        # but the request may default to config.yaml.
+        if not os.path.isfile(os.path.join(project_dir, config_name)):
+            for _cand in ("config.inc.yaml", "config.yaml"):
+                if os.path.isfile(os.path.join(project_dir, _cand)):
+                    config_name = _cand
+                    break
+        proj_config = CProjectConfig(project_dir, config_name)
+        dict_cfg = proj_config.getDictCfgSection()
+        pre_dic_list = dict_cfg.get("preDict", [])
+        post_dic_list = dict_cfg.get("postDict", [])
+        gpt_dic_list = dict_cfg.get("gpt.dict", [])
+        default_dic_dir = dict_cfg.get("defaultDictFolder", "")
+        pre_dic = CNormalDic(initDictList(pre_dic_list, default_dic_dir, project_dir))
+        post_dic = CNormalDic(initDictList(post_dic_list, default_dic_dir, project_dir))
+        gpt_dic = CGptDict(initDictList(gpt_dic_list, default_dic_dir, project_dir))
+        if dict_cfg.get("sortDict", True):
+            pre_dic.sort_dic()
+            post_dic.sort_dic()
+            gpt_dic.sort_dic()
+        try:
+            tPlugins = proj_config.tPlugins
+        except Exception:
+            tPlugins = []
+    except Exception:
+        proj_config = pre_dic = post_dic = gpt_dic = None
+        tPlugins = []
+    return proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+
+
+def _run_problem_detection(
+    entries: list, proj_config: Any, pre_dic: Any, post_dic: Any, gpt_dic: Any, tPlugins: list
+) -> Tuple[list, bool]:
+    """重建 CSentense 并全量运行问题检测（只算不落盘）。
+
+    Args:
+        entries: 缓存条目列表（dict）。
+        proj_config / pre_dic / post_dic / gpt_dic / tPlugins: _load_rebuild_deps 的产物。
+
+    Returns:
+        (results, ok)：results 与 entries 等长，每项为
+        {"index", "problem", "post_dst_preview", "skip_check"}；
+        ok 为 False 表示 find_problems 抛出异常，此时所有 problem 均为空，
+        调用方不得据此覆写已有 problem（避免误删检测结果）。
+    """
+    from GalTransl.CSentense import CSentense
+    from GalTransl.Problem import find_problems
+    from GalTransl.Frontend.LLMTranslate import preprocess_trans_list, postprocess_trans_list
+
+    trans_list = []
+    for e in entries:
+        speaker = e.get("name", "")
+        if isinstance(speaker, list):
+            speaker = "/".join(speaker)
+        pre_src = e.get("pre_src", "") or e.get("pre_jp", "")
+        post_src = e.get("post_src", "") or e.get("post_jp", "")
+        pre_dst = e.get("pre_dst", "") or e.get("pre_zh", "")
+        proofread_dst = e.get("proofread_dst", "") or e.get("proofread_zh", "")
+        if post_src == "":
+            continue
+        s = CSentense(pre_src, speaker if speaker else "", e.get("index", 0))
+        s.post_src = pre_src
+        s.pre_dst = pre_dst
+        s.proofread_zh = proofread_dst
+        s.post_dst = proofread_dst if proofread_dst else pre_dst
+        s.trans_by = e.get("trans_by", "")
+        s.proofread_by = e.get("proofread_by", "")
+        s.trans_conf = e.get("trans_conf", 0)
+        s.doub_content = e.get("doub_content", "")
+        s.unknown_proper_noun = e.get("unknown_proper_noun", "")
+        s.skip_check = e.get("skip_check", False)
+        trans_list.append(s)
+
+    for i, s in enumerate(trans_list):
+        if i > 0:
+            s.prev_tran = trans_list[i - 1]
+        if i < len(trans_list) - 1:
+            s.next_tran = trans_list[i + 1]
+
+    if pre_dic and proj_config:
+        preprocess_trans_list(trans_list, proj_config, pre_dic, tPlugins or None)
+    if post_dic and proj_config:
+        postprocess_trans_list(trans_list, proj_config, post_dic, tPlugins or None)
+
+    ok = True
+    if trans_list:
+        try:
+            find_problems(trans_list, proj_config, gpt_dic)
+        except Exception:
+            ok = False
+            LOGGER.error("问题检测 find_problems 执行失败", exc_info=True)
+
+    results = []
+    ti = 0
+    for e in entries:
+        post_src_val = e.get("post_src", "") or e.get("post_jp", "")
+        if post_src_val == "":
+            results.append({
+                "index": e.get("index", 0),
+                "problem": "",
+                "post_dst_preview": None,
+                "skip_check": bool(e.get("skip_check", False)),
+            })
+            continue
+        tran = trans_list[ti]
+        ti += 1
+        results.append({
+            "index": e.get("index", 0),
+            "problem": tran.problem if ok else "",
+            "post_dst_preview": tran.post_dst,
+            "skip_check": tran.skip_check,
+        })
+    return results, ok
 
 
 async def _check_model_availability(
@@ -1649,6 +1779,46 @@ def build_handler(registry: JobRegistry) -> type:
                 })
                 return
 
+            # POST /api/projects/:id/cache/check — 仅重新运行问题检测，不落盘
+            if sub_path == "/cache/check":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    raw_filename = str(payload.get("filename", "")).strip()
+                    entries = payload.get("entries", [])
+                    config_name = str(payload.get("config_file_name", "config.yaml")).strip() or "config.yaml"
+                    if not raw_filename or not isinstance(entries, list):
+                        self._send_json({"error": "invalid payload"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    norm = os.path.normpath(raw_filename.replace("\\", "/"))
+                    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                    abs_cache = os.path.abspath(cache_dir)
+                    abs_file = os.path.abspath(os.path.join(cache_dir, norm))
+                    if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins = _load_rebuild_deps(
+                        project_dir, config_name
+                    )
+                    if proj_config is None:
+                        LOGGER.warning(f"cache/check skipped (config load failed): {norm}")
+                        self._send_json({"success": False, "error": "config load failed", "results": []})
+                        return
+                    results, ok = _run_problem_detection(
+                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+                    )
+                    self._send_json({"success": ok, "filename": norm, "results": results})
+                except json.JSONDecodeError:
+                    self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:
+                    self._send_json({"error": f"failed to check cache file: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
             # POST /api/projects/:id/cache/save
             if sub_path == "/cache/save":
                 if self.command != "POST":
@@ -1688,121 +1858,35 @@ def build_handler(registry: JobRegistry) -> type:
 
                     # Rebuild: re-derive problem and post_dst_preview fields
                     try:
-                        from GalTransl.CSentense import CSentense
-                        from GalTransl.Problem import find_problems
-                        from GalTransl.Frontend.LLMTranslate import preprocess_trans_list, postprocess_trans_list
-
-                        # Load project config and dictionaries for rebuild
-                        proj_config = None
-                        pre_dic = None
-                        post_dic = None
-                        gpt_dic = None
-                        tPlugins = []
-                        try:
-                            from GalTransl.ConfigHelper import CProjectConfig, initDictList
-                            from GalTransl.Dictionary import CNormalDic, CGptDict
-                            # Resolve the real config file: real projects use
-                            # config.inc.yaml, but the request may default to config.yaml.
-                            if not os.path.isfile(os.path.join(project_dir, config_name)):
-                                for _cand in ("config.inc.yaml", "config.yaml"):
-                                    if os.path.isfile(os.path.join(project_dir, _cand)):
-                                        config_name = _cand
-                                        break
-                            proj_config = CProjectConfig(project_dir, config_name)
-                            dict_cfg = proj_config.getDictCfgSection()
-                            pre_dic_list = dict_cfg.get("preDict", [])
-                            post_dic_list = dict_cfg.get("postDict", [])
-                            gpt_dic_list = dict_cfg.get("gpt.dict", [])
-                            default_dic_dir = dict_cfg.get("defaultDictFolder", "")
-                            pre_dic = CNormalDic(
-                                initDictList(pre_dic_list, default_dic_dir, project_dir)
-                            )
-                            post_dic = CNormalDic(
-                                initDictList(post_dic_list, default_dic_dir, project_dir)
-                            )
-                            gpt_dic = CGptDict(
-                                initDictList(gpt_dic_list, default_dic_dir, project_dir)
-                            )
-                            if dict_cfg.get("sortDict", True):
-                                pre_dic.sort_dic()
-                                post_dic.sort_dic()
-                                gpt_dic.sort_dic()
-                            # Load text plugins
-                            try:
-                                tPlugins = proj_config.tPlugins
-                            except Exception:
-                                tPlugins = []
-                        except Exception:
-                            proj_config = None  # config load failed; skip rebuild below
-
+                        proj_config, pre_dic, post_dic, gpt_dic, tPlugins = _load_rebuild_deps(
+                            project_dir, config_name
+                        )
                         # If config could not be loaded, do NOT run the rebuild:
                         # find_problems would be skipped and the update loop would
                         # delete every existing "problem" field. Preserve them instead.
                         if proj_config is None:
+                            LOGGER.warning(f"cache/save rebuild skipped (config load failed): {norm}")
                             self._send_json({"success": True, "filename": raw_filename})
                             return
-                        trans_list = []
-                        for e in entries:
-                            speaker = e.get("name", "")
-                            if isinstance(speaker, list):
-                                speaker = "/".join(speaker)
-                            pre_src = e.get("pre_src", "") or e.get("pre_jp", "")
-                            post_src = e.get("post_src", "") or e.get("post_jp", "")
-                            pre_dst = e.get("pre_dst", "") or e.get("pre_zh", "")
-                            proofread_dst = e.get("proofread_dst", "") or e.get("proofread_zh", "")
-                            if post_src == "":
-                                continue
-                            s = CSentense(pre_src, speaker if speaker else "", e.get("index", 0))
-                            s.post_src = pre_src
-                            s.pre_dst = pre_dst
-                            s.proofread_zh = proofread_dst
-                            s.post_dst = proofread_dst if proofread_dst else pre_dst
-                            s.trans_by = e.get("trans_by", "")
-                            s.proofread_by = e.get("proofread_by", "")
-                            s.trans_conf = e.get("trans_conf", 0)
-                            s.doub_content = e.get("doub_content", "")
-                            s.unknown_proper_noun = e.get("unknown_proper_noun", "")
-                            s.skip_check = e.get("skip_check", False)
-                            trans_list.append(s)
-
-                        # Link prev/next
-                        for i, s in enumerate(trans_list):
-                            if i > 0:
-                                s.prev_tran = trans_list[i - 1]
-                            if i < len(trans_list) - 1:
-                                s.next_tran = trans_list[i + 1]
-
-                        # Pre-processing and post-processing (shared with LLMTranslate)
-                        if pre_dic and proj_config:
-                            preprocess_trans_list(trans_list, proj_config, pre_dic, tPlugins or None)
-                        if post_dic and proj_config:
-                            postprocess_trans_list(trans_list, proj_config, post_dic, tPlugins or None)
-
-                        # Run find_problems
-                        if trans_list:
-                            try:
-                                find_problems(trans_list, proj_config, gpt_dic)
-                            except Exception:
-                                pass  # If problem detection fails, skip
-
-                        # Update entries with problem and post_dst_preview
-                        idx = 0
-                        for e in entries:
+                        results, detection_ok = _run_problem_detection(
+                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+                        )
+                        # Update entries with problem and post_dst_preview.
+                        # detection_ok=False 时保留已有 problem，避免把检测结果误删。
+                        for e, r in zip(entries, results):
                             post_src_val = e.get("post_src", "") or e.get("post_jp", "")
                             if post_src_val == "":
                                 continue
-                            if idx < len(trans_list):
-                                tran = trans_list[idx]
-                                if tran.problem:
-                                    e["problem"] = tran.problem
+                            if detection_ok:
+                                if r["problem"]:
+                                    e["problem"] = r["problem"]
                                 elif "problem" in e:
                                     del e["problem"]
-                                e["post_dst_preview"] = tran.post_dst
-                                if tran.skip_check:
-                                    e["skip_check"] = True
-                                elif "skip_check" in e:
-                                    del e["skip_check"]
-                                idx += 1
+                            e["post_dst_preview"] = r["post_dst_preview"]
+                            if r["skip_check"]:
+                                e["skip_check"] = True
+                            elif "skip_check" in e:
+                                del e["skip_check"]
 
                         # Re-save with updated fields
                         with open(file_path, "wb") as f:
@@ -1811,6 +1895,7 @@ def build_handler(registry: JobRegistry) -> type:
                         self._send_json({"success": True, "filename": norm, "entries": entries})
                     except Exception:
                         # Rebuild failed, but original save succeeded
+                        LOGGER.warning(f"cache/save rebuild failed for {norm}", exc_info=True)
                         self._send_json({"success": True, "filename": norm})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)

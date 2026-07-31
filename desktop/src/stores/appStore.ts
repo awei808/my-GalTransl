@@ -57,6 +57,8 @@ export interface AppState {
   cacheTree: FileNode[];
   /** 缓存树版本：监控发现"当前打开文件"大小变化时自增，驱动 ReviewPage 局部刷新 */
   cacheVersion: number;
+  /** 问题列表版本：监控发现"任一缓存文件"大小变化时自增，驱动问题侧栏刷新（覆盖非当前文件被外部修改的盲区） */
+  problemVersion: number;
   /** 模型可用性检测快照（全局持久，避免翻译控制台组件重挂后重复检测/丢失结果） */
   modelCheck: ModelCheckSnapshot;
   /** 上一轮 /runtime 轮询到的任务状态（全局持久，避免切回页面时把"运行中"误判为"刚开始"而重复弹窗） */
@@ -82,6 +84,7 @@ export const defaultState: AppState = {
   selectedBackend: "",
   cacheTree: [],
   cacheVersion: 0,
+  problemVersion: 0,
   modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   prevJobStatus: "",
   reviewJumpToIndex: null,

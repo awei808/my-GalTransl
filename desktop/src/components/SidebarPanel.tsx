@@ -473,7 +473,8 @@ function ProblemList() {
 
   createEffect(() => {
     const pid = appState.activeProjectId;
-    void appState.cacheVersion; // 依赖：缓存变化 → 刷新问题列表
+    // 依赖 problemVersion：任一缓存文件变化都刷新问题列表（修复"非当前文件保存后不刷新"盲区）
+    void appState.problemVersion;
     if (!pid || appState.sidebarTab !== "problems") {
       setProblems([]);
       return;

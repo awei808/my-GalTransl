@@ -49,12 +49,22 @@ async function tick() {
 
     // 仅当“当前打开的文件”大小变化（或首次出现）时，触发局部刷新
     let openChanged = false;
+    // 任一非当前打开文件变化 → 递增 problemVersion，驱动问题侧栏刷新
+    let otherChanged = false;
     const open = appState.activeFilePath;
     if (open) {
       const prev = lastSizes[open];
       const cur = sizes[open];
       if (cur !== undefined && (prev === undefined || prev !== cur)) {
         openChanged = true;
+      }
+    }
+    for (const [p, cur] of Object.entries(sizes)) {
+      if (p === open) continue;
+      const prev = lastSizes[p];
+      if (cur !== undefined && (prev === undefined || prev !== cur)) {
+        otherChanged = true;
+        break;
       }
     }
 
@@ -67,6 +77,9 @@ async function tick() {
     lastSizes = sizes;
     if (openChanged) {
       setAppState("cacheVersion", (v: number) => v + 1);
+    }
+    if (openChanged || otherChanged) {
+      setAppState("problemVersion", (v: number) => v + 1);
     }
   } catch {
     // 轮询失败静默忽略（后端可能正在重启等）

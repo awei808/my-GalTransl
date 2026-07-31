@@ -26,6 +26,7 @@ import type {
   ProjectFilesResponse,
   ProjectLogsResponse,
   ProjectProblemsResponse,
+  CacheCheckResponse,
   ProjectProgressResponse,
   ProjectRuntimeResponse,
   MetadataEntry,
@@ -353,6 +354,24 @@ export async function deleteCommonDictionaryFile(payload: { filename: string }) 
 export async function fetchProjectProblems(projectId: string, file?: string) {
   const q = file ? `?file=${encodeURIComponent(file)}` : "";
   return apiRequest<ProjectProblemsResponse>(`/api/projects/${projectId}/problems${q}`);
+}
+
+/** 对给定缓存条目重新运行问题检测（不落盘），用于"刷新"时强制更新检测结果 */
+export async function checkCacheProblems(
+  projectId: string,
+  filename: string,
+  entries: CacheEntry[],
+  configFileName?: string,
+) {
+  return apiRequest<CacheCheckResponse>(`/api/projects/${projectId}/cache/check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename,
+      entries,
+      config_file_name: configFileName || "config.yaml",
+    }),
+  });
 }
 
 // ---- Name table ----
