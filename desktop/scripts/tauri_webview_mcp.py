@@ -81,7 +81,7 @@ async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
                 "url": req.url,
                 "method": req.method,
                 "type": "requestfailed",
-                "failure": req.failure.error_text if req.failure else "unknown",
+                "failure": _safe_failure_text(req),
             }))
 
             _connected = True
@@ -114,6 +114,19 @@ def _safe_start_time(req) -> int:
         return getattr(t, "start_time", 0) or 0
     except Exception:
         return 0
+
+
+def _safe_failure_text(req) -> str:
+    """兼容 Playwright RequestFailed 对象与 CDP str 两种形态，避免监听器抛错污染会话"""
+    try:
+        f = req.failure
+        if not f:
+            return "unknown"
+        if isinstance(f, str):
+            return f
+        return getattr(f, "error_text", None) or "unknown"
+    except Exception:
+        return "unknown"
 
 
 # ── Tool 处理函数 ──────────────────────────────────────────────

@@ -440,7 +440,7 @@ def _build_cache_tree(dir_path: str, prefix: str = "", count_entries: bool = Tru
                 "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
                 "is_metadata": any(
                     rel == d or rel.startswith(d + "/")
-                    for d in ("pass0_cache", "pass1_cache", "pass2_cache", "pass3_cache")
+                    for d in ("pass0_cache", "pass1_cache", "pass2_cache")
                 ),
             }
             if count_entries and name.endswith(".json"):

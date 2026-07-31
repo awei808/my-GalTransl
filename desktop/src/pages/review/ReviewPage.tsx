@@ -9,6 +9,8 @@ import {
   savePerFileMetadata,
 } from "../../lib/api/project";
 import type { CacheEntry, MetadataEntry, MetadataType } from "../../lib/api/types";
+import { toast } from "../../stores/toastStore";
+import { getErrorMessage } from "../../lib/errors";
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -463,6 +465,14 @@ export function ReviewPage() {
   const [metaEntry, setMetaEntry] = createSignal<MetadataEntry | null>(null);
   const [metaLoading, setMetaLoading] = createSignal(false);
   let metaSavePending = false;
+  // 当前元数据文件是否有未保存修改（编辑置 true，保存成功/加载新文件后复位 false）
+  let metaDirty = false;
+  // 元数据切换令牌：每次 effect 触发递增，过期切换闭包（保存/加载响应）直接丢弃
+  let metaSwitchToken = 0;
+  // 非法 JSON 已提示标志：连续非法输入只提示一次，避免 onInput 逐键 toast 轰炸
+  let metaJsonInvalidShown = false;
+  // 当前打开的元数据文件完整路径（切换保存时用于推导旧文件的 metaType/sourceFile）
+  let metaLoadedFullPath = "";
 
   // ── 文件内查找 ──
   const [findOpen, setFindOpen] = createSignal(false);
@@ -805,27 +815,59 @@ export function ReviewPage() {
     const pid = appState.activeProjectId;
     const type = metaType();
     const srcFile = metaSourceFile();
+    const myToken = ++metaSwitchToken; // 任何触发都使旧切换闭包失效
     if (reviewMode() !== "metadata" || !pid) {
       setMetaEntry(null);
+      metaDirty = false;
       // 不重置 loadedFile：该变量供翻译模式（loadFile/saveCurrentFile/runSwitch）使用，
       // 若在此清空，cacheWatcher bump cacheVersion 时会短路后续保存，导致 dirty 无法清除
       return;
     }
     void appState.cacheVersion; // 仅 metadata 模式追踪：外部改动元数据文件时自动刷新
-    // 切换元数据文件前保存当前条目（fire-and-forget）
-    if (loadedFile && loadedFile !== srcFile) {
-      const prevEntry = metaEntry();
-      if (prevEntry) {
-        savePerFileMetadata(pid, metaType(), loadedFile, prevEntry)
-          .catch(() => {});
+    void (async () => {
+      if (loadedFile && loadedFile !== srcFile) {
+        // 切换元数据文件：有改动先等待落盘，防 fire-and-forget 的丢失窗口
+        if (metaDirty && metaEntry()) {
+          // 等待在途失焦保存（saveMeta）完成，防并发写同一文件
+          const deadline = Date.now() + 3000;
+          while (metaSavePending && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 30));
+          }
+          try {
+            // 保存旧文件：filename/type 基于旧文件完整路径（metaLoadedFullPath）推导。
+            // 不能用 loadedFile（纯源文件名，无目录信息，modeInfoOf 会退回空 sourceFile）
+            const prevInfo = modeInfoOf(metaLoadedFullPath || loadedFile);
+            await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry());
+            if (myToken !== metaSwitchToken) return; // 保存期间又切换
+            metaDirty = false;
+          } catch (e) {
+            // 保存失败：中止切换，保住未保存编辑（metaDirty 保持 true）
+            toast.error(`保存 ${loadedFile} 失败：${getErrorMessage(e)}`);
+            return;
+          }
+        }
+      } else if (metaDirty) {
+        // 同文件外部刷新（cacheVersion）：有未保存编辑时跳过自动刷新，避免覆盖
+        return;
       }
-    }
-    loadedFile = srcFile;
-    setMetaLoading(true);
-    fetchPerFileMetadata(pid, type, srcFile)
-      .then((res) => setMetaEntry(res.entry ?? null))
-      .catch(() => setMetaEntry(null))
-      .finally(() => setMetaLoading(false));
+      if (myToken !== metaSwitchToken) return; // 过期切换闭包丢弃
+      loadedFile = srcFile;
+      setMetaLoading(true);
+      try {
+        const res = await fetchPerFileMetadata(pid, type, srcFile);
+        if (myToken !== metaSwitchToken) return; // 过期响应不写 metaEntry
+        setMetaEntry(res.entry ?? null);
+        metaDirty = false; // 新文件即磁盘态，未编辑
+        metaJsonInvalidShown = false; // 新文件加载后重置非法 JSON 提示标志
+        metaLoadedFullPath = appState.activeFilePath; // 记录当前文件完整路径，供下次切换保存推导
+      } catch {
+        if (myToken !== metaSwitchToken) return;
+        setMetaEntry(null);
+        metaDirty = false;
+      } finally {
+        if (myToken === metaSwitchToken) setMetaLoading(false);
+      }
+    })();
   });
 
   function handleMetaContentChange(_index: number, text: string) {
@@ -833,14 +875,28 @@ export function ReviewPage() {
     try {
       parsed = JSON.parse(text);
     } catch {
+      // 非法 JSON：首次出现时提示一次，持续非法不重复
+      if (!metaJsonInvalidShown) {
+        metaJsonInvalidShown = true;
+        toast.warning("元数据 JSON 格式错误，该次修改暂未保存");
+      }
       return;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      // 合法 JSON 但非对象（数组/标量）：同样拦截并提示
+      if (!metaJsonInvalidShown) {
+        metaJsonInvalidShown = true;
+        toast.warning("元数据内容需为 JSON 对象，该次修改暂未保存");
+      }
+      return;
+    }
+    metaJsonInvalidShown = false; // 恢复合法 → 重置提示标志
     setMetaEntry((prev) => {
       if (!prev) return parsed;
       const id = prev.id ?? "";
       return { ...parsed, id };
     });
+    metaDirty = true; // 有效编辑 → 标记未保存
   }
 
   async function saveMeta() {
@@ -849,14 +905,18 @@ export function ReviewPage() {
     const pid = appState.activeProjectId;
     const srcFile = metaSourceFile();
     const entry = metaEntry();
-    if (!pid || !entry) {
+    // 守卫：保存目标必须是当前实际打开的文件。
+    // metaLoadedFullPath 是完整路径，经 modeInfoOf 提取纯源文件名后与 metaSourceFile() 比较。
+    // 切换期间（metaSourceFile 已是新目标、metaLoadedFullPath 仍是旧文件）跳过，防把旧数据写入新文件
+    if (!pid || !entry || modeInfoOf(metaLoadedFullPath).sourceFile !== metaSourceFile()) {
       metaSavePending = false;
       return;
     }
     try {
       await savePerFileMetadata(pid, metaType(), srcFile, entry);
-    } catch {
-      // 静默处理
+      metaDirty = false; // 仅保存成功才清脏
+    } catch (e) {
+      toast.error(`元数据保存失败：${getErrorMessage(e)}`);
     } finally {
       metaSavePending = false;
     }

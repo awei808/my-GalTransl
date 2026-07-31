@@ -29,3 +29,6 @@ desktop/*.timestamp-*.mjs
 # 翻译生成缓存（本地产物，不入库）
 sampleProject/transl_cache/
 desktop/tsconfig.tsbuildinfo
+
+#测试程序引入
+Reload

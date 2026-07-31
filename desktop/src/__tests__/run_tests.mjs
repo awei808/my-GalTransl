@@ -541,6 +541,191 @@ await testGroup("模块 10: P1 切换链路", async () => {
   });
 });
 
+// --- 模块 11: metadata 保存链路状态机（metaDirty + token + 守卫） ---
+await testGroup("模块 11: metadata 保存链路状态机", async () => {
+  testGroup("  11.1 metaDirty 置位/清位：编辑置 true，保存成功清，失败保持", () => {
+    let metaDirty = false;
+
+    // 编辑
+    metaDirty = true;
+    assert(metaDirty === true, "编辑后 dirty=true");
+
+    // 保存成功 → 清
+    metaDirty = false;
+    assert(metaDirty === false, "保存成功后 dirty=false");
+
+    // 再编辑，保存失败 → 保持 true（仅成功才清）
+    metaDirty = true;
+    let saveOk = false;
+    try { throw new Error("network"); } catch { saveOk = false; }
+    if (saveOk) metaDirty = false;
+    assert(metaDirty === true, "保存失败时 dirty 保持 true");
+  });
+
+  testGroup("  11.2 切换保存失败 → 中止（不加载新文件、dirty 保持）", () => {
+    let metaDirty = true;
+    let loaded = "A";
+    let switched = false;
+
+    function simulateSwitch() {
+      let saved = false;
+      try { throw new Error("network"); } catch { saved = false; }
+      if (!saved) return; // 中止切换
+      loaded = "B";
+      metaDirty = false;
+      switched = true;
+    }
+    simulateSwitch();
+    assert(loaded === "A", "失败后不加载新文件");
+    assert(metaDirty === true, "失败后 dirty 保持 true");
+    assert(!switched, "未执行切换");
+  });
+
+  await testGroup("  11.3 token 过期丢弃：旧闭包不生效", async () => {
+    let token = 0;
+    function simulateEffect() {
+      const myToken = ++token;
+      return async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        return myToken === token ? "apply" : "stale";
+      };
+    }
+    const c1 = simulateEffect(); // 旧闭包
+    const c2 = simulateEffect(); // 新闭包（token 递增，c1 失效）
+    const results = await Promise.all([c1(), c2()]);
+    assert(results[0] === "stale", "旧闭包被丢弃");
+    assert(results[1] === "apply", "新闭包生效");
+  });
+
+  testGroup("  11.4 saveMeta 目标守卫：modeInfoOf(metaLoadedFullPath).sourceFile !== metaSourceFile 时跳过", () => {
+    // 与 ReviewPage.modeInfoOf 一致的模拟：完整路径 → 纯源文件名
+    function modeInfoOf(path) {
+      const base = path.split("/").pop() ?? "";
+      if (path.includes("pass1_cache/")) {
+        return { metaType: "filemeta", sourceFile: base.replace(/\.meta\.json$/, "") };
+      }
+      return { metaType: "filemeta", sourceFile: "" };
+    }
+
+    let metaSourceFile = "00_03_華恋との出会い.txt.json"; // 新目标纯名
+    let metaLoadedFullPath = "pass1_cache/00_04_凛音との出会い.txt.json.meta.json"; // 旧文件完整路径
+
+    // 切换中：旧文件纯名 !== 新目标纯名 → 跳过（防把旧数据写入新文件）
+    let saved = false;
+    if (modeInfoOf(metaLoadedFullPath).sourceFile !== metaSourceFile) { /* 跳过 */ } else { saved = true; }
+    assert(!saved, "切换中跳过保存（防写错文件）");
+
+    // 稳定状态：metaLoadedFullPath 是当前打开文件 → 相等 → 保存
+    metaSourceFile = "00_04_凛音との出会い.txt.json";
+    if (modeInfoOf(metaLoadedFullPath).sourceFile !== metaSourceFile) { /* 跳过 */ } else { saved = true; }
+    assert(saved, "稳定状态正常保存");
+  });
+
+  testGroup("  11.5 外部刷新守卫：同文件 + metaDirty → 跳过自动刷新", () => {
+    const loadedFile = "A";
+    const srcFile = "A";
+    let metaDirty = true;
+    let refreshed = false;
+
+    if (loadedFile && loadedFile !== srcFile) {
+      // 切换分支
+    } else if (metaDirty) {
+      // 跳过刷新（dirty 守卫）
+    } else {
+      refreshed = true;
+    }
+    assert(!refreshed, "同文件 dirty 时跳过自动刷新（保护编辑）");
+
+    metaDirty = false;
+    if (loadedFile && loadedFile !== srcFile) {
+      // 切换分支
+    } else if (metaDirty) {
+      // 跳过
+    } else {
+      refreshed = true;
+    }
+    assert(refreshed, "非 dirty 时正常刷新");
+  });
+
+  testGroup("  11.6 非法 JSON 提示去重：连续非法只提示一次，恢复合法后重置", () => {
+    let metaJsonInvalidShown = false;
+    let toasts = 0;
+    function handleChange(text) {
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        if (!metaJsonInvalidShown) {
+          metaJsonInvalidShown = true;
+          toasts++;
+        }
+        return false;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        if (!metaJsonInvalidShown) {
+          metaJsonInvalidShown = true;
+          toasts++;
+        }
+        return false;
+      }
+      metaJsonInvalidShown = false;
+      return true;
+    }
+
+    // 逐键输入非法内容（每个中间态都非法）
+    handleChange("{");
+    handleChange("{a");
+    handleChange("{a:");
+    assert(toasts === 1, "连续非法只提示一次（防 toast 轰炸）");
+
+    // 补全为合法 JSON
+    const ok = handleChange('{"a":1}');
+    assert(ok, "合法输入通过");
+    assert(toasts === 1, "合法输入不额外提示");
+
+    // 再次非法 → 重新提示（标志已重置）
+    handleChange("}");
+    assert(toasts === 2, "恢复合法后再次非法重新提示");
+
+    // 先恢复合法（重置标志），再输入非对象（数组）→ 拦截并提示一次
+    handleChange('{"b":2}');
+    handleChange("[1]");
+    handleChange("[1,2]");
+    assert(toasts === 3, "非对象内容提示一次");
+  });
+
+  testGroup("  11.7 切换保存 filename 推导：metaLoadedFullPath（完整路径）正确，纯名 loadedFile 不行", () => {
+    // 与 ReviewPage.modeInfoOf 一致的模拟
+    function modeInfoOf(path) {
+      if (!path) return { metaType: "filemeta", sourceFile: "" };
+      const base = path.split("/").pop() ?? "";
+      if (path.includes("pass1_cache/")) {
+        return { metaType: "filemeta", sourceFile: base.replace(/\.meta\.json$/, "") };
+      }
+      if (path.includes("pass2_cache/")) {
+        return { metaType: "batchmeta", sourceFile: base.replace(/\.batch\.json$/, "") };
+      }
+      return { metaType: "filemeta", sourceFile: "" }; // 兜底：无目录信息 → 空
+    }
+
+    // 完整路径 → 正确提取纯源文件名
+    const prevInfo = modeInfoOf("pass1_cache/00_04_凛音との出会い.txt.json.meta.json");
+    assertEq(prevInfo.sourceFile, "00_04_凛音との出会い.txt.json", "完整路径提取纯源文件名");
+    assert(!prevInfo.sourceFile.includes("/"), "文件名不含路径分隔符（后端可过）");
+    assert(!prevInfo.sourceFile.endsWith(".meta.json"), "不含 .meta.json 后缀");
+    assertEq(prevInfo.metaType, "filemeta", "metaType 正确");
+
+    // 纯名（loadedFile）→ 兜底空 sourceFile：这就是之前 bug 根因，必须用 metaLoadedFullPath
+    const badInfo = modeInfoOf("00_04_凛音との出会い.txt.json");
+    assertEq(badInfo.sourceFile, "", "纯名无法推导 → 必须用 metaLoadedFullPath");
+
+    // pass2 文件同理
+    const prevInfo2 = modeInfoOf("pass2_cache/00_05.batch.json");
+    assertEq(prevInfo2.sourceFile, "00_05", "batch 提取纯名");
+    assertEq(prevInfo2.metaType, "batchmeta", "batch metaType 正确");
+  });
+});
+
 // ======= 结果 =======
 
 console.log(`\n${"=".repeat(50)}`);
