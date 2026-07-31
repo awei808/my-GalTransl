@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "tauri-webview": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "desktop/scripts/tauri_webview_mcp.py",
+        "--cdp-port",
+        "9222"
+      ],
+      "description": "通过 CDP 直连 Tauri WebView2，捕获前端报错、检查 DOM 结构"
+    }
+  }
+}

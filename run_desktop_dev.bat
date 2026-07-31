@@ -39,10 +39,12 @@ if errorlevel 1 (
   echo Cargo not found. Falling back to browser frontend dev server.
   start "GalTransl Frontend" cmd /k "cd /d %~dp0desktop && npm run dev"
 ) else (
-  start "GalTransl Desktop" cmd /k "cd /d %~dp0desktop && npm run tauri:dev"
+  start "GalTransl Desktop" cmd /k "set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 && cd /d %~dp0desktop && npm run tauri:dev"
 )
 
 echo Backend and desktop frontend are starting in separate windows.
-echo If Cargo is installed, the Tauri desktop shell will start.
+echo If Cargo is installed, the Tauri desktop shell will start (CDP debug port 9222).
 echo Otherwise the browser frontend will start at the Vite dev URL.
+echo.
+echo [MCP 调试] AI 通过 CDP 端口 9222 直连 WebView2 捕获前端报错。
 pause
