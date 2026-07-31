@@ -26,3 +26,7 @@ budoux
 # Very heavyweight tokenizer, manual installation recommended
 # numpy < 2.0.0
 # hanlp
+
+# MCP 脚本（desktop/scripts/tauri_webview_mcp.py）专用依赖
+mcp
+playwright

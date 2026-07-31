@@ -32,3 +32,4 @@ desktop/tsconfig.tsbuildinfo
 
 #测试程序引入
 Reload
+cc_probe

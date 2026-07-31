@@ -44,6 +44,7 @@ async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
     attempt = 0
     while True:
         attempt += 1
+        p = None
         try:
             p = await async_playwright().start()
             _browser = await p.chromium.connect_over_cdp(
@@ -89,10 +90,23 @@ async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
                   file=sys.stderr, flush=True)
             return
 
+        except asyncio.CancelledError:
+            # MCP 会话结束时任务被取消，清理 Playwright 实例避免 driver 残留
+            if p is not None:
+                try:
+                    await p.stop()
+                except Exception:
+                    pass
+            raise
         except Exception:
             if attempt == 1:
                 print(f"[tauri-webview-mcp] 正在等待 Tauri WebView2 (CDP 端口 {cdp_port}) 就绪...",
                       file=sys.stderr, flush=True)
+            if p is not None:
+                try:
+                    await p.stop()
+                except Exception:
+                    pass
             await asyncio.sleep(delay)
 
 
@@ -447,9 +461,6 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    # 连接到 WebView2（无限等待直到就绪）
-    await connect_to_webview(args.cdp_port)
-
     # 创建 MCP Server
     server = Server(
         name="tauri-webview-mcp",
@@ -459,15 +470,23 @@ async def main() -> None:
         on_call_tool=handle_call_tool,
     )
 
-    # 通过 stdio 与 CodeBuddy 通信
+    # 先启动 stdio 握手，WebView2 连接放后台任务，避免未就绪时阻塞 MCP 启用
     async with stdio_server() as (read_stream, write_stream):
-        init_options = server.create_initialization_options()
-        await server.run(
-            read_stream,
-            write_stream,
-            init_options,
-            raise_exceptions=True,
-        )
+        connect_task = asyncio.create_task(connect_to_webview(args.cdp_port))
+        try:
+            init_options = server.create_initialization_options()
+            await server.run(
+                read_stream,
+                write_stream,
+                init_options,
+                raise_exceptions=True,
+            )
+        finally:
+            connect_task.cancel()
+            try:
+                await connect_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 if __name__ == "__main__":
