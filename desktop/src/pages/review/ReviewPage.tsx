@@ -235,6 +235,8 @@ function EntryCard(props: {
             value={draftDst()}
             onInput={(ev) => {
               setDraftDst(ev.currentTarget.value);
+              // 打字时即标记"未保存"，避免脏指示滞后到失焦才出现
+              if (appState.activeFilePath) markDirty(appState.activeFilePath);
             }}
             onBlur={() => {
               // 失焦时把译文草稿提交到内存（实时进入 entries），保存由用户手动触发
@@ -494,6 +496,8 @@ export function ReviewPage() {
       handleRedo();
     } else if (e.key === "s") {
       e.preventDefault(); // 阻止浏览器/系统保存网页
+      // 先失焦当前元素，让主译文框 onBlur 把草稿同步到 entries()，再保存
+      (document.activeElement as HTMLElement | null)?.blur();
       if (reviewMode() === "translate") void saveCurrentFile();
       else void saveMeta();
     }
@@ -605,6 +609,8 @@ export function ReviewPage() {
   // 同时校验 activeFilePath 仍匹配目标文件——防止 handleBlur 并发覆写后新文件响应对误丢弃。
   let loadToken = 0;
   let loadedFile = ""; // entries() 当前所代表的（最新一次成功加载的）文件路径
+  // 虚拟滚动截断时加载区域的 index 集合；null 表示完整加载。保存时用于合并完整数据，防止覆盖未加载条目
+  let loadedSliceIndices: Set<number> | null = null;
   async function loadFile(pid: string, file: string): Promise<void> {
     const targetFile = file;         // 快照：本次请求的目标文件
     const myToken = ++loadToken;
@@ -617,8 +623,11 @@ export function ReviewPage() {
       setTotalCount(all.length);
       if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
         setEntries(all.slice(0, VIRTUAL_LIMIT));
+        // 记录加载区域确切 index 集合（不依赖 index 排序），保存时用于合并完整数据
+        loadedSliceIndices = new Set(all.slice(0, VIRTUAL_LIMIT).map((e) => e.index));
       } else {
         setEntries(all);
+        loadedSliceIndices = null; // 完整加载，无需合并
       }
       loadedFile = file;                                        // 记录 entries() 当前所属文件
     } catch {
@@ -626,6 +635,7 @@ export function ReviewPage() {
       if (myToken === loadToken && appState.activeFilePath === targetFile) {
         setEntries([]);
         loadedFile = "";
+        loadedSliceIndices = null; // 失败清空时同步复位，防残留旧截断标记
         setTotalCount(0);
       }
     } finally {
@@ -684,6 +694,7 @@ export function ReviewPage() {
     if (!pid || !file) {
       setEntries([]);
       loadedFile = "";
+      loadedSliceIndices = null; // 无文件时复位截断标记
       setTotalCount(0);
       setShowAll(false);
       clearUndo();
@@ -737,12 +748,13 @@ export function ReviewPage() {
     const pid = appState.activeProjectId;
     const type = metaType();
     const srcFile = metaSourceFile();
-    void appState.cacheVersion;
     if (reviewMode() !== "metadata" || !pid) {
       setMetaEntry(null);
-      loadedFile = "";
+      // 不重置 loadedFile：该变量供翻译模式（loadFile/saveCurrentFile/runSwitch）使用，
+      // 若在此清空，cacheWatcher bump cacheVersion 时会短路后续保存，导致 dirty 无法清除
       return;
     }
+    void appState.cacheVersion; // 仅 metadata 模式追踪：外部改动元数据文件时自动刷新
     // 切换元数据文件前保存当前条目（fire-and-forget）
     if (loadedFile && loadedFile !== srcFile) {
       const prevEntry = metaEntry();
@@ -882,9 +894,23 @@ export function ReviewPage() {
       // 循环落盘：每次保存最新 entries；若保存期间又有本地改动（连续删除/编辑），则以最新数据再存一次，
       // 直到“保存瞬间与完成瞬间无新改动”，保证最终落盘的是最新状态
       let revAfterSave = entriesRev;
+      // 虚拟滚动截断时缓存后端完整数据，供保存循环内复用（用户编辑期间后端文件未变）
+      let fullBackend: CacheEntry[] | null = null;
       while (true) {
         const myRev = entriesRev;
-        await saveCacheFile(pid, myFile, entries(), getActiveConfigFileName());
+        // entries 已失效（loadFile 失败清空 loadedFile）时中止保存，避免写残缺数据
+        if (loadedFile !== myFile) return;
+        // 快照本次循环的截断状态：避免 await 期间 loadFile 复位为 null 导致崩溃
+        const sliceIndices = loadedSliceIndices;
+        let toSave = entries();
+        if (sliceIndices !== null) {
+          if (fullBackend === null) {
+            const res = await fetchCacheFile(pid, myFile);
+            fullBackend = res.entries ?? [];
+          }
+          toSave = mergeVirtualSlice(fullBackend, entries(), sliceIndices);
+        }
+        await saveCacheFile(pid, myFile, toSave, getActiveConfigFileName());
         if (appState.activeFilePath !== myFile) return;
         revAfterSave = entriesRev;
         if (entriesRev === myRev) break;
@@ -907,6 +933,18 @@ export function ReviewPage() {
     } finally {
       saveInFlight = false;
     }
+  }
+
+  /** 合并虚拟滚动加载区域与后端完整数据：内存编辑覆盖、已删除移除、未加载区域原样保留 */
+  function mergeVirtualSlice(
+    full: CacheEntry[],
+    current: CacheEntry[],
+    loadedIndices: Set<number>,
+  ): CacheEntry[] {
+    const mine = new Map(current.map((e) => [e.index, e]));
+    return full
+      .filter((b) => !(loadedIndices.has(b.index) && !mine.has(b.index)))
+      .map((b) => mine.get(b.index) ?? b);
   }
 
   const file = () => appState.activeFilePath;
@@ -963,7 +1001,10 @@ export function ReviewPage() {
             ● 未保存
           </span>
         </Show>
-        <button class="btn btn--sm" onClick={() => void saveCurrentFile()}>
+        <button class="btn btn--sm" onClick={() => {
+          (document.activeElement as HTMLElement | null)?.blur();
+          void saveCurrentFile();
+        }}>
           保存
         </button>
         <button
