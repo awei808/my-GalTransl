@@ -426,6 +426,17 @@ textarea {
   padding-left: var(--space-1);
 }
 
+/* 未保存修改指示圆点（译文条目模式，dirtyFiles 中的文件） */
+.file-tree-dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-status-warning);
+  flex-shrink: 0;
+  margin-left: var(--space-1);
+  align-self: center;
+}
+
 /* 元数据文件标记（与平铺译文缓存不在同目录，点开即进入元数据模式） */
 .file-tree-tag {
   font-size: 10px;

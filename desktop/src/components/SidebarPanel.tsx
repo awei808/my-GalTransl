@@ -82,6 +82,10 @@ function TreeNode(props: {
         <Show when={n().is_file && n().entry_count != null}>
           <span class="file-tree-count">{n().entry_count}</span>
         </Show>
+        {/* 未保存修改圆点：dirtyFiles 仅含译文条目文件（markDirty 只由 translate 操作调用） */}
+        <Show when={n().is_file && appState.dirtyFiles.includes(n().path)}>
+          <span class="file-tree-dirty-dot" title="有未保存的修改"></span>
+        </Show>
       </div>
       <Show when={!n().is_file && isOpen()}>
         <For each={n().children ?? []}>

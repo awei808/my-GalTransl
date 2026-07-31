@@ -659,6 +659,35 @@ export function ReviewPage() {
     if (switching) return;
     switching = true;
     try {
+      // 离开 metadata 文件（metaDirty 未保存）：在加载目标前先确认，避免确认与加载并发
+      if (metaDirty && metaEntry() && metaLoadedFullPath) {
+        const res = await confirm.show({
+          title: "未保存的修改",
+          message: `文件 ${metaLoadedFullPath} 有未保存的修改，是否保存后再切换？`,
+          confirmText: "保存",
+          cancelText: "不保存",
+          extraText: "取消",
+          tone: "warning",
+          dismissible: false,
+        });
+        if (res.action === "extra") {
+          // 取消：还原 activeFilePath 留在原文件；metaDirty 保持（下次进入 metadata 时编辑保留）
+          setAppState("activeFilePath", metaLoadedFullPath);
+          return;
+        }
+        if (res.confirmed) {
+          try {
+            const prevInfo = modeInfoOf(metaLoadedFullPath);
+            await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry());
+            metaDirty = false;
+          } catch (e) {
+            toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
+            return; // 失败中止切换，留在 metadata
+          }
+        } else {
+          metaDirty = false; // 不保存 → 丢弃
+        }
+      }
       while (true) {
         const target = appState.activeFilePath;
         if (!target || loadedFile === target) break;
@@ -691,8 +720,9 @@ export function ReviewPage() {
               if (appState.activeFilePath !== target) break; // 等待期间又切走
               await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
               markClean(prevFile);
-            } catch {
+            } catch (e) {
               // 保存失败不阻塞切换（dirty 保留，用户可重试）
+              toast.error(`保存 ${prevFile} 失败：${getErrorMessage(e)}`);
             }
           } else {
             // 选择“不保存”：丢弃 → 清脏，避免切回时误弹确认
@@ -738,8 +768,9 @@ export function ReviewPage() {
           }
           await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
           markClean(prevFile);
-        } catch {
+        } catch (e) {
           // 保存失败不阻塞切换（dirty 保留）
+          toast.error(`保存 ${prevFile} 失败：${getErrorMessage(e)}`);
         }
       } else {
         markClean(prevFile); // 不保存 → 丢弃 → 清脏
@@ -770,7 +801,8 @@ export function ReviewPage() {
     }
   });
 
-  // 缓存监控：非翻译模式（如 metadata）下，当前打开文件大小变化时局部重新拉取并渲染
+  // 缓存监控：仅对译文缓存文件做外部大小变化刷新；元数据文件不经过 loadFile（fetchCacheFile 是译文缓存专用，
+  // 且 metadata 的外部刷新已由 metadata effect 的 cacheVersion 追踪处理）
   createEffect(() => {
     const v = appState.cacheVersion;
     const pid = appState.activeProjectId;
@@ -781,6 +813,8 @@ export function ReviewPage() {
     if (v === 0) return; // 初始进入由上方加载 effect 处理
     // 本地有未保存修改时跳过自动刷新，避免覆盖乐观删除/编辑或复活已删条目
     if (appState.dirtyFiles.includes(file)) return;
+    // 元数据文件不通过 loadFile 刷新（错误语义会拉取 metadata 作为缓存解析）
+    if (modeInfoOf(file).mode !== "translate") return;
     loadFile(pid, file);
   });
 
@@ -817,9 +851,9 @@ export function ReviewPage() {
     const srcFile = metaSourceFile();
     const myToken = ++metaSwitchToken; // 任何触发都使旧切换闭包失效
     if (reviewMode() !== "metadata" || !pid) {
-      setMetaEntry(null);
-      metaDirty = false;
-      // 不重置 loadedFile：该变量供翻译模式（loadFile/saveCurrentFile/runSwitch）使用，
+      // 离开 metadata：未保存修改的确认已由 runSwitch（translate 目标）在加载目标前处理。
+      // 这里不清理 metaEntry/metaDirty（runSwitch 需要读取 metaEntry 来保存），
+      // 也不重置 loadedFile：该变量供翻译模式（loadFile/saveCurrentFile/runSwitch）使用，
       // 若在此清空，cacheWatcher bump cacheVersion 时会短路后续保存，导致 dirty 无法清除
       return;
     }
@@ -1027,7 +1061,12 @@ export function ReviewPage() {
           }
           toSave = mergeVirtualSlice(fullBackend, entries(), sliceIndices);
         }
-        await saveCacheFile(pid, myFile, toSave, getActiveConfigFileName());
+        const resp = await saveCacheFile(pid, myFile, toSave, getActiveConfigFileName());
+        // 检查后端返回：保存未确认成功时不 markClean，避免误报"已保存"
+        if (resp && resp.success === false) {
+          toast.error(`保存 ${myFile} 失败：后端未确认成功`);
+          return;
+        }
         if (appState.activeFilePath !== myFile) return;
         revAfterSave = entriesRev;
         if (entriesRev === myRev) break;
@@ -1045,8 +1084,9 @@ export function ReviewPage() {
           return b ? { ...e, problem: b.problem } : e;
         });
       });
-    } catch {
-      // 静默处理
+    } catch (e) {
+      // 保存失败：提示用户（dirty 保持，markClean 未执行）
+      toast.error(`保存 ${myFile} 失败：${getErrorMessage(e)}`);
     } finally {
       saveInFlight = false;
     }

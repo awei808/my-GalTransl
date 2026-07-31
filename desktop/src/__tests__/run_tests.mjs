@@ -724,6 +724,81 @@ await testGroup("模块 11: metadata 保存链路状态机", async () => {
     assertEq(prevInfo2.sourceFile, "00_05", "batch 提取纯名");
     assertEq(prevInfo2.metaType, "batchmeta", "batch metaType 正确");
   });
+
+  testGroup("  11.8 C2：metadata→translate 切换确认三分支（保存/不保存/取消）", () => {
+    let metaDirty = true;
+    const metaEntryObj = { id: "B" };
+    const metaLoadedFullPath = "pass1_cache/00_04_凛音との出会い.txt.json.meta.json";
+    let action = "confirm";
+    let restored = null;
+
+    function simulateLeave() {
+      if (metaDirty && metaEntryObj && metaLoadedFullPath) {
+        if (action === "extra") {
+          restored = metaLoadedFullPath; // 取消：还原 activeFilePath
+          return "cancelled";
+        }
+        if (action === "confirm") {
+          metaDirty = false;
+          return "saved";
+        }
+        metaDirty = false; // 不保存 → 丢弃
+        return "discarded";
+      }
+      return "clean";
+    }
+
+    // 分支 1：保存
+    const r1 = simulateLeave();
+    assert(r1 === "saved", "确认-保存分支");
+    assert(!metaDirty, "保存后清 dirty");
+
+    // 分支 2：不保存
+    metaDirty = true;
+    action = "cancel";
+    const r2 = simulateLeave();
+    assert(r2 === "discarded", "确认-不保存分支");
+    assert(!metaDirty, "不保存后清 dirty");
+
+    // 分支 3：取消
+    metaDirty = true;
+    action = "extra";
+    const r3 = simulateLeave();
+    assert(r3 === "cancelled", "确认-取消分支");
+    assert(restored === metaLoadedFullPath, "取消还原 activeFilePath 留在原文件");
+    assert(metaDirty, "取消后 dirty 保持（未保存编辑保留）");
+
+    // 无编辑（metaDirty=false）→ 不弹确认
+    metaDirty = false;
+    const r4 = simulateLeave();
+    assert(r4 === "clean", "无编辑时直接离开");
+  });
+
+  await testGroup("  11.9 C3：saveCacheFile 返回 success=false → 不 markClean + 提示", async () => {
+    let dirty = ["game/t01.txt.json"];
+    let toasts = 0;
+    let markedClean = false;
+
+    async function simulateSave(resp) {
+      if (resp && resp.success === false) {
+        toasts++;
+        return; // 不 markClean
+      }
+      dirty = dirty.filter((f) => f !== "game/t01.txt.json");
+      markedClean = true;
+    }
+
+    // 失败路径：success=false
+    await simulateSave({ success: false, filename: "x" });
+    assert(toasts === 1, "失败时 toast 提示");
+    assert(!markedClean, "失败时不 markClean");
+    assert(dirty.length === 1, "失败时 dirty 保持");
+
+    // 成功路径：success=true
+    await simulateSave({ success: true, filename: "x" });
+    assert(markedClean, "成功时 markClean");
+    assert(dirty.length === 0, "成功时 dirty 清除");
+  });
 });
 
 // ======= 结果 =======
