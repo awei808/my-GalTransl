@@ -17,6 +17,8 @@ from urllib.parse import urlparse, parse_qs, unquote
 from uuid import uuid4
 
 import os
+import subprocess
+import sys
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
@@ -70,6 +72,24 @@ from GalTransl.backend_security import (
 
 _ALLOWED_ORIGINS = load_allowed_origins()
 _API_TOKEN = load_api_token()
+
+
+def _open_in_file_manager(path: str, is_file: bool) -> None:
+    """在系统默认文件管理器中定位（文件）/ 打开（文件夹）。
+
+    文件：Windows 用 explorer /select, 选中；macOS 用 open -R 定位；其余用 xdg-open 打开父目录。
+    文件夹：直接打开该目录。timeout 防止资源管理器异常时线程被长期挂起。
+    """
+    if os.name == "nt":
+        if is_file:
+            subprocess.run(["explorer", "/select," + path], check=False, timeout=15)
+        else:
+            subprocess.run(["explorer", path], check=False, timeout=15)
+    elif sys.platform == "darwin":
+        subprocess.run(["open", "-R" if is_file else path], check=False, timeout=15)
+    else:
+        parent = os.path.dirname(path) if is_file else path
+        subprocess.run(["xdg-open", parent], check=False, timeout=15)
 
 
 async def _check_model_availability(
@@ -1576,6 +1596,47 @@ def build_handler(registry: JobRegistry) -> type:
                     "output_files": _list_dir_entries(output_dir),
                     "cache_files": cache_files,
                 })
+                return
+
+            # POST /api/projects/:id/reveal — 在系统文件管理器中定位（文件）/ 打开（文件夹）
+            if sub_path == "/reveal":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    rel = str(payload.get("path", "")).strip()
+                    is_metadata = bool(payload.get("is_metadata", False))
+                    if not rel:
+                        self._send_json({"error": "missing path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                    if is_metadata:
+                        # 元数据文件位于 gt_input，而非 cache_dir（与 GET /files 的兼容追加一致）
+                        norm = os.path.normpath(rel.replace("\\", "/"))
+                        if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm) or "/" in norm or os.sep in norm:
+                            self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        target = os.path.join(project_dir, INPUT_FOLDERNAME, norm)
+                        allowed_root = os.path.abspath(os.path.join(project_dir, INPUT_FOLDERNAME))
+                    else:
+                        norm = os.path.normpath(rel.replace("\\", "/"))
+                        if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+                            self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        target = os.path.join(cache_dir, norm)
+                        allowed_root = os.path.abspath(cache_dir)
+                    abs_target = os.path.abspath(target)
+                    if not (abs_target == allowed_root or abs_target.startswith(allowed_root + os.sep)):
+                        self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    if not (os.path.isfile(target) or os.path.isdir(target)):
+                        self._send_json({"error": f"路径不存在: {rel}"}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    _open_in_file_manager(target, os.path.isfile(target))
+                    self._send_json({"success": True, "path": target})
+                except Exception as exc:
+                    self._send_json({"error": f"打开文件管理器失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
             # GET /api/projects/:id/cache

@@ -110,6 +110,22 @@ export async function fetchProjectFiles(projectId: string) {
   return apiRequest<ProjectFilesResponse>(`/api/projects/${projectId}/files`);
 }
 
+/** 在系统文件管理器中定位（文件）/ 打开（文件夹）。后端按 is_metadata 解析实际绝对路径。 */
+export async function revealInFileManager(
+  projectId: string,
+  path: string,
+  isMetadata: boolean,
+) {
+  return apiRequest<{ success: boolean; path: string }>(
+    `/api/projects/${projectId}/reveal`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, is_metadata: isMetadata }),
+    },
+  );
+}
+
 // ---- Project cache ----
 
 export async function fetchProjectCache(projectId: string) {

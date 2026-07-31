@@ -244,6 +244,18 @@ function EntryCard(props: {
               // 失焦时把译文草稿提交到内存（实时进入 entries），保存由用户手动触发
               props.onFieldChange("pre_dst", draftDst());
             }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const ta = e.currentTarget as HTMLTextAreaElement;
+              const pos = ta.selectionStart;
+              const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+              setDraftDst(newVal);
+              if (appState.activeFilePath) markDirty(appState.activeFilePath);
+              requestAnimationFrame(() => {
+                ta.selectionStart = ta.selectionEnd = pos + 1;
+              });
+            }}
           />
         </div>
 
@@ -312,6 +324,7 @@ function EntryCard(props: {
                   <textarea
                     class="field-value field-value--editable"
                     rows="2"
+                    data-field-key={field.key}
                     value={val != null ? String(val) : ""}
                     onInput={(ev) => props.onFieldChange(field.key, ev.currentTarget.value)}
                     onBlur={props.onSave}
@@ -521,14 +534,36 @@ export function ReviewPage() {
     handleRedo();
   }
 
+  // 展开字段 textarea 的原生 Enter 处理（Solid 事件委托在 <Show> 内不工作，由 document 监听兜底）
+  function handleExpandFieldEnter(e: KeyboardEvent) {
+    if (e.key !== "Enter") return;
+    const ta = e.target as HTMLElement;
+    if (!ta.classList.contains("field-value--editable")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = (ta as HTMLTextAreaElement).selectionStart;
+    const newVal = (ta as HTMLTextAreaElement).value.slice(0, pos) + "\n" + (ta as HTMLTextAreaElement).value.slice((ta as HTMLTextAreaElement).selectionEnd);
+    (ta as HTMLTextAreaElement).value = newVal;
+    ta.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    requestAnimationFrame(() => {
+      (ta as HTMLTextAreaElement).selectionStart = (ta as HTMLTextAreaElement).selectionEnd = pos + 1;
+    });
+  }
+
   onMount(() => {
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("galtransl:undo", handleMenuUndo);
     document.addEventListener("galtransl:redo", handleMenuRedo);
     document.addEventListener("galtransl:find-in-file", handleFindInFile);
   });
+
+  // 展开字段 Enter 监听器：不依赖 onMount（HMR 后组件不重新挂载），用 createEffect 确保始终注册
+  createEffect(() => {
+    document.addEventListener("keydown", handleExpandFieldEnter);
+  });
   onCleanup(() => {
     document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("keydown", handleExpandFieldEnter);
     document.removeEventListener("galtransl:undo", handleMenuUndo);
     document.removeEventListener("galtransl:redo", handleMenuRedo);
     document.removeEventListener("galtransl:find-in-file", handleFindInFile);

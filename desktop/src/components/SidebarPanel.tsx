@@ -2,7 +2,7 @@ import { Match, Switch, createSignal, createEffect, onCleanup, Show, For } from 
 import { appState, setAppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
-import { searchCache, replaceCache, fetchProjectProblems, deleteCacheFiles, fetchProjectFiles } from "../lib/api/project";
+import { searchCache, replaceCache, fetchProjectProblems, deleteCacheFiles, fetchProjectFiles, revealInFileManager } from "../lib/api/project";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
 import { getErrorMessage } from "../lib/errors";
@@ -12,6 +12,12 @@ import type {
   CacheSearchResult,
   CacheSearchField,
 } from "../lib/api/types";
+
+/** 是否运行在 Windows 平台（Tauri WebView 的 UA 含 Windows 标识）。非 Windows 不调用后端打开，仅 Toast 提示。 */
+function isWindowsPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Windows/i.test(navigator.userAgent);
+}
 
 /* ── 文件浏览器（类 VSCode 文件树） ── */
 function TreeIcon(props: { node: FileNode }) {
@@ -50,7 +56,7 @@ function TreeNode(props: {
   selected: string | null;
   onToggle: (p: string) => void;
   onSelect: (p: string) => void;
-  onContextMenu?: (e: MouseEvent, path: string, name: string) => void;
+  onContextMenu?: (e: MouseEvent, path: string, name: string, isFile: boolean, isMetadata: boolean) => void;
 }) {
   const n = () => props.node;
   const isOpen = () => props.expanded.has(n().path);
@@ -66,8 +72,8 @@ function TreeNode(props: {
           else props.onToggle(n().path);
         }}
         onContextMenu={(e) => {
-          // 仅对文件节点（含元数据文件）弹出右键菜单，目录不触发
-          if (n().is_file) props.onContextMenu?.(e, n().path, n().name);
+          // 文件与文件夹均可弹出右键菜单（含元数据文件）
+          props.onContextMenu?.(e, n().path, n().name, n().is_file, n().is_metadata);
         }}
         title={n().is_metadata ? "元数据文件（校对审核将以元数据模式打开）" : n().path}
       >
@@ -108,7 +114,7 @@ function TreeNode(props: {
 
 function FileExplorer() {
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
-  const [ctxMenu, setCtxMenu] = createSignal<{ x: number; y: number; path: string; name: string } | null>(null);
+  const [ctxMenu, setCtxMenu] = createSignal<{ x: number; y: number; path: string; name: string; isFile: boolean; isMetadata: boolean } | null>(null);
 
   createEffect(() => {
     const pid = appState.activeProjectId;
@@ -146,10 +152,10 @@ function FileExplorer() {
     });
   }
 
-  function openCtxMenu(e: MouseEvent, path: string, name: string) {
+  function openCtxMenu(e: MouseEvent, path: string, name: string, isFile: boolean, isMetadata: boolean) {
     e.preventDefault();
     e.stopPropagation();
-    setCtxMenu({ x: e.clientX, y: e.clientY, path, name });
+    setCtxMenu({ x: e.clientX, y: e.clientY, path, name, isFile, isMetadata });
   }
 
   async function handleDeleteFile(path: string, name: string) {
@@ -178,6 +184,23 @@ function FileExplorer() {
       setAppState("cacheTree", files.cache_files);
     } catch (err) {
       toast.error(`删除失败：${getErrorMessage(err)}`);
+    }
+  }
+
+  async function handleReveal(path: string, isMetadata: boolean) {
+    const pid = appState.activeProjectId;
+    if (!pid) {
+      toast.error("未选择项目，无法打开文件管理器");
+      return;
+    }
+    if (!isWindowsPlatform()) {
+      toast.warning("该功能暂不支持当前操作系统");
+      return;
+    }
+    try {
+      await revealInFileManager(pid, path, isMetadata);
+    } catch (err) {
+      toast.error(`无法打开文件管理器：${getErrorMessage(err)}`);
     }
   }
 
@@ -213,7 +236,7 @@ function FileExplorer() {
           </div>
         </Show>
       </div>
-      {/* 文件右键菜单 */}
+      {/* 文件/文件夹右键菜单 */}
       <Show when={ctxMenu()}>
         <div
           class="ctx-menu"
@@ -221,18 +244,34 @@ function FileExplorer() {
           onClick={(e) => e.stopPropagation()}
         >
           <button
-            class="ctx-menu__item ctx-menu__item--danger"
+            class="ctx-menu__item"
             onClick={() => {
               const m = ctxMenu();
               setCtxMenu(null);
-              if (m) handleDeleteFile(m.path, m.name);
+              if (m) handleReveal(m.path, m.isMetadata);
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="flex-shrink:0">
-              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+              <path d="M2 12h13M13 9l3 3-3 3" />
             </svg>
-            删除文件
+            在文件管理器中打开
           </button>
+          <Show when={ctxMenu()!.isFile && !ctxMenu()!.isMetadata}>
+            <button
+              class="ctx-menu__item ctx-menu__item--danger"
+              onClick={() => {
+                const m = ctxMenu();
+                setCtxMenu(null);
+                if (m) handleDeleteFile(m.path, m.name);
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="flex-shrink:0">
+                <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+              </svg>
+              删除文件
+            </button>
+          </Show>
         </div>
       </Show>
     </div>
