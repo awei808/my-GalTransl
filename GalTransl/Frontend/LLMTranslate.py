@@ -14,7 +14,7 @@
 
 from typing import List, Dict, Any, Optional, Union, Tuple
 from os import makedirs, cpu_count, sep as os_sep,listdir
-from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename
+from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename, abspath
 from venv import logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import time
@@ -29,6 +29,7 @@ from GalTransl.CSentense import CTransList
 from GalTransl.Dictionary import CGptDict, CNormalDic
 from GalTransl.Problem import find_problems
 from GalTransl.Cache import save_transCache_to_json
+from GalTransl.server_runtime import record_runtime_notice
 from GalTransl.Name import load_name_table, dump_name_table_from_chunks
 from GalTransl.CSerialize import update_json_with_transList, save_json
 from GalTransl.Dictionary import CNormalDic, CGptDict
@@ -838,6 +839,38 @@ async def doLLMTranslate(
 # 完整翻译流水线编排器
 # ─────────────────────────────────────────────────────
 
+def _has_nonempty_gpt_dict(projectConfig: CProjectConfig) -> bool:
+    """项目级 gpt 字典是否已有有效条目（任一文件含非空非注释行）。
+
+    校验范围：gpt.dict 配置的全部项目字典 + 生成产物「项目GPT字典-生成.txt」。
+    全部为空/缺失时返回 False，表示术语表为空、需要重新生成。
+    """
+    result_path = joinpath(projectConfig.getProjectDir(), "项目GPT字典-生成.txt")
+    dict_cfg = projectConfig.getDictCfgSection()
+    gpt_dic_list = dict_cfg.get("gpt.dict", []) if dict_cfg else []
+    default_dic_dir = dict_cfg.get("defaultDictFolder", "") if dict_cfg else ""
+    dic_paths: list[str] = []
+    try:
+        dic_paths = initDictList(gpt_dic_list, default_dic_dir, projectConfig.getProjectDir())
+    except Exception:
+        dic_paths = []
+    candidates = [abspath(p) for p in dic_paths]
+    if isPathExists(result_path) and abspath(result_path) not in candidates:
+        candidates.append(abspath(result_path))
+    for p in candidates:
+        if not isPathExists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if s and not s.startswith("#"):
+                        return True
+        except Exception:
+            continue
+    return False
+
+
 async def _run_full_pipeline(
     projectConfig: CProjectConfig,
     file_json_lists: dict,  # {file_path: json_list}
@@ -890,6 +923,10 @@ async def _run_full_pipeline(
             "输入数据校验失败，流水线中止。请修复上述错误后重试。"
         )
     LOGGER.info("[流水线] 阶段 0 完成：所有输入文件校验通过")
+    record_runtime_notice(
+        projectConfig.getProjectDir(),
+        f"阶段 0/6：输入校验通过（{len(file_list)} 个文件）",
+    )
 
     # ── 阶段 1：文本压缩 ──
     LOGGER.info("[流水线] 阶段 1/6：文本无损压缩")
@@ -936,6 +973,10 @@ async def _run_full_pipeline(
         f"压缩后 {len(all_compressed_text)} 字符 "
         f"全部 message 和角色名校验通过"
     )
+    record_runtime_notice(
+        projectConfig.getProjectDir(),
+        f"阶段 1/6：文本压缩完成（{len(all_compressed_text)} 字符）",
+    )
 
     # ── 阶段 2：全局提示词生成 ──
     LOGGER.info("[流水线] 阶段 2/6：全局游戏分析")
@@ -955,6 +996,9 @@ async def _run_full_pipeline(
 
     if os.path.exists(gp_path) and not force_regen_gp:
         LOGGER.info("[流水线] 阶段 2 跳过：全局分析已存在")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 2/6：全局分析已存在，跳过"
+        )
         success = True
     else:
         gptapi_global = ForGlobalPrompt(
@@ -994,21 +1038,30 @@ async def _run_full_pipeline(
     LOGGER.info(
         f"[流水线] 阶段 2 完成：全局分析已生成，{char_count} 个角色"
     )
+    record_runtime_notice(
+        projectConfig.getProjectDir(),
+        f"阶段 2/6：全局分析完成（{char_count} 个角色）",
+    )
 
     # ── 阶段 3：术语表构建（GenDic）──
     LOGGER.info("[流水线] 阶段 3/6：术语表构建")
     _update_runtime(projectConfig, stage="构建术语表")
 
-    dict_path = os.path.join(
-        projectConfig.getProjectDir(), "项目GPT字典-生成.txt"
-    )
     force_regen = projectConfig.getKey(
         "internals.pipeline.forceRegenDic", False
     )
 
-    if os.path.exists(dict_path) and not force_regen:
-        LOGGER.info("[流水线] 阶段 3 跳过：术语表已存在")
+    # 跳过条件：项目级 gpt 字典已有非空有效条目（不再只看文件是否存在）
+    if _has_nonempty_gpt_dict(projectConfig) and not force_regen:
+        LOGGER.info("[流水线] 阶段 3 跳过：术语表已存在（非空）")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 3 跳过：术语表已存在（非空），不重新生成"
+        )
     else:
+        LOGGER.info("[流水线] 阶段 3：开始生成术语表")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 3：开始生成术语表"
+        )
         from GalTransl.Backend.GenDic import GenDic
 
         gptapi_dic = GenDic(
@@ -1064,9 +1117,17 @@ async def _run_full_pipeline(
             f"[流水线] 阶段 4 警告：{fm_count}/{total_files} 个文件"
             f"生成了元数据，缺失 {total_files - fm_count} 个"
         )
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 4/6 警告：{total_files - fm_count} 个文件未生成文件级元数据",
+        )
     else:
         LOGGER.info(
             f"[流水线] 阶段 4 完成：{fm_count}/{total_files} 个文件"
+        )
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 4/6：文件级元数据完成（{fm_count}/{total_files} 个文件）",
         )
     if skipped_files:
         LOGGER.info(
@@ -1118,9 +1179,17 @@ async def _run_full_pipeline(
             f"[流水线] 阶段 5 警告：{bm_count}/{total_files} 个文件"
             f"划分了批次，缺失 {total_files - bm_count} 个"
         )
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 5/6 警告：{total_files - bm_count} 个文件未划分翻译区间",
+        )
     else:
         LOGGER.info(
             f"[流水线] 阶段 5 完成：{bm_count}/{total_files} 个文件"
+        )
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 5/6：翻译区间划分完成（{bm_count}/{total_files} 个文件）",
         )
     if skipped_batches:
         LOGGER.info(
@@ -1131,6 +1200,7 @@ async def _run_full_pipeline(
 
     # ── 阶段 6：翻译（ForGalJsonMulitChat）──
     LOGGER.info("[流水线] 阶段 6/6：翻译执行")
+    record_runtime_notice(projectConfig.getProjectDir(), "阶段 6/6：开始翻译")
     _update_runtime(projectConfig, stage="翻译执行中")
 
     # 翻译阶段复用现有的翻译流程：
@@ -1143,6 +1213,7 @@ async def _run_full_pipeline(
 
     LOGGER.info("=" * 50)
     LOGGER.info("[流水线] 全部 6 个阶段完成！")
+    record_runtime_notice(projectConfig.getProjectDir(), "流水线完成：全部 6 个阶段执行完毕")
     _update_runtime(projectConfig, stage="流水线完成")
 
 
@@ -1158,7 +1229,7 @@ async def _run_translation_phase(
     - 切块 → worker 协程池 → 翻译每个 chunk → 后处理 → 输出
     """
     import os
-    from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename
+    from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename, abspath
 
     _check_stop_requested(projectConfig)
 

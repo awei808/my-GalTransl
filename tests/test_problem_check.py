@@ -157,5 +157,57 @@ class CacheSaveProblemProtectionTests(_Base):
         self.assertEqual(saved[0]["problem"], "残留日文")
 
 
+class NewlineDetectionTests(_Base):
+    def test_newline_count_mixed(self) -> None:
+        # 真实 \r\n/\n/\r 与字面转义均计 1 次，CRLF 不重复计
+        from GalTransl.Problem import _newline_count
+
+        self.assertEqual(_newline_count("a\r\nb"), 1)
+        self.assertEqual(_newline_count("a\nb\nc"), 2)
+        self.assertEqual(_newline_count("a\\r\\nb"), 1)
+        self.assertEqual(_newline_count("a\\nb"), 1)
+        self.assertEqual(_newline_count("a\rb"), 1)
+        self.assertEqual(_newline_count("a\r\nb\nc\\n"), 3)
+
+    def test_cache_check_detects_extra_newlines_crlf_src_lf_dst(self) -> None:
+        # 原文 CRLF、译文 LF 且换行更多：应报"多加换行"（修复前因换行符类型不同而漏报）
+        _, init = self._init_project("nl_extra")
+        pid = init["project_id"]
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "実在するモデルを使って、どうポーズを取らせれば、\r\nより魅力的に見せることが出来るのか。",
+                "post_src": "実在するモデルを使って、どうポーズを取らせれば、\r\nより魅力的に見せることが出来るのか。",
+                "pre_dst": "怎样让真实的模特摆出姿势，\n\n\n才能看起来更有魅力。\n",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/nl.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertIn("多加换行", results[1]["problem"])
+
+    def test_cache_check_no_newline_false_positive_same_count(self) -> None:
+        # 原文与译文换行数量一致（符号类型不同）：不应报换行问题
+        _, init = self._init_project("nl_same")
+        pid = init["project_id"]
+        entries = [
+            {"index": 1, "name": "", "pre_src": "A\r\nB", "post_src": "A\r\nB", "pre_dst": "甲\n乙"}
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/nl.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertNotIn("多加换行", results[1]["problem"])
+        self.assertNotIn("丢失换行", results[1]["problem"])
+
+
 if __name__ == "__main__":
     unittest.main()

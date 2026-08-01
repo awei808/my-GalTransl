@@ -390,15 +390,17 @@ def validate_global_prompt(data: Any) -> dict:
     校验 GlobalPrompt.json 数据完整性。
 
     必填字段：
-      - 游戏名称 (str, 非空)
       - 剧情概述 (str, 非空)
       - 角色列表 (list, 非空)
       角色列表中每项必须有：名称 (str, 非空)
 
     可选但鼓励的字段：
+      - 游戏名称 (str)
       - 世界观设定 (str)
       - 行文风格 (str)
       - 题材标签 (list[str])
+
+    允许任意额外字段（如「备注」等自定义扩展），不参与校验。
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -407,11 +409,6 @@ def validate_global_prompt(data: Any) -> dict:
     if not isinstance(data, dict):
         errors.append(f"GlobalPrompt 根对象不是 dict，实际类型：{type(data).__name__}")
         return _make_result(valid=False, errors=errors, warnings=warnings, stats=stats)
-
-    # 必填字段：游戏名称
-    game_name = data.get("游戏名称", "")
-    if not game_name or not isinstance(game_name, str) or game_name.strip() == "":
-        errors.append("GlobalPrompt 缺少必填字段「游戏名称」或为空")
 
     # 必填字段：剧情概述
     plot = data.get("剧情概述", "")

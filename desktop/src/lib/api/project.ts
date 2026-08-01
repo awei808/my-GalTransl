@@ -21,6 +21,7 @@ import type {
   ProjectConfigUpdatePayload,
   ConfigSchemaResponse,
   BuildOutputResponse,
+  BuildValidationResponse,
   ProjectDictionaryManagerResponse,
   ProjectDictionaryResponse,
   ProjectFilesResponse,
@@ -103,6 +104,15 @@ export async function buildSingleFileOutput(projectId: string, filename: string)
       method: "POST",
     },
   );
+}
+
+/** 构建前校验（仅提示，不阻断构建）：检查缓存缺失与内容完整性 */
+export async function validateBuild(projectId: string, filenames?: string[]) {
+  return apiRequest<BuildValidationResponse>(`/api/projects/${projectId}/build/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(filenames ? { filenames } : {}),
+  });
 }
 
 // ---- Project files ----
@@ -246,6 +256,13 @@ export async function fetchProjectProgress(projectId: string) {
 
 export async function fetchProjectRuntime(projectId: string) {
   return apiRequest<ProjectRuntimeResponse>(`/api/projects/${projectId}/runtime`);
+}
+
+/** 清除该项目的未读 runtime 提示（前端 toast 后调用，避免重复弹窗） */
+export async function clearRuntimeNotices(projectId: string) {
+  return apiRequest<{ success: boolean }>(`/api/projects/${projectId}/runtime/notices/clear`, {
+    method: "POST",
+  });
 }
 
 export async function stopProjectTranslation(projectId: string) {

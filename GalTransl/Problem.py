@@ -25,6 +25,14 @@ MONOLOGUE_MALE_HE_EXCLUDES = (
     "他山",
 )
 
+
+def _newline_count(s: str) -> int:
+    """统计换行次数：真实 \\r\\n/\\n/\\r 与字面转义（"\\r\\n"/"\\n"）均计为 1 次，CRLF 不重复计。"""
+    norm = s.replace("\\r\\n", "\n").replace("\\n", "\n")
+    norm = norm.replace("\r\n", "\n").replace("\r", "\n")
+    return norm.count("\n")
+
+
 def find_problems(
     trans_list: CTransList,
     projectConfig: CProjectConfig,
@@ -55,18 +63,6 @@ def find_problems(
         post_dst = tran.post_dst
         if pre_dst == "":
             continue
-        n_symbol = ""
-        if "\\r\\n" in pre_src:
-            n_symbol = "\\r\\n"
-        elif "\r\n" in pre_src:
-            n_symbol = "\r\n"
-        elif "\\n" in pre_src:
-            n_symbol = "\\n"
-        elif "\n" in pre_src:
-            n_symbol = "\n"
-        if projectConfig.getlbSymbol() != "auto" and projectConfig.getlbSymbol() != "":
-            n_symbol = projectConfig.getlbSymbol()
-
         problem_list = []
         if CProblemType.词频过高 in find_type:
             most_word, word_count = get_most_common_char(pre_dst)
@@ -107,11 +103,11 @@ def find_problems(
             post_dst_jp_chars = contains_japanese(post_dst)
             if pre_dst_jp_chars != "" and post_dst_jp_chars != "":
                 problem_list.append(f"残留日文：{post_dst_jp_chars}")
-        if CProblemType.丢失换行 in find_type and n_symbol != "":
-            if pre_src.count(n_symbol) > post_dst.count(n_symbol):
+        if CProblemType.丢失换行 in find_type:
+            if _newline_count(pre_src) > _newline_count(post_dst):
                 problem_list.append("丢失换行")
-        if CProblemType.多加换行 in find_type and n_symbol != "":
-            if pre_src.count(n_symbol) < post_dst.count(n_symbol):
+        if CProblemType.多加换行 in find_type:
+            if _newline_count(pre_src) < _newline_count(post_dst):
                 problem_list.append("多加换行")
         if CProblemType.比日文长 in find_type or CProblemType.比日文长严格 in find_type:
             len_beta = 1.3

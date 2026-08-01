@@ -224,7 +224,7 @@ class ValidateGlobalPromptEdgeCases(unittest.TestCase):
     def test_empty_dict(self):
         r = validate_global_prompt({})
         self.assertFalse(r["valid"])
-        self.assertIn("游戏名称", r["errors"][0])
+        self.assertIn("剧情概述", r["errors"][0])
 
     def test_missing_characters(self):
         r = validate_global_prompt({"游戏名称": "t", "剧情概述": "p"})
@@ -258,6 +258,24 @@ class ValidateGlobalPromptEdgeCases(unittest.TestCase):
             "角色列表": [{"名称": "A"}]
         })
         self.assertTrue(r["valid"])
+
+    def test_no_game_name_valid(self):
+        # 游戏名称不再是必填：无游戏名称但其它必填齐全应通过
+        r = validate_global_prompt({
+            "剧情概述": "p",
+            "角色列表": [{"名称": "A"}],
+        })
+        self.assertTrue(r["valid"])
+
+    def test_extra_fields_allowed(self):
+        # 允许任意额外字段（如"备注"等自定义格式），不报错
+        r = validate_global_prompt({
+            "剧情概述": "p",
+            "角色列表": [{"名称": "A"}],
+            "备注": {"‘创’称呼决策逻辑": "条件A→创君；其他→创"},
+        })
+        self.assertTrue(r["valid"])
+        self.assertEqual(r["errors"], [])
 
     def test_missing_optional_fields__warns(self):
         r = validate_global_prompt({

@@ -2431,6 +2431,8 @@ a:hover {
   color: var(--color-text-secondary);
   line-height: 1.5;
   margin: 0;
+  /* 保留 message 中的换行，供构建校验等多行列表提示使用 */
+  white-space: pre-line;
 }
 
 .confirm-input-group {

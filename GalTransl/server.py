@@ -24,6 +24,7 @@ from yaml import safe_load, safe_dump
 
 from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
 from GalTransl.Dictionary import parse_dict_line, DictRow
+from GalTransl.Utils import get_n_symbol
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
@@ -55,6 +56,7 @@ from GalTransl.server_runtime import (
     _trim_preview,
     decode_project_dir,
     encode_project_dir,
+    clear_runtime_notices,
     record_runtime_error,
     record_runtime_success,
     reset_runtime_project,
@@ -439,6 +441,27 @@ def _get_config_schema() -> dict[str, Any]:
     return _CONFIG_SCHEMA_CACHE
 
 
+def _collect_cache_files(cache_dir: str) -> list[str]:
+    """递归收集可构建的翻译缓存文件（相对 cache_dir 的 '/' 路径），跳过元数据。
+
+    翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json）；pass0 GlobalPrompt、
+    pass1 *.meta.json、pass2 *.batch.json 为元数据，不参与构建。
+    """
+    files: list[str] = []
+    for root, _dirs, names in os.walk(cache_dir):
+        for name in sorted(names):
+            if not name.endswith(".json"):
+                continue
+            # 跳过元数据与示例/临时文件（init 会生成 _示例缓存文件.json）
+            if name.endswith(".meta.json") or name.endswith(".batch.json"):
+                continue
+            if name == "GlobalPrompt.json" or name.startswith("_"):
+                continue
+            rel = os.path.relpath(os.path.join(root, name), cache_dir).replace("\\", "/")
+            files.append(rel)
+    return sorted(files)
+
+
 def _build_project_output(
     project_dir: str,
     *,
@@ -446,7 +469,7 @@ def _build_project_output(
 ) -> dict[str, Any]:
     """从缓存文件构建输出文件（output/gt_output/）。
 
-    读取 cache/<filename>.json 和 input/<filename>.json，
+    读取缓存（transl_cache，含 pass3_cache 嵌套）与 input/gt_input 中的原始 JSON，
     将缓存中的译文（pre_dst / proofread_dst）合并回原始 JSON 后写出到 output/gt_output/。
     """
     import orjson
@@ -460,11 +483,8 @@ def _build_project_output(
     if not os.path.isdir(cache_dir):
         return {"success": False, "error": f"cache dir not found: {cache_dir}"}
 
-    # 确定要处理的文件列表
-    if filenames:
-        cache_names = [f for f in filenames if f.endswith(".json")]
-    else:
-        cache_names = sorted(f for f in os.listdir(cache_dir) if f.endswith(".json"))
+    # 确定要处理的文件列表（支持相对子路径如 pass3_cache/xx.txt.json，或纯文件名）
+    cache_names = _normalize_cache_filenames(filenames) if filenames else _collect_cache_files(cache_dir)
 
     built_files: list[str] = []
     errors: list[str] = []
@@ -484,13 +504,15 @@ def _build_project_output(
             errors.append(f"read cache {cache_name} failed: {exc}")
             continue
 
-        # 找对应的 input 文件
-        input_path = os.path.join(input_dir, cache_name)
+        # 找对应的 input 文件（gt_input 顶层，按缓存 basename 匹配；保留分块后缀回退）
+        base = os.path.basename(cache_name)
+        input_path = os.path.join(input_dir, base)
+        input_base = base
         if not os.path.isfile(input_path):
-            # 尝试去掉缓存文件名中的分块后缀（如 01_intro-1.json → 01_intro.json）
-            alt_name = cache_name.rsplit("-", 1)[0] + ".json" if "-" in cache_name else None
-            if alt_name and os.path.isfile(os.path.join(input_dir, alt_name)):
-                input_path = os.path.join(input_dir, alt_name)
+            alt_base = base.rsplit("-", 1)[0] + ".json" if "-" in base else None
+            if alt_base and os.path.isfile(os.path.join(input_dir, alt_base)):
+                input_path = os.path.join(input_dir, alt_base)
+                input_base = alt_base
             else:
                 errors.append(f"input file not found for {cache_name}")
                 continue
@@ -518,15 +540,19 @@ def _build_project_output(
                 # 优先用 proofread_dst，其次 pre_dst
                 dst = ce.get("proofread_dst") or ce.get("pre_dst") or ""
                 if dst:
+                    # 将译文换行统一为原 message 的换行符类型（原文无换行则保持原样）
+                    n_symbols = get_n_symbol(msg)
+                    if n_symbols:
+                        dst = dst.replace("\r\n", "\n").replace("\n", n_symbols[0])
                     item["message"] = dst
                     updated_count += 1
 
-        # 写出 output
-        output_path = os.path.join(output_dir, cache_name)
+        # 写出 output（与 input 同名，位于 gt_output 顶层）
+        output_path = os.path.join(output_dir, input_base)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         try:
             save_json(output_path, input_data)
-            built_files.append(cache_name)
+            built_files.append(input_base)
             total_built += 1
         except Exception as exc:
             errors.append(f"write output {cache_name} failed: {exc}")
@@ -537,6 +563,93 @@ def _build_project_output(
         "built_files": built_files,
         "total_built": total_built,
         "errors": errors,
+    }
+
+
+def _normalize_cache_filenames(filenames: list[str]) -> list[str]:
+    """规范化构建/校验的文件列表：支持相对子路径与纯文件名，过滤非 .json 与穿越路径。"""
+    out: list[str] = []
+    for f in filenames:
+        norm = os.path.normpath(str(f).replace("\\", "/"))
+        if not norm.endswith(".json"):
+            continue
+        if os.path.isabs(norm) or norm == ".." or norm.startswith("../"):
+            continue
+        out.append(norm)
+    return out
+
+
+def _validate_build(project_dir: str, filenames: list[str] | None = None) -> dict[str, Any]:
+    """构建前校验：缓存与输入文件数量、缓存内容完整性。仅提示、不阻断构建。
+
+    Returns:
+        {"ok", "input_total", "cache_total", "missing_files", "content_issues"}
+    """
+    import orjson
+
+    input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+
+    cache_names = (
+        _normalize_cache_filenames(filenames) if filenames else _collect_cache_files(cache_dir)
+    )
+
+    input_names = []
+    if os.path.isdir(input_dir):
+        input_names = sorted(n for n in os.listdir(input_dir) if n.endswith(".json"))
+    cache_bases = {os.path.basename(c) for c in cache_names}
+
+    def _has_cache(inp: str) -> bool:
+        # 同名缓存，或分块缓存（input 名去掉 .json 后加 "-N.json"）
+        if inp in cache_bases:
+            return True
+        stem = inp[:-5]
+        return any(c.startswith(stem + "-") and c.endswith(".json") for c in cache_bases)
+
+    missing_files = [i for i in input_names if not _has_cache(i)]
+
+    content_issues: list[dict[str, Any]] = []
+    for cache_name in cache_names:
+        cache_path = os.path.join(cache_dir, cache_name)
+        if not os.path.isfile(cache_path):
+            content_issues.append({"file": cache_name, "issue": "缓存文件不存在"})
+            continue
+        try:
+            with open(cache_path, "rb") as f:
+                entries = orjson.loads(f.read())
+        except Exception as exc:
+            content_issues.append({"file": cache_name, "issue": f"JSON 解析失败：{exc}"})
+            continue
+        if not isinstance(entries, list):
+            content_issues.append({"file": cache_name, "issue": "内容不是 JSON 数组"})
+            continue
+        indexes: list[int] = []
+        no_index = 0
+        for e in entries:
+            if not isinstance(e, dict) or e.get("index") is None:
+                no_index += 1
+            elif isinstance(e.get("index"), int):
+                indexes.append(e["index"])
+        if no_index:
+            content_issues.append({"file": cache_name, "issue": f"{no_index} 个条目缺少 index"})
+        idxs = sorted(indexes)
+        gaps = []
+        if idxs:
+            if idxs[0] != 1:
+                # 起始缺失：index 从 idxs[0] 开始，1 到 idxs[0]-1 全部缺失
+                gaps.append(f"起始缺失 1→{idxs[0] - 1}（{idxs[0] - 1} 条）")
+            gaps.extend(f"{a}→{b}" for a, b in zip(idxs, idxs[1:]) if b - a != 1)
+        if gaps:
+            content_issues.append(
+                {"file": cache_name, "issue": f"索引不连续：{'、'.join(gaps[:5])}"}
+            )
+
+    return {
+        "ok": not missing_files and not content_issues,
+        "input_total": len(input_names),
+        "cache_total": len(cache_names),
+        "missing_files": missing_files,
+        "content_issues": content_issues,
     }
 
 
@@ -1631,6 +1744,23 @@ def build_handler(registry: JobRegistry) -> type:
                     )
                 return
 
+            # POST /api/projects/:id/build/validate — 构建前校验（仅提示，不阻断构建）
+            if sub_path == "/build/validate":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                filenames: list[str] | None = None
+                content_length = int(self.headers.get("Content-Length", "0"))
+                if content_length > 0:
+                    try:
+                        payload = self._read_json_body()
+                        filenames = payload.get("filenames")
+                    except (ValueError, TypeError, json.JSONDecodeError):
+                        pass
+                result = _validate_build(project_dir, filenames=filenames)
+                self._send_json(result)
+                return
+
             # POST /api/projects/:id/build-output
             # 从缓存文件构建输出文件。支持全量构建和单个文件构建。
             # 请求体可选: {"filenames": ["01_intro.json", ...]} 仅构建指定文件
@@ -2403,9 +2533,19 @@ def build_handler(registry: JobRegistry) -> type:
                     "latest_assembled_preview": runtime.get("latest_assembled_preview", ""),
                     "recent_errors": runtime["recent_errors"],
                     "recent_successes": runtime["recent_successes"],
+                    "notices": runtime.get("notices", []),
                     "retransl_stats": progress_payload["retransl_stats"],
                     "files": progress_payload["files"],
                 })
+                return
+
+            # POST /api/projects/:id/runtime/notices/clear — 前端 toast 后清除一次性提示
+            if sub_path == "/runtime/notices/clear":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                clear_runtime_notices(project_dir)
+                self._send_json({"success": True, "project_dir": project_dir})
                 return
 
             # POST /api/projects/:id/stop

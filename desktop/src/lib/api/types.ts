@@ -286,6 +286,8 @@ export type ProjectRuntimeResponse = {
   latest_assembled_preview: string;
   recent_errors: ProjectRuntimeErrorEntry[];
   recent_successes: ProjectRuntimeSuccessEntry[];
+  /** 一次性用户提示（后端流水线阶段告知），前端 toast 后调用 clearRuntimeNotices 清除 */
+  notices: string[];
   retransl_stats: ProjectRetranslStatEntry[];
   files: FileProgress[];
 };
@@ -304,6 +306,21 @@ export type BuildOutputResponse = {
   built_files: string[];
   total_built: number;
   errors?: string[];
+};
+
+/** 构建前校验：单条内容异常 */
+export type BuildValidationIssue = {
+  file: string;
+  issue: string;
+};
+
+/** POST /api/projects/:id/build/validate 响应（仅提示，不阻断构建） */
+export type BuildValidationResponse = {
+  ok: boolean;
+  input_total: number;
+  cache_total: number;
+  missing_files: string[];
+  content_issues: BuildValidationIssue[];
 };
 
 export type DictFileContent = {

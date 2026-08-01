@@ -2,7 +2,7 @@ import { Icon } from "./icons/Icon";
 import { appState, setAppState, navigateTo, type ActiveView } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { confirm } from "../stores/confirmStore";
-import { buildProjectOutput } from "../lib/api/project";
+import { buildProjectOutput, validateBuild } from "../lib/api/project";
 import { getErrorMessage } from "../lib/errors";
 
 interface TabDef {
@@ -28,11 +28,41 @@ async function handleBuildOutput() {
     return;
   }
 
+  // 构建前校验（仅提示，不阻断构建）
+  const issues: string[] = [];
+  try {
+    const v = await validateBuild(pid);
+    if (v.missing_files && v.missing_files.length > 0) {
+      issues.push(
+        `缺少缓存的输入文件 ${v.missing_files.length} 个：\n${v.missing_files
+          .slice(0, 5)
+          .join("\n")}${v.missing_files.length > 5 ? "\n…" : ""}`,
+      );
+    }
+    if (v.content_issues && v.content_issues.length > 0) {
+      issues.push(
+        `缓存内容异常 ${v.content_issues.length} 处：\n${v.content_issues
+          .slice(0, 5)
+          .map((c) => `${c.file}: ${c.issue}`)
+          .join("\n")}${v.content_issues.length > 5 ? "\n…" : ""}`,
+      );
+    }
+  } catch {
+    // 校验失败不阻断构建，直接进入构建确认
+  }
+
+  const baseMsg = "将从缓存文件生成最终输出文件。此操作会覆盖已有的输出文件。是否继续？";
+  const message =
+    issues.length > 0
+      ? `构建前校验发现以下问题（不影响继续构建）：\n\n${issues.join("\n\n")}\n\n${baseMsg}`
+      : baseMsg;
+
   const result = await confirm.show({
     title: "构建输出",
-    message: "将从缓存文件生成最终输出文件。此操作会覆盖已有的输出文件。是否继续？",
-    confirmText: "开始构建",
-    tone: "info",
+    message,
+    confirmText: "继续构建",
+    cancelText: "取消",
+    tone: issues.length > 0 ? "warning" : "info",
   });
   if (!result.confirmed) return;
 

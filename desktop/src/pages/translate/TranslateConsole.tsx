@@ -5,6 +5,7 @@ import { getErrorMessage } from "../../lib/errors";
 import { confirm } from "../../stores/confirmStore";
 import {
   fetchProjectRuntime,
+  clearRuntimeNotices,
   stopProjectTranslation,
 } from "../../lib/api/project";
 import { fetchTranslators, submitJob, checkModelAvailability } from "../../lib/api/general";
@@ -155,6 +156,11 @@ export function TranslateConsole() {
         const rt = await fetchProjectRuntime(projectId);
         pollErrorCount = 0;
         setRuntime(rt);
+        // 一次性提示：后端流水线阶段告知（如术语表跳过/生成），toast 后清除避免重复
+        if (rt.notices && rt.notices.length > 0) {
+          rt.notices.forEach((n) => toast.info(n));
+          void clearRuntimeNotices(projectId).catch(() => {});
+        }
         const status = rt.job?.status;
         // pending（已排队）/ running 都视为运行中，确保有反馈与停止按钮
         setRunning(status === "running" || status === "pending");

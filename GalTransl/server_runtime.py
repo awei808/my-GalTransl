@@ -133,6 +133,8 @@ class RuntimeState:
     # Per-file deque of recent success events (newest-first, appendleft for O(1) merging)
     recent_successes_by_file: dict[str, deque[RuntimeSentenceEvent]] = field(default_factory=dict)
     recent_errors: deque[RuntimeErrorEvent] = field(default_factory=lambda: deque(maxlen=RUNTIME_RECENT_EVENT_LIMIT))
+    # 一次性用户提示队列（前端轮询到即 toast 并清除），用于流水线阶段告知
+    notices: deque[str] = field(default_factory=lambda: deque(maxlen=20))
     success_timestamps: deque[float] = field(default_factory=deque)
 
 
@@ -265,6 +267,22 @@ class RuntimeRegistry:
             ))
             state.updated_at = ts
 
+    def add_notice(self, project_dir: str, message: str) -> None:
+        with self._lock:
+            state = self._states.get(_normalize_project_dir(project_dir))
+            if state is None:
+                state = RuntimeState(project_dir=project_dir)
+                self._states[_normalize_project_dir(project_dir)] = state
+            state.notices.appendleft(message)
+            state.updated_at = _utcnow_text()
+
+    def clear_notices(self, project_dir: str) -> None:
+        with self._lock:
+            state = self._states.get(_normalize_project_dir(project_dir))
+            if state is not None:
+                state.notices.clear()
+                state.updated_at = _utcnow_text()
+
     @staticmethod
     def _resolve_display_filename_locked(state: RuntimeState, filename: str) -> str:
         normalized = str(filename or "").strip()
@@ -336,6 +354,7 @@ class RuntimeRegistry:
                     "cache_file_display_map": {},
                     "recent_errors": [],
                     "recent_successes": [],
+                    "notices": [],
                     "updated_at": _utcnow_text(),
                 }
             now = datetime.utcnow().timestamp()
@@ -364,6 +383,7 @@ class RuntimeRegistry:
                 "cache_file_display_map": dict(state.cache_file_display_map),
                 "recent_errors": [event.to_dict() for event in state.recent_errors],
                 "recent_successes": [event.to_dict() for event in merged_successes],
+                "notices": list(state.notices),
                 "updated_at": state.updated_at,
             }
 
@@ -878,6 +898,16 @@ def record_runtime_error(
         sleep_seconds=sleep_seconds,
         level=level,
     )
+
+
+def record_runtime_notice(project_dir: str, message: str) -> None:
+    """记录一条一次性用户提示（前端轮询 runtime 后 toast 并清除）。"""
+    RUNTIME_REGISTRY.add_notice(project_dir, message)
+
+
+def clear_runtime_notices(project_dir: str) -> None:
+    """清除该项目的所有未读提示（前端 toast 后调用）。"""
+    RUNTIME_REGISTRY.clear_notices(project_dir)
 
 
 # Project path helpers

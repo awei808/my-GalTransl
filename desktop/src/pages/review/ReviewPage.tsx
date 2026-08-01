@@ -996,6 +996,10 @@ export function ReviewPage() {
     metaJsonInvalidShown = false; // 恢复合法 → 重置提示标志
     setMetaEntry((prev) => {
       if (!prev) return parsed;
+      // 单对象的 GlobalPrompt 不注入空 id（用户手写的 id 仍保留）；per-file 元数据保留只读 id
+      if (metaType() === "globalprompt") {
+        return { ...parsed };
+      }
       const id = prev.id ?? "";
       return { ...parsed, id };
     });
@@ -1173,6 +1177,12 @@ export function ReviewPage() {
     const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
     if (!pid || !myFile || appState.activeFilePath !== myFile) return;
     if (appState.dirtyFiles.includes(myFile)) {
+      // 等待在途保存完成（saveInFlight 在 saveCurrentFile 的 finally 必定释放），带超时兜底，
+      // 避免保存被 saveInFlight 守卫跳过导致磁盘未落盘
+      const deadline = Date.now() + 3000;
+      while (saveInFlight && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 30));
+      }
       await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
     }
     if (appState.activeFilePath !== myFile) return;
