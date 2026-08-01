@@ -1744,6 +1744,66 @@ def build_handler(registry: JobRegistry) -> type:
                     )
                 return
 
+            # POST /api/projects/:id/check-batch-size
+            # 批次划分预检：计算最大可自然划分文件行数（0.9 * max_batch_size * max_batches），
+            # 返回行数超限的待翻译文件列表，供前端弹窗确认是否继续划分。
+            # 请求体: {"translator": "ForGal-full-pipeline", "config_file_name": "config.yaml"}
+            if sub_path == "/check-batch-size":
+                if self.command != "POST":
+                    self._send_json(
+                        {"error": "method not allowed"},
+                        status=HTTPStatus.METHOD_NOT_ALLOWED,
+                    )
+                    return
+                payload = self._read_json_body()
+                translator = str(payload.get("translator", "")).strip()
+                config_file_name = (
+                    str(payload.get("config_file_name", "config.yaml")).strip()
+                    or "config.yaml"
+                )
+                result: dict[str, Any] = {
+                    "max_natural_lines": 0,
+                    "oversize_files": [],
+                    "applicable": False,
+                }
+                if translator not in ("ForGal-full-pipeline", "ForBatchMetaData"):
+                    self._send_json(result)
+                    return
+                try:
+                    config_data = _read_yaml_file(os.path.join(project_dir, config_file_name))
+                    fb = (config_data.get("internals") or {}).get("forbatchmeta") or {}
+                    try:
+                        max_batch_size = max(1, int(fb.get("max_batch_size", 64)))
+                    except (TypeError, ValueError):
+                        max_batch_size = 64
+                    try:
+                        max_batches = max(1, int(fb.get("max_batches", 20)))
+                    except (TypeError, ValueError):
+                        max_batches = 20
+                    max_natural_lines = int(0.9 * max_batch_size * max_batches)
+                    result["max_natural_lines"] = max_natural_lines
+                    result["applicable"] = True
+                    input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+                    for entry in _list_dir_entries(input_dir, count_json_entries=True):
+                        name = entry.get("name", "")
+                        if not name.endswith(".json"):
+                            continue
+                        if name in ("FileMetaData.json", "BatchMetadata.json"):
+                            continue
+                        lines = entry.get("entry_count") or 0
+                        if lines > max_natural_lines:
+                            result["oversize_files"].append(
+                                {"filename": name, "lines": lines}
+                            )
+                except Exception as exc:
+                    self._send_json(
+                        {"error": f"批次划分预检失败: {exc}"},
+                        status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    )
+                    return
+                self._send_json(result)
+                return
+
             # POST /api/projects/:id/build/validate — 构建前校验（仅提示，不阻断构建）
             if sub_path == "/build/validate":
                 if self.command != "POST":

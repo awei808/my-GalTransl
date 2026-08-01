@@ -102,24 +102,25 @@ class NormalizeBatchIntervalsTests(unittest.TestCase):
         out = normalize_batch_intervals(raw, "f", max_index=15, max_batches=20)
         self.assertEqual(len(out), 2)
 
-    def test_max_batch_size_splits_oversized(self) -> None:
+    def test_max_batch_size_marks_oversize(self) -> None:
+        # 超过 max_batch_size 的区间不再切分，仅标注「区间过大」
         raw = [{"区间": [1, 100], "视角": "A"}]
         out = normalize_batch_intervals(
             raw, "f", max_index=100, max_batches=20, max_batch_size=40
         )
-        self.assertEqual([b["区间"] for b in out], [[1, 40], [41, 80], [81, 100]])
-        # 切分后各段复制原区间元信息
-        self.assertTrue(all(b["视角"] == "A" for b in out))
+        self.assertEqual([b["区间"] for b in out], [[1, 100]])
+        self.assertTrue(out[0].get("区间过大"))
+        self.assertEqual(out[0]["视角"], "A")
 
-    def test_max_batch_size_keeps_short_tail(self) -> None:
-        # 模拟 00_03 的 69 行整文件一批：切为 [1,64]+[65,69]；
-        # 尾巴 5 行小于 min_batch_size，但合并将超过 max_batch_size，故保留
+    def test_max_batch_size_keeps_whole_interval_marked(self) -> None:
+        # 模拟 00_03 的 69 行整文件一批：保留原区间并标注「区间过大」
         raw = [{"区间": [1, 69]}]
         out = normalize_batch_intervals(
             raw, "f", max_index=69, max_batches=20,
             min_batch_size=8, max_batch_size=64,
         )
-        self.assertEqual([b["区间"] for b in out], [[1, 64], [65, 69]])
+        self.assertEqual([b["区间"] for b in out], [[1, 69]])
+        self.assertTrue(out[0].get("区间过大"))
 
     def test_min_batch_size_merges_short_interval(self) -> None:
         raw = [{"区间": [1, 3], "视角": "A"}, {"区间": [4, 8], "视角": "B"}]
@@ -168,9 +169,24 @@ class ForBatchMetaDataNormalizeDelegateTests(unittest.TestCase):
             obj, "f", max_index=100, max_batches=20,
             min_batch_size=8, max_batch_size=40,
         )
-        self.assertEqual(
-            [b["区间"] for b in meta["批次"]], [[1, 40], [41, 80], [81, 100]]
-        )
+        self.assertEqual([b["区间"] for b in meta["批次"]], [[1, 100]])
+        self.assertTrue(meta["批次"][0].get("区间过大"))
+
+    def test_max_natural_lines_calculation(self) -> None:
+        from unittest.mock import MagicMock
+
+        cfg = MagicMock()
+        cfg.getKey.side_effect = lambda key, default=None: {
+            "internals.forbatchmeta.max_batches": 20,
+            "internals.forbatchmeta.min_batch_size": 8,
+            "internals.forbatchmeta.max_batch_size": 64,
+        }.get(key, default)
+        token_pool = MagicMock()
+        token_pool.get_available_token.return_value = []
+        bm = ForBatchMetaData(cfg, "ForBatchMetaData", None, token_pool)
+        self.assertEqual(bm.max_batch_size, 64)
+        self.assertEqual(bm.max_batches, 20)
+        self.assertEqual(bm.max_natural_lines, int(0.9 * 64 * 20))
 
 
 class SegmentsInRangeUsesSharedParseTests(unittest.TestCase):

@@ -8,7 +8,7 @@ import {
   clearRuntimeNotices,
   stopProjectTranslation,
 } from "../../lib/api/project";
-import { fetchTranslators, submitJob, checkModelAvailability } from "../../lib/api/general";
+import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize } from "../../lib/api/general";
 import { decodeProjectDir } from "../../lib/api/client";
 import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload } from "../../lib/api/preferences";
 import type {
@@ -356,6 +356,40 @@ export function TranslateConsole() {
         .then((r) => {
           if (r.confirmed) doSubmit();
         });
+      return;
+    }
+    // 批次划分预检：文件行数超过最大可自然划分范围时，先让用户确认是否继续划分
+    const backend = appState.selectedBackend;
+    if (backend === "ForGal-full-pipeline" || backend === "ForBatchMetaData") {
+      checkBatchSize({
+        projectId: pid,
+        translator: backend,
+        configFileName: getActiveConfigFileName(),
+      })
+        .then((r) => {
+          if (r.applicable && r.oversize_files.length > 0) {
+            const list = r.oversize_files
+              .slice(0, 8)
+              .map((f) => `${f.filename}（${f.lines} 行）`)
+              .join("\n");
+            const more =
+              r.oversize_files.length > 8
+                ? `\n…等共 ${r.oversize_files.length} 个文件`
+                : "";
+            confirm
+              .show({
+                title: "批次划分范围超限",
+                message: `以下文件行数超过最大可自然划分范围（${r.max_natural_lines} 行）：\n${list}${more}\n\n继续划分可能导致部分批次过大。是否仍要继续？`,
+                tone: "warning",
+              })
+              .then((res) => {
+                if (res.confirmed) doSubmit();
+              });
+          } else {
+            doSubmit();
+          }
+        })
+        .catch(() => doSubmit()); // 预检失败不阻断翻译
       return;
     }
     doSubmit();

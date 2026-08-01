@@ -29,6 +29,16 @@ export type ModelCheckResult = {
   message: string;
 };
 
+/** 批次划分预检结果（POST /api/projects/:id/check-batch-size 返回） */
+export type CheckBatchSizeResult = {
+  /** 最大可自然划分文件行数（0.9 * max_batch_size * max_batches） */
+  max_natural_lines: number;
+  /** 行数超限的待翻译文件列表 */
+  oversize_files: Array<{ filename: string; lines: number }>;
+  /** 是否适用本次预检（仅 ForGal-full-pipeline / ForBatchMetaData 为 true） */
+  applicable: boolean;
+};
+
 export type Job = {
   config_file_name: string;
   created_at: string;

@@ -10,6 +10,7 @@ from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT
+from GalTransl.server_runtime import record_runtime_notice
 from GalTransl.Backend.ForGalJsonMulitChat import (
     load_file_metadata_map,
     normalize_batch_intervals,
@@ -98,9 +99,12 @@ class ForBatchMetaData(BaseTranslate):
                 f"max_batch_size({self.max_batch_size})，已交换两者"
             )
             self.min_batch_size, self.max_batch_size = self.max_batch_size, self.min_batch_size
+        # 最大可自然划分文件行数：0.9 * 最大区间长度 * 最大批次数，超出则提示用户确认
+        self.max_natural_lines = int(0.9 * self.max_batch_size * self.max_batches)
         LOGGER.debug(
             f"[BatchMetaData] 批次长度约束：min={self.min_batch_size}, "
-            f"max={self.max_batch_size}，最大批次数：{self.max_batches}"
+            f"max={self.max_batch_size}，最大批次数：{self.max_batches}，"
+            f"最大可自然划分行数：{self.max_natural_lines}"
         )
 
         # 文件级剧情元数据映射（{文件名: FileMetaData}），惰性载入一次
@@ -465,6 +469,20 @@ class ForBatchMetaData(BaseTranslate):
         if not meta["批次"]:
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效区间，跳过")
             return False
+        # 超限提示：文件行数超过最大可自然划分范围，或存在「区间过大」的批次时给出一次性提示（前端 toast）
+        if max_index > self.max_natural_lines:
+            record_runtime_notice(
+                self.pj_config.getProjectDir(),
+                f"[批次划分] {filename} 共 {max_index} 行，超过最大可自然划分范围 "
+                f"{self.max_natural_lines} 行（max_batch_size={self.max_batch_size} × "
+                f"max_batches={self.max_batches} × 0.9），划分的批次可能过大",
+            )
+        if any(b.get("区间过大") for b in meta["批次"]):
+            record_runtime_notice(
+                self.pj_config.getProjectDir(),
+                f"[批次划分] {filename} 存在超过 {self.max_batch_size} 行的区间，"
+                f"已标注「区间过大」，翻译时该批次将整体发送",
+            )
         self._save_metadata(meta, filename)
         LOGGER.info(
             f"[BatchMetaData] {filename} 已写入 "

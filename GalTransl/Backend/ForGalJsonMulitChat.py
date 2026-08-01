@@ -199,29 +199,16 @@ def normalize_batch_intervals(
             b["区间"] = [new_lo, cur_hi]
         cleaned.append(b)
 
-    # 超长区间切分：超过 max_batch_size 的区间按行数硬切为多段，元信息复制到各段
+    # 超长区间标注：超过 max_batch_size 的区间不切分（保留自然边界），仅标注「区间过大」
     if max_batch_size and max_batch_size > 0:
-        split: List[dict] = []
         for b in cleaned:
             lo, hi = b["区间"]
-            if hi - lo + 1 <= max_batch_size:
-                split.append(b)
-                continue
-            segs: List[list] = []
-            cur = lo
-            while cur <= hi:
-                end = min(cur + max_batch_size - 1, hi)
-                segs.append([cur, end])
-                cur = end + 1
-            LOGGER.warning(
-                f"[{tag}] {filename} 区间 [{lo},{hi}] 行数超过 max_batch_size({max_batch_size})，"
-                f"已切分为 {len(segs)} 段"
-            )
-            for rng in segs:
-                nb = dict(b)
-                nb["区间"] = rng
-                split.append(nb)
-        cleaned = split
+            if hi - lo + 1 > max_batch_size:
+                b["区间过大"] = True
+                LOGGER.warning(
+                    f"[{tag}] {filename} 区间 [{lo},{hi}] 行数超过 max_batch_size({max_batch_size})，"
+                    f"已标注「区间过大」，翻译时该批次将整体发送"
+                )
 
     # 过短区间合并：长度小于 min_batch_size 的区间，优先与「合并后不超过 max_batch_size
     # 且合并后总长最小」的相邻区间合并；找不到满足上限的相邻对则保留原区间并告警

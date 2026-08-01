@@ -5,6 +5,7 @@ import { apiRequest } from "./client";
 import { getPromptTemplateOverridesForJob } from "./preferences";
 import type {
   AppSettings,
+  CheckBatchSizeResult,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
   Job,
@@ -136,9 +137,30 @@ export async function checkModelAvailability(payload: {
   });
 }
 
+// ---- Batch-size precheck (批次划分预检) ----
+
+export async function checkBatchSize(payload: {
+  projectId: string;
+  translator: string;
+  configFileName?: string;
+}): Promise<CheckBatchSizeResult> {
+  return apiRequest<CheckBatchSizeResult>(
+    `/api/projects/${payload.projectId}/check-batch-size`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        translator: payload.translator,
+        config_file_name: payload.configFileName ?? "config.yaml",
+      }),
+    },
+  );
+}
+
 // Re-export types for convenience
 export type {
   AppSettings,
+  CheckBatchSizeResult,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
   Job,
