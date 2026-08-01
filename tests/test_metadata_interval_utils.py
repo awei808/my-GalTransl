@@ -102,6 +102,49 @@ class NormalizeBatchIntervalsTests(unittest.TestCase):
         out = normalize_batch_intervals(raw, "f", max_index=15, max_batches=20)
         self.assertEqual(len(out), 2)
 
+    def test_max_batch_size_splits_oversized(self) -> None:
+        raw = [{"区间": [1, 100], "视角": "A"}]
+        out = normalize_batch_intervals(
+            raw, "f", max_index=100, max_batches=20, max_batch_size=40
+        )
+        self.assertEqual([b["区间"] for b in out], [[1, 40], [41, 80], [81, 100]])
+        # 切分后各段复制原区间元信息
+        self.assertTrue(all(b["视角"] == "A" for b in out))
+
+    def test_max_batch_size_keeps_short_tail(self) -> None:
+        # 模拟 00_03 的 69 行整文件一批：切为 [1,64]+[65,69]；
+        # 尾巴 5 行小于 min_batch_size，但合并将超过 max_batch_size，故保留
+        raw = [{"区间": [1, 69]}]
+        out = normalize_batch_intervals(
+            raw, "f", max_index=69, max_batches=20,
+            min_batch_size=8, max_batch_size=64,
+        )
+        self.assertEqual([b["区间"] for b in out], [[1, 64], [65, 69]])
+
+    def test_min_batch_size_merges_short_interval(self) -> None:
+        raw = [{"区间": [1, 3], "视角": "A"}, {"区间": [4, 8], "视角": "B"}]
+        out = normalize_batch_intervals(
+            raw, "f", max_index=8, max_batches=20,
+            min_batch_size=5, max_batch_size=100,
+        )
+        self.assertEqual([b["区间"] for b in out], [[1, 8]])
+        # 元信息取先到者（左侧区间的视角）
+        self.assertEqual(out[0]["视角"], "A")
+
+    def test_min_batch_size_skips_merge_when_over_max(self) -> None:
+        raw = [{"区间": [1, 2], "视角": "A"}, {"区间": [3, 12], "视角": "B"}]
+        out = normalize_batch_intervals(
+            raw, "f", max_index=12, max_batches=20,
+            min_batch_size=5, max_batch_size=10,
+        )
+        # 合并将超过 max_batch_size(10)，应保留原区间
+        self.assertEqual([b["区间"] for b in out], [[1, 2], [3, 12]])
+
+    def test_no_length_constraint_keeps_behavior(self) -> None:
+        raw = [{"区间": [1, 100]}]
+        out = normalize_batch_intervals(raw, "f", max_index=100, max_batches=20)
+        self.assertEqual([b["区间"] for b in out], [[1, 100]])
+
 
 class ForBatchMetaDataNormalizeDelegateTests(unittest.TestCase):
     """ForBatchMetaData._normalize_meta 仅作委托，强制 id == 文件名。"""
@@ -118,6 +161,16 @@ class ForBatchMetaDataNormalizeDelegateTests(unittest.TestCase):
             {"batches": []}, "f", max_index=10, max_batches=20
         )
         self.assertEqual(meta["批次"], [])
+
+    def test_delegates_length_constraints(self) -> None:
+        obj = {"批次": [{"区间": [1, 100]}]}
+        meta = ForBatchMetaData._normalize_meta(
+            obj, "f", max_index=100, max_batches=20,
+            min_batch_size=8, max_batch_size=40,
+        )
+        self.assertEqual(
+            [b["区间"] for b in meta["批次"]], [[1, 40], [41, 80], [81, 100]]
+        )
 
 
 class SegmentsInRangeUsesSharedParseTests(unittest.TestCase):

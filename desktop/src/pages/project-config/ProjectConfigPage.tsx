@@ -180,6 +180,14 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "批次最大数量",
     hint: "翻译区间最大数量，超过将自动合并相邻区间。",
   },
+  "internals.forbatchmeta.min_batch_size": {
+    label: "单批最小区间长度",
+    hint: "行数小于此值的区间会尽量与相邻区间合并；文件总行数不足时可整文件一批。",
+  },
+  "internals.forbatchmeta.max_batch_size": {
+    label: "单批最大区间长度",
+    hint: "行数超过此值的区间会被自动切分为多个批次，避免单次请求过大（建议对齐单次请求句子数上限）。",
+  },
   "proxy.enableProxy": { label: "启用代理" },
   "dictionary.defaultDictFolder": {
     label: "通用字典文件夹",

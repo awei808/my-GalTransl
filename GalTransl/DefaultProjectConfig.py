@@ -84,6 +84,8 @@ internals:
     inject_guideline: true        # 是否将翻译规范注入全局分析提示词 [True/False]
   forbatchmeta:
     max_batches: 20 # 翻译区间（批次）最大数量，超过此数将自动合并相邻区间；设大模型输出不稳可调大。[1-200]
+    min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间会尽量与相邻区间合并。[1-1000]
+    max_batch_size: 64 # 单批最大区间长度（行数），超过此值的区间会被自动切分。[1-1000]
     inject_guideline: true # 是否将翻译规范注入批次划分提示词。[True/False]
   forfilemeta:
     inject_guideline: true # 是否将翻译规范注入文件元数据生成提示词。[True/False]

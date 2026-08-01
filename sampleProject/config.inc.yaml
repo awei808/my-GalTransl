@@ -68,6 +68,13 @@ common:
   loggingLevel: info # 日志输出级别：debug详细，info常规，warning仅警告。[debug/info/warning]
   saveLog: false # 是否将日志写入文件。[True/False]
 
+# 内部流程参数
+internals:
+  forbatchmeta: # 批次级元数据（翻译区间划分）设置
+    max_batches: 20 # 翻译区间（批次）最大数量，超过将自动合并相邻区间 [1-200]
+    min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间尽量与相邻区间合并 [1-1000]
+    max_batch_size: 64 # 单批最大区间长度（行数），超过此值的区间会被自动切分 [1-1000]
+
 
 
 # 代理设置，使用中转供应商时一般不用开代理

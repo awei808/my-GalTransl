@@ -79,8 +79,28 @@ class ForBatchMetaData(BaseTranslate):
             self.max_batches = max(1, int(self.max_batches))
         except (TypeError, ValueError):
             self.max_batches = 20
+
+        # 单批区间长度约束，默认 min=8/max=64；可在 internals.forbatchmeta 设置。
+        # 超过 max_batch_size 的区间会被硬切，小于 min_batch_size 的区间会尽量合并
+        self.min_batch_size = self.pj_config.getKey("internals.forbatchmeta.min_batch_size", 8)
+        try:
+            self.min_batch_size = max(1, int(self.min_batch_size))
+        except (TypeError, ValueError):
+            self.min_batch_size = 8
+        self.max_batch_size = self.pj_config.getKey("internals.forbatchmeta.max_batch_size", 64)
+        try:
+            self.max_batch_size = max(1, int(self.max_batch_size))
+        except (TypeError, ValueError):
+            self.max_batch_size = 64
+        if self.min_batch_size > self.max_batch_size:
+            LOGGER.warning(
+                f"[BatchMetaData] min_batch_size({self.min_batch_size}) 大于 "
+                f"max_batch_size({self.max_batch_size})，已交换两者"
+            )
+            self.min_batch_size, self.max_batch_size = self.max_batch_size, self.min_batch_size
         LOGGER.debug(
-            f"[BatchMetaData] 最大批次数限制：{self.max_batches}"
+            f"[BatchMetaData] 批次长度约束：min={self.min_batch_size}, "
+            f"max={self.max_batch_size}，最大批次数：{self.max_batches}"
         )
 
         # 文件级剧情元数据映射（{文件名: FileMetaData}），惰性载入一次
@@ -194,6 +214,8 @@ class ForBatchMetaData(BaseTranslate):
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         prompt_req = prompt_req.replace("[max_batches]", str(self.max_batches))
+        prompt_req = prompt_req.replace("[min_batch_size]", str(self.min_batch_size))
+        prompt_req = prompt_req.replace("[max_batch_size]", str(self.max_batch_size))
         return prompt_req
 
     # 2. 准备输入
@@ -331,12 +353,15 @@ class ForBatchMetaData(BaseTranslate):
 
     @staticmethod
     def _normalize_meta(obj: dict, filename: str, max_index: int,
-                        max_batches: int = 20) -> dict:
+                        max_batches: int = 20,
+                        min_batch_size: Optional[int] = None,
+                        max_batch_size: Optional[int] = None) -> dict:
         """规整批次数组：复用共享 normalize_batch_intervals 做字段清洗、裁剪、
-        重叠修复、最大批次数限制与间隙检测，仅强制 id == 文件名。"""
+        重叠修复、长度约束、最大批次数限制与间隙检测，仅强制 id == 文件名。"""
         raw_batches = obj.get("批次", obj.get("batches", []))
         cleaned = normalize_batch_intervals(
-            raw_batches, filename, max_index, max_batches, tag="BatchMetaData"
+            raw_batches, filename, max_index, max_batches, tag="BatchMetaData",
+            min_batch_size=min_batch_size, max_batch_size=max_batch_size,
         )
         return {"id": filename, "批次": cleaned}
 
@@ -433,7 +458,10 @@ class ForBatchMetaData(BaseTranslate):
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效 JSON，跳过")
             return False
 
-        meta = self._normalize_meta(meta, filename, max_index, self.max_batches)
+        meta = self._normalize_meta(
+            meta, filename, max_index, self.max_batches,
+            min_batch_size=self.min_batch_size, max_batch_size=self.max_batch_size,
+        )
         if not meta["批次"]:
             LOGGER.warning(f"[BatchMetaData] {filename} 未解析到有效区间，跳过")
             return False

@@ -137,8 +137,10 @@ def normalize_batch_intervals(
     max_index: int,
     max_batches: int,
     tag: str = "BatchMetaData",
+    min_batch_size: Optional[int] = None,
+    max_batch_size: Optional[int] = None,
 ) -> List[dict]:
-    """规整批次数组：清洗字段、裁剪并排序区间、重叠修复、最大批次数限制、间隙检测。
+    """规整批次数组：清洗字段、裁剪并排序区间、重叠修复、长度约束（超长切分/过短合并）、最大批次数限制、间隙检测。
 
     把 ForBatchMetaData._normalize_meta 的区间处理逻辑收口为共享函数，供批次级
     元数据生成与多轮翻译分组复用，确保对脏数据/边界的处理行为一致。返回
@@ -196,6 +198,77 @@ def normalize_batch_intervals(
             )
             b["区间"] = [new_lo, cur_hi]
         cleaned.append(b)
+
+    # 超长区间切分：超过 max_batch_size 的区间按行数硬切为多段，元信息复制到各段
+    if max_batch_size and max_batch_size > 0:
+        split: List[dict] = []
+        for b in cleaned:
+            lo, hi = b["区间"]
+            if hi - lo + 1 <= max_batch_size:
+                split.append(b)
+                continue
+            segs: List[list] = []
+            cur = lo
+            while cur <= hi:
+                end = min(cur + max_batch_size - 1, hi)
+                segs.append([cur, end])
+                cur = end + 1
+            LOGGER.warning(
+                f"[{tag}] {filename} 区间 [{lo},{hi}] 行数超过 max_batch_size({max_batch_size})，"
+                f"已切分为 {len(segs)} 段"
+            )
+            for rng in segs:
+                nb = dict(b)
+                nb["区间"] = rng
+                split.append(nb)
+        cleaned = split
+
+    # 过短区间合并：长度小于 min_batch_size 的区间，优先与「合并后不超过 max_batch_size
+    # 且合并后总长最小」的相邻区间合并；找不到满足上限的相邻对则保留原区间并告警
+    if min_batch_size and min_batch_size > 0:
+        i = 0
+        while i < len(cleaned):
+            lo, hi = cleaned[i]["区间"]
+            if hi - lo + 1 >= min_batch_size:
+                i += 1
+                continue
+            options: List[Tuple[int, int]] = []
+            if i > 0:
+                prev_lo, _prev_hi = cleaned[i - 1]["区间"]
+                options.append((hi - prev_lo + 1, i - 1))
+            if i + 1 < len(cleaned):
+                _nxt_lo, nxt_hi = cleaned[i + 1]["区间"]
+                options.append((nxt_hi - lo + 1, i))
+            options.sort(key=lambda o: (o[0], o[1]))
+            best: Optional[Tuple[int, int]] = None
+            for merged_len, target in options:
+                if max_batch_size and max_batch_size > 0 and merged_len > max_batch_size:
+                    continue
+                best = (merged_len, target)
+                break
+            if best is None:
+                LOGGER.warning(
+                    f"[{tag}] {filename} 区间 [{lo},{hi}] 行数 {hi - lo + 1} 小于 "
+                    f"min_batch_size({min_batch_size})，且合并将超过 max_batch_size，已保留原区间"
+                )
+                i += 1
+                continue
+            _merged_len, target = best
+            if target == i - 1:
+                cleaned[i - 1]["区间"][1] = hi
+                LOGGER.debug(
+                    f"[{tag}] {filename} 过短区间 [{lo},{hi}] 向左合并 → "
+                    f"[{cleaned[i - 1]['区间'][0]},{hi}]"
+                )
+                del cleaned[i]
+                i = max(0, i - 1)
+            else:
+                cleaned[i]["区间"][1] = cleaned[i + 1]["区间"][1]
+                LOGGER.debug(
+                    f"[{tag}] {filename} 过短区间 [{lo},{hi}] 向右合并 → "
+                    f"[{lo},{cleaned[i]['区间'][1]}]"
+                )
+                del cleaned[i + 1]
 
     # 最大批次数限制：反复合并间距最小的两个相邻区间
     while len(cleaned) > max_batches:
