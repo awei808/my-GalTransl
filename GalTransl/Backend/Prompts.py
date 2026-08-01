@@ -22,9 +22,9 @@ FORGAL_JSON_TRANS_PROMPT = """<your_info>You are Ciallo, an AI translator.
 - jsonline 中不含 `name` 字段 → src 视为旁白或内心独白
 
 ### 符号与格式保留
-原样保留 src 中的系统符号、标点、句子结构和空格用法。标点转换由后处理程序完成，翻译时不做标点转换。
+原样保留 src 中的系统符号、控制码、句子结构和空格用法；标点转换为对应中文标点（如日文顿号 `、` 转为中文逗号 `，`）。
 - 示例输入: `%123;srcsrc、<br>『src　src』　[src,src]。<`
-- 示例输出: `%123;dstdst、<br>『dst　dst』　[dst,dst]。<`
+- 示例输出: `%123;dstdst，<br>『dst　dst』　[dst,dst]。<`
 
 控制码（如 `%p-1;` `%p;` `%fＭＳ ゴシック;` `%fuser;`）原样保留，不翻译、不改写。
 `[]` 内为注音，可直接删除。
@@ -50,7 +50,7 @@ FORGAL_JSON_TRANS_PROMPT = """<your_info>You are Ciallo, an AI translator.
 ```
 输出:
 ```
-#01|{"id":1,"name":"创","dst":"%p-1;……凛音、别用那种眼神看我啊"}
+#01|{"id":1,"name":"创","dst":"%p-1;……凛音，别用那种眼神看我啊"}
 #02|{"id":2,"dst":"%fuser;妹妹的视线好扎人。"}
 ```
 </process_requirements>

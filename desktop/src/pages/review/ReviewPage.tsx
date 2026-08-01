@@ -887,7 +887,8 @@ export function ReviewPage() {
     requestAnimationFrame(() => {
       const el = document.getElementById(`entry-${idx}`);
       if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // 立即定位到目标条目（不做滚动动画），高亮动画保留
+        el.scrollIntoView({ block: "center" });
         // 高亮动画：先移除再强制 reflow 重加，保证重复跳转同一条目也能重新触发
         const card = el.querySelector(".entry-card") as HTMLElement | null;
         if (card) {
@@ -1094,12 +1095,36 @@ export function ReviewPage() {
   }
 
   function handleJump() {
-    const val = parseInt(jumpValue(), 10);
-    if (isNaN(val)) return;
-    const el = document.getElementById(`entry-${val}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const raw = jumpValue().trim();
+    if (!raw) {
+      toast.warning("跳转失败：请输入条目序号");
+      return;
     }
+    const val = parseInt(raw, 10);
+    if (isNaN(val) || val < 1) {
+      toast.warning("跳转失败：条目序号需为正整数");
+      return;
+    }
+    const el = document.getElementById(`entry-${val}`);
+    if (!el) {
+      toast.warning(`跳转失败：条目 #${val} 不存在`);
+      return;
+    }
+    el.scrollIntoView({ block: "center" }); // 立即定位，不做滚动动画
+    // 高亮动画：与问题侧栏跳转一致（先移除再强制 reflow 重加，重复跳转同一条目也能重触发）
+    const card = el.querySelector(".entry-card") as HTMLElement | null;
+    if (card) {
+      card.classList.remove("entry-flash");
+      void card.offsetWidth;
+      card.classList.add("entry-flash");
+      card.addEventListener(
+        "animationend",
+        () => card.classList.remove("entry-flash"),
+        { once: true },
+      );
+    }
+    const fileName = (appState.activeFilePath ?? "").split("/").pop() || "";
+    toast.success(`跳转到 ${fileName} 第 ${val} 条成功`);
   }
 
   /** 手动保存：把内存中的最新条目落盘（循环到无并发改动为止，确保最终一定写入），再按 index 合并后端重建的 problem */

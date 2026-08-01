@@ -257,7 +257,7 @@ function FileExplorer() {
             </svg>
             在文件管理器中打开
           </button>
-          <Show when={ctxMenu()!.isFile && !ctxMenu()!.isMetadata}>
+          <Show when={ctxMenu()!.isFile}>
             <button
               class="ctx-menu__item ctx-menu__item--danger"
               onClick={() => {
