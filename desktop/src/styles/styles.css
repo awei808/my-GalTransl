@@ -396,46 +396,6 @@ textarea {
   flex-shrink: 0;
 }
 
-/* ── 问题 ⓘ 说明卡片（hover 显示通俗解释与修复建议） ── */
-.problem-tip {
-  position: relative;
-  cursor: help;
-  font-size: 12px;
-  color: var(--color-status-error);
-  flex-shrink: 0;
-  line-height: 1;
-}
-.problem-tip-card {
-  display: none;
-  position: absolute;
-  bottom: 140%;
-  left: 0;
-  z-index: 100;
-  width: 260px;
-  padding: 8px 10px;
-  background: var(--color-bg-panel);
-  border: 1px solid var(--color-border-default);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  font-size: 12px;
-  color: var(--color-text-primary);
-  line-height: 1.5;
-  white-space: normal;
-  font-weight: normal;
-}
-.problem-tip:hover .problem-tip-card,
-.problem-tip:focus .problem-tip-card {
-  display: block;
-}
-.problem-tip-title {
-  font-weight: var(--weight-semibold);
-  display: block;
-  margin-bottom: 4px;
-}
-.problem-tip-line {
-  display: block;
-}
-
 /* ── 文件树（类 VSCode） ── */
 .file-tree {
   display: flex;

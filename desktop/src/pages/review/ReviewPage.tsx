@@ -166,19 +166,9 @@ function EntryCard(props: {
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
   onSave?: () => void;
-  problemTypes?: ProblemTypeInfo[];
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
-
-  // 问题类型说明查询：取 problem 首个类型名，匹配 catalog 的通俗解释/修复建议（低基础用户可理解）
-  const problemHint = createMemo(() => {
-    const p = e().problem;
-    if (!p || !props.problemTypes?.length) return null;
-    const name = problemTypesOf(p)[0];
-    const t = props.problemTypes.find((x) => x.name === name);
-    return t && (t.explanation || t.suggestion) ? t : null;
-  });
 
   // 角色名颜色：同一名字确定性映射到同色（依赖 themeDark，主题切换时自动重算）
   const nameColor = createMemo(() => {
@@ -221,20 +211,6 @@ function EntryCard(props: {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <span class="entry-problem-text">{e().problem}</span>
-            <Show when={problemHint()}>
-              <span class="problem-tip" tabindex="0" aria-label="问题说明">
-                ⓘ
-                <span class="problem-tip-card">
-                  <span class="problem-tip-title">{problemHint()!.name}</span>
-                  <Show when={problemHint()!.explanation}>
-                    <span class="problem-tip-line">{problemHint()!.explanation}</span>
-                  </Show>
-                  <Show when={problemHint()!.suggestion}>
-                    <span class="problem-tip-line">建议：{problemHint()!.suggestion}</span>
-                  </Show>
-                </span>
-              </span>
-            </Show>
           </Show>
           <Show when={!hasProblem() && e().skip_check}>
             <span class="entry-skip-badge">⏭</span>
@@ -1543,7 +1519,6 @@ export function ReviewPage() {
                     onSkip={() => handleSkip(entrySignal().index)}
                     onDelete={() => handleDelete(entrySignal().index)}
     onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
-    problemTypes={problemTypes()}
     />
                 </div>
               )}

@@ -1069,20 +1069,20 @@ def _build_prompt_templates_payload() -> dict[str, Any]:
 
 
 _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
-    {"name": "词频过高", "description": "某字在译文中重复大于 20 次（且远多于原文）。", "explanation": "译文里某个字重复太多，读起来显得啰嗦。", "suggestion": "把重复的字换成同义词，或改写句子。"},
-    {"name": "标点错漏", "description": "括号/引号/冒号等标点与原文不一致。", "explanation": "译文里的标点（括号、引号、冒号等）和原文对不上。", "suggestion": "对照原文补齐或修正对应标点。"},
-    {"name": "残留日文", "description": "译文中残留日文平假名或片假名。", "explanation": "译文里还有日文假名（あ、カ等）没翻译成中文。", "suggestion": "把残留的假名翻译成对应的中文。"},
-    {"name": "丢失换行", "description": "译文缺少原文中的行内换行。", "explanation": "原文是多行的，但译文把多行合并成了一行。", "suggestion": "按原文的换行位置给译文补上换行。"},
-    {"name": "多加换行", "description": "译文换行符比原文多，可能导致溢出。", "explanation": "译文里的换行比原文多，多出来的换行可能导致游戏里显示错位。", "suggestion": "删掉多余的换行，保持与原文一致。"},
-    {"name": "比日文长", "description": "译文长度超过原文 1.3 倍（常用，宽松阈值）。", "explanation": "译文比原文长不少，可能超出游戏文本框显示范围。", "suggestion": "精简译文，让它尽量和原文长度接近。"},
-    {"name": "比日文长严格", "description": "译文长度超过原文（零容忍，严格阈值）。", "explanation": "译文比原文还长，很可能显示不下。", "suggestion": "把译文改得更精炼一些。"},
-    {"name": "字典使用", "description": "没有按 GPT 字典的要求翻译。", "explanation": "译文里的专有名词没有按词典/术语表的译名来翻。", "suggestion": "把对应词改成术语表里的标准译名。"},
-    {"name": "引入英文", "description": "原文无英文，但译文引入了英文单词。", "explanation": "原文没有英文，但译文里出现了英文字母。", "suggestion": "把英文换成对应的中文翻译。"},
-    {"name": "语言不通", "description": "译文包含大量非 GBK 字符（仅对中文目标语言生效）。", "explanation": "译文里出现了大量乱码或特殊字符，读起来不通顺。", "suggestion": "检查译文的编码/字符，把乱码改回正常中文。"},
-    {"name": "缺控制符", "description": "译文缺少原文中的控制符（如 \\n、变量标记等）。", "explanation": "原文里有控制符（比如 \\n 换行、%p 之类的标记），译文里漏掉了。", "suggestion": "把原文中的控制符原样补回译文对应位置。"},
-    {"name": "独白男他", "description": "独白（无name）译文出现'他'。", "explanation": "这是旁白/内心独白，但译文里用了'他'，可能弄错人物性别。", "suggestion": "确认人物性别，把'他'改成'她'或换种说法。"},
-    {"name": "长句丢失换行", "description": "译文平均分句长度超过阈值，可能丢失了应有的换行。", "explanation": "译文句子太长（平均分句长度超过设定阈值），原文可能是多行短句。", "suggestion": "按语义或原文换行把长句拆开。"},
-    {"name": "换行位置异常", "description": "换行符未紧跟中文标点（逗号/顿号/句号等）之后，断行位置可能不当。", "explanation": "换行符前面不是标点（句号、逗号等），断行的位置可能不对。", "suggestion": "检查该处断行是否合理，必要时调整换行位置或补上标点。"},
+    {"name": "词频过高", "description": "某字在译文中重复大于 20 次（且远多于原文）。"},
+    {"name": "标点错漏", "description": "括号/引号/冒号等标点与原文不一致。"},
+    {"name": "残留日文", "description": "译文中残留日文平假名或片假名。"},
+    {"name": "丢失换行", "description": "译文缺少原文中的行内换行。"},
+    {"name": "多加换行", "description": "译文换行符比原文多，可能导致溢出。"},
+    {"name": "比日文长", "description": "译文长度超过原文 1.3 倍（常用，宽松阈值）。"},
+    {"name": "比日文长严格", "description": "译文长度超过原文（零容忍，严格阈值）。"},
+    {"name": "字典使用", "description": "没有按 GPT 字典的要求翻译。"},
+    {"name": "引入英文", "description": "原文无英文，但译文引入了英文单词。"},
+    {"name": "语言不通", "description": "译文包含大量非 GBK 字符（仅对中文目标语言生效）。"},
+    {"name": "缺控制符", "description": "译文缺少原文中的控制符（如 \\n、变量标记等）。"},
+    {"name": "独白男他", "description": "独白（无name）译文出现'他'。"},
+    {"name": "长句丢失换行", "description": "译文平均分句长度超过阈值，可能丢失了应有的换行。"},
+    {"name": "换行位置异常", "description": "换行符未紧跟中文标点（逗号/顿号/句号等）之后，断行位置可能不当。"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)
