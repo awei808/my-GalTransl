@@ -373,12 +373,13 @@ export async function fetchProjectProblems(projectId: string, file?: string) {
   return apiRequest<ProjectProblemsResponse>(`/api/projects/${projectId}/problems${q}`);
 }
 
-/** 对给定缓存条目重新运行问题检测（不落盘），用于"刷新"时强制更新检测结果 */
+/** 对给定缓存条目重新运行问题检测；persist=true 时写回缓存文件（单文件范围），供"保存并重检"同步侧栏 */
 export async function checkCacheProblems(
   projectId: string,
   filename: string,
   entries: CacheEntry[],
   configFileName?: string,
+  persist = false,
 ) {
   return apiRequest<CacheCheckResponse>(`/api/projects/${projectId}/cache/check`, {
     method: "POST",
@@ -387,6 +388,7 @@ export async function checkCacheProblems(
       filename,
       entries,
       config_file_name: configFileName || "config.yaml",
+      persist,
     }),
   });
 }

@@ -1973,7 +1973,7 @@ def build_handler(registry: JobRegistry) -> type:
                 })
                 return
 
-            # POST /api/projects/:id/cache/check — 仅重新运行问题检测，不落盘
+            # POST /api/projects/:id/cache/check — 重新运行问题检测；persist=true 时写回缓存文件（单文件范围）
             if sub_path == "/cache/check":
                 if self.command != "POST":
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
@@ -1983,6 +1983,7 @@ def build_handler(registry: JobRegistry) -> type:
                     raw_filename = str(payload.get("filename", "")).strip()
                     entries = payload.get("entries", [])
                     config_name = str(payload.get("config_file_name", "config.yaml")).strip() or "config.yaml"
+                    persist = bool(payload.get("persist", False))
                     if not raw_filename or not isinstance(entries, list):
                         self._send_json({"error": "invalid payload"}, status=HTTPStatus.BAD_REQUEST)
                         return
@@ -2006,7 +2007,27 @@ def build_handler(registry: JobRegistry) -> type:
                     results, ok = _run_problem_detection(
                         entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
                     )
-                    self._send_json({"success": ok, "filename": norm, "results": results})
+                    if persist and ok:
+                        # 写回缓存文件（单文件范围）：合并 problem / post_dst_preview / skip_check
+                        file_path = os.path.join(cache_dir, norm)
+                        if os.path.isfile(file_path):
+                            import orjson
+                            for e, r in zip(entries, results):
+                                post_src_val = e.get("post_src", "") or e.get("post_jp", "")
+                                if post_src_val == "":
+                                    continue
+                                if r["problem"]:
+                                    e["problem"] = r["problem"]
+                                elif "problem" in e:
+                                    del e["problem"]
+                                e["post_dst_preview"] = r["post_dst_preview"]
+                                if r["skip_check"]:
+                                    e["skip_check"] = True
+                                elif "skip_check" in e:
+                                    del e["skip_check"]
+                            with open(file_path, "wb") as f:
+                                f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
+                    self._send_json({"success": ok, "filename": norm, "results": results, "persisted": persist and ok})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:

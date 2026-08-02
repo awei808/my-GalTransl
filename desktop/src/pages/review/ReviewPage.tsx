@@ -556,6 +556,14 @@ export function ReviewPage() {
     handleRedo();
   }
 
+  // ── 菜单事件（文件→保存） ──
+  function handleMenuSave() {
+    // 先失焦当前元素，让主译文框 onBlur 把草稿同步到 entries()，再保存
+    (document.activeElement as HTMLElement | null)?.blur();
+    if (reviewMode() === "translate") void saveCurrentFile();
+    else void saveMeta();
+  }
+
   // 展开字段 textarea 的原生 Enter 处理（Solid 事件委托在 <Show> 内不工作，由 document 监听兜底）
   function handleExpandFieldEnter(e: KeyboardEvent) {
     if (e.key !== "Enter") return;
@@ -577,6 +585,7 @@ export function ReviewPage() {
     document.addEventListener("galtransl:undo", handleMenuUndo);
     document.addEventListener("galtransl:redo", handleMenuRedo);
     document.addEventListener("galtransl:find-in-file", handleFindInFile);
+    document.addEventListener("galtransl:save", handleMenuSave);
   });
 
   // 展开字段 Enter 监听器：不依赖 onMount（HMR 后组件不重新挂载），用 createEffect 确保始终注册
@@ -589,6 +598,7 @@ export function ReviewPage() {
     document.removeEventListener("galtransl:undo", handleMenuUndo);
     document.removeEventListener("galtransl:redo", handleMenuRedo);
     document.removeEventListener("galtransl:find-in-file", handleFindInFile);
+    document.removeEventListener("galtransl:save", handleMenuSave);
     // 组件卸载时清除跳转标记，避免残留
     setAppState("reviewJumpToIndex", null);
   });
@@ -1235,7 +1245,7 @@ export function ReviewPage() {
     }
   }
 
-  /** 刷新：先自动保存未保存的更改（若有），再强制重新运行问题检测（不落盘），确保检测结果最新而非旧缓存 */
+  /** 保存并重检：先自动保存未保存的更改（若有，保存触发后端 rebuild 重检写盘），再强制重新运行问题检测并写盘（persist=true），确保侧栏同步最新结果 */
   async function handleRefresh() {
     (document.activeElement as HTMLElement | null)?.blur(); // 同步主译文框草稿到 entries
     const pid = appState.activeProjectId;
@@ -1251,11 +1261,11 @@ export function ReviewPage() {
       await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
     }
     if (appState.activeFilePath !== myFile) return;
-    await recheckProblems(pid, myFile);
+    await recheckProblems(pid, myFile, true); // 重检并写盘（非 dirty 时也同步侧栏）
   }
 
-  /** 对当前条目强制重新问题检测（POST /cache/check，不落盘），按 index 合并 problem 结果 */
-  async function recheckProblems(pid: string, myFile: string) {
+  /** 对当前条目强制重新问题检测（POST /cache/check，persist 时写盘），按 index 合并 problem 结果 */
+  async function recheckProblems(pid: string, myFile: string, persist = false) {
     try {
       // 虚拟滚动截断时合并后端完整数据，保证检测覆盖全部条目
       let full = entries();
@@ -1263,7 +1273,7 @@ export function ReviewPage() {
         const res = await fetchCacheFile(pid, myFile);
         full = mergeVirtualSlice(res.entries ?? [], entries(), loadedSliceIndices);
       }
-      const resp = await checkCacheProblems(pid, myFile, full, getActiveConfigFileName());
+      const resp = await checkCacheProblems(pid, myFile, full, getActiveConfigFileName(), persist);
       if (!resp || !resp.success) {
         toast.warning("重新问题检测失败，已保留原检测结果");
         return;
@@ -1350,7 +1360,7 @@ export function ReviewPage() {
           保存
         </button>
         <button class="btn btn--sm" onClick={() => void handleRefresh()}>
-          刷新
+          保存并重检
         </button>
         </Show>{/* /translate mode */}
 
