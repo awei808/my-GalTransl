@@ -1,4 +1,4 @@
-import { Match, Switch, createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { Match, Switch, createSignal, createEffect, createMemo, onCleanup, Show, For } from "solid-js";
 import { appState, setAppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
@@ -6,6 +6,7 @@ import { searchCache, replaceCache, fetchProjectProblems, deleteCacheFiles, fetc
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
 import { getErrorMessage } from "../lib/errors";
+import { problemTypesOf } from "../lib/problems";
 import type {
   FileNode,
   ProblemEntry,
@@ -476,6 +477,18 @@ function FindReplacePanel() {
 /* ── 问题检测 ── */
 function ProblemList() {
   const [problems, setProblems] = createSignal<ProblemEntry[]>([]);
+  const [filterType, setFilterType] = createSignal("all");
+  // 已收起的文件集合（默认展开，点击文件行右侧图标收起；内联读取以启用细粒度追踪）
+
+  const [collapsedFiles, setCollapsedFiles] = createSignal<Set<string>>(new Set());
+  function toggleFile(filename: string) {
+    setCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) next.delete(filename);
+      else next.add(filename);
+      return next;
+    });
+  }
 
   createEffect(() => {
     const pid = appState.activeProjectId;
@@ -493,16 +506,42 @@ function ProblemList() {
       .catch(() => {});
   });
 
-  // 按文件名分组
+  // 各类型出现次数统计
+  const typeCounts = createMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of problems()) {
+      for (const t of problemTypesOf(p.problem)) {
+        map.set(t, (map.get(t) ?? 0) + 1);
+      }
+    }
+    return map;
+  });
+
+  // 按类型筛选后的问题列表（精确匹配类型名，避免"比日文长"误匹配"比日文长严格"）
+  const filteredProblems = createMemo(() => {
+    const ft = filterType();
+    if (ft === "all") return problems();
+    return problems().filter((p) => problemTypesOf(p.problem).includes(ft));
+  });
+
+  // 按文件名分组（基于筛选结果）
   const grouped = () => {
     const map = new Map<string, ProblemEntry[]>();
-    for (const p of problems()) {
+    for (const p of filteredProblems()) {
       const list = map.get(p.filename) ?? [];
       list.push(p);
       map.set(p.filename, list);
     }
     return [...map.entries()];
   };
+
+  // 类型色标：按类型名哈希到固定色板
+  const PROBLEM_COLORS = ["#e5484d", "#f76b15", "#eab308", "#3b82f6", "#8b5cf6", "#14b8a6"];
+  function typeColor(name: string): string {
+    let h = 0;
+    for (const ch of name) h = (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+    return PROBLEM_COLORS[h % PROBLEM_COLORS.length];
+  }
 
   function jumpToEntry(filename: string, index: number) {
     const patch: Record<string, unknown> = {
@@ -520,21 +559,92 @@ function ProblemList() {
     <div class="sidebar-panel">
       <div class="sidebar-header">问题检测</div>
       <div class="sidebar-content">
+        <Show when={problems().length > 0}>
+          {/* 统计条：总数 + 各类型计数 */}
+          <div class="problem-stats">
+            <span class="problem-stats-total">共 {problems().length} 处</span>
+            <For each={[...typeCounts().entries()]}>
+              {([t, n]) => (
+                <span
+                  class="problem-stat-chip"
+                  style={{ color: typeColor(t) }}
+                  onClick={() => setFilterType(filterType() === t ? "all" : t)}
+                >
+                  {t} {n}
+                </span>
+              )}
+            </For>
+          </div>
+          {/* 类型筛选下拉 */}
+          <select
+            class="problem-filter-select"
+            value={filterType()}
+            onChange={(e) => setFilterType(e.currentTarget.value)}
+          >
+            <option value="all">全部类型</option>
+            <For each={[...typeCounts().keys()]}>
+              {(t) => <option value={t}>{t}</option>}
+            </For>
+          </select>
+        </Show>
         <Show when={grouped().length > 0} fallback={<p class="sidebar-placeholder">暂无问题</p>}>
           <For each={grouped()}>
-            {([filename, entries]) => (
-              <div class="problem-group">
-                <div class="problem-filename">{filename}</div>
-                <For each={entries}>
-                  {(entry) => (
-                    <div class="problem-entry" onClick={() => jumpToEntry(entry.filename, entry.index)}>
-                      <span class="problem-index">#{entry.index}</span>
-                      <span class="problem-desc">{entry.problem?.slice(0, 50)}</span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            )}
+            {([filename, entries]) => {
+              // 内联读取 collapsedFiles()：Solid 细粒度追踪需在 JSX 表达式中读取，
+              // 若放在 For 回调顶部的 const 中不会被追踪，点击后 UI 不更新
+              return (
+                <div class="problem-group">
+                  {/* 文件行：左侧文件名，右侧展开/收起切换图标 */}
+                  <div class="problem-filename-row">
+                    <span class="problem-filename">{filename}</span>
+                    <button
+                      class="problem-toggle"
+                      data-open={!collapsedFiles().has(filename)}
+                      aria-expanded={!collapsedFiles().has(filename)}
+                      aria-label={
+                        collapsedFiles().has(filename) ? "展开问题列表" : "收起问题列表"
+                      }
+                      onClick={() => toggleFile(filename)}
+                    >
+                      {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
+                      <svg
+                        class="problem-toggle-icon"
+                        viewBox="0 0 16 16"
+                        width="14"
+                        height="14"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M4 6l4 4 4-4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <Show when={!collapsedFiles().has(filename)}>
+                    <For each={entries}>
+                      {(entry) => (
+                        <div
+                          class="problem-entry"
+                          onClick={() => jumpToEntry(entry.filename, entry.index)}
+                        >
+                          <span
+                            class="problem-colorbar"
+                            style={{ background: typeColor(problemTypesOf(entry.problem)[0] ?? "其他") }}
+                          />
+                          <span class="problem-index">#{entry.index}</span>
+                          <span class="problem-desc">{entry.problem?.slice(0, 50)}</span>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              );
+            }}
           </For>
         </Show>
       </div>

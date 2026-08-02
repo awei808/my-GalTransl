@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Index, Show, onCleanup, onMount, createMemo } from "solid-js";
+import { createSignal, createEffect, Index, Show, For, onCleanup, onMount, createMemo } from "solid-js";
 import { appState, setAppState, markDirty, markClean, getActiveConfigFileName } from "../../stores/appStore";
 import { confirm } from "../../stores/confirmStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
@@ -9,9 +9,11 @@ import {
   savePerFileMetadata,
   checkCacheProblems,
 } from "../../lib/api/project";
-import type { CacheEntry, MetadataEntry, MetadataType } from "../../lib/api/types";
+import type { CacheEntry, MetadataEntry, MetadataType, ProblemTypeInfo } from "../../lib/api/types";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
+import { fetchProblemTypes } from "../../lib/api/general";
+import { problemTypesOf } from "../../lib/problems";
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -170,9 +172,19 @@ function EntryCard(props: {
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
   onSave?: () => void;
+  problemTypes?: ProblemTypeInfo[];
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
+
+  // 问题类型说明查询：取 problem 首个类型名，匹配 catalog 的通俗解释/修复建议（低基础用户可理解）
+  const problemHint = createMemo(() => {
+    const p = e().problem;
+    if (!p || !props.problemTypes?.length) return null;
+    const name = problemTypesOf(p)[0];
+    const t = props.problemTypes.find((x) => x.name === name);
+    return t && (t.explanation || t.suggestion) ? t : null;
+  });
 
   // 角色名颜色：同一名字确定性映射到同色
   const nameColor = createMemo(() => getNameColor(String(e().name || "")));
@@ -212,6 +224,20 @@ function EntryCard(props: {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <span class="entry-problem-text">{e().problem}</span>
+            <Show when={problemHint()}>
+              <span class="problem-tip" tabindex="0" aria-label="问题说明">
+                ⓘ
+                <span class="problem-tip-card">
+                  <span class="problem-tip-title">{problemHint()!.name}</span>
+                  <Show when={problemHint()!.explanation}>
+                    <span class="problem-tip-line">{problemHint()!.explanation}</span>
+                  </Show>
+                  <Show when={problemHint()!.suggestion}>
+                    <span class="problem-tip-line">建议：{problemHint()!.suggestion}</span>
+                  </Show>
+                </span>
+              </span>
+            </Show>
           </Show>
           <Show when={!hasProblem() && e().skip_check}>
             <span class="entry-skip-badge">⏭</span>
@@ -513,17 +539,50 @@ export function ReviewPage() {
   const [findOpen, setFindOpen] = createSignal(false);
   const [findQuery, setFindQuery] = createSignal("");
 
-  // 根据查找条件过滤条目（createMemo 避免模板中三次调用重复遍历）
+  // ── 快捷筛选 ──
+  const [filterProblemsOnly, setFilterProblemsOnly] = createSignal(false);
+  const [filterResidualJa, setFilterResidualJa] = createSignal(false);
+  const [filterProblemType, setFilterProblemType] = createSignal("all");
+  const [filterSpeaker, setFilterSpeaker] = createSignal("all");
+  const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
+
+  // 根据查找条件 + 快捷筛选过滤条目（createMemo 避免模板中重复遍历）
   const filteredEntries = createMemo(() => {
+    let list = entries();
     const q = findQuery().toLowerCase().trim();
-    if (!q) return entries();
-    return entries().filter(
-      (e) =>
-        (e.pre_src && e.pre_src.toLowerCase().includes(q)) ||
-        (e.pre_dst && e.pre_dst.toLowerCase().includes(q)) ||
-        (e.problem && e.problem.toLowerCase().includes(q)),
-    );
+    if (q) {
+      list = list.filter(
+        (e) =>
+          (e.pre_src && e.pre_src.toLowerCase().includes(q)) ||
+          (e.pre_dst && e.pre_dst.toLowerCase().includes(q)) ||
+          (e.problem && e.problem.toLowerCase().includes(q)),
+      );
+    }
+    if (filterProblemsOnly()) list = list.filter((e) => !!e.problem);
+    if (filterResidualJa()) list = list.filter((e) => problemTypesOf(e.problem).includes("残留日文"));
+    const ptype = filterProblemType();
+    if (ptype !== "all") list = list.filter((e) => problemTypesOf(e.problem).includes(ptype));
+    const spk = filterSpeaker();
+    if (spk !== "all") list = list.filter((e) => (e.name ?? "") === spk);
+    return list;
   });
+
+  // 说话人列表与问题统计（供筛选下拉与计数展示）
+  const speakers = createMemo(() =>
+    Array.from(new Set(entries().map((e) => String(e.name ?? "").trim()).filter(Boolean))),
+  );
+  const problemCount = createMemo(() => filteredEntries().filter((e) => !!e.problem).length);
+  const hasFilter = () =>
+    filterProblemsOnly() ||
+    filterResidualJa() ||
+    filterProblemType() !== "all" ||
+    filterSpeaker() !== "all";
+  function clearFilters() {
+    setFilterProblemsOnly(false);
+    setFilterResidualJa(false);
+    setFilterProblemType("all");
+    setFilterSpeaker("all");
+  }
 
   function handleFindInFile() {
     setFindOpen(!findOpen());
@@ -541,9 +600,8 @@ export function ReviewPage() {
       handleRedo();
     } else if (e.key === "s") {
       e.preventDefault(); // 阻止浏览器/系统保存网页
-      // 先失焦当前元素，让主译文框 onBlur 把草稿同步到 entries()，再保存
-      (document.activeElement as HTMLElement | null)?.blur();
-      if (reviewMode() === "translate") void saveCurrentFile();
+      // handleRefresh 内部会先失焦同步草稿，再保存并重检
+      if (reviewMode() === "translate") void handleRefresh();
       else void saveMeta();
     }
   }
@@ -558,9 +616,8 @@ export function ReviewPage() {
 
   // ── 菜单事件（文件→保存） ──
   function handleMenuSave() {
-    // 先失焦当前元素，让主译文框 onBlur 把草稿同步到 entries()，再保存
-    (document.activeElement as HTMLElement | null)?.blur();
-    if (reviewMode() === "translate") void saveCurrentFile();
+    // handleRefresh 内部会先失焦同步草稿，再保存并重检
+    if (reviewMode() === "translate") void handleRefresh();
     else void saveMeta();
   }
 
@@ -586,6 +643,9 @@ export function ReviewPage() {
     document.addEventListener("galtransl:redo", handleMenuRedo);
     document.addEventListener("galtransl:find-in-file", handleFindInFile);
     document.addEventListener("galtransl:save", handleMenuSave);
+    void fetchProblemTypes().then((r) => {
+      if (r) setProblemTypes(r);
+    });
   });
 
   // 展开字段 Enter 监听器：不依赖 onMount（HMR 后组件不重新挂载），用 createEffect 确保始终注册
@@ -1245,23 +1305,32 @@ export function ReviewPage() {
     }
   }
 
+  // 保存并重检进行中标志：按钮/Ctrl+S/菜单保存三入口共用，重入时静默忽略（首次执行已含保存+重检全部意图）
+  let refreshInFlight = false;
+
   /** 保存并重检：先自动保存未保存的更改（若有，保存触发后端 rebuild 重检写盘），再强制重新运行问题检测并写盘（persist=true），确保侧栏同步最新结果 */
   async function handleRefresh() {
-    (document.activeElement as HTMLElement | null)?.blur(); // 同步主译文框草稿到 entries
-    const pid = appState.activeProjectId;
-    const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
-    if (!pid || !myFile || appState.activeFilePath !== myFile) return;
-    if (appState.dirtyFiles.includes(myFile)) {
-      // 等待在途保存完成（saveInFlight 在 saveCurrentFile 的 finally 必定释放），带超时兜底，
-      // 避免保存被 saveInFlight 守卫跳过导致磁盘未落盘
-      const deadline = Date.now() + 3000;
-      while (saveInFlight && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 30));
+    if (refreshInFlight) return;
+    refreshInFlight = true;
+    try {
+      (document.activeElement as HTMLElement | null)?.blur(); // 同步主译文框草稿到 entries
+      const pid = appState.activeProjectId;
+      const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
+      if (!pid || !myFile || appState.activeFilePath !== myFile) return;
+      if (appState.dirtyFiles.includes(myFile)) {
+        // 等待在途保存完成（saveInFlight 在 saveCurrentFile 的 finally 必定释放），带超时兜底，
+        // 避免保存被 saveInFlight 守卫跳过导致磁盘未落盘
+        const deadline = Date.now() + 3000;
+        while (saveInFlight && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
       }
-      await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
+      if (appState.activeFilePath !== myFile) return;
+      await recheckProblems(pid, myFile, true); // 重检并写盘（非 dirty 时也同步侧栏）
+    } finally {
+      refreshInFlight = false;
     }
-    if (appState.activeFilePath !== myFile) return;
-    await recheckProblems(pid, myFile, true); // 重检并写盘（非 dirty 时也同步侧栏）
   }
 
   /** 对当前条目强制重新问题检测（POST /cache/check，persist 时写盘），按 index 合并 problem 结果 */
@@ -1332,6 +1401,53 @@ export function ReviewPage() {
           </div>
         </Show>
 
+        {/* 快捷筛选：只看有问题 / 残留日文 / 类型 / 说话人 */}
+        <div class="review-filter-bar">
+          <button
+            class={`review-filter-chip ${filterProblemsOnly() ? "review-filter-chip--active" : ""}`}
+            onClick={() => setFilterProblemsOnly(!filterProblemsOnly())}
+          >
+            只看有问题
+          </button>
+          <button
+            class={`review-filter-chip ${filterResidualJa() ? "review-filter-chip--active" : ""}`}
+            onClick={() => setFilterResidualJa(!filterResidualJa())}
+          >
+            残留日文
+          </button>
+          <select
+            class="review-filter-select"
+            value={filterProblemType()}
+            onChange={(e) => setFilterProblemType(e.currentTarget.value)}
+          >
+            <option value="all">全部类型</option>
+            <For each={problemTypes()}>
+              {(t) => <option value={t.name}>{t.name}</option>}
+            </For>
+          </select>
+          <select
+            class="review-filter-select"
+            value={filterSpeaker()}
+            onChange={(e) => setFilterSpeaker(e.currentTarget.value)}
+          >
+            <option value="all">全部说话人</option>
+            <For each={speakers()}>
+              {(s) => <option value={s}>{s}</option>}
+            </For>
+          </select>
+          <Show when={hasFilter() || findQuery().trim()}>
+            <span class="review-filter-count">
+              {filteredEntries().length}/{entries().length} 条
+              {problemCount() > 0 ? ` · 问题 ${problemCount()}` : ""}
+            </span>
+          </Show>
+          <Show when={hasFilter()}>
+            <button class="review-filter-clear" onClick={clearFilters}>
+              清除筛选
+            </button>
+          </Show>
+        </div>
+
         <div class="review-jump-group">
           <input
             class="review-jump-input"
@@ -1353,14 +1469,12 @@ export function ReviewPage() {
             ● 未保存
           </span>
         </Show>
-        <button class="btn btn--sm" onClick={() => {
-          (document.activeElement as HTMLElement | null)?.blur();
-          void saveCurrentFile();
-        }}>
-          保存
-        </button>
-        <button class="btn btn--sm" onClick={() => void handleRefresh()}>
-          保存并重检
+        <button
+          class="btn btn--sm"
+          title="保存当前文件的修改，并重新运行问题检测；检测结果写回缓存并同步到问题检测侧栏"
+          onClick={() => void handleRefresh()}
+        >
+          保存并重检问题
         </button>
         </Show>{/* /translate mode */}
 
@@ -1431,8 +1545,9 @@ export function ReviewPage() {
                     entry={entrySignal()}
                     onSkip={() => handleSkip(entrySignal().index)}
                     onDelete={() => handleDelete(entrySignal().index)}
-                    onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
-                  />
+    onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
+    problemTypes={problemTypes()}
+    />
                 </div>
               )}
             </Index>

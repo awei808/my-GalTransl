@@ -483,6 +483,10 @@ export type PluginsResponse = {
 export type ProblemTypeInfo = {
   name: string;
   description: string;
+  /** 通俗解释（低基础用户可理解） */
+  explanation?: string;
+  /** 修复建议 */
+  suggestion?: string;
 };
 
 export type ProblemTypesResponse = {

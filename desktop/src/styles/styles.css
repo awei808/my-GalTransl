@@ -340,6 +340,132 @@ textarea {
   background: var(--color-bg-panel);
 }
 
+/* ── 校对页快捷筛选栏 ── */
+.review-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  flex-wrap: wrap;
+}
+.review-filter-chip {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.review-filter-chip--active {
+  background: #0057b3;
+  border-color: #0057b3;
+  color: #fff;
+}
+.review-filter-select {
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.review-filter-count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.review-filter-clear {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: #0057b3;
+  cursor: pointer;
+}
+
+/* ── 问题检测侧栏：统计条 / 类型筛选 / 色标 ── */
+.problem-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: 12px;
+}
+.problem-stats-total {
+  font-weight: var(--weight-semibold);
+}
+.problem-stat-chip {
+  cursor: pointer;
+  font-size: 12px;
+  /* 胶囊结构参考 .entry-name-badge，背景用各自字体色调的低饱和度色（currentColor 混合） */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+  user-select: none;
+}
+.problem-filter-select {
+  margin: 8px 10px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.problem-colorbar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── 问题 ⓘ 说明卡片（hover 显示通俗解释与修复建议） ── */
+.problem-tip {
+  position: relative;
+  cursor: help;
+  font-size: 12px;
+  color: var(--color-status-error);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.problem-tip-card {
+  display: none;
+  position: absolute;
+  bottom: 140%;
+  left: 0;
+  z-index: 100;
+  width: 260px;
+  padding: 8px 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 12px;
+  color: var(--color-text);
+  line-height: 1.5;
+  white-space: normal;
+  font-weight: normal;
+}
+.problem-tip:hover .problem-tip-card,
+.problem-tip:focus .problem-tip-card {
+  display: block;
+}
+.problem-tip-title {
+  font-weight: var(--weight-semibold);
+  display: block;
+  margin-bottom: 4px;
+}
+.problem-tip-line {
+  display: block;
+}
+
 .problem-index {
   flex-shrink: 0;
   font-size: var(--font-xs);
@@ -490,13 +616,42 @@ textarea {
   margin-bottom: var(--space-1);
 }
 
+.problem-filename-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border-default);
+  margin-bottom: 2px;
+}
 .problem-filename {
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   color: var(--color-text-secondary);
   padding: 4px 8px;
-  border-bottom: 1px solid var(--color-border-default);
-  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.problem-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+.problem-toggle:hover {
+  color: #0057b3;
+}
+.problem-toggle-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+.problem-toggle[data-open="false"] .problem-toggle-icon {
+  transform: rotate(-90deg);
 }
 
 .problem-entry {
@@ -1470,6 +1625,14 @@ textarea {
   font-weight: var(--weight-medium);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
+  /* 固定两行文字高度：避免文件名换行数不同导致工具栏高度变化 */
+  display: block;
+  line-height: var(--leading-normal);
+  height: calc(var(--font-base) * 2 * var(--leading-normal));
+  overflow: hidden;
+  word-break: break-all;
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 .review-jump-group {
@@ -1477,6 +1640,8 @@ textarea {
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  align-self: flex-start; /* 跳转组贴工具栏顶部，不随工具栏高度居中 */
+  flex-shrink: 0; /* 保持宽度，不被筛选栏变宽时挤压 */
 }
 
 .review-jump-input {
@@ -1488,6 +1653,7 @@ textarea {
   border-radius: var(--radius-sm);
   background: var(--color-bg-input);
   color: var(--color-text-primary);
+  flex-shrink: 0; /* 保持 90px 固定宽度 */
 }
 
 .review-jump-input:focus {
@@ -1498,6 +1664,16 @@ textarea {
 .review-count {
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
+}
+
+/* 工具栏按钮：固定一行文字高度，顶部对齐（不随文件名两行高度垂直居中） */
+.review-toolbar .btn--sm {
+  height: calc(var(--font-sm) * var(--leading-normal) + 6px);
+  align-self: flex-start;
+  position: relative;
+  top: 0;
+  flex-shrink: 0;      /* 保持宽度，不被筛选栏变宽时挤压 */
+  white-space: nowrap; /* 文本单行显示，不被压缩换行 */
 }
 
 .review-sort-btn {
