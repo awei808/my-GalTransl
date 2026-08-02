@@ -13,3 +13,9 @@
 
 # 存在且上线前必须修复的bug
 - 任意路径读取、读写文件
+
+
+
+# 需修复的技术债务
+- 字典界面：rowsToText / rowToText / rowsToStructuredText 逻辑相近但行为不同（normal 走 join、conditional 走重建），未来易不一致
+建议：统一收敛为单一序列化入口

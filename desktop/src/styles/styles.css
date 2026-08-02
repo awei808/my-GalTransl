@@ -3401,6 +3401,157 @@ a:hover {
   font-family: var(--font-mono);
 }
 
+/* ── 字典结构化卡片：目标/条件 chip 与注释行 ── */
+.dict-card-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  font-family: var(--font-mono);
+  background: var(--color-bg-input);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-default);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dict-card-pill--target {
+  background: var(--color-bg-selected);
+  color: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.dict-card-pill--cond {
+  background: var(--color-bg-panel);
+}
+
+.dict-card-flag--negate {
+  color: #c44;
+  font-weight: var(--weight-semibold);
+}
+
+.dict-card-pill--placeholder {
+  background: transparent;
+  border-style: dashed;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.dict-card-conds {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.dict-card-cond-op {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+
+.dict-card-flag {
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.dict-card-input--inline {
+  width: auto;
+  min-width: 60px;
+  max-width: 200px;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  color: var(--color-text-primary);
+  padding: 0;
+}
+
+.dict-card-note {
+  width: 100%;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  font-family: var(--font-mono);
+  padding: 2px 0 0;
+  border-top: 1px dashed var(--color-border-default);
+  margin-top: 2px;
+}
+
+.dict-card-note--inline {
+  width: auto;
+  border-top: none;
+  margin: 0;
+  padding: 2px 6px;
+  background: var(--color-bg-input);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+/* ── 条件字典单句填空卡片 ── */
+.dict-card--conditional {
+  align-items: center;
+  gap: 4px;
+}
+
+.dict-card-fill-text {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dict-card-fill-input,
+.dict-card-fill-select {
+  font-size: var(--font-sm);
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  min-height: 22px;
+  flex: 0 1 auto;
+  min-width: 32px;
+  max-width: 120px;
+  outline: none;
+}
+
+.dict-card-fill-input:focus,
+.dict-card-fill-select:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.dict-card-fill-select {
+  flex: 0 0 auto;
+  min-width: 48px;
+  max-width: 100px;
+  cursor: pointer;
+  padding-right: 14px;
+}
+
+.dict-card-fill-select--connector {
+  min-width: 40px;
+  max-width: 56px;
+}
+
+.dict-card-fill-fixed {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
 .name-entry-arrow {
   color: var(--color-text-tertiary);
   font-size: var(--font-sm);

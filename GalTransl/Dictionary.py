@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 from os import path
 from GalTransl.CSentense import CSentense, CTransList
@@ -33,12 +33,30 @@ class IfWord:
 
 
 @dataclass
+class ConditionItem:
+    """条件字典的子条件项结构化表示。"""
+
+    word: str  # 纯文本（已剥离 ! > < 语法）
+    op: str  # 子条件间的连接符："and" / "or"（单条件时为空串）
+    negate: bool = False  # ! 前缀
+    startswith: bool = False  # > 前缀
+    endswith: bool = False  # < 后缀
+    placeholder: bool = False  # (同上) / ~ / （同上）占位
+
+
+@dataclass
 class DictRow:
     """单行字典的结构化解析结果（与前端 DictRow 字段对齐）。"""
 
     type: str  # normal/conditional/situation/gpt/comment/blank
     values: List[str]
     raw: str
+    # 结构化字段（供卡片 UI 展示语法分离后的"有效文本"）。
+    # values 仍保留 5 元素兼容形式以便序列化回文本时不丢信息。
+    target: Optional[str] = None
+    cond_items: List[ConditionItem] = field(default_factory=list)
+    spl_word: str = ""  # "and" / "or" / ""（仅 conditional 有值）
+    note: str = ""  # 行内 // 注释内容（已剥离 // 前缀）
 
 
 # 解析用的注释前缀集合（与前端 dictUtils.parseRows 对齐），单一事实源
@@ -48,6 +66,10 @@ _CONDITIONAL_KEYS = [
     "pre_jp", "post_jp", "pre_zh", "post_zh",
 ]
 _SITUATION_KEYS = ["mono", "diag"]
+_COND_PLACEHOLDERS = ("(同上)", "（同上）", "~")
+_COND_NEGATE_PREFIX = "!"
+_COND_STARTSWITH_PREFIX = ">"
+_COND_ENDSWITH_SUFFIX = "<"
 
 
 def _safe_escape(text: str) -> str:
@@ -58,46 +80,137 @@ def _safe_escape(text: str) -> str:
         return text
 
 
+def _split_note(rest: str) -> str:
+    """从行尾 rest 字段中提取 // / # / \\ 前缀的注释内容（不含前缀）。"""
+    if not rest:
+        return ""
+    stripped = rest.lstrip()
+    for p in _COMMENT_PREFIXES:
+        if stripped.startswith(p):
+            return stripped[len(p):].lstrip()
+    return ""
+
+
+def _parse_cond_items(cond: str) -> tuple[List[ConditionItem], str]:
+    """把条件列字符串解析为结构化子条件列表。
+
+    条件列形态: `人妻[or]ひとづま`、`!サタン`、`(同上)`、`>字<` 等。
+    支持 [and]/[or] 两种连接符；同时存在时按先 [and] 优先，
+    避免与边界情况冲突（与引擎 load_dic 保持一致）。
+
+    Returns:
+        (cond_items, spl_word): 解析后的子条件列表与连接符。
+    """
+    if not cond:
+        return [], ""
+
+    spl_word = "and" if "[and]" in cond else "or"
+    raw_items = [s.strip() for s in cond.split(f"[{spl_word}]")]
+    items: List[ConditionItem] = []
+    for i, raw in enumerate(raw_items):
+        op = spl_word if 0 < i else ""
+        placeholder = raw in _COND_PLACEHOLDERS
+        if placeholder:
+            items.append(ConditionItem(
+                word="", op=op, negate=False,
+                startswith=False, endswith=False, placeholder=True,
+            ))
+            continue
+        word = raw
+        negate = word.startswith(_COND_NEGATE_PREFIX)
+        if negate:
+            word = word[len(_COND_NEGATE_PREFIX):]
+        startswith = word.startswith(_COND_STARTSWITH_PREFIX)
+        if startswith:
+            word = word[len(_COND_STARTSWITH_PREFIX):]
+        endswith = word.endswith(_COND_ENDSWITH_SUFFIX)
+        if endswith:
+            word = word[: -len(_COND_ENDSWITH_SUFFIX)]
+        items.append(ConditionItem(
+            word=word, op=op, negate=negate,
+            startswith=startswith, endswith=endswith, placeholder=False,
+        ))
+    return items, spl_word
+
+
+def _serialize_cond_item(item: ConditionItem) -> str:
+    """把子条件项还原为引擎可识别的字符串。"""
+    if item.placeholder:
+        return "(同上)"
+    word = item.word
+    if item.startswith:
+        word = f">{word}"
+    if item.endswith:
+        word = f"{word}<"
+    if item.negate:
+        word = f"!{word}"
+    return word
+
+
 def parse_dict_line(line: str, category: str) -> DictRow:
     """纯解析：单行字典文本 -> 结构化 DictRow，不做任何 IO / 翻译副作用。
 
-    解析语义与翻译引擎 load_dic 对齐：按 | 分割、对每字段做转义处理、
-    仅在行内不含 | 时才把 // # \\ 前缀视作注释（含 | 的此类行引擎会按规则加载）。
-    Tab/四空格到 | 的转换由引擎单独负责，此处不做（保持拆分职责）。
+    解析语义与翻译引擎 load_dic 对齐：Tab/四空格先归一化为 |，再按 | 分割、
+    对每字段做转义处理；仅在行内不含 | 时才把 // # \\ 前缀视作注释
+    （含 | 的此类行引擎会按规则加载）。
 
     Args:
         line: 单行字典文本（不含换行符）。
         category: 字典类别，pre/gpt/post 之一。
 
     Returns:
-        DictRow: 含类型、字段值列表与原始行。
+        DictRow: 含类型、字段值列表与原始行，以及结构化子条件/目标/注释。
     """
+    raw_line = line
     if not line.strip():
-        return DictRow("blank", [], line)
+        return DictRow("blank", [], raw_line)
     # 注释判定：仅当行内不含 | 时，// # \\ 前缀才视作注释。
     # 含 | 的 // 行会被引擎当作有效规则加载，编辑器需保持一致，避免误判为注释。
     if "|" not in line and any(line.startswith(p) for p in _COMMENT_PREFIXES):
-        return DictRow("comment", [line], line)
-    # 与引擎一致：按 | 分割后对每字段做转义处理
+        return DictRow("comment", [line], raw_line)
+    # 与引擎 load_dic 一致：Tab / 四空格转 | 后再分割（兼容旧版 Tab 分隔字典文件）
+    line = line.replace("    ", "\t").replace("\t", "|")
     parts = [_safe_escape(p) for p in line.split("|")]
     if category == "gpt":
         src = parts[0] if len(parts) > 0 else ""
         dst = parts[1] if len(parts) > 1 else ""
-        notes = "|".join(parts[2:]) if len(parts) > 2 else ""
-        return DictRow("gpt", [src, dst, notes], line)
+        rest = "|".join(parts[2:]) if len(parts) > 2 else ""
+        note = _split_note(rest)
+        return DictRow(
+            "gpt", [src, dst, rest], raw_line,
+            target=None, cond_items=[], spl_word="", note=note,
+        )
     if len(parts) >= 4 and parts[0] in _CONDITIONAL_KEYS:
         target, cond, search, replace = parts[0], parts[1], parts[2], parts[3]
         rest = "|".join(parts[4:]) if len(parts) > 4 else ""
-        return DictRow("conditional", [target, cond, search, replace, rest], line)
+        cond_items, spl_word = _parse_cond_items(cond)
+        note = _split_note(rest)
+        return DictRow(
+            "conditional", [target, cond, search, replace, rest], raw_line,
+            target=target, cond_items=cond_items, spl_word=spl_word, note=note,
+        )
     if len(parts) >= 3 and parts[0] in _SITUATION_KEYS:
         scene = parts[0]
         search = parts[1]
         replace = "|".join(parts[2:]) if len(parts) > 2 else ""
-        return DictRow("situation", [scene, search, replace], line)
+        # situation 没有专门的 rest 列；只在末尾字段为单条注释时识别
+        note = ""
+        if len(parts) >= 4 and _COMMENT_PREFIXES and any(
+            parts[-1].lstrip().startswith(p) for p in _COMMENT_PREFIXES
+        ):
+            note = _split_note(parts[-1])
+        return DictRow(
+            "situation", [scene, search, replace], raw_line,
+            target=scene, cond_items=[], spl_word="", note=note,
+        )
     search = parts[0] if len(parts) > 0 else ""
     replace = parts[1] if len(parts) > 1 else ""
     rest = "|".join(parts[2:]) if len(parts) > 2 else ""
-    return DictRow("normal", [search, replace, rest], line)
+    note = _split_note(rest)
+    return DictRow(
+        "normal", [search, replace, rest], raw_line,
+        target=None, cond_items=[], spl_word="", note=note,
+    )
 
 
 class CBasicDicElement:
@@ -207,7 +320,6 @@ class CNormalDic:
     :dic_list:字典文件的list，可以只有文件名，然后提供dir参数，也可以是完整的，混搭也可以
     :dic_base_dir:字典目录的path，会自动进行拼接
     """
-
     conditionaDic_key = ["pre_src", "post_src", "pre_dst", "post_dst", "pre_jp", "post_jp", "pre_zh", "post_zh"]  # 条件字典（新名在前，旧名兼容）
     situationsDic_key = ["mono", "diag"]  # 场景字典
 
@@ -216,13 +328,13 @@ class CNormalDic:
         for dic_path in dic_list:
             self.load_dic(dic_path)  # 加载字典
 
-    def sort_dic(self) -> None:
+    def sort_dic(self):
         """
         按字典search_word的长度重排序
         """
         self.dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
-    def get_dst(self, word: str) -> str:
+    def get_dst(self, word: str):
         for dic in self.dic_list:
             if dic.search_word == word:
                 return dic.replace_word
@@ -331,7 +443,7 @@ class CNormalDic:
                         find_ifword_text = input_tran.pre_src
                     case "post_src" | "post_jp":
                         find_ifword_text = input_tran.post_src
-                    case "pre_dst" | "pre_zh":
+                    case "pre_dst" | "pre_dst":
                         find_ifword_text = input_tran.pre_dst
                     case "post_dst" | "post_zh":
                         find_ifword_text = input_tran.post_dst
@@ -414,20 +526,16 @@ class CGptDict:
         for dic_path in dic_list:
             self.load_dic(dic_path)  # 加载字典
 
-    def get_dst(self, word: str) -> str:
+    def get_dst(self, word: str):
         for dic in self._dic_list:
             if dic.search_word == word:
                 return dic.replace_word
         return ""
 
-    def sort_dic(self) -> None:
-        """
-        按字典search_word的长度重排序
-        """
+    def sort_dic(self):
         self._dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
     def load_dic(self, dic_path: str) -> None:
-        """加载一个字典txt到这个对象的内存"""
         if not path.exists(dic_path):
             LOGGER.warning(f"{dic_path}不存在，请检查路径。")
             return
@@ -535,7 +643,7 @@ class CGptDict:
                 elif type=="tsv":
                     promt += _format_dic_entry_tsv(dic)
                 input_text = input_text.replace(dic.search_word, "")
-                used_dic.append(dic.search_word)
+            used_dic.append(dic.search_word)
         if promt:
             if type=="gpt":
                 promt=TITLE_GPT+promt

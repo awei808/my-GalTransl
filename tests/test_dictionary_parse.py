@@ -56,8 +56,12 @@ class ParseDictLineTests(unittest.TestCase):
         self.assertEqual(r.values, ["onlysearch", "", ""])
 
     def test_dictrow_shape(self) -> None:
+        # 字典行序列化字段：基础三件套 + 4 个结构化字段（target/cond_items/spl_word/note）
         d = asdict(parse_dict_line("a|b", "pre"))
-        self.assertEqual(set(d.keys()), {"type", "values", "raw"})
+        self.assertEqual(
+            set(d.keys()),
+            {"type", "values", "raw", "target", "cond_items", "spl_word", "note"},
+        )
 
     def test_comment_with_pipe_treated_as_rule(self) -> None:
         # 含 | 的 // 行引擎按规则加载，编辑器须一致，不得误判为注释
@@ -76,6 +80,81 @@ class ParseDictLineTests(unittest.TestCase):
         r = parse_dict_line("a\\|b", "pre")
         self.assertEqual(r.values[0], "a\\")
         self.assertEqual(r.values[1], "b")
+
+    def test_conditional_with_tab_separator(self) -> None:
+        # 旧版 Tab 分隔的条件字典行应归一化为 | 后正确解析（与引擎 load_dic 一致）
+        r = parse_dict_line('post_jp\t「 [and] !"\t1^"\t「', "post")
+        self.assertEqual(r.type, "conditional")
+        self.assertEqual(r.values, ["post_jp", "「 [and] !\"", "1^\"", "「", ""])
+        # raw 保留原始 Tab 行，不被转换污染
+        self.assertEqual(r.raw, 'post_jp\t「 [and] !"\t1^"\t「')
+
+    def test_normal_with_tab_separator(self) -> None:
+        r = parse_dict_line("搜索\t替换", "pre")
+        self.assertEqual(r.type, "normal")
+        self.assertEqual(r.values, ["搜索", "替换", ""])
+        self.assertEqual(r.raw, "搜索\t替换")
+
+    def test_four_spaces_normalized_to_pipe(self) -> None:
+        # 引擎 load_dic 会把四空格归一化为 |，编辑器解析保持一致
+        r = parse_dict_line("搜索    替换", "pre")
+        self.assertEqual(r.type, "normal")
+        self.assertEqual(r.values, ["搜索", "替换", ""])
+
+    # ---- 结构化字段 ----
+    def test_conditional_extracts_target_and_cond_items(self) -> None:
+        r = parse_dict_line("pre_jp|人妻[or]ひとづま|有夫之妇|人妻|//条件字典例子", "post")
+        self.assertEqual(r.type, "conditional")
+        self.assertEqual(r.target, "pre_jp")
+        self.assertEqual(r.spl_word, "or")
+        self.assertEqual(len(r.cond_items), 2)
+        self.assertEqual(r.cond_items[0].word, "人妻")
+        self.assertEqual(r.cond_items[0].op, "")
+        self.assertEqual(r.cond_items[1].word, "ひとづま")
+        self.assertEqual(r.cond_items[1].op, "or")
+        self.assertEqual(r.note, "条件字典例子")
+
+    def test_conditional_negate_prefix_extracted(self) -> None:
+        r = parse_dict_line("pre_jp|!サタン|撒旦|魔王|//", "post")
+        self.assertEqual(r.cond_items[0].word, "サタン")
+        self.assertTrue(r.cond_items[0].negate)
+        self.assertEqual(r.note, "")
+
+    def test_conditional_startswith_endswith_extracted(self) -> None:
+        r = parse_dict_line("pre_jp|>字<|search|replace", "post")
+        self.assertEqual(r.cond_items[0].word, "字")
+        self.assertTrue(r.cond_items[0].startswith)
+        self.assertTrue(r.cond_items[0].endswith)
+
+    def test_conditional_placeholder_recognized(self) -> None:
+        r = parse_dict_line("pre_jp|(同上)|已婚|人妻|//", "post")
+        self.assertTrue(r.cond_items[0].placeholder)
+        self.assertEqual(r.cond_items[0].word, "")
+
+    def test_conditional_and_split(self) -> None:
+        r = parse_dict_line("pre_jp|甲[and]乙|search|replace", "post")
+        self.assertEqual(r.spl_word, "and")
+        self.assertEqual(r.cond_items[0].word, "甲")
+        self.assertEqual(r.cond_items[1].word, "乙")
+        self.assertEqual(r.cond_items[1].op, "and")
+
+    def test_normal_extracts_inline_note(self) -> None:
+        r = parse_dict_line("搜索|替换|//普通字典例子", "post")
+        self.assertEqual(r.type, "normal")
+        self.assertEqual(r.note, "普通字典例子")
+        # values 仍保留原始 rest（含 // 前缀），保持序列化回文本时不丢信息
+        self.assertEqual(r.values, ["搜索", "替换", "//普通字典例子"])
+
+    def test_gpt_extracts_inline_note(self) -> None:
+        r = parse_dict_line("src|dst|//说明", "gpt")
+        self.assertEqual(r.type, "gpt")
+        self.assertEqual(r.note, "说明")
+        self.assertEqual(r.values, ["src", "dst", "//说明"])
+
+    def test_situation_extracts_scene_as_target(self) -> None:
+        r = parse_dict_line("diag|台詞|独白|//说明", "pre")
+        self.assertEqual(r.target, "diag")
+        self.assertEqual(r.note, "说明")
 
 
 class LoadLineTests(unittest.TestCase):
@@ -111,6 +190,13 @@ class LoadLineTests(unittest.TestCase):
         self.assertEqual(el.search_word, "猫")
         self.assertEqual(el.replace_word, "猫娘")
         self.assertEqual(len(el.if_word_list), 1)
+
+    def test_load_line_conditional_tab(self) -> None:
+        el = CBasicDicElement()
+        el.load_line("pre_src\t含甲\t猫\t猫娘", "pre")
+        self.assertTrue(el.is_conditionaDic)
+        self.assertEqual(el.search_word, "猫")
+        self.assertEqual(el.replace_word, "猫娘")
 
     def test_load_line_situation(self) -> None:
         el = CBasicDicElement()
@@ -180,7 +266,13 @@ class ParseEndpointTests(_Base):
         )
         self.assertEqual(status, 200)
         rows = body["rows"]
-        self.assertEqual(rows[0], {"type": "normal", "values": ["搜索", "替换", ""], "raw": "搜索|替换"})
+        self.assertEqual(
+            rows[0],
+            {
+                "type": "normal", "values": ["搜索", "替换", ""], "raw": "搜索|替换",
+                "target": None, "cond_items": [], "spl_word": "", "note": "",
+            },
+        )
         self.assertEqual(rows[1]["type"], "conditional")
         self.assertEqual(rows[2]["type"], "comment")
 
@@ -198,7 +290,13 @@ class ParseEndpointTests(_Base):
             "POST", "/api/dictionaries/parse", body={"content": "src|dst|note", "category": "gpt"}
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["rows"][0], {"type": "gpt", "values": ["src", "dst", "note"], "raw": "src|dst|note"})
+        self.assertEqual(
+            body["rows"][0],
+            {
+                "type": "gpt", "values": ["src", "dst", "note"], "raw": "src|dst|note",
+                "target": None, "cond_items": [], "spl_word": "", "note": "",
+            },
+        )
 
     def test_parse_category_invalid(self) -> None:
         status, _ = self._req(
@@ -211,7 +309,11 @@ class ParseEndpointTests(_Base):
             "POST", "/api/dictionaries/parse", body={"content": "", "category": "pre"}
         )
         self.assertEqual(status, 200)
-        self.assertEqual(body["rows"], [{"type": "blank", "values": [], "raw": ""}])
+        self.assertEqual(
+            body["rows"],
+            [{"type": "blank", "values": [], "raw": "",
+              "target": None, "cond_items": [], "spl_word": "", "note": ""}],
+        )
 
     def test_parse_bad_json(self) -> None:
         status, _ = self._req("POST", "/api/dictionaries/parse", raw=b"{not json", content_type="application/json")

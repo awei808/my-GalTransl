@@ -6,11 +6,50 @@ import { apiRequest } from "../../lib/api/client";
 
 export type DictRowType = "normal" | "conditional" | "situation" | "gpt" | "comment" | "blank";
 
+export type ConditionItem = {
+  word: string;
+  op: "and" | "or" | "";
+  negate: boolean;
+  startswith: boolean;
+  endswith: boolean;
+  placeholder: boolean;
+};
+
 export type DictRow = {
   type: DictRowType;
   values: string[];
   raw: string;
+  // 结构化字段（与后端 parse_dict_line 对齐）
+  target?: string | null;
+  condItems?: ConditionItem[];
+  splWord?: "and" | "or" | "";
+  note?: string;
 };
+
+function snakeToCamelKey(k: string): string {
+  return k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * 后端 asdict 默认输出 snake_case，前端 DictRow 用 camelCase；
+ * 解析响应时统一做 key 归一化，避免字段名不匹配导致 UI 永远拿不到值。
+ */
+export function normalizeDictRow(row: Record<string, unknown>): DictRow {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(row)) {
+    out[snakeToCamelKey(k)] = row[k];
+  }
+  // condItems 内每个子项也做一次 key 归一化（op/word/negate/startswith/endswith/placeholder 本就是单词）
+  const condItems = out.condItems as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(condItems)) {
+    out.condItems = condItems.map((c) => {
+      const obj: Record<string, unknown> = {};
+      for (const k of Object.keys(c)) obj[snakeToCamelKey(k)] = c[k];
+      return obj;
+    });
+  }
+  return out as DictRow;
+}
 
 export type DictRowWithIndex = {
   row: DictRow;
@@ -63,12 +102,12 @@ export async function parseDictContent(
   content: string,
   category: DictTab,
 ): Promise<DictRow[]> {
-  const data = await apiRequest<{ rows: DictRow[] }>("/api/dictionaries/parse", {
+  const data = await apiRequest<{ rows: Record<string, unknown>[] }>("/api/dictionaries/parse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content, category }),
   });
-  return data.rows ?? [];
+  return (data.rows ?? []).map(normalizeDictRow);
 }
 
 export function rowsToText(rows: DictRow[]): string {
@@ -77,6 +116,20 @@ export function rowsToText(rows: DictRow[]): string {
       if (row.type === "blank") return "";
       if (row.type === "comment") return row.values[0] ?? row.raw;
       return row.values.join("|");
+    })
+    .join("\n");
+}
+
+/**
+ * 将行数组序列化为文本（卡片编辑后的保存路径）。
+ * 注意：conditional 行走 rowToText 结构化重建，会规范化条件列空格并丢弃尾随空备注列；
+ * 普通/场景/GPT 行走 values.join，保留原样。即"编辑一次即整篇规范化"，属既定行为。
+ */
+export function rowsToStructuredText(rows: DictRow[]): string {
+  return rows
+    .map((row) => {
+      if (row.type === "conditional") return rowToText(row);
+      return rowsToText([row]);
     })
     .join("\n");
 }
@@ -91,6 +144,48 @@ export function getTypeLabel(type: DictRowType, _tab: DictTab): string {
   return type;
 }
 
+/**
+ * 条件列子项序列化为引擎可识别的字符串（与 GalTransl.Dictionary._serialize_cond_item 对齐）。
+ */
+export function serializeCondItem(item: ConditionItem): string {
+  if (item.placeholder) return "(同上)";
+  let w = item.word;
+  if (item.startswith) w = `>${w}`;
+  if (item.endswith) w = `${w}<`;
+  if (item.negate) w = `!${w}`;
+  return w;
+}
+
+/**
+ * 卡片结构化数据 → 文本行。仅当行类型涉及结构化字段时使用，normal/gpt/situation 走 values 兼容路径。
+ * 若结构化字段缺失则回退到 values 拼接，保证老数据仍能正常序列化。
+ * 注意：条件列由 condItems 重建，会规范化空格（`「 [and]`→`「[and]`）、丢弃尾随空备注列——"保存即规范化"。
+ */
+export function rowToText(row: DictRow): string {
+  if (row.type === "blank") return "";
+  if (row.type === "comment") return row.values[0] ?? row.raw;
+  if (row.type === "gpt" || row.type === "normal" || row.type === "situation") {
+    return row.values.join("|");
+  }
+  // conditional: 用结构化字段重建
+  const target = row.target ?? row.values[0] ?? "";
+  const condText =
+    row.condItems && row.condItems.length > 0
+      ? row.condItems
+          .map((c, i) => (i === 0 ? serializeCondItem({ ...c, op: "" }) : `[${row.splWord || "or"}]${serializeCondItem(c)}`))
+          .join("")
+      : row.values[1] ?? "";
+  const search = row.values[2] ?? "";
+  const replace = row.values[3] ?? "";
+  // note 为空但原 rest（values[4]）非空时回退原值，避免非注释的尾随字段被丢弃
+  const noteSuffix = row.note
+    ? `|//${row.note}`
+    : row.values[4] && row.values[4].length > 0
+      ? `|${row.values[4]}`
+      : "";
+  return `${target}|${condText}|${search}|${replace}${noteSuffix}`;
+}
+
 export function getFieldLabels(type: DictRowType, _tab: DictTab): string[] {
   if (type === "gpt") return ["原文", "译文", "解释(可空)"];
   if (type === "normal") return ["搜索", "替换", "备注"];
@@ -98,4 +193,70 @@ export function getFieldLabels(type: DictRowType, _tab: DictTab): string[] {
   if (type === "situation") return ["场景", "搜索", "替换"];
   if (type === "comment") return ["内容"];
   return [];
+}
+
+// ---------- 单句填空卡片：搜索词前缀 & 条件语义 ----------
+
+export type SearchMode = "all" | "first" | "startswith";
+
+export const SEARCH_MODE_OPTIONS: Array<{ value: SearchMode; label: string }> = [
+  { value: "all", label: "所有" },
+  { value: "first", label: "第一个" },
+  { value: "startswith", label: "以…开头" },
+];
+
+/**
+ * 解析搜索词的引擎前缀。
+ * `1^词` → first；`^^词` → startswith；`词` → all。
+ */
+export function parseSearchPrefix(raw: string): { mode: SearchMode; word: string } {
+  if (raw.startsWith("1^")) return { mode: "first", word: raw.slice(2) };
+  if (raw.startsWith("^^")) return { mode: "startswith", word: raw.slice(2) };
+  return { mode: "all", word: raw };
+}
+
+/**
+ * 按模式重建搜索词引擎串（与 parseSearchPrefix 互为逆运算）。
+ */
+export function serializeSearchPrefix(mode: SearchMode, word: string): string {
+  if (mode === "first") return `1^${word}`;
+  if (mode === "startswith") return `^^${word}`;
+  return word;
+}
+
+export type CondSemantic = "has" | "not" | "startswith" | "same";
+
+export const COND_SEMANTIC_OPTIONS: Array<{ value: CondSemantic; label: string }> = [
+  { value: "has", label: "有" },
+  { value: "not", label: "无" },
+  { value: "startswith", label: "以…开头" },
+  { value: "same", label: "同上" },
+];
+
+/**
+ * 把条件项标志映射为语义枚举（展示用）。
+ */
+export function condSemanticOf(item: ConditionItem): CondSemantic {
+  if (item.placeholder) return "same";
+  if (item.startswith) return "startswith";
+  if (item.negate) return "not";
+  return "has";
+}
+
+/**
+ * 把语义枚举应用到条件项（幂等覆盖全部标志，避免残留非法组合）。
+ */
+export function applyCondSemantic(item: ConditionItem, semantic: CondSemantic): ConditionItem {
+  const base: ConditionItem = {
+    word: item.word,
+    op: item.op,
+    negate: false,
+    startswith: false,
+    endswith: false,
+    placeholder: false,
+  };
+  if (semantic === "has") return base;
+  if (semantic === "not") return { ...base, negate: true };
+  if (semantic === "startswith") return { ...base, startswith: true };
+  return { ...base, placeholder: true, word: "" };
 }

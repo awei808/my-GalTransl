@@ -27,12 +27,22 @@ import type {
 import {
   getFilesByTab,
   parseDictContent,
-  rowsToText,
   getFieldLabels,
   stripProjectDirMarker,
+  condSemanticOf,
+  applyCondSemantic,
+  parseSearchPrefix,
+  serializeSearchPrefix,
+  rowsToStructuredText,
+  COND_SEMANTIC_OPTIONS,
+  SEARCH_MODE_OPTIONS,
   PROJECT_DIR_MARKER,
 } from "../../components/dict/dictUtils";
-import type { DictRow, DictTab } from "../../components/dict/dictUtils";
+import type {
+  DictRow,
+  DictTab,
+  ConditionItem,
+} from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
 
 const TABS: { key: string; label: string }[] = [
@@ -136,19 +146,86 @@ export function DictionaryPage() {
   // 否则每次按键都重序列化整篇文本并重置受控 value，会打断中文 / 日文等 IME。
   const composing = new Map<string, boolean>();
 
-  /** 更新某行的某个字段值 */
-  function updateRowValue(ri: number, colIndex: number, value: string) {
+  /** 更新某行的某个字段值。结构化字段（target/condItems/note/search）走专属路径，其余走 values[col]。 */
+  function updateRowValue(
+    ri: number,
+    field:
+      | number
+      | { kind: "condItem"; index: number }
+      | { kind: "condSemantic"; index: number }
+      | { kind: "splWord" }
+      | { kind: "searchMode" }
+      | { kind: "searchWord" }
+      | "target"
+      | "note",
+    value: string,
+  ) {
     parseSeq++;  // 本地已编辑，作废飞行中的解析响应，避免其返回后覆盖本次按键
     const rows = parsedRows();
     if (ri < 0 || ri >= rows.length) return;
     const row = rows[ri];
     if (row.type === "blank" || row.type === "comment") return;
-    const vals = [...row.values];
-    vals[colIndex] = value;
+    // 安全防护：词/目标/搜索字段过滤 `|`（会破坏行分隔结构；过滤后更新保证 DOM 同步）
+    const isWordField =
+      field === "target" ||
+      (typeof field === "object" &&
+        (field.kind === "condItem" || field.kind === "searchWord")) ||
+      typeof field === "number";
+    if (isWordField && value.includes("|")) {
+      value = value.replace(/\|/g, "");
+    }
+    // 搜索词非空校验：空搜索词会触发引擎 replace("") 的危险行为（搜索词 onInput 负责弹回 DOM）
+    if (typeof field === "object" && field.kind === "searchWord" && value.trim() === "") return;
+    let next: DictRow = row;
+    if (field === "target") {
+      next = { ...row, target: value, values: row.values.map((v, i) => (i === 0 ? value : v)) };
+    } else if (field === "note") {
+      const rest = value ? `//${value}` : "";
+      next = { ...row, note: value, values: [...row.values.slice(0, 4), rest] };
+    } else if (typeof field === "object" && field.kind === "condItem") {
+      const condItems = (row.condItems ?? []).map((c, i) =>
+        i === field.index ? { ...c, word: value } : c,
+      );
+      next = { ...row, condItems };
+    } else if (typeof field === "object" && field.kind === "condSemantic") {
+      const condItems = (row.condItems ?? []).map((c, i) =>
+        i === field.index
+          ? applyCondSemantic(c, value as Parameters<typeof applyCondSemantic>[1])
+          : c,
+      );
+      next = { ...row, condItems };
+    } else if (typeof field === "object" && field.kind === "splWord") {
+      // 切换条件连接符：更新 splWord 并同步各条件项的 op（首个无 op）
+      const splWord: "and" | "or" = value === "and" ? "and" : "or";
+      const condItems = (row.condItems ?? []).map(
+        (c, i): ConditionItem =>
+          i === 0 ? { ...c, op: "" } : { ...c, op: splWord },
+      );
+      next = { ...row, splWord, condItems };
+    } else if (
+      typeof field === "object" &&
+      (field.kind === "searchMode" || field.kind === "searchWord")
+    ) {
+      // 搜索词：读当前前缀解析，改模式或词后重建 values[2]
+      const cur = parseSearchPrefix(row.values[2] ?? "");
+      const mode =
+        field.kind === "searchMode"
+          ? (value as Parameters<typeof serializeSearchPrefix>[0])
+          : cur.mode;
+      const word = field.kind === "searchWord" ? value : cur.word;
+      const vals = [...row.values];
+      vals[2] = serializeSearchPrefix(mode, word);
+      next = { ...row, values: vals };
+    } else {
+      const colIndex = field as number;
+      const vals = [...row.values];
+      vals[colIndex] = value;
+      next = { ...row, values: vals };
+    }
     const all = [...rows];
-    all[ri] = { ...row, values: vals };
+    all[ri] = next;
     setParsedRows(all);
-    setDraftText(rowsToText(all));
+    setDraftText(rowsToStructuredText(all));
   }
 
   /** 卡片字段标签 */
@@ -623,35 +700,238 @@ export function DictionaryPage() {
                       <Index each={parsedRows()}>
                         {(rowSignal, ri) => (
                           <Show when={rowSignal().type !== "blank"}>
-                            <div class="dict-card">
+                            <div class={`dict-card dict-card--${rowSignal().type}`}>
                               <Show
                                 when={rowSignal().type === "comment"}
                                 fallback={
-                                  <Index each={rowSignal().values}>
-                                    {(valSignal, ci) => (
+                                  <Show
+                                    when={rowSignal().type === "conditional"}
+                                    fallback={
                                       <>
-                                        <Show when={ci > 0}>
-                                          <span class="dict-card-arrow">→</span>
-                                        </Show>
-                                        <input
-                                          class="dict-card-input"
-                                          value={valSignal()}
-                                          onCompositionStart={() =>
-                                            composing.set(`${ri}:${ci}`, true)
-                                          }
-                                          onCompositionEnd={(e) => {
-                                            composing.set(`${ri}:${ci}`, false);
-                                            updateRowValue(ri, ci, e.currentTarget.value);
-                                          }}
-                                          onInput={(e) => {
-                                            if (e.isComposing) return; // 组合中跳过，避免打断 IME
-                                            updateRowValue(ri, ci, e.currentTarget.value);
-                                          }}
-                                          placeholder={cardFields()[ci] || ""}
-                                        />
+                                        <Index each={rowSignal().values}>
+                                          {(valSignal, ci) => (
+                                            <>
+                                              <Show when={ci > 0}>
+                                                <span class="dict-card-arrow">→</span>
+                                              </Show>
+                                              <Show
+                                                when={
+                                                  !rowSignal().note ||
+                                                  ci < rowSignal().values.length - 1
+                                                }
+                                                fallback={
+                                                  <span
+                                                    class="dict-card-note dict-card-note--inline"
+                                                    title="行内注释（不可编辑）"
+                                                  >
+                                                    // {rowSignal().note}
+                                                  </span>
+                                                }
+                                              >
+                                                <input
+                                                  class="dict-card-input"
+                                                  value={valSignal()}
+                                                  onCompositionStart={() =>
+                                                    composing.set(`${ri}:${ci}`, true)
+                                                  }
+                                                  onCompositionEnd={(e) => {
+                                                    composing.set(`${ri}:${ci}`, false);
+                                                    updateRowValue(
+                                                      ri,
+                                                      ci,
+                                                      e.currentTarget.value,
+                                                    );
+                                                  }}
+                                                  onInput={(e) => {
+                                                    if (e.isComposing) return;
+                                                    updateRowValue(
+                                                      ri,
+                                                      ci,
+                                                      e.currentTarget.value,
+                                                    );
+                                                  }}
+                                                  placeholder={cardFields()[ci] || ""}
+                                                />
+                                              </Show>
+                                            </>
+                                          )}
+                                        </Index>
                                       </>
-                                    )}
-                                  </Index>
+                                    }
+                                  >
+                                    {/* 单句填空：对【目标】若句子【语义】【词】且/或…则【模式】【搜索词】→【替换】 */}
+                                    <span class="dict-card-fill-text">对</span>
+                                    <input
+                                      class="dict-card-fill-input"
+                                      value={rowSignal().target ?? rowSignal().values[0] ?? ""}
+                                      placeholder="目标字段"
+                                      onCompositionStart={() =>
+                                        composing.set(`${ri}:target`, true)
+                                      }
+                                      onCompositionEnd={(e) => {
+                                        composing.set(`${ri}:target`, false);
+                                        updateRowValue(ri, "target", e.currentTarget.value);
+                                      }}
+                                      onInput={(e) => {
+                                        if (e.isComposing) return;
+                                        updateRowValue(ri, "target", e.currentTarget.value);
+                                      }}
+                                    />
+                                    <span class="dict-card-fill-text">，若句子</span>
+                                      <For each={rowSignal().condItems ?? []}>
+                                        {(c, ci) => (
+                                          <>
+                                            <Show when={ci() > 0}>
+                                              <select
+                                                class="dict-card-fill-select dict-card-fill-select--connector"
+                                                value={
+                                                  rowSignal().splWord === "and" ? "and" : "or"
+                                                }
+                                                onChange={(e) =>
+                                                  updateRowValue(
+                                                    ri,
+                                                    { kind: "splWord" },
+                                                    e.currentTarget.value,
+                                                  )
+                                                }
+                                                title="条件连接符"
+                                              >
+                                                <option value="and">且</option>
+                                                <option value="or">或</option>
+                                              </select>
+                                            </Show>
+                                          <select
+                                            class="dict-card-fill-select"
+                                            value={condSemanticOf(c)}
+                                            onChange={(e) =>
+                                              updateRowValue(
+                                                ri,
+                                                { kind: "condSemantic", index: ci() },
+                                                e.currentTarget.value,
+                                              )
+                                            }
+                                          >
+                                            <For each={COND_SEMANTIC_OPTIONS}>
+                                              {(o) => (
+                                                <option value={o.value}>{o.label}</option>
+                                              )}
+                                            </For>
+                                          </select>
+                                          <Show
+                                            when={!c.placeholder}
+                                            fallback={
+                                              <span class="dict-card-fill-fixed">同上</span>
+                                            }
+                                          >
+                                            <input
+                                              class="dict-card-fill-input"
+                                              value={c.word}
+                                              placeholder="条件词"
+                                              onCompositionStart={() =>
+                                                composing.set(`${ri}:cond:${ci()}`, true)
+                                              }
+                                              onCompositionEnd={(e) => {
+                                                composing.set(
+                                                  `${ri}:cond:${ci()}`,
+                                                  false,
+                                                );
+                                                updateRowValue(
+                                                  ri,
+                                                  { kind: "condItem", index: ci() },
+                                                  e.currentTarget.value,
+                                                );
+                                              }}
+                                              onInput={(e) => {
+                                                if (e.isComposing) return;
+                                                updateRowValue(
+                                                  ri,
+                                                  { kind: "condItem", index: ci() },
+                                                  e.currentTarget.value,
+                                                );
+                                              }}
+                                            />
+                                          </Show>
+                                        </>
+                                      )}
+                                    </For>
+                                    <Show when={(rowSignal().condItems ?? []).length === 0}>
+                                      <span class="dict-card-fill-fixed">（无条件）</span>
+                                    </Show>
+                                    <span class="dict-card-fill-text">，则</span>
+                                    <select
+                                      class="dict-card-fill-select"
+                                      value={parseSearchPrefix(rowSignal().values[2] ?? "").mode}
+                                      onChange={(e) =>
+                                        updateRowValue(
+                                          ri,
+                                          { kind: "searchMode" },
+                                          e.currentTarget.value,
+                                        )
+                                      }
+                                    >
+                                      <For each={SEARCH_MODE_OPTIONS}>
+                                        {(o) => (
+                                          <option value={o.value}>{o.label}</option>
+                                        )}
+                                      </For>
+                                    </select>
+                                    <input
+                                      class="dict-card-fill-input"
+                                      value={parseSearchPrefix(rowSignal().values[2] ?? "").word}
+                                      placeholder="搜索词"
+                                      onCompositionStart={() =>
+                                        composing.set(`${ri}:searchWord`, true)
+                                      }
+                                      onCompositionEnd={(e) => {
+                                        composing.set(`${ri}:searchWord`, false);
+                                        updateRowValue(
+                                          ri,
+                                          { kind: "searchWord" },
+                                          e.currentTarget.value,
+                                        );
+                                      }}
+                                      onInput={(e) => {
+                                        if (e.isComposing) return;
+                                        const raw = e.currentTarget.value;
+                                        const cleaned = raw.replace(/\|/g, "");
+                                        if (cleaned !== raw) e.currentTarget.value = cleaned;
+                                        if (cleaned.trim() === "") {
+                                          // 空搜索词弹回原值（引擎 replace("") 有危险行为）
+                                          e.currentTarget.value = parseSearchPrefix(
+                                            rowSignal().values[2] ?? "",
+                                          ).word;
+                                          return;
+                                        }
+                                        updateRowValue(
+                                          ri,
+                                          { kind: "searchWord" },
+                                          cleaned,
+                                        );
+                                      }}
+                                    />
+                                    <span class="dict-card-fill-text">→</span>
+                                    <input
+                                      class="dict-card-fill-input"
+                                      value={rowSignal().values[3] ?? ""}
+                                      placeholder="替换词"
+                                      onCompositionStart={() =>
+                                        composing.set(`${ri}:3`, true)
+                                      }
+                                      onCompositionEnd={(e) => {
+                                        composing.set(`${ri}:3`, false);
+                                        updateRowValue(ri, 3, e.currentTarget.value);
+                                      }}
+                                      onInput={(e) => {
+                                        if (e.isComposing) return;
+                                        updateRowValue(ri, 3, e.currentTarget.value);
+                                      }}
+                                    />
+                                    <Show when={rowSignal().note}>
+                                      <span class="dict-card-note" title="行内注释">
+                                        // {rowSignal().note}
+                                      </span>
+                                    </Show>
+                                  </Show>
                                 }
                               >
                                 <span class="dict-card-comment">{rowSignal().values[0]}</span>
