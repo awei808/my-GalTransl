@@ -257,5 +257,190 @@ class NewlineDetectionTests(_Base):
         self.assertNotIn("丢失换行", results[1]["problem"])
 
 
+class LongSentenceNewlineTests(_Base):
+    """长句丢失换行：平均分句长度超过 avgSentenceLengthThreshold 才报。"""
+
+    def _set_problem_config(self, project_dir: str, problems: list, threshold: int = 17) -> None:
+        cfg_path = os.path.join(project_dir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {
+            "problemList": problems,
+            "avgSentenceLengthThreshold": threshold,
+        }
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+
+    def test_long_sentence_triggers_when_avg_exceeds_threshold(self) -> None:
+        # 译文无换行且整句超长（avg=整句长度 > 17）→ 报"长句丢失换行"
+        _, init = self._init_project("ls_long")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文第一行\\n原文第二行",
+                "post_src": "原文第一行\\n原文第二行",
+                "pre_dst": "这是一句非常非常长的中文句子它把所有内容都压缩在一起没有任何换行完全看不出原来的段落结构",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/ls.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertIn("长句丢失换行", results[1]["problem"])
+
+    def test_short_sentence_not_triggers(self) -> None:
+        # 有换行且平均分句长度 ≤ 阈值 → 不报
+        _, init = self._init_project("ls_short")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文第一行\\n原文第二行\\n原文第三行",
+                "post_src": "原文第一行\\n原文第二行\\n原文第三行",
+                "pre_dst": "短句。\\n短句。\\n短句。",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/ls.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertNotIn("长句丢失换行", results[1]["problem"])
+
+    def test_no_newline_in_src_skips_detection(self) -> None:
+        # 原文无换行 → 门控跳过，即使译文超长也不报
+        _, init = self._init_project("ls_gate")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文根本没有换行",
+                "post_src": "原文根本没有换行",
+                "pre_dst": "这是一句非常非常长的中文句子它把所有内容都压缩在一起没有任何换行完全看不出原来的段落结构",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/ls.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertNotIn("长句丢失换行", results[1]["problem"])
+
+    def test_real_newline_in_src_triggers(self) -> None:
+        # 真实换行（\r\n 控制符）同样触发：译成一行超长句
+        _, init = self._init_project("ls_real")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 10)
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "コスタリアは無人島を\r\n丸ごと開発して作られた\r\n日本最大の離島コスプレリゾートだ。",
+                "post_src": "コスタリアは無人島を\r\n丸ごと開発して作られた\r\n日本最大の離島コスプレリゾートだ。",
+                "pre_dst": "既然号称Cosplay度假区，整座岛都被打造得能够作为摄影棚发挥作用，备有各种情境与类型的舞台。",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/ls.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertIn("长句丢失换行", results[1]["problem"])
+
+
+class NewlinePositionTests(_Base):
+    """换行位置异常：换行符未紧跟允许标点（含逗号/顿号）之后才报。"""
+
+    def _set_problem_config(self, project_dir: str) -> None:
+        cfg_path = os.path.join(project_dir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {"problemList": ["换行位置异常"]}
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+
+    def _check(self, pid: str, pre_dst: str):
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文",
+                "post_src": "原文",
+                "pre_dst": pre_dst,
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/np.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        return {r["index"]: r for r in body["results"]}[1]["problem"]
+
+    def test_break_after_punctuation_not_reported(self) -> None:
+        # 句号/逗号/顿号后换行均不报
+        _, init = self._init_project("np_ok")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "第一句。\\n第二句，\\n第三顿、\\n第四句。")
+        self.assertNotIn("换行位置异常", problem)
+
+    def test_break_after_hanzi_reports(self) -> None:
+        # 汉字后直接换行 → 报第1行
+        _, init = self._init_project("np_bad1")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "没有标点就换行\\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_multiple_bad_lines_reported(self) -> None:
+        # 两处汉字后换行 → 行号列表正确
+        _, init = self._init_project("np_bad2")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "句号。\\n汉字换行\\n句号。\\n汉字换行\\n末尾")
+        self.assertIn("换行位置异常：第2、4行", problem)
+
+    def test_leading_and_consecutive_newlines_skipped(self) -> None:
+        # 行首换行跳过；连续换行中前段为空的跳过；正常汉字后换行仍上报
+        _, init = self._init_project("np_skip")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "\\n句号。\\n\\n汉字后换行\\n末尾")
+        self.assertIn("换行位置异常：第4行", problem)
+
+    def test_real_newline_after_hanzi_reports(self) -> None:
+        # 真实换行（\n 控制符）同样识别：汉字后换行报异常
+        _, init = self._init_project("np_real")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "没有标点就换行\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_real_newline_after_punctuation_ok(self) -> None:
+        # 真实换行（\n 控制符）在句号后 → 不报
+        _, init = self._init_project("np_real_ok")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "第一句。\n第二句，\n第三顿、\n第四句。")
+        self.assertNotIn("换行位置异常", problem)
+
+
 if __name__ == "__main__":
     unittest.main()

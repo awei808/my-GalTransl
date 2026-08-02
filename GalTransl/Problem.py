@@ -25,12 +25,22 @@ MONOLOGUE_MALE_HE_EXCLUDES = (
     "他山",
 )
 
+# 允许出现在换行前的字符：中文标点 + 逗号、顿号（顿号后换行不判定异常）
+_ALLOWED_BREAK_CHARS = punctuation_zh + "，、"
+
 
 def _newline_count(s: str) -> int:
     """统计换行次数：真实 \\r\\n/\\n/\\r 与字面转义（"\\r\\n"/"\\n"）均计为 1 次，CRLF 不重复计。"""
     norm = s.replace("\\r\\n", "\n").replace("\\n", "\n")
     norm = norm.replace("\r\n", "\n").replace("\r", "\n")
     return norm.count("\n")
+
+
+def _clean_text_len(s: str) -> int:
+    """去除全部换行后的纯文本长度（与 _newline_count 归一化口径一致）。"""
+    norm = s.replace("\\r\\n", "\n").replace("\\n", "\n")
+    norm = norm.replace("\r\n", "\n").replace("\r", "\n")
+    return len(norm) - norm.count("\n")
 
 
 def find_problems(
@@ -110,6 +120,25 @@ def find_problems(
         if CProblemType.多加换行 in find_type:
             if _newline_count(pre_src) < _newline_count(post_dst):
                 problem_list.append("多加换行")
+        if CProblemType.长句丢失换行 in find_type:
+            # 原文有换行才检测；真实/字面换行均归一化处理
+            if _newline_count(pre_src) > 0:
+                n_number = _newline_count(post_dst)
+                clean_len = _clean_text_len(post_dst)
+                if clean_len / (n_number + 1) > projectConfig.getAvgSentenceLengthThreshold():
+                    problem_list.append("长句丢失换行")
+        if CProblemType.换行位置异常 in find_type:
+            bad_lines = []
+            # 归一化真实/字面换行为真实 \n 后按段检查换行前字符
+            _norm = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
+            _norm = _norm.replace("\r\n", "\n").replace("\r", "\n")
+            _segments = _norm.split("\n")
+            for _i in range(1, len(_segments)):
+                _prev = _segments[_i - 1][-1] if _segments[_i - 1] else ""
+                if _prev and _prev not in _ALLOWED_BREAK_CHARS:
+                    bad_lines.append(str(_i))
+            if bad_lines:
+                problem_list.append("换行位置异常：第" + "、".join(bad_lines) + "行")
         if CProblemType.比日文长 in find_type or CProblemType.比日文长严格 in find_type:
             len_beta = 1.3
             min_diff=8

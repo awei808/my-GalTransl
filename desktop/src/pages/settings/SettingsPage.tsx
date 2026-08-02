@@ -61,6 +61,8 @@ export function SettingsPage() {
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   // 勾选状态来源：当前项目 config 的 problemAnalyze.problemList，保存时写回 YAML
   const [enabledProblemTypes, setEnabledProblemTypesSignal] = createSignal<string[]>([]);
+  // 长句丢失换行的平均分句长度阈值（写回 problemAnalyze.avgSentenceLengthThreshold）
+  const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
   const [problemLoading, setProblemLoading] = createSignal(false);
   const [configLoading, setConfigLoading] = createSignal(false);
   const [configLoadError, setConfigLoadError] = createSignal("");
@@ -219,6 +221,12 @@ export function SettingsPage() {
         }
       }
       setEnabledProblemTypesSignal(list);
+      const rawThreshold = section["avgSentenceLengthThreshold"];
+      setAvgThreshold(
+        typeof rawThreshold === "number" && Number.isFinite(rawThreshold)
+          ? rawThreshold
+          : 17
+      );
     } catch (e) {
       setConfigLoadError(`加载问题检测配置失败：${getErrorMessage(e)}`);
       setEnabledProblemTypesSignal([]);
@@ -245,6 +253,7 @@ export function SettingsPage() {
         ...((config["problemAnalyze"] as Record<string, unknown> | undefined) ?? {}),
       };
       problemAnalyze["problemList"] = enabledProblemTypes();
+      problemAnalyze["avgSentenceLengthThreshold"] = avgThreshold();
       config["problemAnalyze"] = problemAnalyze;
       await updateProjectConfig(pid, {
         config,
@@ -523,6 +532,28 @@ export function SettingsPage() {
               </For>
             </div>
           )}
+
+          {/* 长句丢失换行阈值 */}
+          <div class="settings-field" style="margin-top: 12px">
+            <label class="settings-field-label" for="avg-sentence-length-threshold">
+              平均分句长度阈值（长句丢失换行）
+            </label>
+            <input
+              id="avg-sentence-length-threshold"
+              class="settings-input settings-input--number"
+              type="number"
+              min={10}
+              max={50}
+              step={1}
+              value={avgThreshold()}
+              disabled={!appState.activeProjectId}
+              onChange={(e) => {
+                const raw = Number((e.target as HTMLInputElement).value);
+                setAvgThreshold(Number.isFinite(raw) ? raw : 17);
+              }}
+            />
+            <span class="settings-hint">译文平均分句长度超过该值即报「长句丢失换行」，建议 15~25。</span>
+          </div>
 
           <Show when={configLoadError()}>
             <div class="settings-error">{configLoadError()}</div>

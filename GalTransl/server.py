@@ -1081,6 +1081,8 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "语言不通", "description": "译文包含大量非 GBK 字符（仅对中文目标语言生效）。"},
     {"name": "缺控制符", "description": "译文缺少原文中的控制符（如 \\n、变量标记等）。"},
     {"name": "独白男他", "description": "独白（无name）译文出现'他'。"},
+    {"name": "长句丢失换行", "description": "译文平均分句长度超过阈值，可能丢失了应有的换行。"},
+    {"name": "换行位置异常", "description": "换行符未紧跟中文标点（逗号/顿号/句号等）之后，断行位置可能不当。"},
 ]
 
 

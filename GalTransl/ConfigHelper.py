@@ -111,6 +111,8 @@ class CProblemType(Enum):
     语言不通 = 10
     缺控制符 = 11
     独白男他 = 12
+    长句丢失换行 = 13
+    换行位置异常 = 14
 
 
 class CProjectConfig:
@@ -244,6 +246,17 @@ class CProjectConfig:
         elif not self.projectConfig["problemAnalyze"]["arinashiDict"]:
             return {}
         return self.projectConfig["problemAnalyze"]["arinashiDict"]
+
+    def getAvgSentenceLengthThreshold(self) -> int:
+        """长句丢失换行的平均分句长度阈值，默认17，建议15~25。"""
+        try:
+            return int(
+                self.projectConfig["problemAnalyze"].get(
+                    "avgSentenceLengthThreshold", 17
+                )
+            )
+        except (ValueError, TypeError, AttributeError):
+            return 17
 
     def refreshProxyEnabledFlag(self) -> None:
         self.keyValues["internals.enableProxy"] = has_usable_proxy_config(
