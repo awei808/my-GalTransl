@@ -14,6 +14,7 @@ import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
+import { isDarkTheme, themeDark } from "../../lib/theme";
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -155,15 +156,8 @@ function generateColorAt(index: number, config: ThemeConfig): string {
 function getNameColor(name: string): string {
   if (!name) return "#999";
   const idx = hashId(name) % 10000;
-  return generateColorAt(idx, _IS_DARK_THEME ? DARK_THEME : LIGHT_THEME);
+  return generateColorAt(idx, isDarkTheme() ? DARK_THEME : LIGHT_THEME);
 }
-
-// 模块级主题缓存——避免每次调用 getNameColor 都查 DOM
-const _IS_DARK_THEME =
-  typeof document !== "undefined" &&
-  (document.documentElement.classList.contains("dark") ||
-    document.documentElement.getAttribute("data-theme") === "dark" ||
-    window.matchMedia("(prefers-color-scheme: dark)").matches);
 
 /* ── 单条 CacheEntry 组件 ── */
 function EntryCard(props: {
@@ -186,8 +180,11 @@ function EntryCard(props: {
     return t && (t.explanation || t.suggestion) ? t : null;
   });
 
-  // 角色名颜色：同一名字确定性映射到同色
-  const nameColor = createMemo(() => getNameColor(String(e().name || "")));
+  // 角色名颜色：同一名字确定性映射到同色（依赖 themeDark，主题切换时自动重算）
+  const nameColor = createMemo(() => {
+    themeDark();
+    return getNameColor(String(e().name || ""));
+  });
 
   // 本地展开状态——仅影响自身，不再触发全量重算
   const [expanded, setExpanded] = createSignal(false);

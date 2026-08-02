@@ -115,7 +115,7 @@ export function PromptTemplatesPage() {
                 </div>
               </div>
 
-              <div class="pt-field pt-field--system">
+              <div class="pt-field">
                 <label class="pt-label">System Prompt（系统提示词）</label>
                 <textarea
                   class="pt-textarea pt-textarea--system"
@@ -136,7 +136,7 @@ export function PromptTemplatesPage() {
                   spellcheck={false}
                 />
               </div>
-              <div class="pt-field pt-field--user">
+              <div class="pt-field">
                 <label class="pt-label">User Prompt（用户提示词）</label>
                 <textarea
                   class="pt-textarea pt-textarea--user"

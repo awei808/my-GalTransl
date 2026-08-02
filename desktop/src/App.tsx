@@ -11,6 +11,7 @@ import { ToastHost } from "./components/toast/ToastHost";
 import { ConfirmHost } from "./components/confirm/ConfirmHost";
 import { appState, setAppState } from "./stores/appStore";
 import { setLogProject } from "./stores/logStore";
+import { applyThemePreference } from "./lib/theme";
 
 function handleExternalLinkClick(e: MouseEvent) {
   const anchor = (e.target as HTMLElement | null)?.closest("a");
@@ -59,6 +60,8 @@ export function App() {
   });
 
   onMount(() => {
+    // 启动时应用已保存的主题偏好（theme.ts 模块加载时已应用一次，此处幂等兜底）
+    applyThemePreference();
     document.addEventListener("keydown", handleGlobalKeyDown);
     document.addEventListener("click", handleExternalLinkClick);
   });

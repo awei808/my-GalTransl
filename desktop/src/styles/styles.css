@@ -310,36 +310,6 @@ textarea {
   flex: 1;
 }
 
-/* 问题检测列表 */
-.problem-group {
-  margin-bottom: var(--space-2);
-}
-
-.problem-filename {
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--color-text-secondary);
-  padding: var(--space-05) var(--space-1);
-  border-bottom: 1px solid var(--color-border-default);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.problem-entry {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-05) var(--space-1);
-  cursor: pointer;
-  border-radius: 3px;
-  transition: background 0.15s;
-}
-
-.problem-entry:hover {
-  background: var(--color-bg-panel);
-}
-
 /* ── 校对页快捷筛选栏 ── */
 .review-filter-bar {
   display: flex;
@@ -359,17 +329,17 @@ textarea {
   transition: all 0.15s;
 }
 .review-filter-chip--active {
-  background: #0057b3;
-  border-color: #0057b3;
-  color: #fff;
+  background: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
 }
 .review-filter-select {
   padding: 3px 6px;
   font-size: 12px;
   border: 1px solid var(--color-border-default);
   border-radius: 4px;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
 }
 .review-filter-count {
   font-size: 12px;
@@ -380,7 +350,7 @@ textarea {
   font-size: 12px;
   border: none;
   background: transparent;
-  color: #0057b3;
+  color: var(--color-brand-primary);
   cursor: pointer;
 }
 
@@ -390,7 +360,7 @@ textarea {
   flex-wrap: wrap;
   gap: 4px 10px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border-light);
+  border-bottom: 1px solid var(--color-border-default);
   font-size: 12px;
 }
 .problem-stats-total {
@@ -416,8 +386,8 @@ textarea {
   font-size: 12px;
   border: 1px solid var(--color-border-default);
   border-radius: 4px;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
 }
 .problem-colorbar {
   width: 3px;
@@ -443,12 +413,12 @@ textarea {
   z-index: 100;
   width: 260px;
   padding: 8px 10px;
-  background: var(--color-bg);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-size: 12px;
-  color: var(--color-text);
+  color: var(--color-text-primary);
   line-height: 1.5;
   white-space: normal;
   font-weight: normal;
@@ -464,23 +434,6 @@ textarea {
 }
 .problem-tip-line {
   display: block;
-}
-
-.problem-index {
-  flex-shrink: 0;
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  min-width: 2.5em;
-}
-
-.problem-desc {
-  flex: 1;
-  font-size: var(--font-sm);
-  color: var(--color-text-primary);
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ── 文件树（类 VSCode） ── */
@@ -568,9 +521,9 @@ textarea {
   font-size: 10px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-full);
   background: var(--color-brand-primary);
-  color: #fff;
+  color: var(--color-text-on-brand);
   flex-shrink: 0;
 }
 
@@ -579,7 +532,7 @@ textarea {
   position: fixed;
   z-index: var(--z-dropdown);
   min-width: 160px;
-  background: var(--color-bg-elevated, #fff);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
@@ -605,10 +558,10 @@ textarea {
   background: var(--color-bg-hover);
 }
 .ctx-menu__item--danger {
-  color: #d92d20;
+  color: var(--color-status-error);
 }
 .ctx-menu__item--danger:hover {
-  background: rgba(217, 45, 32, 0.1);
+  background: var(--color-bg-error);
 }
 
 /* ── 问题检测 ── */
@@ -643,7 +596,7 @@ textarea {
   flex-shrink: 0;
 }
 .problem-toggle:hover {
-  color: #0057b3;
+  color: var(--color-brand-primary);
 }
 .problem-toggle-icon {
   width: 14px;
@@ -1149,32 +1102,32 @@ textarea {
 }
 
 .model-check__status--checking .model-check__dot {
-  background: var(--color-info, #2f80ed);
+  background: var(--color-status-info);
   animation: model-check-pulse 1s ease-in-out infinite;
 }
 
 .model-check__status--ok .model-check__dot {
-  background: var(--color-success, #27ae60);
+  background: var(--color-status-success);
 }
 
 .model-check__status--ok .model-check__text {
-  color: var(--color-success, #27ae60);
+  color: var(--color-status-success);
 }
 
 .model-check__status--error .model-check__dot {
-  background: var(--color-danger, #eb5757);
+  background: var(--color-status-error);
 }
 
 .model-check__status--error .model-check__text {
-  color: var(--color-danger, #eb5757);
+  color: var(--color-status-error);
 }
 
 .model-check__status--na .model-check__dot {
-  background: var(--color-text-tertiary, #9ca3af);
+  background: var(--color-text-tertiary);
 }
 
 .model-check__status--na .model-check__text {
-  color: var(--color-text-tertiary, #9ca3af);
+  color: var(--color-text-tertiary);
 }
 
 .model-check__goto-config {
@@ -1261,17 +1214,6 @@ textarea {
   line-height: 1.4;
 }
 
-/* ── 危险按钮 ── */
-.btn--danger {
-  background: var(--color-status-error);
-  color: var(--color-text-on-brand);
-  border-color: var(--color-status-error);
-}
-
-.btn--danger:hover {
-  opacity: 0.9;
-}
-
 /* ── 翻译主体两栏 ── */
 .translate-body {
   flex: 1;
@@ -1353,14 +1295,14 @@ textarea {
 }
 
 .panel-tab:hover {
-  color: var(--color-primary, #0066CC);
-  background: rgba(0, 102, 204, 0.05);
+  color: var(--color-brand-primary);
+  background: var(--color-bg-hover);
 }
 
 .panel-tab--active {
-  color: var(--color-primary, #0066CC);
-  border-color: var(--color-primary, #0066CC);
-  background: #fff;
+  color: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  background: var(--color-bg-panel);
 }
 
 .panel-tab-badge {
@@ -1371,8 +1313,8 @@ textarea {
   line-height: 18px;
   text-align: center;
   border-radius: 9px;
-  background: var(--color-primary, #0066CC);
-  color: #fff;
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
   font-weight: var(--weight-semibold);
 }
 
@@ -1388,9 +1330,9 @@ textarea {
 }
 .prompt-worker-meta {
   padding: 2px var(--space-2) var(--space-1);
-  font-size: var(--font-xs, 12px);
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
-  border-top: 1px dashed var(--color-border-light, #e0e0e0);
+  border-top: 1px dashed var(--color-border-default);
 }
 
 /* ── panel-content 变体 ── */
@@ -1408,8 +1350,8 @@ textarea {
   align-items: center;
   justify-content: center;
   padding: var(--space-8) var(--space-4);
-  border: 1px dashed var(--color-border-light, #d9d9d9);
-  border-radius: var(--radius-lg, 12px);
+  border: 1px dashed var(--color-border-default);
+  border-radius: var(--radius-lg);
   margin-top: var(--space-4);
 }
 
@@ -1448,13 +1390,13 @@ textarea {
   color: var(--color-text-primary);
 }
 .flow-list li b {
-  color: var(--color-primary, #0066CC);
+  color: var(--color-brand-primary);
 }
 .flow-note {
   margin: var(--space-3) 0 0;
   padding: var(--space-2) var(--space-3);
-  background: rgba(0, 102, 204, 0.06);
-  border-left: 3px solid var(--color-primary, #0066CC);
+  background: var(--color-bg-info);
+  border-left: 3px solid var(--color-brand-primary);
   border-radius: var(--radius-sm);
   font-size: var(--font-sm);
   color: var(--color-text-secondary);
@@ -1464,7 +1406,7 @@ textarea {
 /* ── 文件进度行 ── */
 .fp-row {
   padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--color-border-light, #f0f0f0);
+  border-bottom: 1px solid var(--color-border-default);
 }
 .fp-row:last-child {
   border-bottom: none;
@@ -1489,8 +1431,8 @@ textarea {
   flex-shrink: 0;
   margin-left: var(--space-2);
 }
-.fp-status--done { color: var(--color-success, #28a745); }
-.fp-status--running { color: var(--color-primary, #0066CC); }
+.fp-status--done { color: var(--color-status-success); }
+.fp-status--running { color: var(--color-brand-primary); }
 
 .fp-meta {
   display: flex;
@@ -1507,14 +1449,14 @@ textarea {
 
 .fp-fail {
   font-size: var(--font-sm);
-  color: var(--color-error, #dc3545);
+  color: var(--color-status-error);
   font-weight: var(--weight-medium);
 }
 
 .fp-bar-track {
   width: 100%;
   height: 5px;
-  background: var(--color-border-light, #e8e8e8);
+  background: var(--color-bg-subtle);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -1526,20 +1468,20 @@ textarea {
 }
 
 .fp-bar-fill--running {
-  background: linear-gradient(90deg, #3399ff, #0077dd);
+  background: linear-gradient(90deg, var(--color-brand-primary), var(--color-brand-primary-hover));
 }
 
 .fp-bar-fill--done {
-  background: linear-gradient(90deg, #34c759, #22a855);
+  background: linear-gradient(90deg, var(--color-progress-complete), var(--color-status-success));
 }
 
 /* ── 错误条目 ── */
 .error-entry {
   padding: var(--space-2);
-  border: 1px solid var(--color-border-light, #f0f0f0);
-  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
   margin-bottom: var(--space-1);
-  background: var(--color-bg-error, #fff5f5);
+  background: var(--color-bg-error);
 }
 
 .error-entry__head {
@@ -1552,8 +1494,8 @@ textarea {
 .error-entry__kind {
   font-size: 11px;
   font-weight: var(--weight-semibold);
-  color: var(--color-error, #dc3545);
-  background: rgba(220, 53, 69, 0.08);
+  color: var(--color-status-error);
+  background: var(--color-bg-error);
   padding: 1px 6px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -1579,7 +1521,7 @@ textarea {
   justify-content: space-between;
   align-items: center;
   padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--color-border-light, #f0f0f0);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .retransl-row:last-child {
@@ -2161,7 +2103,7 @@ textarea {
 }
 
 .settings-problem-item input[type="checkbox"] {
-  accent-color: var(--color-primary);
+  accent-color: var(--color-brand-primary);
   margin-top: 2px;
   flex-shrink: 0;
 }
@@ -2549,7 +2491,7 @@ a:hover {
 
 .toast-close:hover {
   opacity: 0.8;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--color-bg-hover);
 }
 
 /* ==========================================
@@ -2954,7 +2896,7 @@ a:hover {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
   font-size: var(--font-sm);
   cursor: pointer;
@@ -2965,11 +2907,11 @@ a:hover {
 }
 
 .text-plugin-chip:hover {
-  border-color: var(--color-primary);
+  border-color: var(--color-brand-primary);
 }
 
 .text-plugin-chip input[type="checkbox"] {
-  accent-color: var(--color-primary);
+  accent-color: var(--color-brand-primary);
 }
 
 .wizard-path-preview {
@@ -3227,52 +3169,6 @@ a:hover {
   min-height: 0;
 }
 
-/* ── 字典卡片 ── */
-.dict-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-panel);
-}
-
-.dict-card-arrow {
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-  padding: 0 var(--space-05);
-}
-
-.dict-card-comment {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dict-card-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  font-size: var(--font-base);
-  background: transparent;
-  padding: 2px 0;
-}
-
-.dict-card-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-1);
-}
-
-.dict-card-add {
-  align-self: flex-start;
-}
-
 /* 左侧文件列表 */
 .dict-file-list {
   width: 220px;
@@ -3421,12 +3317,6 @@ a:hover {
   font-family: var(--font-mono);
   font-size: var(--font-sm);
   color: var(--color-text-primary);
-}
-
-.dict-editor-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
 }
 
 .dict-dirty-mark {
@@ -3622,7 +3512,7 @@ a:hover {
 }
 
 .dict-card-flag--negate {
-  color: #c44;
+  color: var(--color-status-error);
   font-weight: var(--weight-semibold);
 }
 
@@ -3844,7 +3734,7 @@ a:hover {
   padding: 1px 6px;
   border-radius: 8px;
   background: var(--color-brand-primary);
-  color: #fff;
+  color: var(--color-text-on-brand);
   font-weight: var(--weight-medium);
 }
 
@@ -4052,9 +3942,9 @@ a:hover {
   transition: all 0.12s ease;
 }
 .bp-row-del:hover {
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-  background: var(--color-danger-subtle);
+  border-color: var(--color-status-error);
+  color: var(--color-status-error);
+  background: var(--color-bg-error);
 }
 .bp-add-btn {
   align-self: flex-start;
@@ -4420,7 +4310,7 @@ a:hover {
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
-  background: var(--color-accent-subtle, #eef4ff);
+  background: var(--color-bg-info);
   border-bottom: 1px solid var(--color-border-default);
 }
 
@@ -4521,7 +4411,7 @@ a:hover {
 
 .pc-external-info__textarea:focus {
   outline: none;
-  border-color: var(--color-accent, #0066cc);
+  border-color: var(--color-border-focus);
 }
 
 .pc-external-info__textarea::placeholder {

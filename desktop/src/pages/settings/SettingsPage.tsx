@@ -26,6 +26,7 @@ import {
 import { fetchVersion, fetchVersionCheck, fetchProblemTypes } from "../../lib/api/general";
 import { fetchProjectConfig, updateProjectConfig } from "../../lib/api/project";
 import type { ThemeMode, ProblemTypeInfo } from "../../lib/api/types";
+import { applyThemePreference } from "../../lib/theme";
 import { compressImageToDataUrl } from "./imageCompress";
 import { getErrorMessage } from "../../lib/errors";
 
@@ -96,8 +97,8 @@ export function SettingsPage() {
   function applyTheme(mode: ThemeMode) {
     const next = setThemeModePreference(mode);
     setTheme(next);
-    // 切换 data-theme
-    document.documentElement.setAttribute("data-theme", next === "system" ? "" : next);
+    // 切换 data-theme（system 模式由 theme 模块监听系统偏好）
+    applyThemePreference();
   }
 
   function applyHideConsole(enabled: boolean) {
@@ -535,12 +536,12 @@ export function SettingsPage() {
 
           {/* 长句丢失换行阈值 */}
           <div class="settings-field" style="margin-top: 12px">
-            <label class="settings-field-label" for="avg-sentence-length-threshold">
+            <label class="settings-label" for="avg-sentence-length-threshold">
               平均分句长度阈值（长句丢失换行）
             </label>
             <input
               id="avg-sentence-length-threshold"
-              class="settings-input settings-input--number"
+              class="field__input settings-number-sm"
               type="number"
               min={10}
               max={50}

@@ -47,6 +47,7 @@
   --color-bg-warning: #fff7e6;
   --color-bg-error: #ffebee;
   --color-bg-info: #e6f1fb;
+  --color-bg-subtle: #f3f6fa; /* 次级背景（代码块/只读输入/分组行） */
 
   /* --- 翻译专用色 --- */
   --color-progress-complete: #10b981;
@@ -90,6 +91,7 @@
   --color-bg-warning: rgba(210, 153, 34, 0.12);
   --color-bg-error: rgba(248, 81, 73, 0.12);
   --color-bg-info: rgba(0, 153, 255, 0.12);
+  --color-bg-subtle: #262c33; /* 次级背景（代码块/只读输入/分组行） */
 
   --color-progress-complete: #34d399;
   --color-progress-pending: #4b5563;
@@ -109,6 +111,7 @@
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace;
 
   /* 字号（px：桌面端固定） */
+  --font-xs: 11px; /* 更小辅助文字（问题索引/徽标等） */
   --font-sm: 12px; /* 辅助文字/状态栏 */
   --font-base: 13px; /* 全局 UI 基准（VSCode 标准） */
   --font-md: 14px; /* 按钮/菜单/标签 */
@@ -133,6 +136,7 @@
    ========================================== */
 :root {
   --space-0: 0px;
+  --space-05: 4px; /* 半格 */
   --space-1: 8px; /* 基准网格 */
   --space-1-5: 12px; /* 1.5 格 */
   --space-2: 16px; /* 2 格，常用内边距 */
