@@ -248,6 +248,8 @@ async def _check_model_availability(
 
     try:
         cfg = CProjectConfig(project_dir, resolved_config)
+        # 服务端检测走非交互模式：不激活 alive_bar，避免与其它进度条嵌套报错
+        cfg.non_interactive = True
     except Exception:
         return {
             "ok": False,
@@ -2591,6 +2593,7 @@ def build_handler(registry: JobRegistry) -> type:
                     "current_file": runtime["current_file"],
                     "latest_prompt_preview": runtime.get("latest_prompt_preview", ""),
                     "latest_assembled_preview": runtime.get("latest_assembled_preview", ""),
+                    "prompt_previews": runtime.get("prompt_previews", {}),
                     "recent_errors": runtime["recent_errors"],
                     "recent_successes": runtime["recent_successes"],
                     "notices": runtime.get("notices", []),

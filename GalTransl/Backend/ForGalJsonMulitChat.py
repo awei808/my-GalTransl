@@ -21,7 +21,7 @@ from GalTransl.Backend.Prompts import (
     H_WORDS_LIST,
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.server_runtime import set_live_snippets
+from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
 from GalTransl.Service import JobCancelledError
 from openai._types import NOT_GIVEN
 
@@ -1670,12 +1670,20 @@ class ForGalJsonMulitChat(BaseTranslate):
                 batch_metadata_block=batch_metadata_block,
             )
 
-            # 实时推送当前提示词预览（前端翻译控制台左栏"当前提示词"）
+            # 实时推送当前提示词预览（前端翻译控制台左栏"当前提示词"，多 worker 时按 worker 分板块）
             _project_dir = self.pj_config.getProjectDir()
             try:
-                set_live_snippets(_project_dir, prompt_preview=user_content)
-            except Exception:
-                pass
+                LOGGER.debug(
+                    f"[prompt-preview] translate 推送提示词: WORKER_ID_CTX={WORKER_ID_CTX.get()!r}, "
+                    f"filename={filename!r}, idx_tip={idx_tip!r}"
+                )
+                set_live_snippets(
+                    _project_dir,
+                    prompt_preview=user_content,
+                    filename=f"{filename}:{idx_tip}",
+                )
+            except Exception as e:
+                LOGGER.warning(f"[prompt-preview] set_live_snippets 调用失败: {e}")
 
             # 组装本次调用的 messages（历史 + 本轮 user）
             call_messages = conv + [{"role": "user", "content": user_content}]

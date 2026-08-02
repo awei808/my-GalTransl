@@ -280,6 +280,14 @@ export type ProjectRetranslStatEntry = {
   count: number;
 };
 
+export type WorkerPromptPreview = {
+  worker_id: string;
+  preview: string;
+  filename: string;
+  batch: string;
+  updated_at: string;
+};
+
 export type ProjectRuntimeResponse = {
   project_dir: string;
   job: RuntimeJob | null;
@@ -294,6 +302,8 @@ export type ProjectRuntimeResponse = {
   batch_total: number;
   latest_prompt_preview: string;
   latest_assembled_preview: string;
+  /** 多 worker 并发时按 worker_id 隔离的提示词快照（key 为 worker 标识） */
+  prompt_previews: Record<string, WorkerPromptPreview>;
   recent_errors: ProjectRuntimeErrorEntry[];
   recent_successes: ProjectRuntimeSuccessEntry[];
   /** 一次性用户提示（后端流水线阶段告知），前端 toast 后调用 clearRuntimeNotices 清除 */

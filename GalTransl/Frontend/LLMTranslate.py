@@ -29,7 +29,7 @@ from GalTransl.CSentense import CTransList
 from GalTransl.Dictionary import CGptDict, CNormalDic
 from GalTransl.Problem import find_problems
 from GalTransl.Cache import save_transCache_to_json
-from GalTransl.server_runtime import record_runtime_notice
+from GalTransl.server_runtime import WORKER_ID_CTX, record_runtime_notice
 from GalTransl.Name import load_name_table, dump_name_table_from_chunks
 from GalTransl.CSerialize import update_json_with_transList, save_json
 from GalTransl.Dictionary import CNormalDic, CGptDict
@@ -224,9 +224,11 @@ async def update_progress_title(
                 projectConfig.active_workers = configured_workers
             else:
                 projectConfig.active_workers = active_workers
+            # 上报兜底后的值：worker 全空闲时也上报 configured（而非 0），
+            # 避免前端"并发"指示条误显示 0，也避免 snapshot 依赖 workers_active 时丢失数据
             _update_runtime(
                 projectConfig,
-                workers_active=active_workers,
+                workers_active=projectConfig.active_workers,
                 workers_configured=configured_workers,
             )
             # 更新标题（仅 CLI 模式有 bar）
@@ -775,22 +777,28 @@ async def doLLMTranslate(
         for _ in range(worker_count):
             chunk_queue.put_nowait(None)
 
-        async def worker_loop():
-            while True:
-                _check_stop_requested(projectConfig)
-                split_chunk = await chunk_queue.get()
-                if split_chunk is None:
-                    return
-                await doLLMTranslSingleChunk(
-                    semaphore,
-                    split_chunk=split_chunk,
-                    projectConfig=projectConfig,
-                    gptapi=gptapi,  # 传递共享的 gptapi 实例
-                )
+        async def worker_loop(worker_index: int = 0):
+            # 每个 worker task 独立 contextvars 上下文，提示词推送按此隔离板块
+            worker_token = WORKER_ID_CTX.set(str(worker_index))
+            LOGGER.debug(f"[prompt-preview] worker_loop[{worker_index}] 启动, WORKER_ID_CTX={WORKER_ID_CTX.get()!r}")
+            try:
+                while True:
+                    _check_stop_requested(projectConfig)
+                    split_chunk = await chunk_queue.get()
+                    if split_chunk is None:
+                        return
+                    await doLLMTranslSingleChunk(
+                        semaphore,
+                        split_chunk=split_chunk,
+                        projectConfig=projectConfig,
+                        gptapi=gptapi,  # 传递共享的 gptapi 实例
+                    )
+            finally:
+                WORKER_ID_CTX.reset(worker_token)
 
         worker_tasks = [
-            asyncio.create_task(worker_loop())
-            for _ in range(worker_count)
+            asyncio.create_task(worker_loop(worker_index=i))
+            for i in range(worker_count)
         ]
 
         try:
@@ -1424,22 +1432,28 @@ async def _run_translation_phase(
         for _ in range(worker_count):
             chunk_queue.put_nowait(None)
 
-        async def worker_loop():
-            while True:
-                _check_stop_requested(projectConfig)
-                split_chunk = await chunk_queue.get()
-                if split_chunk is None:
-                    return
-                await doLLMTranslSingleChunk(
-                    semaphore,
-                    split_chunk=split_chunk,
-                    projectConfig=projectConfig,
-                    gptapi=gptapi,
-                )
+        async def worker_loop(worker_index: int = 0):
+            # 与 doLLMTranslate 中 worker 池一致：绑定 worker 身份，提示词按此分板块
+            worker_token = WORKER_ID_CTX.set(str(worker_index))
+            LOGGER.debug(f"[prompt-preview] pipeline worker_loop[{worker_index}] 启动, WORKER_ID_CTX={WORKER_ID_CTX.get()!r}")
+            try:
+                while True:
+                    _check_stop_requested(projectConfig)
+                    split_chunk = await chunk_queue.get()
+                    if split_chunk is None:
+                        return
+                    await doLLMTranslSingleChunk(
+                        semaphore,
+                        split_chunk=split_chunk,
+                        projectConfig=projectConfig,
+                        gptapi=gptapi,
+                    )
+            finally:
+                WORKER_ID_CTX.reset(worker_token)
 
         worker_tasks = [
-            asyncio.create_task(worker_loop())
-            for _ in range(worker_count)
+            asyncio.create_task(worker_loop(worker_index=i))
+            for i in range(worker_count)
         ]
 
         try:

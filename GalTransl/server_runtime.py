@@ -6,6 +6,7 @@ import re
 import threading
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections import deque
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 from yaml import safe_load
 
-from GalTransl import CACHE_FOLDERNAME
+from GalTransl import CACHE_FOLDERNAME, LOGGER
 
 def _utcnow_text() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -77,6 +78,20 @@ class RuntimeErrorEvent:
         return asdict(self)
 
 
+# 当前执行上下文所属的翻译 worker 标识（-1 表示非 worker 上下文，如元数据生成阶段）
+WORKER_ID_CTX: ContextVar[str] = ContextVar("galtransl_worker_id", default="-1")
+
+
+@dataclass(slots=True)
+class WorkerPromptSnapshot:
+    """单个 worker 当前提示词的实时快照。"""
+    worker_id: str
+    preview: str = ""
+    filename: str = ""
+    batch: str = ""
+    updated_at: str = ""
+
+
 RUNTIME_RECENT_EVENT_LIMIT = 80
 RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
 # Upper bound on success events per snapshot (500): each file keeps a 100-slot deque,
@@ -127,6 +142,8 @@ class RuntimeState:
     batch_total: int = 0
     latest_prompt_preview: str = ""
     latest_assembled_preview: str = ""
+    # 按 worker_id 隔离的提示词快照（多 worker 并发时各占一个 key）
+    prompt_previews: dict[str, WorkerPromptSnapshot] = field(default_factory=dict)
     updated_at: str = field(default_factory=_utcnow_text)
     file_totals: dict[str, int] = field(default_factory=dict)
     cache_file_display_map: dict[str, str] = field(default_factory=dict)
@@ -347,6 +364,7 @@ class RuntimeRegistry:
                     "batch_total": 0,
                     "latest_prompt_preview": "",
                     "latest_assembled_preview": "",
+                    "prompt_previews": {},
                     "workers_active": 0,
                     "workers_configured": 0,
                     "translation_speed_lpm": 0,
@@ -376,6 +394,18 @@ class RuntimeRegistry:
                 "batch_total": state.batch_total,
                 "latest_prompt_preview": state.latest_prompt_preview,
                 "latest_assembled_preview": state.latest_assembled_preview,
+                # 直接透传已写入的提示词快照：数据存在性不依赖 workers_active，
+                # 否则 worker 空闲瞬间（队列间隙/任务首尾）会被清空，前端 tab 消失
+                "prompt_previews": {
+                    wid: {
+                        "worker_id": snap.worker_id,
+                        "preview": snap.preview,
+                        "filename": snap.filename,
+                        "batch": snap.batch,
+                        "updated_at": snap.updated_at,
+                    }
+                    for wid, snap in state.prompt_previews.items()
+                },
                 "workers_active": state.workers_active,
                 "workers_configured": state.workers_configured,
                 "translation_speed_lpm": speed,
@@ -403,23 +433,53 @@ def _trim_preview(value: str, limit: int = 140) -> str:
 RUNTIME_REGISTRY = RuntimeRegistry()
 
 
-def set_live_snippets(project_dir: str, prompt_preview: str = "", assembled_preview: str = "") -> None:
+def set_live_snippets(
+    project_dir: str,
+    prompt_preview: str = "",
+    assembled_preview: str = "",
+    worker_id: str = "",
+    filename: str = "",
+) -> None:
     """在翻译循环中设置当前提示词和译文拼接的实时预览。
 
-    由 ForGalJsonMulitChat.translate() 在每轮 LLM 调用前后调用。
-    确保前端轮询 /runtime 时可以获取到最新提示词和译文拼接内容。
+    由 ForGalJsonMulitChat.translate() 与 BaseTranslate.ask_chatbot() 调用。
+    worker_id 为空时回退到 contextvars 中的 worker 标识（-1 表示非 worker 上下文），
+    此时仅更新 latest_prompt_preview 兼容元数据生成阶段。
 
     提示词预览（prompt_preview）：覆盖式更新，限 8000 字符。
     译文拼接（assembled_preview）：累积式追加，无截断，
     保留所有历史增量数据保证连续性与完整性。
     """
     max_len = 8000  # 仅提示词预览限制长度
+    worker_id = worker_id or WORKER_ID_CTX.get()
     with RUNTIME_REGISTRY._lock:
         state = RUNTIME_REGISTRY._states.get(_normalize_project_dir(project_dir))
         if state is None:
+            LOGGER.debug(f"[prompt-preview] set_live_snippets: 无对应 runtime state, project_dir={project_dir!r}")
             return
         if prompt_preview:
-            state.latest_prompt_preview = prompt_preview[:max_len] if len(prompt_preview) > max_len else prompt_preview
+            preview_text = prompt_preview[:max_len] if len(prompt_preview) > max_len else prompt_preview
+            state.latest_prompt_preview = preview_text
+            if worker_id and worker_id != "-1":
+                # filename 含 ":批次" 后缀时拆分展示字段
+                file_name, _, batch = filename.partition(":")
+                state.prompt_previews[worker_id] = WorkerPromptSnapshot(
+                    worker_id=worker_id,
+                    preview=preview_text,
+                    filename=file_name,
+                    batch=batch,
+                    updated_at=_utcnow_text(),
+                )
+                LOGGER.debug(
+                    f"[prompt-preview] set_live_snippets 写入成功: worker_id={worker_id!r}, "
+                    f"filename={file_name!r}, batch={batch!r}, "
+                    f"prompt_previews keys={list(state.prompt_previews.keys())}"
+                )
+            else:
+                LOGGER.debug(
+                    f"[prompt-preview] set_live_snippets 未写入 prompt_previews: "
+                    f"worker_id={worker_id!r}（-1/空表示非 worker 上下文）, 仅更新 latest_prompt_preview"
+                )
         if assembled_preview:
             # 累积追加而非替换：保留并叠加所有历史批次/文件的译文片段
             state.latest_assembled_preview += assembled_preview

@@ -1221,6 +1221,23 @@ textarea {
   font-weight: var(--weight-semibold);
 }
 
+/* ── 左侧提示词面板：多 worker 动态 tab 板块 ── */
+.panel-tabs--prompt {
+  border-bottom: none;
+  padding-bottom: 0;
+  background: transparent;
+}
+.panel-tab--sm {
+  padding: 2px var(--space-2);
+  font-size: var(--font-xs, 12px);
+}
+.prompt-worker-meta {
+  padding: 2px var(--space-2) var(--space-1);
+  font-size: var(--font-xs, 12px);
+  color: var(--color-text-secondary);
+  border-top: 1px dashed var(--color-border-light, #e0e0e0);
+}
+
 /* ── panel-content 变体 ── */
 .panel-content--pre {
   white-space: pre-wrap;

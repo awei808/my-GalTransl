@@ -805,7 +805,7 @@ class BaseTranslate:
             else:
                 _user_content = prompt
             if _runtime_dir and _user_content:
-                set_live_snippets(_runtime_dir, prompt_preview=_user_content)
+                set_live_snippets(_runtime_dir, prompt_preview=_user_content, filename=file_name)
         except Exception:
             # 预览仅用于 UI 展示，任何异常都不应影响翻译主流程
             pass

@@ -131,6 +131,24 @@ export function TranslateConsole() {
   type PanelTab = "assembled" | "errors" | "files" | "flow";
   const [panelTab, setPanelTab] = createSignal<PanelTab>("assembled");
 
+  // 左侧提示词面板：多 worker 动态 tab 板块
+  const [promptWorkerTab, setPromptWorkerTab] = createSignal<string | null>(null);
+  const promptPreviews = () => runtime()?.prompt_previews ?? {};
+  const promptWorkerIds = () =>
+    Object.keys(promptPreviews()).sort((a, b) => Number(a) - Number(b));
+  const activePromptWorkerId = () => promptWorkerTab() ?? promptWorkerIds()[0];
+  const activePromptSnapshot = () => promptPreviews()[activePromptWorkerId()];
+  // worker 列表变化（增/减/清空）时自动修正选中 tab，避免悬空
+  createEffect(() => {
+    const ids = promptWorkerIds();
+    if (ids.length === 0) {
+      setPromptWorkerTab(null);
+      return;
+    }
+    const cur = promptWorkerTab();
+    if (!cur || !ids.includes(cur)) setPromptWorkerTab(ids[0]);
+  });
+
   // 文件级 toast 追踪（开始 / 出错 / 完成），避免重复弹窗
   const prevFilesCompleted = new Set<string>();
   const prevFilesStarted = new Set<string>();
@@ -654,7 +672,37 @@ export function TranslateConsole() {
         <div class="translate-body">
           <div class="translate-panel">
             <div class="panel-header">当前提示词</div>
-            <div class="panel-content">{runtime()?.latest_prompt_preview || "等待翻译开始…"}</div>
+            <Show
+              when={promptWorkerIds().length > 1}
+              fallback={
+                <div class="panel-content">
+                  {runtime()?.latest_prompt_preview || "等待翻译开始…"}
+                </div>
+              }
+            >
+              {/* 每个 worker 一个 tab，动态生成 */}
+              <div class="panel-tabs panel-tabs--prompt">
+                <For each={promptWorkerIds()}>
+                  {(wid) => (
+                    <button
+                      class={`panel-tab panel-tab--sm ${activePromptWorkerId() === wid ? "panel-tab--active" : ""}`}
+                      onClick={() => setPromptWorkerTab(wid)}
+                    >
+                      Worker {Number(wid) + 1}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <div class="panel-content panel-content--pre">
+                {activePromptSnapshot()?.preview || "等待该 Worker 提交提示词…"}
+              </div>
+              <Show when={activePromptSnapshot()?.filename}>
+                <div class="prompt-worker-meta">
+                  {activePromptSnapshot()?.filename}
+                  {activePromptSnapshot()?.batch ? ` · 批次 ${activePromptSnapshot()?.batch}` : ""}
+                </div>
+              </Show>
+            </Show>
           </div>
           <div class="translate-divider" />
           <div class="translate-panel">
