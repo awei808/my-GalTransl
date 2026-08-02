@@ -896,6 +896,7 @@ class BaseTranslate:
                 response = api_task.result()
                 result = ""
                 lastline = ""
+                reasoning_result = ""
                 if is_stream:
                     stream_abort_requested = False
                     stream_line_buffer = ""
@@ -911,9 +912,11 @@ class BaseTranslate:
                             if not chunk.choices:
                                 continue
                             if hasattr(chunk.choices[0].delta, "reasoning_content"):
-                                lastline = lastline + (
+                                _reasoning_piece = (
                                     chunk.choices[0].delta.reasoning_content or ""
                                 )
+                                reasoning_result = reasoning_result + _reasoning_piece
+                                lastline = lastline + _reasoning_piece
                             if hasattr(chunk.choices[0].delta, "content"):
                                 content_piece = chunk.choices[0].delta.content or ""
                                 result = result + content_piece
@@ -957,7 +960,11 @@ class BaseTranslate:
                                     pass
                 else:
                     try:
-                        result = response.choices[0].message.content
+                        _msg = response.choices[0].message
+                        result = _msg.content
+                        reasoning_result = getattr(
+                            _msg, "reasoning_content", None
+                        ) or ""
                     except Exception:
                         raise ValueError(
                             "response.choices[0].message.content is None, no_candidates"
@@ -985,7 +992,8 @@ class BaseTranslate:
                         _call_trace, status="success", latency_ms=_lat,
                         retry_count=api_try_count, prompt_tokens=_pt,
                         completion_tokens=_ct,
-                        response_preview=(result or "")[:500],
+                        response_preview=result or "",
+                        reasoning=reasoning_result,
                     )
                 return result, token
             except Exception as e:

@@ -78,6 +78,7 @@ class ApiLogger:
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         response_preview: str = "",
+        reasoning: str = "",
         error: str = "",
     ) -> None:
         if self._writer_task is None or self._writer_task.done():
@@ -92,6 +93,7 @@ class ApiLogger:
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "response": response_preview,
+            "reasoning": reasoning,
             "error": error,
         })
 
@@ -183,6 +185,18 @@ class ApiLogger:
                     f'success {_lt}ms {_ct}t'
                     f'{"" if not entry.get("retry_count") else f" retry={entry.get("retry_count")}"}'
                 )
+                reason = entry.get("reasoning", "") or ""
+                if reason:
+                    # 思考内容单独标记输出，便于与译文区分
+                    lines.append(
+                        f'[{entry.get("ts", "?")}][API] {tid} -REASONING'
+                    )
+                    for rline in reason.split("\n"):
+                        lines.append(rline if rline else " ")
+                    if resp:
+                        lines.append(
+                            f'[{entry.get("ts", "?")}][API] {tid} -CONTENT'
+                        )
                 if resp:
                     for rline in resp.split("\n"):
                         lines.append(rline if rline else " ")

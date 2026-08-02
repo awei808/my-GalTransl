@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
+import yaml
+
 from GalTransl import server as _server_mod
 
 
@@ -109,6 +111,52 @@ class CacheCheckTests(_Base):
         self.assertEqual(status, 200)
         self.assertFalse(body["success"])
         self.assertEqual(body["results"], [])
+
+    def test_cache_check_empty_problem_list_skips_detection(self) -> None:
+        # problemList 显式配置为空列表 → 不检测任何问题（不回退旧版 GPT35 段）
+        _, init = self._init_project("cc_empty")
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        cfg_path = os.path.join(pdir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {"problemList": []}
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+        entries = [
+            {"index": 1, "name": "", "pre_src": "测试", "post_src": "测试", "pre_dst": "これはテストです"}
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/x.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertEqual(results[1]["problem"], "")
+
+    def test_cache_check_legacy_gpt35_fallback(self) -> None:
+        # problemList 键缺失、但存在旧版 GPT35 段 → 回退按 GPT35 清单检测
+        _, init = self._init_project("cc_legacy")
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        cfg_path = os.path.join(pdir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {"GPT35": ["残留日文"]}
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+        entries = [
+            {"index": 1, "name": "", "pre_src": "测试", "post_src": "测试", "pre_dst": "これはテストです"}
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/x.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertIn("残留日文", results[1]["problem"])
 
 
 class CacheSaveProblemProtectionTests(_Base):

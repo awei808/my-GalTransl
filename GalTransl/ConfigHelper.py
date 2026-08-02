@@ -234,6 +234,10 @@ class CProjectConfig:
 
         return result
 
+    def hasProblemAnalyzeConfig(self, backendName: str) -> bool:
+        """problemAnalyze 段中是否存在指定键，用于区分「未配置」与「配置为空」。"""
+        return backendName in self.projectConfig.get("problemAnalyze", {})
+
     def getProblemAnalyzeArinashiDict(self) -> dict:
         if "arinashiDict" not in self.projectConfig["problemAnalyze"]:
             return {}

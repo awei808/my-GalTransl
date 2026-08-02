@@ -51,7 +51,8 @@ def find_problems(
     """
     arinashi_dict = projectConfig.getProblemAnalyzeArinashiDict()
     find_type = projectConfig.getProblemAnalyzeConfig("problemList")
-    if not find_type:
+    # 仅当 problemList 键未配置时才回退旧版 GPT35 段；配置为空列表则按"不检测"处理
+    if not find_type and not projectConfig.hasProblemAnalyzeConfig("problemList"):
         find_type = projectConfig.getProblemAnalyzeConfig("GPT35")  # 兼容旧版
 
     for tran in trans_list:

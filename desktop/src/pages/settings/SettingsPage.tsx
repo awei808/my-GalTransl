@@ -1,5 +1,5 @@
-import { createSignal, onMount, Show, For } from "solid-js";
-import { appState, navigateTo } from "../../stores/appStore";
+import { createSignal, createEffect, onMount, Show, For } from "solid-js";
+import { appState, navigateTo, getActiveConfigFileName } from "../../stores/appStore";
 import {
   getThemeModePreference,
   setThemeModePreference,
@@ -14,8 +14,6 @@ import {
   setHomeHistoryRetentionLimit,
   getHomeJobRetentionLimit,
   setHomeJobRetentionLimit,
-  getEnabledProblemTypes,
-  setEnabledProblemTypes,
   CUSTOM_BACKGROUND_OPACITY_MIN,
   CUSTOM_BACKGROUND_OPACITY_MAX,
   CUSTOM_BACKGROUND_SURFACE_OPACITY_MIN,
@@ -26,6 +24,7 @@ import {
   CACHE_BROWSER_FONT_SIZE_MAX,
 } from "../../lib/api/preferences";
 import { fetchVersion, fetchVersionCheck, fetchProblemTypes } from "../../lib/api/general";
+import { fetchProjectConfig, updateProjectConfig } from "../../lib/api/project";
 import type { ThemeMode, ProblemTypeInfo } from "../../lib/api/types";
 import { compressImageToDataUrl } from "./imageCompress";
 import { getErrorMessage } from "../../lib/errors";
@@ -60,9 +59,13 @@ export function SettingsPage() {
 
   // ── 问题检测项 ──
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
-  const [enabledProblemTypes, setEnabledProblemTypesSignal] =
-    createSignal<string[]>(getEnabledProblemTypes());
+  // 勾选状态来源：当前项目 config 的 problemAnalyze.problemList，保存时写回 YAML
+  const [enabledProblemTypes, setEnabledProblemTypesSignal] = createSignal<string[]>([]);
   const [problemLoading, setProblemLoading] = createSignal(false);
+  const [configLoading, setConfigLoading] = createSignal(false);
+  const [configLoadError, setConfigLoadError] = createSignal("");
+  const [saveState, setSaveState] = createSignal<"idle" | "saving" | "ok" | "error">("idle");
+  const [saveError, setSaveError] = createSignal("");
 
   onMount(() => {
     fetchVersion()
@@ -78,18 +81,10 @@ export function SettingsPage() {
       .catch((e: Error) => setVerError(e.message))
       .finally(() => setCheckingVer(false));
 
-    // 加载问题检测项列表
+    // 加载问题检测项候选列表（勾选状态由当前项目配置决定）
     setProblemLoading(true);
     fetchProblemTypes()
-      .then((types) => {
-        setProblemTypes(types);
-        // 如果还没有保存过偏好，默认全选
-        if (enabledProblemTypes().length === 0 && types.length > 0) {
-          const all = types.map((t) => t.name);
-          setEnabledProblemTypesSignal(all);
-          setEnabledProblemTypes(all);
-        }
-      })
+      .then((types) => setProblemTypes(types))
       .catch(() => {})
       .finally(() => setProblemLoading(false));
   });
@@ -196,7 +191,70 @@ export function SettingsPage() {
     const current = enabledProblemTypes();
     const next = current.includes(name) ? current.filter((n) => n !== name) : [...current, name];
     setEnabledProblemTypesSignal(next);
-    setEnabledProblemTypes(next);
+  }
+
+  // 切换当前项目/配置名后，重新从项目 YAML 读取问题检测项
+  createEffect(() => {
+    const pid = appState.activeProjectId;
+    if (!pid || appState.configNameDetecting) return;
+    void loadProjectProblemTypes(pid, getActiveConfigFileName());
+  });
+
+  async function loadProjectProblemTypes(projectId: string, configFileName: string) {
+    setConfigLoading(true);
+    setConfigLoadError("");
+    setSaveState("idle");
+    try {
+      const res = await fetchProjectConfig(projectId, configFileName);
+      const config = (res.config ?? {}) as Record<string, unknown>;
+      const problemAnalyze = config["problemAnalyze"] as Record<string, unknown> | undefined;
+      const section = problemAnalyze ?? {};
+      const rawList = section["problemList"];
+      let list = Array.isArray(rawList) ? rawList.map((x) => String(x)).filter((x) => x) : [];
+      if (list.length === 0 && !("problemList" in section)) {
+        // 兼容旧版：problemList 未配置时后端会回退读 GPT35 段，这里同步展示
+        const rawGpt35 = section["GPT35"];
+        if (Array.isArray(rawGpt35)) {
+          list = rawGpt35.map((x) => String(x)).filter((x) => x);
+        }
+      }
+      setEnabledProblemTypesSignal(list);
+    } catch (e) {
+      setConfigLoadError(`加载问题检测配置失败：${getErrorMessage(e)}`);
+      setEnabledProblemTypesSignal([]);
+    } finally {
+      setConfigLoading(false);
+    }
+  }
+
+  async function saveProblemTypes() {
+    const pid = appState.activeProjectId;
+    if (!pid) {
+      setSaveError("请先打开一个项目，再保存问题检测项");
+      setSaveState("error");
+      return;
+    }
+    const configFileName = getActiveConfigFileName();
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      // 读最新配置再合并，避免覆盖其他字段的修改
+      const res = await fetchProjectConfig(pid, configFileName);
+      const config = { ...(res.config ?? {}) } as Record<string, unknown>;
+      const problemAnalyze = {
+        ...((config["problemAnalyze"] as Record<string, unknown> | undefined) ?? {}),
+      };
+      problemAnalyze["problemList"] = enabledProblemTypes();
+      config["problemAnalyze"] = problemAnalyze;
+      await updateProjectConfig(pid, {
+        config,
+        config_file_name: configFileName,
+      });
+      setSaveState("ok");
+    } catch (e) {
+      setSaveError(`保存失败：${getErrorMessage(e)}`);
+      setSaveState("error");
+    }
   }
 
   return (
@@ -435,10 +493,13 @@ export function SettingsPage() {
         <section class="settings-section">
           <div class="settings-section-header">
             <h3>校对审核</h3>
-            <p>选择校对审核时需要检测的问题类型。未选中的类型在检测时会被跳过。</p>
+            <p>
+              选择校对审核时需要检测的问题类型。检测项保存在当前项目 config 文件的
+              problemAnalyze.problemList，未选中的类型在检测时会被跳过。
+            </p>
           </div>
 
-          {problemLoading() ? (
+          {problemLoading() || configLoading() ? (
             <p class="settings-hint">加载问题类型中…</p>
           ) : problemTypes().length === 0 ? (
             <p class="settings-hint">未连接到后端，无法获取问题类型列表。</p>
@@ -450,6 +511,7 @@ export function SettingsPage() {
                     <input
                       type="checkbox"
                       checked={enabledProblemTypes().includes(pt.name)}
+                      disabled={!appState.activeProjectId}
                       onChange={() => toggleProblemType(pt.name)}
                     />
                     <span class="settings-problem-info">
@@ -462,9 +524,35 @@ export function SettingsPage() {
             </div>
           )}
 
+          <Show when={configLoadError()}>
+            <div class="settings-error">{configLoadError()}</div>
+          </Show>
+          <Show when={saveError()}>
+            <div class="settings-error">{saveError()}</div>
+          </Show>
+
           <div class="settings-hint">
             已启用 {enabledProblemTypes().length} / {problemTypes().length} 个检测项。
             {enabledProblemTypes().length === 0 && " ⚠️ 未选择任何检测项时将不会发现问题。"}
+          </div>
+
+          <div class="settings-field" style="margin-top: 10px; border-bottom: none">
+            <button
+              class="btn btn--sm btn--primary"
+              disabled={!appState.activeProjectId || saveState() === "saving"}
+              onClick={saveProblemTypes}
+            >
+              {saveState() === "saving"
+                ? "保存中…"
+                : appState.activeProjectId
+                  ? "保存到当前项目"
+                  : "请先打开项目"}
+            </button>
+            <Show when={saveState() === "ok"}>
+              <span class="settings-hint" style="margin-left: 8px">
+                已保存到当前项目配置。
+              </span>
+            </Show>
           </div>
         </section>
 
