@@ -630,7 +630,7 @@ export function ReviewPage() {
       return next;
     });
     entriesRev++;
-    if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    refreshDirtyState();
   }
 
   function handleRedo() {
@@ -662,7 +662,7 @@ export function ReviewPage() {
       return next;
     });
     entriesRev++;
-    if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    refreshDirtyState();
   }
 
   // 当 activeFilePath 变化时加载文件
@@ -697,6 +697,7 @@ export function ReviewPage() {
         loadedSliceIndices = null; // 完整加载，无需合并
       }
       loadedFile = file;                                        // 记录 entries() 当前所属文件
+      baselineKey = snapshotKey(entries());                     // 重置编辑基线
     } catch {
       // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
       if (myToken === loadToken && appState.activeFilePath === targetFile) {
@@ -1033,10 +1034,45 @@ export function ReviewPage() {
     }
   }
 
+  // 最近一次加载/保存时的可编辑字段基线，用于内容还原后自动恢复 clean
+  let baselineKey = "";
+
+  // 换行规范化：CRLF/CR 统一为 LF。textarea 会把 CRLF 规范化为 LF，
+  // 若不规范化，同一译文在条目数据（CRLF）与编辑框（LF）间恒被判为"变化"，导致误标脏。
+  function normNewlines(s: string): string {
+    return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  }
+
+  function snapshotKey(list: CacheEntry[]): string {
+    // 仅取用户可编辑字段，排除 problem/post_dst_preview 等会因 recheck 变化但无需保存的字段
+    return JSON.stringify(
+      list.map((e) => ({
+        index: e.index,
+        pre_dst: normNewlines(e.pre_dst ?? ""),
+        proofread_dst: normNewlines(e.proofread_dst ?? ""),
+        skip_check: !!e.skip_check,
+      })),
+    );
+  }
+
+  function refreshDirtyState() {
+    const file = appState.activeFilePath;
+    if (!file) return;
+    if (snapshotKey(entries()) === baselineKey) markClean(file);
+    else markDirty(file);
+  }
+
   function handleFieldChange(serial: number, field: string, value: string) {
     const pos = entries().findIndex((e) => e.index === serial);
     if (pos === -1) return;
-    const before = { ...entries()[pos] };
+    const current = entries()[pos];
+    // 值未变化（按换行规范化比较）：不更新、不入 undo，但仍按基线校正脏状态
+    // （输入内容后再删除还原：onInput 已标脏，此处内容与基线一致应恢复 clean）
+    if (normNewlines(String(current[field as keyof CacheEntry] ?? "")) === normNewlines(value)) {
+      refreshDirtyState();
+      return;
+    }
+    const before = { ...current };
     setEntries((prev) => {
       const next = [...prev];
       next[pos] = { ...next[pos], [field]: value };
@@ -1053,8 +1089,8 @@ export function ReviewPage() {
       description: `修改 ${ALL_FIELDS.find((f) => f.key === field)?.label ?? field}`,
     });
 
-    // 标记 dirty
-    if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    // 内容与基线比对，决定 dirty/clean（值还原为原值时自动恢复 clean）
+    refreshDirtyState();
     entriesRev++;
   }
 
@@ -1073,7 +1109,7 @@ export function ReviewPage() {
         return { ...e, skip_check: true, problem: "" };
       }),
     );
-    if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    refreshDirtyState();
     entriesRev++;
   }
 
@@ -1093,7 +1129,7 @@ export function ReviewPage() {
 
     // 按条目序号删除当前条目（而非数组下标，过滤/虚拟滚动下均正确）
     setEntries((prev) => prev.filter((e) => e.index !== serial));
-    if (appState.activeFilePath) markDirty(appState.activeFilePath);
+    refreshDirtyState();
     entriesRev++;
   }
 
@@ -1173,6 +1209,7 @@ export function ReviewPage() {
         if (entriesRev === myRev) break;
       }
       markClean(myFile);
+      baselineKey = snapshotKey(entries()); // 保存成功，重置编辑基线
       // 按 index 局部合并后端重建的 problem（不要求长度相等，删除后其余条目也能刷新问题），不整表替换避免闪烁。
       // 合并失败不影响保存结果（保存已成功），仅静默跳过，避免误报"保存失败"。
       try {
