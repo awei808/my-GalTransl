@@ -3,14 +3,14 @@
  * 覆盖三按钮确认弹窗（extraText/action），验证 backward compat
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { confirm } from "../stores/confirmStore";
+import { confirm, getConfirmState } from "../stores/confirmStore";
 import type { ConfirmResult } from "../stores/confirmStore";
 
 describe("confirmStore — 三按钮确认流程", () => {
   beforeEach(() => {
     // 确保前一个测试的 resolve 不会残留（如果之前未 resolve 手动清理）
     // 由于 confirm 是单例模态，需要确保每次测试从干净状态开始
-    if (confirm.openState()) {
+    if (getConfirmState().visible) {
       confirm.resolve(false);
     }
   });

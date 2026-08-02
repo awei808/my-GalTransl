@@ -33,7 +33,7 @@ import {
   applyCondSemantic,
   parseSearchPrefix,
   serializeSearchPrefix,
-  rowsToStructuredText,
+  rowsToText,
   COND_SEMANTIC_OPTIONS,
   SEARCH_MODE_OPTIONS,
   PROJECT_DIR_MARKER,
@@ -225,7 +225,7 @@ export function DictionaryPage() {
     const all = [...rows];
     all[ri] = next;
     setParsedRows(all);
-    setDraftText(rowsToStructuredText(all));
+    setDraftText(rowsToText(all));
   }
 
   /** 卡片字段标签 */

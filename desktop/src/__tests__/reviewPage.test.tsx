@@ -18,9 +18,8 @@ import {
   setAppState,
   markDirty,
   markClean,
-  getActiveConfigFileName,
 } from "../stores/appStore";
-import { confirm } from "../stores/confirmStore";
+import { confirm, getConfirmState } from "../stores/confirmStore";
 
 /* ─────────── 模拟 Repair: 保存前的 blur 提交草稿流程 ─────────── */
 
@@ -164,7 +163,7 @@ describe("场景 4：完整生命周期 — 打字 → 标脏 → 保存 → mar
 describe("场景 5：确认弹窗「取消」后留在原文件（runSwitch 的 extra 分支）", () => {
   beforeEach(() => {
     // 确保无残留 confirm
-    if (confirm.openState()) {
+    if (getConfirmState().visible) {
       confirm.resolve(false);
     }
   });
@@ -235,7 +234,7 @@ describe("场景 6：边界条件", () => {
 
   it("document.activeElement 为 null 时 blur() 安全跳过", () => {
     // 模拟: (document.activeElement as HTMLElement | null)?.blur()
-    const el: HTMLElement | null = null;
+    const el = null as HTMLElement | null;
     expect(() => el?.blur()).not.toThrow();
   });
 

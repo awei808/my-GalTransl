@@ -13,7 +13,7 @@ import {
   applyCondSemantic,
   serializeCondItem,
   rowToText,
-  rowsToStructuredText,
+  rowsToText,
   normalizeDictRow,
 } from "../components/dict/dictUtils";
 import type { DictRow, ConditionItem } from "../components/dict/dictUtils";
@@ -192,7 +192,7 @@ describe("normalizeDictRow（后端 snake_case → 前端 camelCase）", () => {
   });
 });
 
-describe("rowsToStructuredText（保存路径序列化）", () => {
+describe("rowsToText（统一保存路径序列化）", () => {
   it("conditional 走结构化重建，normal/comment 走 values join", () => {
     const rows: DictRow[] = [
       {
@@ -215,7 +215,7 @@ describe("rowsToStructuredText（保存路径序列化）", () => {
       },
       { type: "comment", values: ["//====="], raw: "//=====" },
     ];
-    const out = rowsToStructuredText(rows);
+    const out = rowsToText(rows);
     const lines = out.split("\n");
     // normal 行保留原样（含 // 备注）
     expect(lines[0]).toBe("女佣|女仆|//普通字典例子");
@@ -225,6 +225,13 @@ describe("rowsToStructuredText（保存路径序列化）", () => {
     expect(lines[2]).toBe("//=====");
   });
   it("空行输出空串", () => {
-    expect(rowsToStructuredText([{ type: "blank", values: [], raw: "" }])).toBe("");
+    expect(rowsToText([{ type: "blank", values: [], raw: "" }])).toBe("");
+  });
+  it("situation/gpt 行走 values join", () => {
+    const rows: DictRow[] = [
+      { type: "situation", values: ["diag", "台詞", "独白"], raw: "diag|台詞|独白" },
+      { type: "gpt", values: ["src", "dst", "note"], raw: "src|dst|note" },
+    ];
+    expect(rowsToText(rows)).toBe("diag|台詞|独白\nsrc|dst|note");
   });
 });

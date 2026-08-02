@@ -735,7 +735,8 @@ export function ReviewPage() {
         if (res.confirmed) {
           try {
             const prevInfo = modeInfoOf(metaLoadedFullPath);
-            await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry());
+            // metaEntry() 在外层 if (metaDirty && metaEntry() && metaLoadedFullPath) 已保证非空
+            await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry()!);
             metaDirty = false;
           } catch (e) {
             toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
@@ -941,7 +942,8 @@ export function ReviewPage() {
             // 保存旧文件：filename/type 基于旧文件完整路径（metaLoadedFullPath）推导。
             // 不能用 loadedFile（纯源文件名，无目录信息，modeInfoOf 会退回空 sourceFile）
             const prevInfo = modeInfoOf(metaLoadedFullPath || loadedFile);
-            await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry());
+            // metaEntry() 在外层 if (metaDirty && metaEntry()) 已保证非空
+            await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry()!);
             if (myToken !== metaSwitchToken) return; // 保存期间又切换
             metaDirty = false;
           } catch (e) {
@@ -963,7 +965,8 @@ export function ReviewPage() {
         setMetaEntry(res.entry ?? null);
         metaDirty = false; // 新文件即磁盘态，未编辑
         metaJsonInvalidShown = false; // 新文件加载后重置非法 JSON 提示标志
-        metaLoadedFullPath = appState.activeFilePath; // 记录当前文件完整路径，供下次切换保存推导
+        // activeFilePath 至此非空（正在加载目标文件）；?? "" 仅作类型收窄，与声明类型一致
+        metaLoadedFullPath = appState.activeFilePath ?? ""; // 记录当前文件完整路径，供下次切换保存推导
       } catch {
         if (myToken !== metaSwitchToken) return;
         setMetaEntry(null);

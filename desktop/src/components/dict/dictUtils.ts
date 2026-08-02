@@ -110,28 +110,13 @@ export async function parseDictContent(
   return (data.rows ?? []).map(normalizeDictRow);
 }
 
-export function rowsToText(rows: DictRow[]): string {
-  return rows
-    .map((row) => {
-      if (row.type === "blank") return "";
-      if (row.type === "comment") return row.values[0] ?? row.raw;
-      return row.values.join("|");
-    })
-    .join("\n");
-}
-
 /**
- * 将行数组序列化为文本（卡片编辑后的保存路径）。
- * 注意：conditional 行走 rowToText 结构化重建，会规范化条件列空格并丢弃尾随空备注列；
- * 普通/场景/GPT 行走 values.join，保留原样。即"编辑一次即整篇规范化"，属既定行为。
+ * 将行数组序列化为文本（卡片编辑后的保存路径，统一入口）。
+ * 每行走 rowToText：conditional 结构化重建（规范化条件列空格、丢弃尾随空备注列）；
+ * 其余类型 values.join 保留原样。即"编辑一次即整篇规范化"，属既定行为。
  */
-export function rowsToStructuredText(rows: DictRow[]): string {
-  return rows
-    .map((row) => {
-      if (row.type === "conditional") return rowToText(row);
-      return rowsToText([row]);
-    })
-    .join("\n");
+export function rowsToText(rows: DictRow[]): string {
+  return rows.map(rowToText).join("\n");
 }
 
 export function getTypeLabel(type: DictRowType, _tab: DictTab): string {

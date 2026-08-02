@@ -73,7 +73,13 @@ function TreeNode(props: {
         }}
         onContextMenu={(e) => {
           // 文件与文件夹均可弹出右键菜单（含元数据文件）
-          props.onContextMenu?.(e, n().path, n().name, n().is_file, n().is_metadata);
+          props.onContextMenu?.(
+            e,
+            n().path,
+            n().name,
+            !!n().is_file,
+            !!n().is_metadata,
+          );
         }}
         title={n().is_metadata ? "元数据文件（校对审核将以元数据模式打开）" : n().path}
       >

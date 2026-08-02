@@ -10,7 +10,6 @@ import {
   markClean,
   markDirty as md,
   markClean as mc,
-  getActiveConfigFileName,
 } from "../stores/appStore";
 
 /** 重置 dirtyFiles 与 activeFilePath 到初始状态 */
