@@ -138,6 +138,19 @@ export function TranslateConsole() {
     Object.keys(promptPreviews()).sort((a, b) => Number(a) - Number(b));
   const activePromptWorkerId = () => promptWorkerTab() ?? promptWorkerIds()[0];
   const activePromptSnapshot = () => promptPreviews()[activePromptWorkerId()];
+  // 多 worker 并发时，从各 worker 提示词快照聚合正在处理的文件（去重保序）
+  const activeFiles = createMemo(() => {
+    const seen = new Set<string>();
+    const files: string[] = [];
+    for (const wid of promptWorkerIds()) {
+      const fname = promptPreviews()[wid]?.filename;
+      if (fname && !seen.has(fname)) {
+        seen.add(fname);
+        files.push(fname);
+      }
+    }
+    return files;
+  });
   // worker 列表变化（增/减/清空）时自动修正选中 tab，避免悬空
   createEffect(() => {
     const ids = promptWorkerIds();
@@ -565,8 +578,18 @@ export function TranslateConsole() {
                   <b>{summary()!.workers_active}</b> / {summary()!.workers_configured}
                 </span>
               </Show>
-              <Show when={runtime()?.current_file}>
-                <span class="current-file">当前文件: {runtime()!.current_file}</span>
+              <Show
+                when={activeFiles().length > 1}
+                fallback={
+                  <Show when={runtime()?.current_file}>
+                    <span class="current-file">当前文件: {runtime()!.current_file}</span>
+                  </Show>
+                }
+              >
+                {/* 并行文件列表：两行内省略，hover 显示完整 */}
+                <span class="current-file current-file--multi" title={activeFiles().join("\n")}>
+                  并行处理: {activeFiles().join("、")}
+                </span>
               </Show>
             </div>
           </div>

@@ -930,6 +930,19 @@ textarea {
   color: var(--color-text-link);
   font-family: var(--font-mono);
   font-size: var(--font-sm);
+  min-width: 0; /* 允许 flex 子项收缩 */
+}
+
+/* 多文件模式：两行高度 + 超出省略号，hover 由 title 展示完整列表 */
+.current-file--multi {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.5;
+  max-height: calc(1.5em * 2); /* 两行固定高度 */
+  word-break: break-all; /* 长文件名强制断行，避免撑破 */
+  cursor: help;
 }
 
 /* ── 多 worker 并发指示 ── */

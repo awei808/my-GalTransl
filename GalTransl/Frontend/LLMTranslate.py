@@ -563,7 +563,9 @@ async def doLLMTranslate(
             LOGGER.debug(f"[FileMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
         # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
+        _workers_raw = projectConfig.getKey("workersPerProject")
+        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
         worker_count = max(1, workers_per_project)
         await _run_meta_worker_pool(
             projectConfig, gptapi, file_json_lists,
@@ -615,7 +617,9 @@ async def doLLMTranslate(
             LOGGER.debug(f"[BatchMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
         # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
+        _workers_raw = projectConfig.getKey("workersPerProject")
+        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
         worker_count = max(1, workers_per_project)
         await _run_meta_worker_pool(
             projectConfig, gptapi, file_json_lists,
@@ -1184,7 +1188,9 @@ async def _run_full_pipeline(
     )
     total_files = len(file_json_lists)
     # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-    workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+    # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
+    _workers_raw = projectConfig.getKey("workersPerProject")
+    workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
     worker_count = max(1, workers_per_project)
     processed_fm = await _run_meta_worker_pool(
         projectConfig, gptapi_filemeta, file_json_lists,
@@ -1241,7 +1247,9 @@ async def _run_full_pipeline(
         "internals.pipeline.forceRegenBatchMeta", False
     )
     # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-    workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+    # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
+    _workers_raw = projectConfig.getKey("workersPerProject")
+    workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
     worker_count = max(1, workers_per_project)
     processed_bm = await _run_meta_worker_pool(
         projectConfig, gptapi_batchmeta, file_json_lists,
