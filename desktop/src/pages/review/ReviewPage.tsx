@@ -731,6 +731,10 @@ export function ReviewPage() {
       if (appState.activeFilePath !== targetFile) return;       // 文件已切走
       const all = res.entries ?? [];
       setTotalCount(all.length);
+      // 先记录 entries() 所属文件再 setEntries：loadedFile 是非响应式变量，
+      // setEntries 会同步触发依赖 entries() 的 effect（含跳转 effect）重跑，
+      // 若在 setEntries 之后才赋值 loadedFile，重跑时读到旧值会卡在跳转守卫。
+      loadedFile = file;
       if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
         setEntries(all.slice(0, VIRTUAL_LIMIT));
         // 记录加载区域确切 index 集合（不依赖 index 排序），保存时用于合并完整数据
@@ -739,7 +743,6 @@ export function ReviewPage() {
         setEntries(all);
         loadedSliceIndices = null; // 完整加载，无需合并
       }
-      loadedFile = file;                                        // 记录 entries() 当前所属文件
       baselineKey = snapshotKey(entries());                     // 重置编辑基线
     } catch {
       // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
@@ -924,12 +927,13 @@ export function ReviewPage() {
   createEffect(() => {
     const idx = appState.reviewJumpToIndex;
     if (idx === null) return;
-    // 文件尚未加载完成：等下一轮（loadedFile 在 loadFile 成功后更新）
+    // 文件尚未加载完成：等下一轮（loadedFile 在 loadFile 成功后先于 setEntries 更新）
     if (entries().length === 0 || loadedFile !== appState.activeFilePath) return;
     // 强制展开全部条目，确保目标在 DOM 中
     setShowAll(true);
-    // 推迟到 DOM 渲染完成后执行滚动
-    requestAnimationFrame(() => {
+    // 推迟到 DOM 渲染完成后执行滚动；跨文件加载时目标条目可能尚未渲染，
+    // 逐帧重试直到出现（避免单次尝试失败后清除标记导致跳转失效）
+    const tryScroll = (attempt: number) => {
       const el = document.getElementById(`entry-${idx}`);
       if (el) {
         // 立即定位到目标条目（不做滚动动画），高亮动画保留
@@ -946,10 +950,16 @@ export function ReviewPage() {
             { once: true },
           );
         }
+        setAppState("reviewJumpToIndex", null);
+      } else if (attempt < 60) {
+        // 每帧重试一次（约 1 秒），等待跨文件切换的目标条目渲染完成
+        requestAnimationFrame(() => tryScroll(attempt + 1));
+      } else {
+        // 超时放弃并清除标记，防止死循环
+        setAppState("reviewJumpToIndex", null);
       }
-      // 无论是否找到元素，只要尝试过就清除标记，防止重入
-      setAppState("reviewJumpToIndex", null);
-    });
+    };
+    requestAnimationFrame(() => tryScroll(0));
   });
 
   function handleShowAll() {
