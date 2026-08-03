@@ -224,6 +224,83 @@ def _run_problem_detection(
     return results, ok
 
 
+def recheck_pass3_cache_files(
+    cache_dir: str,
+    proj_config: Any,
+    pre_dic: Any,
+    post_dic: Any,
+    gpt_dic: Any,
+    tPlugins: list,
+    target_files: list[str] | None = None,
+) -> int:
+    """对 pass3_cache 下的缓存 json 重新运行问题检测并写回 problem。
+
+    停止翻译合并增量缓存后调用，等效于对每个文件执行一次前端"保存并重检问题"，
+    使新合并入的译文立即带上最新的 problem / post_dst_preview 标注。
+
+    Args:
+        cache_dir: 缓存根目录（projectDir/transl_cache）。
+        target_files: 待重检的主缓存 json 绝对路径列表（通常为 compact 合并的
+            结果）；为 None 时全量扫描 pass3_cache 下的 *.json。
+        其余参数同 _run_problem_detection。
+
+    Returns:
+        int: 成功重检并写回的文件数。
+    """
+    import orjson
+
+    pass3_dir = os.path.join(cache_dir, PASS3_CACHE_DIR)
+    if not os.path.isdir(pass3_dir):
+        return 0
+
+    if target_files is None:
+        targets = [
+            os.path.join(pass3_dir, n)
+            for n in sorted(os.listdir(pass3_dir))
+            if n.endswith(".json")
+        ]
+    else:
+        targets = [p for p in target_files if p.endswith(".json") and os.path.isfile(p)]
+
+    rechecked = 0
+    for file_path in targets:
+        try:
+            with open(file_path, "rb") as f:
+                entries = orjson.loads(f.read())
+            if not isinstance(entries, list) or not entries:
+                continue
+
+            results, ok = _run_problem_detection(
+                entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+            )
+            if not ok:
+                # 检测失败时不得覆写已有 problem（与 /cache/check 语义一致），跳过该文件
+                continue
+
+            # 与 /cache/check persist=true 相同的写回逻辑
+            for e, r in zip(entries, results):
+                post_src_val = e.get("post_src", "") or e.get("post_jp", "")
+                if post_src_val == "":
+                    continue
+                if r["problem"]:
+                    e["problem"] = r["problem"]
+                elif "problem" in e:
+                    del e["problem"]
+                e["post_dst_preview"] = r["post_dst_preview"]
+                if r["skip_check"]:
+                    e["skip_check"] = True
+                elif "skip_check" in e:
+                    del e["skip_check"]
+
+            with open(file_path, "wb") as f:
+                f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
+            rechecked += 1
+        except Exception as exc:
+            LOGGER.warning(f"自动重检缓存失败：{file_path}: {exc}")
+
+    return rechecked
+
+
 async def _check_model_availability(
     project_dir: str,
     translator: str,

@@ -72,7 +72,8 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 f.write(b"\n")
 
             compacted = await compact_cache_append_logs(cache_dir)
-            self.assertEqual(compacted, 1)
+            # 返回被合并的主缓存 json 绝对路径列表
+            self.assertEqual(compacted, [cache_file_path])
             self.assertFalse(os.path.exists(append_file_path))
 
             with open(cache_file_path, "rb") as f:
@@ -84,6 +85,63 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(entry["pre_dst"], "新译文")
             self.assertEqual(entry["trans_by"], "model(new)")
             # append 未提供的派生字段（problem）应保留
+            self.assertEqual(entry["problem"], "残留日文")
+
+    async def test_compact_merges_append_in_subdirectory(self) -> None:
+        # 真实场景：append 产生在 pass3_cache 子目录，compact 必须递归扫描子目录才能覆盖。
+        with tempfile.TemporaryDirectory() as cache_dir:
+            sub_dir = os.path.join(cache_dir, "pass3_cache")
+            os.makedirs(sub_dir)
+            cache_file_path = os.path.join(sub_dir, "demo.json")
+            append_file_path = _append_cache_file_path(cache_file_path)
+
+            speaker = ""
+            pre_src = "こんにちは"
+            cache_key = _make_cache_key(speaker, pre_src)
+
+            snapshot = [
+                {
+                    "index": 0,
+                    "name": speaker,
+                    "pre_src": pre_src,
+                    "post_src": pre_src,
+                    "pre_dst": "旧译文",
+                    "proofread_dst": "",
+                    "problem": "残留日文",
+                    "trans_by": "model(old)",
+                    "proofread_by": "",
+                }
+            ]
+            with open(cache_file_path, "wb") as f:
+                f.write(orjson.dumps(snapshot, option=orjson.OPT_INDENT_2))
+
+            append_entry = {
+                "index": 0,
+                "name": speaker,
+                "pre_src": pre_src,
+                "post_src": pre_src,
+                "pre_dst": "新译文",
+                "proofread_dst": "",
+                "trans_by": "model(new)",
+                "proofread_by": "",
+                "__cache_key": cache_key,
+            }
+            with open(append_file_path, "ab") as f:
+                f.write(orjson.dumps(append_entry))
+                f.write(b"\n")
+
+            # 传入缓存根目录，靠递归扫描命中 pass3_cache 子目录中的 append
+            compacted = await compact_cache_append_logs(cache_dir)
+            self.assertEqual(compacted, [cache_file_path])
+            self.assertFalse(os.path.exists(append_file_path))
+
+            with open(cache_file_path, "rb") as f:
+                merged = orjson.loads(f.read())
+
+            self.assertEqual(len(merged), 1)
+            entry = merged[0]
+            self.assertEqual(entry["pre_dst"], "新译文")
+            self.assertEqual(entry["trans_by"], "model(new)")
             self.assertEqual(entry["problem"], "残留日文")
 
     async def test_get_transCache_preserves_problem_when_reading_append(self) -> None:
@@ -194,6 +252,7 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 translator="gpt4",
             )
 
+            fake_rebuild = (fake_cfg, None, None, None, [])
             with patch("GalTransl.server.reset_runtime_project"), patch(
                 "GalTransl.server.update_runtime_status"
             ), patch("GalTransl.Service.CProjectConfig", return_value=fake_cfg), patch(
@@ -201,7 +260,11 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
             ), patch(
                 "GalTransl.Service.run_galtransl",
                 new=AsyncMock(side_effect=JobCancelledError()),
-            ):
+            ), patch(
+                "GalTransl.server._load_rebuild_deps", return_value=fake_rebuild
+            ), patch(
+                "GalTransl.server.recheck_pass3_cache_files", return_value=1
+            ) as m_recheck:
                 state = await run_job_async(spec)
 
             self.assertEqual(state.status, "cancelled")
@@ -212,6 +275,89 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(merged[0]["pre_dst"], "新译文")
             self.assertEqual(merged[0]["trans_by"], "model(new)")
+            # 停止翻译后应自动触发一次合并后重检（刷新 problem），无需用户手动操作
+            m_recheck.assert_called_once()
+
+    async def test_run_job_async_skips_recheck_when_config_load_failed(self) -> None:
+        # _load_rebuild_deps 返回 proj_config=None（配置/词典加载失败）时不得重检，
+        # 避免 find_problems 在缺配置时误删已有 problem。
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache_file_path = os.path.join(cache_dir, "demo.json")
+            append_file_path = _append_cache_file_path(cache_file_path)
+            with open(cache_file_path, "wb") as f:
+                f.write(
+                    orjson.dumps(
+                        [
+                            {
+                                "index": 0,
+                                "name": "",
+                                "pre_src": "こんにちは",
+                                "post_src": "こんにちは",
+                                "pre_dst": "旧译文",
+                                "proofread_dst": "",
+                                "trans_by": "model(old)",
+                                "proofread_by": "",
+                            }
+                        ],
+                        option=orjson.OPT_INDENT_2,
+                    )
+                )
+            with open(append_file_path, "ab") as f:
+                f.write(
+                    orjson.dumps(
+                        {
+                            "index": 0,
+                            "name": "",
+                            "pre_src": "こんにちは",
+                            "post_src": "こんにちは",
+                            "pre_dst": "新译文",
+                            "proofread_dst": "",
+                            "trans_by": "model(new)",
+                            "proofread_by": "",
+                            "__cache_key": "NoneこんにちはNone",
+                        }
+                    )
+                )
+                f.write(b"\n")
+
+            fake_cfg = SimpleNamespace(
+                projectConfig={"backendSpecific": {}},
+                keyValues={},
+                non_interactive=False,
+                runtime_project_dir="",
+                print_translation_log_in_terminal=True,
+                getCommonConfigSection=lambda: {"loggingLevel": "info"},
+                getKey=lambda key, default=None: 1 if key == "workersPerProject" else default,
+                getCachePath=lambda: cache_dir,
+            )
+
+            spec = JobSpec(
+                job_id="job456",
+                project_dir="dummy-project",
+                config_file_name="config.inc.yaml",
+                translator="gpt4",
+            )
+
+            with patch("GalTransl.server.reset_runtime_project"), patch(
+                "GalTransl.server.update_runtime_status"
+            ), patch("GalTransl.Service.CProjectConfig", return_value=fake_cfg), patch(
+                "GalTransl.Service.load_app_settings", return_value={}
+            ), patch(
+                "GalTransl.Service.run_galtransl",
+                new=AsyncMock(side_effect=JobCancelledError()),
+            ), patch(
+                "GalTransl.server._load_rebuild_deps",
+                return_value=(None, None, None, None, []),
+            ), patch(
+                "GalTransl.server.recheck_pass3_cache_files", return_value=1
+            ) as m_recheck:
+                state = await run_job_async(spec)
+
+            self.assertEqual(state.status, "cancelled")
+            # append 仍应被合并（compact 不依赖配置加载）
+            self.assertFalse(os.path.exists(append_file_path))
+            # 配置加载失败时不重检
+            m_recheck.assert_not_called()
 
 
 if __name__ == "__main__":

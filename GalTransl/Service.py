@@ -288,12 +288,37 @@ async def run_job_async(
         LOGGER.error(current_state.error, exc_info=True)
     finally:
         if current_state.status == "cancelled" and cfg is not None:
+            merged_files: list[str] = []
             try:
-                compacted = await compact_cache_append_logs(cfg.getCachePath())
-                if compacted > 0:
-                    LOGGER.info(f"[cache]停止翻译后已合并 {compacted} 个增量缓存文件")
+                merged_files = await compact_cache_append_logs(cfg.getCachePath())
+                if merged_files:
+                    LOGGER.info(
+                        f"[cache]停止翻译后已合并 {len(merged_files)} 个增量缓存文件"
+                    )
             except Exception as ex:
                 LOGGER.warning(f"[cache]停止翻译后合并增量缓存失败：{str(ex)}")
+            # 合并后自动重检：仅刷新合并过的 json 的 problem / post_dst_preview，
+            # 避免用户仍需手动"保存并重检问题"，也不重复扫描已完成文件。
+            try:
+                from GalTransl.server import _load_rebuild_deps, recheck_pass3_cache_files
+
+                proj_config, pre_dic, post_dic, gpt_dic, tPlugins = _load_rebuild_deps(
+                    spec.project_dir, spec.config_file_name
+                )
+                if proj_config is not None and merged_files:
+                    rechecked = recheck_pass3_cache_files(
+                        cfg.getCachePath(),
+                        proj_config,
+                        pre_dic,
+                        post_dic,
+                        gpt_dic,
+                        tPlugins,
+                        target_files=merged_files,
+                    )
+                    if rechecked > 0:
+                        LOGGER.info(f"[cache]停止翻译后已重检 {rechecked} 个缓存文件")
+            except Exception as ex:
+                LOGGER.warning(f"[cache]停止翻译后重检缓存失败：{str(ex)}")
         current_state.finished_at = _utcnow_text()
         update_runtime_status(spec.project_dir, workers_active=0)
 

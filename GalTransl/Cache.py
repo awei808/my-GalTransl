@@ -216,24 +216,36 @@ async def _compact_cache_from_append(cache_file_path: str, append_file_path: str
         os.remove(append_file_path)
 
 
-async def compact_cache_append_logs(cache_dir: str) -> int:
+async def compact_cache_append_logs(cache_dir: str) -> list[str]:
+    """递归合并 cache_dir 树内所有残留的 *.append.jsonl 到对应主缓存 json。
+
+    停止翻译/异常中断时，翻译阶段（pass3_cache 子目录）可能残留增量缓存，
+    需递归扫描子目录才能覆盖；合并后删除 append 文件。
+
+    Args:
+        cache_dir (str): 缓存根目录（如 projectDir/transl_cache）。
+
+    Returns:
+        list[str]: 成功合并的主缓存 json 绝对路径列表（空列表表示无残留）。
+    """
     if not cache_dir or not os.path.isdir(cache_dir):
-        return 0
+        return []
 
-    compacted_count = 0
-    for name in os.listdir(cache_dir):
-        if not name.endswith(_CACHE_APPEND_SUFFIX):
-            continue
+    merged_paths: list[str] = []
+    for root, _dirs, files in os.walk(cache_dir):
+        for name in files:
+            if not name.endswith(_CACHE_APPEND_SUFFIX):
+                continue
 
-        append_file_path = os.path.join(cache_dir, name)
-        cache_file_path = append_file_path[: -len(_CACHE_APPEND_SUFFIX)]
-        try:
-            await _compact_cache_from_append(cache_file_path, append_file_path)
-            compacted_count += 1
-        except Exception as e:
-            LOGGER.warning(f"[cache]压缩append缓存失败：{append_file_path}: {e}")
+            append_file_path = os.path.join(root, name)
+            cache_file_path = append_file_path[: -len(_CACHE_APPEND_SUFFIX)]
+            try:
+                await _compact_cache_from_append(cache_file_path, append_file_path)
+                merged_paths.append(cache_file_path)
+            except Exception as e:
+                LOGGER.warning(f"[cache]压缩append缓存失败：{append_file_path}: {e}")
 
-    return compacted_count
+    return merged_paths
 
 
 async def save_transCache_to_json(trans_list: CTransList, cache_file_path: str, post_save: bool = False, project_dir: str = "") -> None:
