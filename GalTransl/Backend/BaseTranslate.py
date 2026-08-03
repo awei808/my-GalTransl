@@ -19,6 +19,7 @@ from GalTransl.Utils import load_guideline_file, fix_quotes2
 from openai import RateLimitError, AsyncOpenAI
 from openai import DefaultAioHttpClient
 from openai._types import NOT_GIVEN
+import json
 import random
 import re
 import time
@@ -35,6 +36,26 @@ except Exception:
 
 _GLOBAL_RPM_LOCK = Lock()
 _GLOBAL_NEXT_ALLOWED_TS = 0.0
+
+
+def _infer_provider(model_name: str) -> str:
+    """按模型名自动推断服务商，用于 thinking 参数路由。"""
+    n = (model_name or "").lower()
+    if "qwen" in n:
+        return "qwen"
+    if "glm" in n:
+        return "zhipu"
+    if "gemini" in n:
+        return "gemini"
+    if "claude" in n:
+        return "anthropic"
+    if "grok" in n:
+        return "grok"
+    if "kimi" in n or "moonshot" in n:
+        return "kimi"
+    if "reasoner" in n or "deepseek" in n:
+        return "deepseek"
+    return "openai"
 
 # 最近一次 LLM 请求的模型/流式标志：用 ContextVar 按 asyncio task 隔离，
 # 避免多 worker 并发调用 ask_chatbot 时实例属性互相覆盖
@@ -302,6 +323,20 @@ class BaseTranslate:
             "tokenStrategy", "random"
         )
         self.stream = config.getBackendConfigSection(section_name).get("stream", True)
+        # 思考相关配置（profile 级，缺省时零发送，向后兼容）
+        self.provider = config.getBackendConfigSection(section_name).get("provider", "auto")
+        self.thinking_mode = config.getBackendConfigSection(section_name).get(
+            "thinking_mode", "default"
+        )
+        self.reasoning_effort = config.getBackendConfigSection(section_name).get(
+            "reasoning_effort", ""
+        )
+        self.thinking_budget = int(
+            config.getBackendConfigSection(section_name).get("thinking_budget", 0) or 0
+        )
+        self.extra_body_raw = config.getBackendConfigSection(section_name).get(
+            "extra_body", ""
+        )
 
         change_prompt = CProjectConfig.getProjectConfig(config)["common"].get(
             "gpt.change_prompt", "no"
@@ -776,6 +811,88 @@ class BaseTranslate:
         """返回当前 task 最近一次 LLM 请求是否为流式（多 worker 场景下按 task 隔离）。"""
         return _LAST_CHATBOT_STREAM_CTX.get()
 
+    def _build_thinking_params(self, model_name: str) -> tuple[dict[str, Any], Any]:
+        """按服务商生成思考参数，返回 (extra_body, reasoning_effort)。
+
+        未配置任何思考参数（thinking_mode=default 且 effort/budget/extra_body 均空）时
+        返回空体，请求体与旧版完全一致，保证向后兼容。
+        """
+        provider = getattr(self, "provider", "auto") or "auto"
+        mode = getattr(self, "thinking_mode", "default") or "default"
+        effort = (getattr(self, "reasoning_effort", "") or "").strip().lower()
+        budget = int(getattr(self, "thinking_budget", 0) or 0)
+        extra_raw = getattr(self, "extra_body_raw", "") or ""
+
+        if provider == "auto":
+            provider = _infer_provider(model_name)
+
+        extra: dict[str, Any] = {}
+        if extra_raw.strip():
+            try:
+                parsed = json.loads(extra_raw)
+                if isinstance(parsed, dict):
+                    extra.update(parsed)
+            except Exception:
+                LOGGER.warning(f"[thinking] 解析 extra_body JSON 失败，已忽略：{extra_raw}")
+
+        eff: Any = NOT_GIVEN
+
+        if mode == "off":
+            # 显式关闭思考：仅支持关闭的平台发送关闭参数；
+            # openai/grok 思考由模型名控制或不可关闭，不发送
+            if provider == "deepseek":
+                # DeepSeek 官方：thinking: {type: disabled}（经 extra_body）
+                extra["thinking"] = {"type": "disabled"}
+            elif provider == "qwen":
+                # 阿里百炼官方：enable_thinking=false 关闭混合思考
+                extra["enable_thinking"] = False
+            elif provider == "zhipu":
+                # 智谱官方：thinking: {type: disabled}
+                extra["thinking"] = {"type": "disabled"}
+            elif provider == "kimi":
+                # Kimi 官方：kimi-k2.5/k2.6 支持 thinking.type=disabled；
+                # k3/k2.7-code 不可关闭，交由平台返回或忽略
+                extra["thinking"] = {"type": "disabled"}
+            elif provider == "gemini":
+                eff = "none"
+            # anthropic：新版接口无统一关闭参数，交由模型默认（不发送）
+        elif mode == "on":
+            if provider == "deepseek":
+                # DeepSeek 官方：thinking: {type: enabled}（经 extra_body）
+                extra["thinking"] = {"type": "enabled"}
+            elif provider == "qwen":
+                # 阿里百炼官方：enable_thinking=true（qwen3 混合思考）
+                extra["enable_thinking"] = True
+                if budget > 0:
+                    extra["thinking_budget"] = budget
+            elif provider == "zhipu":
+                extra["thinking"] = {"type": "enabled"}
+            elif provider == "kimi":
+                extra["thinking"] = {"type": "enabled"}
+            elif provider == "anthropic":
+                # Anthropic 官方（Opus 4.6+）：output_config.effort 控制思考深度
+                extra["output_config"] = {"effort": effort if effort else "high"}
+            # openai/grok/gemini：思考由模型名控制或默认开启，不发送开关参数
+
+        # 思考强度：按平台与模型精确路由 reasoning_effort
+        if effort:
+            if provider == "grok" and "grok-4" in (model_name or "").lower():
+                LOGGER.warning("[thinking] grok-4 不支持 reasoning_effort，已忽略")
+            elif provider == "grok" and effort not in ("low", "high"):
+                LOGGER.warning("[thinking] Grok 的 reasoning_effort 仅支持 low/high，已忽略")
+            elif provider == "openai" and effort == "max":
+                LOGGER.warning("[thinking] OpenAI 不支持 reasoning_effort=max，已忽略")
+            elif provider == "gemini" and effort == "max":
+                LOGGER.warning("[thinking] Gemini 不支持 reasoning_effort=max，已忽略")
+            elif provider == "kimi" and "k3" not in (model_name or "").lower():
+                LOGGER.warning("[thinking] 仅 kimi-k3 支持 reasoning_effort，已忽略")
+            elif provider in ("openai", "gemini", "grok", "deepseek", "kimi"):
+                eff = effort
+
+        # 开启思考时禁用与推理冲突的参数（Grok/Kimi/DeepSeek 思考模式限制）
+        thinking_on = mode == "on"
+        return extra, eff, thinking_on
+
     async def ask_chatbot(
         self,
         prompt: str = "",
@@ -876,17 +993,24 @@ class BaseTranslate:
                 # Create the API call as a task so we can cancel it if
                 # the user requests a stop while the request is in-flight.
                 LOGGER.info(f"timeout: {self.api_timeout}")
+                # 按服务商生成思考参数（未配置时返回空体，向后兼容）
+                extra_body, thinking_effort, thinking_on = self._build_thinking_params(
+                    token.model_name
+                )
+                eff = reasoning_effort if reasoning_effort != NOT_GIVEN else thinking_effort
                 api_task = asyncio.ensure_future(
                     client.chat.completions.create(
                         model=token.model_name,
                         messages=messages,
                         stream=is_stream,
-                        temperature=temperature,
-                        frequency_penalty=frequency_penalty,
+                        # 思考模式下禁用与推理冲突的参数（Grok/Kimi/DeepSeek 限制）
+                        temperature=NOT_GIVEN if thinking_on else temperature,
+                        frequency_penalty=NOT_GIVEN if thinking_on else frequency_penalty,
+                        top_p=NOT_GIVEN if thinking_on else top_p,
                         max_tokens=max_tokens,
                         timeout=self.api_timeout,
-                        top_p=top_p,
-                        reasoning_effort=reasoning_effort,
+                        reasoning_effort=eff,
+                        extra_body=extra_body if extra_body else None,
                     )
                 )
 

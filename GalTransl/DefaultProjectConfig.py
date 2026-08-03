@@ -14,6 +14,11 @@ backendSpecific:
     checkAvailableConcurrency: 4 # checkAvailable阶段的并发检测数，避免启动时瞬时打满请求。[1-16]
     globalRequestRPM: 0 # 全局跨任务请求限速（每分钟请求数）。0表示不限制。[0-60000]
     stream: true # 流式请求，一般不用修改除非接口不支持流式[True/False]
+    provider: auto # 服务商[auto自动识别/deepseek/openai/kimi/qwen/anthropic/zhipu/grok/gemini/custom]
+    thinking_mode: default # 思考模式[default不干预/on开启/off关闭思考]，仅部分模型支持关闭
+    reasoning_effort: "" # 思考强度[low/medium/high/max]，留空不发送（ds/Anthropic 支持 max，OpenAI 不支持）
+    thinking_budget: 0 # 思考预算token数（anthropic/gemini），0不设置
+    extra_body: "" # 高级参数JSON，透传到请求体（可覆盖上述映射），如 {"thinking_budget": 4096}
     apiTimeout: 300 # 请求超时时间，单位秒
     apiErrorWait: auto # 发生API Error时的等待时间，包括频率限制。auto将自动适应[auto/0-120]
 

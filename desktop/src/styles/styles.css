@@ -4416,3 +4416,12 @@ a:hover {
 .pc-input--num {
   width: 96px;
 }
+
+/* 后端配置页 API 调用设置：checkbox 着色与对齐 */
+.pc-row-control input[type="checkbox"] {
+  accent-color: var(--color-brand-primary);
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  cursor: pointer;
+}

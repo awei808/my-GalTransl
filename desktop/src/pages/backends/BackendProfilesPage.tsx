@@ -19,6 +19,12 @@ interface TokenEntry {
 }
 interface OpenAICompatConfig {
   tokens?: TokenEntry[];
+  stream?: boolean;
+  provider?: string;
+  thinking_mode?: string;
+  reasoning_effort?: string;
+  thinking_budget?: number;
+  extra_body?: string;
 }
 interface SakuraConfig {
   endpoints?: string[];
@@ -94,6 +100,18 @@ export function BackendProfilesPage() {
       const next: Record<string, unknown> = { ...prev };
       next["SakuraLLM"] = { endpoints };
       delete next["OpenAI-Compatible"];
+      return next;
+    });
+  }
+
+  function getOpenAI(): OpenAICompatConfig {
+    return (editConfig()["OpenAI-Compatible"] as OpenAICompatConfig) ?? {};
+  }
+  function setOpenAIField(patch: Partial<OpenAICompatConfig>) {
+    setEditConfig((prev) => {
+      const cur = (prev["OpenAI-Compatible"] as OpenAICompatConfig) ?? {};
+      const next: Record<string, unknown> = { ...prev };
+      next["OpenAI-Compatible"] = { ...cur, ...patch };
       return next;
     });
   }
@@ -396,6 +414,106 @@ export function BackendProfilesPage() {
               <button class="btn btn--sm bp-add-btn" onClick={addToken}>
                 + 添加 token
               </button>
+            </Show>
+
+            {/* API 调用设置（OpenAI-Compatible 级）：流式 / 服务商 / 思考参数 */}
+            <Show when={editType() === "OpenAI-Compatible"}>
+              <div class="pc-group">
+                <div class="pc-group-title">API 调用设置</div>
+                <div class="pc-field-list">
+                  <div class="pc-row">
+                    <span class="pc-row-label">流式请求 (stream)</span>
+                    <span class="pc-row-control">
+                      <input
+                        type="checkbox"
+                        checked={getOpenAI().stream ?? true}
+                        onChange={(e) => setOpenAIField({ stream: e.currentTarget.checked })}
+                      />
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">服务商 (provider)</span>
+                    <span class="pc-row-control">
+                      <select
+                        class="field__input pc-select"
+                        value={getOpenAI().provider ?? "auto"}
+                        onChange={(e) => setOpenAIField({ provider: e.currentTarget.value })}
+                      >
+                        <option value="auto">自动识别（按模型名）</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="kimi">Kimi (Moonshot)</option>
+                        <option value="qwen">Qwen（通义千问）</option>
+                        <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="zhipu">智谱 GLM</option>
+                        <option value="grok">Grok (xAI)</option>
+                        <option value="gemini">Gemini</option>
+                        <option value="custom">自定义</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">思考模式 (thinking_mode)</span>
+                    <span class="pc-row-control">
+                      <select
+                        class="field__input pc-select"
+                        value={getOpenAI().thinking_mode ?? "default"}
+                        onChange={(e) => setOpenAIField({ thinking_mode: e.currentTarget.value })}
+                      >
+                        <option value="default">默认（由模型决定，不干预）</option>
+                        <option value="on">开启思考</option>
+                        <option value="off">关闭思考</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">思考强度 (reasoning_effort)</span>
+                    <span class="pc-row-control">
+                      <select
+                        class="field__input pc-select"
+                        value={getOpenAI().reasoning_effort ?? ""}
+                        onChange={(e) => setOpenAIField({ reasoning_effort: e.currentTarget.value })}
+                      >
+                        <option value="">不设置</option>
+                        <option value="low">低</option>
+                        <option value="medium">中</option>
+                        <option value="high">高</option>
+                        <option value="max">最大</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">思考预算 (thinking_budget)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-input--num"
+                        type="number"
+                        min="0"
+                        value={getOpenAI().thinking_budget ?? 0}
+                        onInput={(e) =>
+                          setOpenAIField({
+                            thinking_budget:
+                              e.currentTarget.value === "" ? 0 : Number(e.currentTarget.value),
+                          })
+                        }
+                        title="Anthropic / Gemini 等平台的思考 token 预算，0 表示不设置"
+                      />
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">高级参数 (extra_body)</span>
+                    <span class="pc-row-control">
+                      <textarea
+                        class="field__input"
+                        rows="2"
+                        value={getOpenAI().extra_body ?? ""}
+                        onInput={(e) => setOpenAIField({ extra_body: e.currentTarget.value })}
+                        placeholder='{"thinking_budget": 4096}'
+                      />
+                    </span>
+                  </div>
+                </div>
+              </div>
             </Show>
 
             {/* Sakura 本地模型：逐 endpoint 结构化字段 */}
