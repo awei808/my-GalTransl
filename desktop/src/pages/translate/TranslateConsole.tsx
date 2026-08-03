@@ -151,6 +151,10 @@ export function TranslateConsole() {
     }
     return files;
   });
+  // 正在处理的文件集合（basename 归一化，兼容与 file_totals 显示名的口径差异）
+  const activeFileSet = createMemo(
+    () => new Set(activeFiles().map((f) => f.split("/").pop() ?? f))
+  );
   // worker 列表变化（增/减/清空）时自动修正选中 tab，避免悬空
   createEffect(() => {
     const ids = promptWorkerIds();
@@ -807,13 +811,20 @@ export function TranslateConsole() {
                       {(fp) => {
                         const pct = fp.total > 0 ? Math.round((fp.translated / fp.total) * 100) : 0;
                         const done = fp.translated >= fp.total && fp.total > 0;
+                        const active = activeFileSet().has(fp.filename.split("/").pop() ?? fp.filename);
+                        // 四态：已完成 / 处理中（正在被 worker 处理）/ 排队中 / 空闲
                         const statusText = () =>
-                          done ? "已完成" : (isRunning() ? "处理中" : "");
+                          done ? "已完成" : (active ? "处理中" : (isRunning() ? "排队中" : ""));
+                        const statusClass = done
+                          ? "fp-status--done"
+                          : active
+                            ? "fp-status--running"
+                            : "fp-status--queued";
                         return (
                           <div class="fp-row">
                             <div class="fp-info">
                               <span class="fp-name" title={fp.filename}>{fp.filename}</span>
-                              <span class={`fp-status ${done ? "fp-status--done" : "fp-status--running"}`}>
+                              <span class={`fp-status ${statusClass}`}>
                                 {statusText()}
                               </span>
                             </div>
@@ -825,7 +836,7 @@ export function TranslateConsole() {
                             </div>
                             <div class="fp-bar-track">
                               <div
-                                class={`fp-bar-fill ${done ? "fp-bar-fill--done" : "fp-bar-fill--running"}`}
+                                class={`fp-bar-fill ${done ? "fp-bar-fill--done" : active ? "fp-bar-fill--running" : "fp-bar-fill--queued"}`}
                                 style={{ width: `${pct}%` }}
                               />
                             </div>

@@ -1406,6 +1406,7 @@ textarea {
 }
 .fp-status--done { color: var(--color-status-success); }
 .fp-status--running { color: var(--color-brand-primary); }
+.fp-status--queued { color: var(--color-text-tertiary); }
 
 .fp-meta {
   display: flex;
@@ -1442,6 +1443,10 @@ textarea {
 
 .fp-bar-fill--running {
   background: linear-gradient(90deg, var(--color-brand-primary), var(--color-brand-primary-hover));
+}
+
+.fp-bar-fill--queued {
+  background: var(--color-bg-hover);
 }
 
 .fp-bar-fill--done {

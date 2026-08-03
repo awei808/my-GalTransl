@@ -294,6 +294,28 @@ def _build_runtime_file_maps(ordered_chunks: list[SplitChunkMetadata], input_dir
     return file_totals, cache_file_display_map
 
 
+def _build_meta_file_totals(file_json_lists: dict, input_dir: str) -> dict[str, int]:
+    """为元数据阶段构建 file_totals：{相对显示名: 非空行数}。
+
+    元数据阶段（ForFileMetaData / ForBatchMetaData）不经过切块，无法复用
+    _build_runtime_file_maps（其输入是 SplitChunkMetadata 列表）。此函数直接从
+    file_json_lists 统计每个输入文件的非空行数，作为前端文件进度面板的进度分母。
+    """
+    file_totals: dict[str, int] = {}
+    for file_path, json_list in file_json_lists.items():
+        display_name = file_path.replace(input_dir, "").lstrip(os_sep).replace(os_sep, "/")
+        count = 0
+        for row in json_list:
+            if not isinstance(row, dict):
+                continue
+            message = str(row.get("message", "") or "").strip()
+            if not message:
+                continue
+            count += 1
+        file_totals[display_name] = count
+    return file_totals
+
+
 async def update_progress_title(
     bar: Any, semaphore: asyncio.Semaphore, workersPerProject: int, projectConfig: CProjectConfig
 ) -> None:
@@ -554,6 +576,11 @@ async def doLLMTranslate(
             f"[FileMetaData] 开始为 {total} 个文件生成文件级元数据"
         )
         _update_runtime(projectConfig, stage="生成文件级元数据")
+        # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
+        _update_runtime(
+            projectConfig,
+            file_totals=_build_meta_file_totals(file_json_lists, input_dir),
+        )
         # 载入已有缓存映射，跳过已生成元数据的文件
         existing_fm_map = {}
         try:
@@ -608,6 +635,11 @@ async def doLLMTranslate(
             f"[BatchMetaData] 开始为 {total} 个文件划分翻译区间"
         )
         _update_runtime(projectConfig, stage="划分翻译区间")
+        # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
+        _update_runtime(
+            projectConfig,
+            file_totals=_build_meta_file_totals(file_json_lists, input_dir),
+        )
         # 载入已有缓存映射，跳过已划分批次的文件
         existing_bm_map = {}
         try:
@@ -1172,6 +1204,13 @@ async def _run_full_pipeline(
     # ── 阶段 4：文件级元数据生成 ──
     LOGGER.info("[流水线] 阶段 4/6：文件级剧情元数据")
     _update_runtime(projectConfig, stage="生成文件级元数据")
+    # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
+    _update_runtime(
+        projectConfig,
+        file_totals=_build_meta_file_totals(
+            file_json_lists, projectConfig.getInputPath()
+        ),
+    )
 
     from GalTransl.Backend.ForFileMetaData import ForFileMetaData
     from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
@@ -1232,6 +1271,13 @@ async def _run_full_pipeline(
     # ── 阶段 5：批次级元数据生成 ──
     LOGGER.info("[流水线] 阶段 5/6：翻译区间划分")
     _update_runtime(projectConfig, stage="划分翻译区间")
+    # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
+    _update_runtime(
+        projectConfig,
+        file_totals=_build_meta_file_totals(
+            file_json_lists, projectConfig.getInputPath()
+        ),
+    )
 
     from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
     from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
