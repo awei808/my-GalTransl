@@ -941,7 +941,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             parse_ok, parse_error = self._parse_jsonline_result_line(
                 line,
                 trans_list,
-                getattr(self, "_last_chatbot_model_name", ""),
+                self.get_last_chatbot_model(),
                 n_symbol,
                 key_name,
                 cursor,
@@ -1764,7 +1764,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                         message=f"{type(e).__name__}: {e}",
                         filename=filename,
                         index_range=str(idx_tip),
-                        model=getattr(self, "_last_chatbot_model_name", ""),
+                        model=self.get_last_chatbot_model(),
                         level="error",
                     )
                 except Exception:
@@ -1780,7 +1780,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 trans_list=trans_list,
                 n_symbol=n_symbol,
                 sig_list=sig_list,
-                is_stream=getattr(self, "_last_chatbot_was_stream", False),
+                is_stream=self.get_last_chatbot_stream(),
                 stream_error_msg=stream_error_msg,
                 stream_cursor=stream_cursor,
                 stream_parsed_list=parsed_result_trans_list,

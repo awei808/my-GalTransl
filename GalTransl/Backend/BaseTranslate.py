@@ -4,6 +4,7 @@ from opencc import OpenCC
 from typing import Any, Optional, List
 from collections import deque
 from threading import Lock
+from contextvars import ContextVar
 from GalTransl.COpenAI import COpenAITokenPool, COpenAIToken
 from GalTransl.ConfigHelper import CProxyPool, build_httpx_proxy_kwargs
 from GalTransl import LOGGER, LANG_SUPPORTED, TRANSLATOR_DEFAULT_ENGINE
@@ -34,6 +35,11 @@ except Exception:
 
 _GLOBAL_RPM_LOCK = Lock()
 _GLOBAL_NEXT_ALLOWED_TS = 0.0
+
+# 最近一次 LLM 请求的模型/流式标志：用 ContextVar 按 asyncio task 隔离，
+# 避免多 worker 并发调用 ask_chatbot 时实例属性互相覆盖
+_LAST_CHATBOT_MODEL_CTX: ContextVar = ContextVar("galtransl_last_chatbot_model", default="")
+_LAST_CHATBOT_STREAM_CTX: ContextVar = ContextVar("galtransl_last_chatbot_stream", default=False)
 
 
 class RequestHealthMetrics:
@@ -762,6 +768,14 @@ class BaseTranslate:
         except Exception:
             return
 
+    def get_last_chatbot_model(self) -> str:
+        """返回当前 task 最近一次 LLM 请求使用的模型名（多 worker 场景下按 task 隔离）。"""
+        return _LAST_CHATBOT_MODEL_CTX.get()
+
+    def get_last_chatbot_stream(self) -> bool:
+        """返回当前 task 最近一次 LLM 请求是否为流式（多 worker 场景下按 task 隔离）。"""
+        return _LAST_CHATBOT_STREAM_CTX.get()
+
     async def ask_chatbot(
         self,
         prompt: str = "",
@@ -830,8 +844,8 @@ class BaseTranslate:
                 else:
                     raise ValueError("tokenStrategy must be random or fallback")
                 is_stream=stream if stream != NOT_GIVEN else token.stream
-                self._last_chatbot_was_stream = bool(is_stream)
-                self._last_chatbot_model_name = getattr(token, "model_name", "")
+                _LAST_CHATBOT_STREAM_CTX.set(bool(is_stream))
+                _LAST_CHATBOT_MODEL_CTX.set(getattr(token, "model_name", ""))
                 LOGGER.debug(f"Call {token.domain} withs token {token.maskToken()}")
 
                 # ── API 调用日志：记录请求信息 ──

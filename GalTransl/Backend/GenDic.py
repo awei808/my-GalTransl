@@ -281,7 +281,7 @@ class GenDic(BaseTranslate):
                 speaker=None,
                 source_preview=source_preview,
                 translation_preview=translation_preview,
-                trans_by=getattr(self, "_last_chatbot_model_name", "") or "GenDic",
+                trans_by=self.get_last_chatbot_model() or "GenDic",
             )
         except Exception:
             return

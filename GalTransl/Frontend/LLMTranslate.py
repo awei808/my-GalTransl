@@ -59,6 +59,97 @@ def _update_runtime(projectConfig: CProjectConfig, **kwargs: Any) -> None:
         return
 
 
+async def _run_meta_worker_pool(
+    projectConfig: CProjectConfig,
+    gptapi: Any,
+    file_json_lists: dict,
+    existing_map: dict,
+    worker_count: int,
+    tag: str,
+    stage_prefix: str,
+    force_regen: bool = False,
+) -> int:
+    """多 worker 并发执行文件级/批次级元数据生成。
+
+    与翻译阶段 worker 池同构：队列分发 + 每 worker 绑定 WORKER_ID_CTX，
+    使元数据阶段提示词预览同样按 worker 分板块展示。
+
+    Args:
+        projectConfig: 项目配置。
+        gptapi: ForFileMetaData / ForBatchMetaData 后端实例。
+        file_json_lists: {file_path: json_list} 待处理文件映射。
+        existing_map: 已有缓存映射，用于跳过已生成元数据的文件。
+        worker_count: 并发 worker 数。
+        tag: 日志前缀（"FileMetaData" / "BatchMetaData"）。
+        stage_prefix: 运行时阶段提示前缀。
+        force_regen: 为 True 时忽略已有缓存，强制重新生成。
+
+    Returns:
+        实际处理的文件数（跳过缓存的不计）。
+    """
+    todo = []
+    for file_path, jsons in file_json_lists.items():
+        fname = os_basename(file_path)
+        if fname in existing_map and not force_regen:
+            LOGGER.debug(f"[{tag}] 跳过已有缓存: {fname}")
+            continue
+        todo.append((fname, jsons))
+
+    if not todo:
+        LOGGER.info(f"[{tag}] 全部文件已有缓存，无需处理")
+        return 0
+
+    queue: asyncio.Queue = asyncio.Queue()
+    for item in todo:
+        queue.put_nowait(item)
+    for _ in range(worker_count):
+        queue.put_nowait(None)
+
+    processed = 0
+    total_todo = len(todo)
+
+    async def worker_loop(worker_index: int) -> None:
+        nonlocal processed
+        # 与翻译阶段一致：绑定 worker 身份，提示词预览按此分板块
+        worker_token = WORKER_ID_CTX.set(str(worker_index))
+        LOGGER.debug(
+            f"[{tag}] worker_loop[{worker_index}] 启动, "
+            f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+        )
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+                fname, jsons = item
+                _update_runtime(
+                    projectConfig, current_file=fname,
+                    stage=f"{stage_prefix} {fname}",
+                )
+                # 仅成功（返回 True）才计数，LLM 业务失败返回 False 不计入已处理
+                ok = await gptapi.batch_translate(jsons, filename=fname)
+                if ok:
+                    processed += 1
+                LOGGER.debug(
+                    f"[{tag}] worker_loop[{worker_index}] {fname} 处理完成 "
+                    f"ok={ok} ({processed}/{total_todo})"
+                )
+        finally:
+            WORKER_ID_CTX.reset(worker_token)
+
+    tasks = [asyncio.create_task(worker_loop(i)) for i in range(worker_count)]
+    try:
+        await asyncio.gather(*tasks)
+    except Exception:
+        # 任一 worker 抛出未捕获异常（写盘失败/构建异常等）：取消其余 worker，
+        # 避免孤儿任务继续写盘导致未定义完成状态的残留写入
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    return processed
+
+
 def _pass3_cache_dir(projectConfig: CProjectConfig) -> str:
     """返回 Pass 3 翻译缓存目录（transl_cache/pass3_cache）。"""
     from GalTransl import PASS3_CACHE_DIR
@@ -471,19 +562,15 @@ async def doLLMTranslate(
         except Exception as exc:
             LOGGER.debug(f"[FileMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
-        for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
-            fname = os_basename(file_path)
-            if fname in existing_fm_map:
-                LOGGER.debug(f"[FileMetaData] 跳过已有缓存: {fname}")
-                continue
-            LOGGER.debug(
-                f"[FileMetaData] ({i}/{total}) 开始处理 {fname}，"
-                f"共 {len(jsons)} 句"
-            )
-            _update_runtime(projectConfig, current_file=fname,
-                            stage=f"({i}/{total}) {fname}")
-            await gptapi.batch_translate(jsons, filename=fname)
-            LOGGER.debug(f"[FileMetaData] ({i}/{total}) {fname} 处理完成")
+        # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+        workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+        worker_count = max(1, workers_per_project)
+        await _run_meta_worker_pool(
+            projectConfig, gptapi, file_json_lists,
+            existing_map=existing_fm_map,
+            worker_count=worker_count,
+            tag="FileMetaData", stage_prefix="文件级元数据",
+        )
         LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
 
         # 交叉验证：检查 FileMetaData.json 条目数
@@ -527,19 +614,15 @@ async def doLLMTranslate(
         except Exception as exc:
             LOGGER.debug(f"[BatchMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
-        for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
-            fname = os_basename(file_path)
-            if fname in existing_bm_map:
-                LOGGER.debug(f"[BatchMetaData] 跳过已有缓存: {fname}")
-                continue
-            LOGGER.debug(
-                f"[BatchMetaData] ({i}/{total}) 开始处理 {fname}，"
-                f"共 {len(jsons)} 句"
-            )
-            _update_runtime(projectConfig, current_file=fname,
-                            stage=f"({i}/{total}) {fname}")
-            await gptapi.batch_translate(jsons, filename=fname)
-            LOGGER.debug(f"[BatchMetaData] ({i}/{total}) {fname} 处理完成")
+        # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+        workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+        worker_count = max(1, workers_per_project)
+        await _run_meta_worker_pool(
+            projectConfig, gptapi, file_json_lists,
+            existing_map=existing_bm_map,
+            worker_count=worker_count,
+            tag="BatchMetaData", stage_prefix="批次划分",
+        )
         LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
 
         # 交叉验证：检查 BatchMetadata.json 条目数
@@ -1100,22 +1183,17 @@ async def _run_full_pipeline(
         "internals.pipeline.forceRegenFileMeta", False
     )
     total_files = len(file_json_lists)
-    skipped_files = 0
-    for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
-        fname = os.path.basename(file_path)
-        LOGGER.info(f"[FileMetaData] ({i}/{total_files}) {fname}")
-        _update_runtime(
-            projectConfig, current_file=fname,
-            stage=f"文件级元数据 ({i}/{total_files})"
-        )
-        # 该文件产物已存在且未强制重生成 → 跳过，避免覆盖
-        if fname in existing_fm_map and not force_regen_fm:
-            LOGGER.info(
-                f"[流水线] 阶段 4 跳过：{fname} 文件级元数据已存在"
-            )
-            skipped_files += 1
-            continue
-        await gptapi_filemeta.batch_translate(jsons, filename=fname)
+    # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+    workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+    worker_count = max(1, workers_per_project)
+    processed_fm = await _run_meta_worker_pool(
+        projectConfig, gptapi_filemeta, file_json_lists,
+        existing_map=existing_fm_map,
+        worker_count=worker_count,
+        tag="FileMetaData", stage_prefix="文件级元数据",
+        force_regen=force_regen_fm,
+    )
+    skipped_files = total_files - processed_fm
 
     # 交叉验证 FileMetaData 条目数
     fm_map = load_file_metadata_map(projectConfig)
@@ -1162,22 +1240,17 @@ async def _run_full_pipeline(
     force_regen_bm = projectConfig.getKey(
         "internals.pipeline.forceRegenBatchMeta", False
     )
-    skipped_batches = 0
-    for i, (file_path, jsons) in enumerate(file_json_lists.items(), 1):
-        fname = os.path.basename(file_path)
-        LOGGER.info(f"[BatchMetaData] ({i}/{total_files}) {fname}")
-        _update_runtime(
-            projectConfig, current_file=fname,
-            stage=f"批次划分 ({i}/{total_files})"
-        )
-        # 该文件产物已存在且未强制重生成 → 跳过，避免覆盖
-        if fname in existing_bm_map and not force_regen_bm:
-            LOGGER.info(
-                f"[流水线] 阶段 5 跳过：{fname} 批次级元数据已存在"
-            )
-            skipped_batches += 1
-            continue
-        await gptapi_batchmeta.batch_translate(jsons, filename=fname)
+    # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+    workers_per_project = int(projectConfig.getKey("common.workersPerProject", 1))
+    worker_count = max(1, workers_per_project)
+    processed_bm = await _run_meta_worker_pool(
+        projectConfig, gptapi_batchmeta, file_json_lists,
+        existing_map=existing_bm_map,
+        worker_count=worker_count,
+        tag="BatchMetaData", stage_prefix="批次划分",
+        force_regen=force_regen_bm,
+    )
+    skipped_batches = total_files - processed_bm
 
     # 交叉验证 BatchMetadata 条目数
     bm_map = load_batch_metadata_map(projectConfig)

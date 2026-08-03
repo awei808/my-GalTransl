@@ -450,7 +450,7 @@ class ForBatchMetaData(BaseTranslate):
                     message=f"{type(e).__name__}: {e}",
                     filename=filename,
                     index_range="-",
-                    model=getattr(self, "_last_chatbot_model_name", ""),
+                    model=self.get_last_chatbot_model(),
                     level="error",
                 )
             except Exception:
