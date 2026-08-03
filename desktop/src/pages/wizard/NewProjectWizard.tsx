@@ -241,17 +241,20 @@ export function NewProjectWizard() {
         "gpt.dynamicNumPerRequestTranslate": 16,
         "gpt.contextNum": 8,
       };
-      // 翻译规范文件：写入 config.gpt.translation_guideline（后端 BaseTranslate 读取的规范位置，
-      // 而非 common.gpt.translation_guideline，否则选择会被后端忽略）。
-      const gptSection: Record<string, unknown> = {
-        ...((config.gpt as Record<string, unknown>) || {}),
-      };
+      // 翻译规范文件：写入 common 段扁平键 gpt.translation_guideline（后端 CProjectConfig.getKey
+      // 只读该位置，见 GalTransl/ConfigHelper.py；不要写顶层 gpt 段，否则选择会被后端忽略）。
       if (translationGuideline()) {
-        gptSection["translation_guideline"] = translationGuideline();
+        common["gpt.translation_guideline"] = translationGuideline();
       } else {
-        delete gptSection["translation_guideline"];
+        delete common["gpt.translation_guideline"];
       }
-      config.gpt = gptSection;
+      // 清理旧版本误写进顶层 gpt 段的 translation_guideline 残留（段内无其它键时删除整段）
+      if (config.gpt && typeof config.gpt === "object") {
+        const gptSection = { ...(config.gpt as Record<string, unknown>) };
+        delete gptSection.translation_guideline;
+        if (Object.keys(gptSection).length === 0) delete config.gpt;
+        else config.gpt = gptSection;
+      }
       config.common = common;
       config.plugin = {
         ...((config.plugin as Record<string, unknown>) || {}),

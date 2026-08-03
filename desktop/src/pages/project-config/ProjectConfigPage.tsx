@@ -28,16 +28,15 @@ const MANAGED_GLOBAL_PREFIX = "backendSpecific.OpenAI-Compatible.";
 const DYNAMIC_NUM_KEY = "common.gpt.dynamicNumPerRequestTranslate";
 const DYNAMIC_MAX_KEY = "common.gpt.dynamicNumPerRequestTranslate.max";
 // 翻译规范文件：改为下拉选择，选项来自 translation_guidelines 目录文件名。
-// 注意：后端 BaseTranslate 只读「gpt.translation_guideline」（见 GalTransl/Backend/BaseTranslate.py），
-// 因此此处必须用无 common. 前缀的规范键，否则选择会被后端忽略。
-const GUIDELINE_KEY = "gpt.translation_guideline";
+// 注意：后端 CProjectConfig.getKey 只从 common 段读扁平键（见 GalTransl/ConfigHelper.py），
+// BaseTranslate 用 getKey("gpt.translation_guideline") 加载规范（见 GalTransl/Backend/BaseTranslate.py），
+// 因此此处必须用带 common. 前缀的扁平键，否则选择会被后端忽略。
+const GUIDELINE_KEY = "common.gpt.translation_guideline";
 const HIDDEN_CONFIG_KEYS = new Set<string>([
   "common.gpt.dynamicNumPerRequestTranslate.min",
   "common.gpt.dynamicNumPerRequestTranslate.max",
   // 改为专用多行「游戏外部信息」输入框（见页面顶部卡片），不再以单行英文框出现在通用列表
   "externals.gameInfo",
-  // 旧版本误写到此处的翻译规范键（后端只读 gpt.translation_guideline），隐藏避免重复行
-  "common.gpt.translation_guideline",
   // problemAnalyze 功能已在程序全局设置中有更完善的配置项，项目设置中不再暴露
   "problemAnalyze.problemList",
 ]);
@@ -139,7 +138,7 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "前文句数",
     hint: "每次请求附带的前文句数；越大上下文越强、成本越高（常用 8）。",
   },
-  "gpt.translation_guideline": {
+  "common.gpt.translation_guideline": {
     label: "翻译规范文件",
     hint: "位于 translation_guidelines 目录，影响文风与措辞。",
   },
@@ -217,25 +216,53 @@ function isOmittedFromList(key: string): boolean {
 }
 
 /**
- * 旧版曾把翻译规范误写到 common.gpt.translation_guideline，而后端只读 gpt.translation_guideline。
- * 该旧键会被 HIDDEN_CONFIG_KEYS 隐藏，新键又可能不存在 → 配置项整行消失。
- * 加载时把旧键值归一化到新键（仅在内存，保存时由 handleSave 清理旧键），保证下拉框始终能显示当前选择。
+ * 翻译规范键统一为 common 段扁平键 gpt.translation_guideline（后端 CProjectConfig.getKey
+ * 只读该位置，见 GalTransl/ConfigHelper.py）。旧版本曾误写顶层 gpt.translation_guideline，
+ * 早期前端还会把 common 扁平键迁到顶层——这里统一归一化：取值优先级为
+ * common 扁平键 > common.gpt 嵌套 > 顶层 gpt.translation_guideline，
+ * 写入 common 扁平键并清理其余位置的残留，保证下拉框与保存结果一致。
  */
 function migrateGuidelineKey(obj: Record<string, ConfigValue>): Record<string, ConfigValue> {
-  const common = obj.common as Record<string, ConfigValue> | undefined;
-  const oldVal =
-    common && typeof common === "object" ? common["gpt.translation_guideline"] : undefined;
-  const gpt = obj.gpt as Record<string, ConfigValue> | undefined;
-  const hasNew = !!gpt && typeof gpt === "object" && "translation_guideline" in gpt;
-  if (oldVal === undefined || oldVal === null || hasNew) return obj;
   const next: Record<string, ConfigValue> = { ...obj };
-  next.gpt = {
-    ...(gpt as Record<string, ConfigValue> | {}),
-    translation_guideline: oldVal,
-  } as Record<string, ConfigValue>;
-  const commonCopy = { ...(common as Record<string, ConfigValue>) };
-  delete commonCopy["gpt.translation_guideline"];
-  next.common = commonCopy;
+  const common = next.common as Record<string, ConfigValue> | undefined;
+  const commonNested =
+    common &&
+    typeof common.gpt === "object" &&
+    common.gpt !== null &&
+    !Array.isArray(common.gpt)
+      ? (common.gpt as Record<string, ConfigValue>)
+      : undefined;
+  const gpt = next.gpt as Record<string, ConfigValue> | undefined;
+
+  // 取值：common 扁平键优先，其次 common.gpt 嵌套，最后顶层 gpt 段
+  let val: ConfigValue | undefined = common?.["gpt.translation_guideline"];
+  if (val === undefined || val === null) val = commonNested?.translation_guideline;
+  if (val === undefined || val === null) val = gpt?.translation_guideline;
+  if (val === undefined || val === null) return next; // 三种位置都无值，无需迁移
+
+  // 写入规范位置：common 段扁平键
+  if (common && typeof common === "object") {
+    const commonCopy = { ...common };
+    commonCopy["gpt.translation_guideline"] = val;
+    // 清理 common.gpt 嵌套残留（嵌套只剩 translation_guideline 时删除嵌套对象）
+    if (commonNested) {
+      const nestedCopy = { ...commonNested };
+      delete nestedCopy.translation_guideline;
+      if (Object.keys(nestedCopy).length === 0) delete commonCopy.gpt;
+      else commonCopy.gpt = nestedCopy;
+    }
+    next.common = commonCopy;
+  }
+
+  // 清理顶层 gpt 段残留（仅删 translation_guideline，其余键保留；段空则整体删除）
+  if (gpt && typeof gpt === "object") {
+    if ("translation_guideline" in gpt) {
+      const gptCopy = { ...gpt };
+      delete gptCopy.translation_guideline;
+      if (Object.keys(gptCopy).length === 0) delete next.gpt;
+      else next.gpt = gptCopy;
+    }
+  }
   return next;
 }
 
@@ -816,16 +843,10 @@ export function ProjectConfigPage() {
     if (!pid()) return;
     setSaving(true);
     try {
-      // 清理旧版本误写到 common.gpt.translation_guideline 的残留键：
-      // 后端只读 gpt.translation_guideline，残留键会在通用配置列表里显示成多余文本框。
-      const cleaned = { ...config() } as Record<string, ConfigValue>;
-      const commonObj = cleaned.common as Record<string, ConfigValue> | undefined;
-      if (commonObj && typeof commonObj === "object" && "gpt.translation_guideline" in commonObj) {
-        const commonClean = { ...commonObj };
-        delete commonClean["gpt.translation_guideline"];
-        cleaned.common = commonClean;
-        setConfig(cleaned);
-      }
+      // 保存前归一化翻译规范键：统一写入 common 段扁平键 gpt.translation_guideline
+      //（后端 BaseTranslate/getKey 只读该位置），并清理顶层 gpt 段与 common.gpt 嵌套残留。
+      const cleaned = migrateGuidelineKey({ ...config() } as Record<string, ConfigValue>);
+      setConfig(cleaned);
       await updateProjectConfig(pid()!, {
         config: cleaned,
         config_file_name: getActiveConfigFileName(),
