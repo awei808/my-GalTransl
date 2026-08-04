@@ -1215,6 +1215,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 result_trans_list,
                 getattr(token, "model_name", ""),
                 proofread=proofread,
+                retain_failed=False,  # 失败句子不保留：pre_dst 保持空，由上层重新入队重试
                 translate_failed_prefix="(Failed)",
                 translate_problem_message="翻译失败",
                 proofread_problem_message="翻译失败",

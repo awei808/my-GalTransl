@@ -22,7 +22,7 @@ import json
 import re
 import unittest
 from types import SimpleNamespace, MethodType
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.ForGalJsonMulitChat import (
@@ -624,12 +624,15 @@ class HandleParseResultTests(unittest.TestCase):
             stream_parsed_list=[], idx_tip="0~2", filename="f.json",
             proofread=False, call_messages=[], prefill_used=False,
         )
-        self.assertEqual(len(res), 3)
-        self.assertTrue(all("(Failed)" in tr.pre_dst for tr in res[1]))
+        # 失败句子不保留：无成功句，结果列表为空、游标为 0，由上层重新入队重试
+        self.assertEqual(res[0], 0)  # 游标 = 成功句数
+        self.assertEqual(res[1], [])  # 不保留失败句（无 (Failed) 兜底）
         self.assertEqual(res[2], 0)  # real_success == 0
         # 关键不变量：返回的 success_count 必须与结果列表长度一致，
         # 否则上层 batch 推进会错位（跳过/重复句子）
         self.assertEqual(res[0], len(res[1]))
+        # 失败句 pre_dst 保持空（不写缓存、不输出失败内容）
+        self.assertTrue(all(tr.pre_dst == "" for tr in self.trans_list))
 
     def test_stream_partial_failure_consistent(self):
         # 流式：前 2 句成功，第 3 句解析失败 -> 部分成功 + 1 句兜底
@@ -658,9 +661,11 @@ class HandleParseResultTests(unittest.TestCase):
             proofread=False, call_messages=[], prefill_used=False,
         )
         self.assertEqual(real, 2)            # 真实成功 2 句
-        self.assertEqual(len(res), 3)     # 2 成功 + 1 兜底
+        self.assertEqual(len(res), 2)     # 只保留成功句，失败句不保留
         self.assertEqual(cnt, len(res))   # 关键不变量：num 与结果数一致
-        self.assertTrue("(Failed)" in res[2].pre_dst)
+        # 失败句（第 3 句）不在结果中，且 pre_dst 保持空
+        self.assertTrue(all("(Failed)" not in tr.pre_dst for tr in res))
+        self.assertEqual(self.trans_list[2].pre_dst, "")
 
     def test_non_stream_success(self):
         lines = [
@@ -921,9 +926,84 @@ class TranslateIntegrationTests(unittest.IsolatedAsyncioTestCase):
         t.ask_chatbot = MethodType(fake_empty, t)
         trans_list = [CSentense(f"原文{i}", index=i) for i in range(3)]
         cnt, res = await t.translate(trans_list, filename="f.json")
-        # 整批失败后兜底：返回全部句子（含 (Failed) 标记）
+        # 整批失败：内部重试耗尽后返回空结果，失败句 pre_dst 保持空（不保留），
+        # 由上层 _batch_translate_common 重新入队重试，最终仍失败则不写缓存、留待下次运行
+        self.assertEqual(cnt, 0)
+        self.assertEqual(res, [])
+        self.assertTrue(all(tr.pre_dst == "" for tr in trans_list))
+
+class BatchRetryTests(unittest.IsolatedAsyncioTestCase):
+    """翻译失败句"不保留、直接重试"：部分成功时失败句重新入队重试，整批失败 3 轮后放弃。"""
+
+    async def test_failed_sentences_requeued_and_retried(self) -> None:
+        t = make_translator()
+        t.skipH = False
+        t.save_steps = 100
+        trans_list = [CSentense(f"原文{i}", index=i) for i in range(3)]
+        trans_list[0].pre_dst = "译0"
+        trans_list[1].pre_dst = "译1"
+        calls = {"n": 0}
+
+        async def fake_translate(trans_list_split, dic_prompt, proofread=False, filename=""):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # 第 1 轮：前 2 句成功，第 3 句失败（pre_dst 空、不保留、不入结果）
+                return 2, trans_list[:2]
+            # 第 2 轮：仅处理第 3 句并成功
+            trans_list[2].pre_dst = "译2"
+            return 1, [trans_list[2]]
+
+        with patch.object(t, "translate", side_effect=fake_translate), patch.object(
+            t, "_get_effective_num_per_request", return_value=3
+        ), patch.object(t, "_update_dynamic_num_per_request"), patch.object(
+            t, "_check_stop_requested"
+        ), patch.object(t, "_record_runtime_success"), patch.object(
+            t.pj_config, "bar", return_value=None, create=True
+        ), patch("GalTransl.Backend.BaseTranslate.save_transCache_to_json"):
+            res = await t._batch_translate_common(
+                filename="f.json",
+                cache_file_path="x.json",
+                translist_unhit=trans_list,
+                num_pre_request=3,
+            )
+
+        # 失败句被重新入队：translate 调了 2 轮，最终 3 句全部成功返回
+        self.assertEqual(calls["n"], 2)
         self.assertEqual(len(res), 3)
-        self.assertTrue(all("(Failed)" in tr.pre_dst for tr in res))
+        self.assertEqual([x.pre_dst for x in res], ["译0", "译1", "译2"])
+
+    async def test_batch_gives_up_after_3_stall_rounds(self) -> None:
+        t = make_translator()
+        t.skipH = False
+        t.save_steps = 100
+        trans_list = [CSentense(f"原文{i}", index=i) for i in range(3)]
+        calls = {"n": 0}
+
+        async def fake_translate(trans_list_split, dic_prompt, proofread=False, filename=""):
+            calls["n"] += 1
+            return 0, []  # 永远无成功
+
+        with patch.object(t, "translate", side_effect=fake_translate), patch.object(
+            t, "_get_effective_num_per_request", return_value=3
+        ), patch.object(t, "_update_dynamic_num_per_request"), patch.object(
+            t, "_check_stop_requested"
+        ), patch.object(t, "_record_runtime_success"), patch.object(
+            t.pj_config, "bar", return_value=None, create=True
+        ), patch("GalTransl.Backend.BaseTranslate.save_transCache_to_json"), patch(
+            "GalTransl.Backend.BaseTranslate.asyncio.sleep", new=AsyncMock()
+        ):
+            res = await t._batch_translate_common(
+                filename="f.json",
+                cache_file_path="x.json",
+                translist_unhit=trans_list,
+                num_pre_request=3,
+            )
+
+        # 连续 3 轮无进展后放弃：失败句不保留（pre_dst 空）、不入结果、不写缓存
+        self.assertEqual(calls["n"], 3)
+        self.assertEqual(res, [])
+        self.assertTrue(all(tr.pre_dst == "" for tr in trans_list))
+
 
 class RedundantNameFieldRegressionTests(unittest.TestCase):
     """回归：模型在 dst 后重复追加 name 等字段（畸形但本身合法的 jsonline）

@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import os
 import threading
+import time
 import traceback
 from typing import Any
 
@@ -157,6 +158,11 @@ async def run_job_async(
     current_state.status = "running"
     current_state.success = False
     current_state.error = ""
+    _job_start_mono = time.monotonic()
+    LOGGER.info(
+        f"[job] 任务开始 job={spec.job_id} translator={spec.translator} "
+        f"project={spec.project_dir}"
+    )
     reset_runtime_project(spec.project_dir)
 
     if not spec.project_dir or not isinstance(spec.project_dir, str):
@@ -237,8 +243,16 @@ async def run_job_async(
             current_state.gendic_duplicated_entries = int(getattr(cfg, "gendic_duplicated_count", 0) or 0)
         elif spec.translator == "ForGal-full-pipeline":
             LOGGER.info("[Service] 完整流水线执行成功")
+        LOGGER.info(
+            f"[job] 任务完成 job={spec.job_id} translator={spec.translator} "
+            f"已运行 {time.monotonic() - _job_start_mono:.1f}s"
+        )
     except JobCancelledError:
         current_state.status = "cancelled"
+        LOGGER.info(
+            f"[job] 用户请求停止翻译 job={spec.job_id} translator={spec.translator} "
+            f"已运行 {time.monotonic() - _job_start_mono:.1f}s"
+        )
         if spec.translator == "GenDic":
             added_entries = int(getattr(cfg, "gendic_added_count", 0) or 0)
             duplicated_entries = int(getattr(cfg, "gendic_duplicated_count", 0) or 0)
@@ -320,6 +334,10 @@ async def run_job_async(
             except Exception as ex:
                 LOGGER.warning(f"[cache]停止翻译后重检缓存失败：{str(ex)}")
         current_state.finished_at = _utcnow_text()
+        LOGGER.info(
+            f"[job] 任务结束 job={spec.job_id} status={current_state.status} "
+            f"耗时 {time.monotonic() - _job_start_mono:.1f}s"
+        )
         update_runtime_status(spec.project_dir, workers_active=0)
 
     return current_state

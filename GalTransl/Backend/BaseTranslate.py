@@ -416,8 +416,15 @@ class BaseTranslate:
                 http_client=http_client,
             )
             self.client_list.append((client, token))
+            # 只记脱敏 token 与域名，避免完整密钥进入日志
+            LOGGER.debug(f"[api] 创建客户端 domain={token.domain} token={token.maskToken()}")
 
-        pass
+        LOGGER.info(
+            f"[api] 后端初始化 eng_type={eng_type} provider={self.provider} "
+            f"stream={self.stream} thinking_mode={self.thinking_mode} "
+            f"reasoning_effort={self.reasoning_effort or '未设置'} "
+            f"可用key数={len(self.client_list)}"
+        )
 
     @staticmethod
     def _is_stop_requested(pj_config: CProjectConfig) -> bool:
@@ -593,11 +600,19 @@ class BaseTranslate:
         result_trans_list: list,
         model_name: str,
         proofread: bool = False,
+        retain_failed: bool = True,
         translate_failed_prefix: str = "(Failed)",
         translate_problem_message: str = "翻译失败",
         proofread_problem_message: str = "翻译失败",
         proofread_problem_append: bool = True,
     ) -> int:
+        if not retain_failed and not proofread:
+            # 失败句子不保留：不写入 (Failed) 值、不追加进结果列表，
+            # 直接返回成功句之后的游标（start_index 即成功句数），
+            # 让上层按成功句数推进 i，失败句在下一轮被重新切入批次重试。
+            # proofread 分支即将弃用，保持原逻辑不动。
+            return max(0, start_index)
+
         i = max(0, start_index)
         failed_model_name = f"{model_name}(Failed)"
         while i < len(trans_list):
@@ -655,6 +670,7 @@ class BaseTranslate:
         trans_result_list = []
         len_trans_list = len(translist_unhit)
         transl_step_count = 0
+        stall_count = 0  # 整批无进展的连续轮数，超过 3 轮则放弃本批失败句（不保留、留待下次运行）
 
         while i < len_trans_list:
             self._check_stop_requested()
@@ -684,40 +700,29 @@ class BaseTranslate:
                 filename=filename,
             )
 
-            if num <= 0 and not trans_result:
+            if num <= 0:
+                # 整批无成功句（失败句 pre_dst 保持空、不保留）：继续重试，
+                # 连续 3 轮仍无进展则放弃本批失败句（不写缓存、留待下次运行），任务继续。
+                stall_count += 1
+                if stall_count >= 3:
+                    LOGGER.warning(
+                        f"[{filename}:{self._build_idx_tip(trans_list_split)}] "
+                        f"连续 {stall_count} 轮翻译失败，放弃本批失败句子（不保留，留待下次运行）"
+                    )
+                    i += len(trans_list_split)
+                    stall_count = 0
+                    continue
                 LOGGER.warning(
-                    f"[{filename}:{self._build_idx_tip(trans_list_split)}] translate returned no progress, retrying once"
+                    f"[{filename}:{self._build_idx_tip(trans_list_split)}] "
+                    f"翻译无进展，第 {stall_count}/3 轮重试"
                 )
                 self._check_stop_requested()
                 await asyncio.sleep(1)
-                # 重试一次
-                num, trans_result = await self.translate(
-                    trans_list_split,
-                    dic_prompt,
-                    proofread=proofread,
-                    filename=filename,
-                )
-
-            if num <= 0 and not trans_result:
-                LOGGER.error(
-                    f"[{filename}:{self._build_idx_tip(trans_list_split)}] translate returned no progress after retry, marking batch as failed"
-                )
-                fallback_list = []
-                # 按翻译失败处理
-                self._append_parse_failure_fallback_results(
-                    trans_list_split,
-                    0,
-                    fallback_list,
-                    "",
-                    proofread=proofread,
-                    translate_failed_prefix="(Failed)",
-                    translate_problem_message="翻译失败",
-                )
-                trans_result = fallback_list
-                num = len(fallback_list)
+                continue
 
             if num > 0:
                 i += num
+                stall_count = 0  # 有成功即视为进展，重置连续失败计数
             self.pj_config.bar(num)
             self._update_dynamic_num_per_request(
                 requested_count=len(trans_list_split),
@@ -795,6 +800,13 @@ class BaseTranslate:
                 _GLOBAL_NEXT_ALLOWED_TS = _GLOBAL_NEXT_ALLOWED_TS + interval
 
         if wait_seconds > 0:
+            LOGGER.debug(
+                f"[并发] rpm 限速 {self.global_request_rpm}/min，等待 {wait_seconds:.2f}s"
+            )
+            if wait_seconds > 5:
+                LOGGER.info(
+                    f"[并发] rpm 限速等待较长：{wait_seconds:.1f}s（上限 {self.global_request_rpm}/min）"
+                )
             await self._interruptible_sleep(wait_seconds)
 
     def _record_request_health(self, latency_seconds: float, is_rate_limited: bool) -> None:

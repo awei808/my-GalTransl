@@ -357,6 +357,10 @@ class COpenAITokenPool:
                 if not available:
                     continue
                 if token.isAvailable:
+                    LOGGER.debug(
+                        f"[并发] 获取API token {token.maskToken()} "
+                        f"可用 {len(self.get_available_token())}/{len(self.tokens)}"
+                    )
                     return token
                 rounds += 1
             except IndexError:

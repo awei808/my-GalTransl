@@ -301,6 +301,54 @@ def recheck_pass3_cache_files(
     return rechecked
 
 
+def _append_engine_log(project_dir: str, message: str) -> None:
+    """把消息追加写入项目目录的 GalTransl.log（绕过 LOGGER handler 生命周期）。
+
+    校对保存等操作发生在翻译任务之外，此时 Runner 动态挂载的 job 级 handler 已移除，
+    LOGGER.info 无处可去；此处直接以追加模式写文件，保证审计日志始终可查。
+    仅写后端引擎日志文件，不经过 /api/log，因此不会进入 frontend.log。
+    """
+    try:
+        pdir = str(project_dir or "").strip()
+        if not pdir:
+            return
+        os.makedirs(pdir, exist_ok=True)
+        ts = time.strftime("%m-%d %H:%M:%S")
+        with open(os.path.join(pdir, "GalTransl.log"), "a", encoding="utf-8") as _f:
+            _f.write(f"[{ts}][INFO] {message}\n")
+    except OSError:
+        return
+
+
+def _cache_entry_key(entry: Any) -> Any:
+    """缓存条目的稳定标识：优先 __cache_key，其次 index，最后 (name, pre_src)。"""
+    if not isinstance(entry, dict):
+        return id(entry)
+    ck = entry.get("__cache_key")
+    if ck:
+        return ("__cache_key", ck)
+    idx = entry.get("index")
+    if idx is not None:
+        return ("index", idx)
+    return ("src", entry.get("name", ""), entry.get("pre_src", ""))
+
+
+def _entry_modified(old: dict, new: dict) -> bool:
+    """判断新旧条目在译文相关字段上是否有差异（用于保存时审计 diff）。"""
+    for f in ("pre_dst", "proofread_dst", "problem", "skip_check"):
+        if old.get(f) != new.get(f):
+            return True
+    return False
+
+
+def _fmt_indices(indices: list[Any]) -> str:
+    """把条目 index 列表格式化为日志文本，过长时截断，避免日志膨胀。"""
+    cleaned = [str(i) for i in indices if i is not None]
+    if len(cleaned) > 20:
+        return "[" + ",".join(cleaned[:20]) + f"...共{len(cleaned)}条]"
+    return "[" + ",".join(cleaned) + "]"
+
+
 async def _check_model_availability(
     project_dir: str,
     translator: str,
@@ -2217,8 +2265,32 @@ def build_handler(registry: JobRegistry) -> type:
                         return
 
                     import orjson
+                    # 写盘前对比旧文件，记录本次保存修改/删除了哪些条目（审计日志）
+                    modified_indices: list[Any] = []
+                    deleted_indices: list[Any] = []
+                    try:
+                        with open(file_path, "rb") as _old_f:
+                            old_entries = orjson.loads(_old_f.read())
+                        if isinstance(old_entries, list) and isinstance(entries, list):
+                            old_map = {_cache_entry_key(e): e for e in old_entries}
+                            new_map = {_cache_entry_key(e): e for e in entries}
+                            for k, oe in old_map.items():
+                                if k not in new_map:
+                                    deleted_indices.append(oe.get("index"))
+                            for k, ne in new_map.items():
+                                if k in old_map and _entry_modified(old_map[k], ne):
+                                    modified_indices.append(ne.get("index"))
+                    except Exception:
+                        pass
                     with open(file_path, "wb") as f:
                         f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
+                    if modified_indices or deleted_indices:
+                        _append_engine_log(
+                            project_dir,
+                            f"[cache] 保存缓存文件 {norm}：修改 {len(modified_indices)} 条 "
+                            f"{_fmt_indices(modified_indices)}，删除 {len(deleted_indices)} 条 "
+                            f"{_fmt_indices(deleted_indices)}",
+                        )
 
                     # Rebuild: re-derive problem and post_dst_preview fields
                     try:
@@ -2430,6 +2502,9 @@ def build_handler(registry: JobRegistry) -> type:
                     deleted = data.pop(entry_index)
                     with open(file_path, "wb") as f:
                         f.write(orjson.dumps(data, option=orjson.OPT_INDENT_2))
+                    _append_engine_log(
+                        project_dir, f"[cache] 删除条目 {filename} index={entry_index}"
+                    )
                     self._send_json({"success": True, "filename": filename, "deleted_index": entry_index})
                 except (json.JSONDecodeError, ValueError):
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
@@ -2473,6 +2548,11 @@ def build_handler(registry: JobRegistry) -> type:
                             deleted_files.append(rel)
                         except OSError:
                             not_found_files.append(rel)
+                    if deleted_files:
+                        _append_engine_log(
+                            project_dir,
+                            f"[cache] 删除缓存文件 {','.join(str(x) for x in deleted_files)}",
+                        )
                     self._send_json({"success": True, "deleted_files": deleted_files, "not_found_files": not_found_files})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
@@ -2617,6 +2697,12 @@ def build_handler(registry: JobRegistry) -> type:
                                     file_details.append(detail)
                             except Exception:
                                 continue
+                    if not dry_run and total_matches > 0:
+                        _append_engine_log(
+                            project_dir,
+                            f"[cache] 批量替换 {query[:30]!r} -> {replacement[:30]!r} "
+                            f"field={field} 命中 {total_matches} 处 / {total_files} 文件",
+                        )
                     self._send_json({
                         "success": True,
                         "total_matches": total_matches,
@@ -2800,6 +2886,9 @@ def build_handler(registry: JobRegistry) -> type:
                         status=HTTPStatus.CONFLICT,
                     )
                     return
+                _append_engine_log(
+                    project_dir, f"[job] 收到停止翻译请求 project={project_dir}"
+                )
                 self._send_json({
                     "success": True,
                     "project_dir": project_dir,

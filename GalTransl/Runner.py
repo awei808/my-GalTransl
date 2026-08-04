@@ -51,6 +51,11 @@ class _ServerStatusFilter(logging.Filter):
         "翻译开始时间",
         "开始时间已到",
         "当前使用",
+        "[job] 任务开始",
+        "[job] 任务完成",
+        "[job] 任务结束",
+        "[job] 用户请求停止",
+        "[并发]",
     )
 
     def filter(self, record: logging.LogRecord) -> bool:

@@ -245,6 +245,10 @@ async def auto_tune_workers(
             target = min(adaptive_state.max_workers, current + 1)
 
         if target != current:
+            LOGGER.info(
+                f"[并发] worker 自适应调档：{current} -> {target} "
+                f"(429比例={ratio_429:.2f} 平均延迟={avg_latency:.1f}s)"
+            )
             await apply_limit(target)
 
 
@@ -1639,6 +1643,11 @@ async def doLLMTranslSingleChunk(
     """
 
     async with semaphore:
+        # 记录当前并发占用（configured - 剩余槽位），DEBUG 级避免刷屏
+        LOGGER.debug(
+            f"[并发] 获取翻译槽位 当前并发占用 "
+            f"{getattr(projectConfig, 'runtime_workers_configured', 0) - semaphore._value}"
+        )
         _check_stop_requested(projectConfig)
         st = time()
         proj_dir = projectConfig.getProjectDir()
