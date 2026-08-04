@@ -99,7 +99,7 @@ RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
 RUNTIME_SNAPSHOT_SUCCESS_LIMIT = 500
 
 
-# 7 阶段流水线——供前端"流程完成情况"展示用。
+# 8 阶段流水线——供前端"流程完成情况"展示用。
 # 顺序与 LLMTranslate.doLLMTranslate 的阶段执行顺序一致。
 PIPELINE_STAGE_NAMES: list[str] = [
     "输入数据校验",
@@ -109,19 +109,20 @@ PIPELINE_STAGE_NAMES: list[str] = [
     "生成文件级元数据",
     "划分翻译区间",
     "翻译执行中",
+    "译文质量改进",
 ]
 PIPELINE_STAGE_TOTAL: int = len(PIPELINE_STAGE_NAMES)
 
 
 def _compute_stage_index(stage: str) -> int:
-    """返回 stage 字段对应的流水线阶段索引（0-6）；-1 表示不匹配。"""
+    """返回 stage 字段对应的流水线阶段索引（0-7）；-1 表示不匹配。"""
     if not stage:
         return -1
     # 子阶段如 "文件级元数据 (1/5)" 通过前缀或包含匹配映射到对应主阶段
     for idx, name in enumerate(PIPELINE_STAGE_NAMES):
         if stage.startswith(name) or name in stage:
             return idx
-    # 兜底："完整流水线启动" → 阶段 0，"流水线完成" → 阶段 6，"检查模型可用性" → 阶段 0
+    # 兜底："完整流水线启动" → 阶段 0，"流水线完成" → 阶段 7，"检查模型可用性" → 阶段 0
     if "启动" in stage or "模型可用性" in stage:
         return 0
     if "完成" in stage:

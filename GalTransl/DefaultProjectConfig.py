@@ -71,6 +71,10 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
+  gpt.enableBetterTranslation: false # 整文件翻译完成后追加"改进轮"对话，让AI评估哪些译文还能更好并给出备选译文（仅多轮后端支持，消耗额外token）[True/False]
+  gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
+  gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.enableBetterTranslation [True/False]
+  gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
   # Sakura/GalTransl
   gpt.token_limit: 0 # (Sakura/GalTransl) 单轮token上限；0表示不限制。用于避免上下文溢出。
   # 调试日志

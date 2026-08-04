@@ -4425,3 +4425,13 @@ a:hover {
   vertical-align: middle;
   cursor: pointer;
 }
+
+/* ── 校对审核页：备选译文交换按钮（AI 改进轮）── */
+.entry-btn--swap {
+  color: #b061e8;
+  border-color: rgba(176, 97, 232, 0.45);
+}
+.entry-btn--swap:hover {
+  background: rgba(176, 97, 232, 0.12);
+  border-color: #b061e8;
+}

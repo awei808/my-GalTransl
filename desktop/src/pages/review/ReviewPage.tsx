@@ -165,6 +165,7 @@ function EntryCard(props: {
   onSkip: () => void;
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
+  onSwapAlt: () => void;
   onSave?: () => void;
 }) {
   const e = () => props.entry;
@@ -261,6 +262,26 @@ function EntryCard(props: {
 
         {/* 右侧操作按钮 */}
         <div class="entry-actions">
+          <Show when={e().alt_dst}>
+            <button
+              class="entry-btn entry-btn--swap"
+              title="点击交换当前译文与备选译文（AI 改进轮给出的备选译文）"
+              onClick={props.onSwapAlt}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M7 16V4m0 0L3 8m4-4l4 4" />
+                <path d="M17 8v12m0 0l4-4m-4 4l-4-4" />
+              </svg>
+              <span class="entry-btn-text">备选译文</span>
+            </button>
+          </Show>
           <button class="entry-btn" title="展开/收起全部字段" onClick={() => setExpanded((v) => !v)}>
             <svg
               width="14"
@@ -444,6 +465,7 @@ const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
   { key: "post_src", label: "译后原文" },
   { key: "pre_dst", label: "译前译文" },
   { key: "proofread_dst", label: "校对译文" },
+  { key: "alt_dst", label: "备选译文" },
   { key: "trans_by", label: "翻译引擎" },
   { key: "proofread_by", label: "校对者" },
   { key: "problem", label: "问题" },
@@ -1103,6 +1125,7 @@ export function ReviewPage() {
         index: e.index,
         pre_dst: normNewlines(e.pre_dst ?? ""),
         proofread_dst: normNewlines(e.proofread_dst ?? ""),
+        alt_dst: normNewlines(e.alt_dst ?? ""),
         skip_check: !!e.skip_check,
       })),
     );
@@ -1143,6 +1166,33 @@ export function ReviewPage() {
     });
 
     // 内容与基线比对，决定 dirty/clean（值还原为原值时自动恢复 clean）
+    refreshDirtyState();
+    entriesRev++;
+  }
+
+  function handleSwapAlt(serial: number) {
+    // 先 blur 提交主译文框草稿（onBlur 同步写入 entries），避免聚焦编辑中的草稿覆盖交换结果
+    (document.activeElement as HTMLElement | null)?.blur();
+    const pos = entries().findIndex((e) => e.index === serial);
+    if (pos === -1) return;
+    const current = entries()[pos];
+    const pre = current.pre_dst ?? "";
+    const alt = current.alt_dst;
+    if (!alt) return; // 无备选译文则不提供交换
+    setEntries((prev) => {
+      const next = [...prev];
+      next[pos] = { ...next[pos], pre_dst: alt, alt_dst: pre };
+      return next;
+    });
+    // 交换同时改两字段：before/after 均为双字段对象，undo/redo 整对象合并还原
+    pushUndo({
+      id: `${appState.activeFilePath}:${serial}`,
+      file: appState.activeFilePath ?? "",
+      index: serial,
+      before: { pre_dst: pre, alt_dst: alt },
+      after: { pre_dst: alt, alt_dst: pre },
+      description: "交换备选译文",
+    });
     refreshDirtyState();
     entriesRev++;
   }
@@ -1528,6 +1578,7 @@ export function ReviewPage() {
                     entry={entrySignal()}
                     onSkip={() => handleSkip(entrySignal().index)}
                     onDelete={() => handleDelete(entrySignal().index)}
+                    onSwapAlt={() => handleSwapAlt(entrySignal().index)}
     onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
     />
                 </div>

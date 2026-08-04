@@ -61,6 +61,8 @@ function taskTypeLabel(translator: string): string {
     case "ForGal-json-multi-chat":
     case "ForGal-json":
       return "文件翻译";
+    case "ForImproveTranslation":
+      return "译文质量改进";
     case "ForFileMetaData":
       return "文件级元数据";
     case "ForBatchMetaData":
@@ -92,6 +94,7 @@ function fileDesc(
 /* ── 后端下拉项的简洁中文说明（面向零基础用户，直接跟在后端名字后）── */
 const BACKEND_HINTS: Record<string, string> = {
   "ForGal-json-multi-chat": "按批次翻译原文，为取得最好效果，建议在最后执行本后端",
+  "ForImproveTranslation": "AI 评估整文件译文质量，对可改进的句子给出备选译文（可在校对审核页一键交换）",
   "ForGal-json": "逐句翻译原文（旧格式兼容）",
   "ForFileMetaData": "AI 分析每个文件的剧情与角色",
   "ForBatchMetaData": "AI 分析文件内容，将文本按剧情划分批次，并生成每个批次的指导语言风格",
@@ -860,6 +863,7 @@ export function TranslateConsole() {
                     <li><b>文件级元数据</b>：AI 分析每个文件的剧情和角色身份，生成文件级提示词。可使用后端ForFileMetaData完成或人工创建</li>
                     <li><b>划分区间</b>：把文件按剧情拆成几个批次并生成批次级提示词。跳过本步将按照项目设置的每次请求句数来进行下步。可使用后端ForBatchMetaData完成或人工创建</li>
                     <li><b>翻译执行</b>：逐文件、逐批次交给 AI 翻译，注入全局、文件级、批次级提示词提高翻译效果（若有）。使用后端ForGalJsonMulitChat完成</li>
+                    <li><b>译文质量改进</b>：AI 评估整个文件的译文，对可改进的句子给出备选译文，可在校对审核页一键交换。需在项目设置开启 gpt.enableBetterTranslation，或直接使用后端ForImproveTranslation执行</li>
                     <li><b>校对审核</b>：你在界面里逐条检查、修改译文。</li>
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>

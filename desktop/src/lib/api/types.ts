@@ -171,6 +171,7 @@ export type CacheEntry = {
   proofread_zh?: string;
   post_zh_preview?: string;
   post_dst_preview?: string;
+  alt_dst?: string;
 };
 
 export type CacheSearchField = "all" | "src" | "dst" | "problem";

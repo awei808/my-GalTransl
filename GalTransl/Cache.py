@@ -146,6 +146,8 @@ def _build_cache_obj(tran: CSentense, post_save: bool = False) -> Optional[dict]
         cache_obj["doub_content"] = tran.doub_content
     if tran.unknown_proper_noun != "":
         cache_obj["unknown_proper_noun"] = tran.unknown_proper_noun
+    if tran.alt_zh != "":
+        cache_obj["alt_dst"] = tran.alt_zh
     if post_save:
         cache_obj["post_dst_preview"] = tran.post_dst
 
@@ -514,8 +516,12 @@ async def get_transCache_from_json(
             tran.doub_content = cache_dict[cache_key]["doub_content"]
         if "unknown_proper_noun" in cache_dict[cache_key]:
             tran.unknown_proper_noun = cache_dict[cache_key]["unknown_proper_noun"]
+        if "alt_dst" in cache_dict[cache_key]:
+            tran.alt_zh = cache_dict[cache_key]["alt_dst"]
         if "skip_check" in cache_dict[cache_key]:
             tran.skip_check = cache_dict[cache_key]["skip_check"]
+        if "problem" in cache_dict[cache_key]:
+            tran.problem = cache_dict[cache_key]["problem"]
 
         if tran.proofread_zh != "":
             tran.post_dst = tran.proofread_zh

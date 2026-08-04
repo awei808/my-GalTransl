@@ -687,7 +687,98 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 
-    # ---- 2.7 独立引擎：仅生成全局游戏分析（ForGlobalPrompt）----
+    # ---- 2.7 独立引擎：译文质量改进（ForImproveTranslation）----
+    if eng_type == "ForImproveTranslation":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+        # 载入字典：主流程的字典初始化位于翻译阶段，独立分支需自行加载，
+        # 否则 projectConfig.pre_dic 为 None 导致 preprocess_trans_list 崩溃
+        projectConfig.pre_dic = CNormalDic(
+            initDictList(pre_dic_list, default_dic_dir, project_dir)
+        )
+        projectConfig.post_dic = CNormalDic(
+            initDictList(post_dic_list, default_dic_dir, project_dir)
+        )
+        projectConfig.gpt_dic = CGptDict(
+            initDictList(gpt_dic_list, default_dic_dir, project_dir)
+        )
+        if projectConfig.getDictCfgSection().get("sortDict", True):
+            projectConfig.pre_dic.sort_dic()
+            projectConfig.post_dic.sort_dic()
+            projectConfig.gpt_dic.sort_dic()
+        gptapi = await init_gptapi(projectConfig)
+        total = len(file_json_lists)
+        LOGGER.info(f"[改进轮] 开始为 {total} 个文件执行译文质量改进评估")
+        _update_runtime(projectConfig, stage="译文质量改进")
+        num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+        try:
+            num_better = int(num_better) if num_better else 100
+        except (TypeError, ValueError):
+            num_better = 100
+        for file_path, json_list in file_json_lists.items():
+            _check_stop_requested(projectConfig)
+            file_name = (
+                file_path.replace(input_dir, "")
+                .lstrip(os_sep)
+                .replace(os_sep, "-}")
+            )
+            cache_file_path = joinpath(cache_dir, file_name)
+            if not isPathExists(cache_file_path):
+                LOGGER.warning(f"[改进轮] {file_name} 无缓存译文，跳过")
+                continue
+            # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
+            # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
+            from GalTransl.Loader import load_transList
+
+            trans_list, _ = load_transList(json_list)
+            preprocess_trans_list(
+                trans_list,
+                projectConfig,
+                projectConfig.pre_dic,
+                projectConfig.tPlugins,
+            )
+            await get_transCache_from_json(
+                trans_list,
+                cache_file_path,
+                retry_failed=False,
+                proofread=False,
+                retran_key="",
+                eng_type=eng_type,
+            )
+            # 注入文件级元数据（供首轮评估）
+            file_metadata = getattr(projectConfig, "file_metadata", None)
+            if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
+                gptapi.set_file_metadata(file_metadata, file_name)
+            _update_runtime(projectConfig, current_file=file_name)
+            await gptapi.batch_translate(
+                file_name,
+                cache_file_path,
+                trans_list,
+                num_better,
+                gpt_dic=projectConfig.gpt_dic,
+            )
+            # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
+            # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
+            has_content = any(
+                t.pre_dst != "" or t.alt_zh != "" or t.proofread_zh != ""
+                for t in trans_list
+            )
+            if has_content:
+                await save_transCache_to_json(
+                    trans_list,
+                    cache_file_path,
+                    post_save=True,
+                    project_dir=_runtime_project_dir(projectConfig),
+                )
+            else:
+                LOGGER.warning(
+                    f"[改进轮] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                )
+        LOGGER.info("[改进轮] 译文质量改进完成")
+        _update_runtime(projectConfig, stage="译文质量改进完成")
+        return True
+
+    # ---- 2.8 独立引擎：仅生成全局游戏分析（ForGlobalPrompt）----
     if eng_type == "ForGlobalPrompt":
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
@@ -1762,7 +1853,7 @@ async def doLLMTranslSingleChunk(
         if split_chunk.is_file_finished():
             LOGGER.debug(get_text("file_chunks_completed", GT_LANG, file_name))
             await postprocess_results(
-                split_chunk.get_file_finished_chunks(), projectConfig
+                split_chunk.get_file_finished_chunks(), projectConfig, gptapi
             )
 
         _update_runtime(projectConfig, current_file=file_name)
@@ -1771,12 +1862,16 @@ async def doLLMTranslSingleChunk(
 async def postprocess_results(
     resultChunks: List[SplitChunkMetadata],
     projectConfig: CProjectConfig,
+    gptapi: Any = None,
 ) -> None:
     """单个文件翻译完成后的收尾工作。
 
     对每个 chunk 逐一：find_problems 标注问题 → save_transCache_to_json(post_save=True)
     写完整 jsonl 快照（这也是唯一一次把 append 日志合并入主快照的时机）。
     随后合并所有 chunk 的结果，套用 name 替换表并经文件插件写出最终译文。
+
+    若开启 gpt.enableBetterTranslation 且后端支持，会在保存快照前先执行改进轮，
+    把模型给出的备选译文写入各句 alt_zh，随快照一并落盘。
     """
 
     proj_dir = projectConfig.getProjectDir()
@@ -1786,6 +1881,58 @@ async def postprocess_results(
     eng_type = projectConfig.select_translator
     gpt_dic = projectConfig.gpt_dic
     name_replaceDict = projectConfig.name_replaceDict
+
+    # 改进轮（可选，流水线第 8 流程）：整文件翻译+校对完成后，用独立后端
+    # ForImproveTranslation 评估译文质量并生成备选译文（写入各句 alt_zh）。
+    # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
+    if projectConfig.getKey("gpt.enableBetterTranslation"):
+        from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
+
+        _better_api = None
+        try:
+            merged_trans = []
+            for _chunk in resultChunks:
+                merged_trans.extend(_chunk.trans_list)
+            _orig_name = (
+                resultChunks[0].file_path.replace(input_dir, "")
+                .lstrip(os_sep)
+                .replace(os_sep, "-}")
+            )
+            _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+            try:
+                _num_better = int(_num_better) if _num_better else 100
+            except (TypeError, ValueError):
+                _num_better = 100
+            _update_runtime(projectConfig, stage="译文质量改进")
+            _better_api = ForImproveTranslation(
+                projectConfig,
+                "ForImproveTranslation",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+            # 注入文件级元数据（与翻译轮一致，供首轮评估使用）
+            _fm = getattr(projectConfig, "file_metadata", None)
+            if _fm is not None and hasattr(_better_api, "set_file_metadata"):
+                _better_api.set_file_metadata(_fm, _orig_name)
+            await _better_api.batch_translate(
+                _orig_name,
+                _orig_name + ".json",
+                merged_trans,
+                _num_better,
+                gpt_dic=projectConfig.gpt_dic,
+            )
+        except Exception as e:
+            from GalTransl.Service import JobCancelledError
+
+            if isinstance(e, JobCancelledError):
+                raise
+            LOGGER.warning(
+                f"[改进轮] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
+            )
+        finally:
+            # 独立实例用完即关，避免每文件泄漏一个 API 客户端
+            if _better_api is not None:
+                await _better_api.shutdown()
 
     # 对每个分块执行错误检查和缓存保存
     for i, chunk in enumerate(resultChunks):
@@ -1852,6 +1999,9 @@ async def init_gptapi(
         case "ForGal-json-multi-chat":
             from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
             return ForGalJsonMulitChat(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForImproveTranslation":
+            from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
+            return ForImproveTranslation(projectConfig, eng_type, proxyPool, tokenPool)
         case "GenDic":
             from GalTransl.Backend.GenDic import GenDic
             return GenDic(projectConfig, eng_type, proxyPool, tokenPool)

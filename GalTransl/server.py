@@ -335,7 +335,7 @@ def _cache_entry_key(entry: Any) -> Any:
 
 def _entry_modified(old: dict, new: dict) -> bool:
     """判断新旧条目在译文相关字段上是否有差异（用于保存时审计 diff）。"""
-    for f in ("pre_dst", "proofread_dst", "problem", "skip_check"):
+    for f in ("pre_dst", "proofread_dst", "alt_dst", "problem", "skip_check"):
         if old.get(f) != new.get(f):
             return True
     return False
@@ -2265,9 +2265,10 @@ def build_handler(registry: JobRegistry) -> type:
                         return
 
                     import orjson
-                    # 写盘前对比旧文件，记录本次保存修改/删除了哪些条目（审计日志）
+                    # 写盘前对比旧文件，记录本次保存修改/删除/交换了哪些条目（审计日志）
                     modified_indices: list[Any] = []
                     deleted_indices: list[Any] = []
+                    swapped_indices: list[Any] = []
                     try:
                         with open(file_path, "rb") as _old_f:
                             old_entries = orjson.loads(_old_f.read())
@@ -2278,18 +2279,35 @@ def build_handler(registry: JobRegistry) -> type:
                                 if k not in new_map:
                                     deleted_indices.append(oe.get("index"))
                             for k, ne in new_map.items():
-                                if k in old_map and _entry_modified(old_map[k], ne):
-                                    modified_indices.append(ne.get("index"))
+                                if k in old_map:
+                                    oe = old_map[k]
+                                    # 交换备选译文：新 pre_dst == 旧 alt_dst 且 新 alt_dst == 旧 pre_dst
+                                    is_swap = bool(
+                                        oe.get("alt_dst")
+                                        and ne.get("pre_dst") == oe.get("alt_dst")
+                                        and ne.get("alt_dst") == oe.get("pre_dst")
+                                    )
+                                    if is_swap:
+                                        swapped_indices.append(ne.get("index"))
+                                    elif _entry_modified(oe, ne):
+                                        modified_indices.append(ne.get("index"))
                     except Exception:
                         pass
                     with open(file_path, "wb") as f:
                         f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
-                    if modified_indices or deleted_indices:
+                    if modified_indices or deleted_indices or swapped_indices:
+                        _audit_parts = [
+                            f"修改 {len(modified_indices)} 条 {_fmt_indices(modified_indices)}",
+                            f"删除 {len(deleted_indices)} 条 {_fmt_indices(deleted_indices)}",
+                        ]
+                        if swapped_indices:
+                            _audit_parts.append(
+                                f"交换备选译文 {len(swapped_indices)} 条 "
+                                f"{_fmt_indices(swapped_indices)}"
+                            )
                         _append_engine_log(
                             project_dir,
-                            f"[cache] 保存缓存文件 {norm}：修改 {len(modified_indices)} 条 "
-                            f"{_fmt_indices(modified_indices)}，删除 {len(deleted_indices)} 条 "
-                            f"{_fmt_indices(deleted_indices)}",
+                            f"[cache] 保存缓存文件 {norm}：" + "，".join(_audit_parts),
                         )
 
                     # Rebuild: re-derive problem and post_dst_preview fields

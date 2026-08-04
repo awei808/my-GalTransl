@@ -654,6 +654,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         trans_list: CTransList,
         proofread: bool,
         filename: str,
+        problem_types: Optional[list] = None,
     ) -> tuple:
         """
         输入内容处理与拼接（流程第 1 步）。
@@ -664,6 +665,7 @@ class ForGalJsonMulitChat(BaseTranslate):
           - 将 \\t → [t]、换行符 → <br>（LLM 友好格式，避免与 jsonline 冲突）
           - 为每句生成唯一 3 位签名 sig（防串行校验）
           - 翻译模式构建 {id,name,src}；校对模式额外携带 dst
+          - problem_types 非 None 时可选注入 problem（译文问题，供改进轮参考）
           - 无说话人时删除 name 字段（表示旁白/独白）
         最终将所有 jsonline 行拼接为待译输入文本。
 
@@ -671,6 +673,8 @@ class ForGalJsonMulitChat(BaseTranslate):
             trans_list: 本批评句
             proofread: 是否校对模式
             filename: 文件名（预留，当前用于潜在扩展）
+            problem_types: 允许注入的译文问题类型白名单（CProblemType 或其中文名）；
+                None=不注入；空列表=注入全部；非空=仅注入白名单内类型。
 
         Returns:
             (input_list, sig_list, n_symbol, input_src)
@@ -727,6 +731,18 @@ class ForGalJsonMulitChat(BaseTranslate):
                     ),
                 }
 
+            # 可选注入译文问题（problem）：供改进轮评估参考；翻译轮不传 problem_types 不生效
+            if problem_types is not None:
+                if problem_types:
+                    problem_str = self._filter_problem_by_types(
+                        getattr(trans, "problem", ""), problem_types
+                    )
+                else:
+                    # 空白名单=注入全部已检测问题
+                    problem_str = getattr(trans, "problem", "")
+                if problem_str:
+                    tmp_obj["problem"] = problem_str
+
             # 无说话人时删除 name 字段，表示旁白/独白
             if tmp_obj["name"] == "null":
                 del tmp_obj["name"]
@@ -736,6 +752,49 @@ class ForGalJsonMulitChat(BaseTranslate):
         # 拼接所有 jsonline 行为最终输入文本
         input_src = "\n".join(input_list)
         return input_list, sig_list, n_symbol, input_src
+
+    @staticmethod
+    def _filter_problem_by_types(problem: str, problem_types: list) -> str:
+        """按类型白名单过滤 problem 字符串，保留「类型名：描述」原文。
+
+        类型匹配为精确匹配：项 == 类型名 或以「类型名：」开头，
+        避免「比日文长」误匹配「比日文长严格」。对 find_problems 生成的
+        文本前缀与枚举名不一致的类别（标点错漏/语言不通/字典使用）做别名兜底。
+
+        Args:
+            problem: 原始 problem 字符串（如 "残留日文：xx, 独白男他"）。
+            problem_types: 允许的类型（CProblemType 成员或其 name 字符串）。
+
+        Returns:
+            str: 过滤后的问题串；无匹配返回空串。
+        """
+        if not problem:
+            return ""
+        # find_problems 生成文本与枚举名不一致的类别 -> 文本前缀别名
+        type_aliases = {
+            "标点错漏": ("本无", "本有"),
+            "语言不通": ("语言不通-非GBK",),
+            "字典使用": ("未使用",),
+        }
+        allowed = {
+            (t.name if hasattr(t, "name") else str(t)).strip() for t in problem_types
+        }
+        kept = []
+        for item in problem.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            type_name = item.split("：", 1)[0].strip()
+            if type_name in allowed:
+                kept.append(item)
+                continue
+            if any(
+                alias in type_name
+                for tname in allowed
+                for alias in type_aliases.get(tname, ())
+            ):
+                kept.append(item)
+        return ", ".join(kept)
 
     # 2. 提示词拼接
 
@@ -1397,6 +1456,12 @@ class ForGalJsonMulitChat(BaseTranslate):
         explicit = self.file_metadata_map.get(filename)
         if explicit is not None:
             return explicit
+        # 显式注入的 key 可能带分批后缀（如 name_0）；翻译轮以带后缀名精确命中，
+        # 改进轮等以原始名查询时按剥离后缀兜底匹配，避免分片文件丢失剧情元数据。
+        stripped = strip_chunk_suffix(filename)
+        for k, v in self.file_metadata_map.items():
+            if strip_chunk_suffix(k) == stripped:
+                return v
         self._ensure_file_metadata_loaded()
         md = self._file_metadata_by_file.get(filename)
         if md is not None:
@@ -1886,7 +1951,6 @@ class ForGalJsonMulitChat(BaseTranslate):
             )
             merged.extend(res)
         return merged
-
 
 """
 接入说明（如需启用本后端）：
