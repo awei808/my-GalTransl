@@ -1640,7 +1640,7 @@ class ForGalJsonMulitChat(BaseTranslate):
 
         始终保留 system 消息（index 0）与第一轮 user 消息（index 1，含剧情元数据），
         仅裁剪中间的历史轮次，保留最近的若干轮。
-
+        当前配置项中未设置相应配置，也就是说裁剪功能实际是没有实现的。暂不考虑实现
         Args:
             messages: 完整 messages 列表
 
