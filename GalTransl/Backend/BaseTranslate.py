@@ -22,6 +22,7 @@ from openai._types import NOT_GIVEN
 import json
 import random
 import re
+import sys
 import time
 from contextlib import suppress
 from GalTransl.TerminalOutput import should_print_translation_logs
@@ -36,6 +37,15 @@ except Exception:
 
 _GLOBAL_RPM_LOCK = Lock()
 _GLOBAL_NEXT_ALLOWED_TS = 0.0
+
+
+def _print_translation_block(text: str) -> None:
+    """终端打印整批译文；GBK 等终端编码失败时按 replace 降级，避免崩溃。"""
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
+    print(text)
 
 
 def _infer_provider(model_name: str) -> str:
@@ -744,7 +754,7 @@ class BaseTranslate:
                     self._record_runtime_success(filename, trans)
                 result_output += repr(trans)
 
-            LOGGER.info(result_output)
+            _print_translation_block(result_output)
             trans_result_list += trans_result
             transl_step_count += 1
             if transl_step_count >= self.save_steps:
@@ -1357,7 +1367,7 @@ class BaseTranslate:
             for trans in trans_result:
                 result_output = result_output + repr(trans)
             if should_print_translation_logs(self.pj_config):
-                LOGGER.info(result_output)
+                _print_translation_block(result_output)
             trans_result_list += trans_result
             transl_step_count += 1
             if transl_step_count >= self.save_steps:

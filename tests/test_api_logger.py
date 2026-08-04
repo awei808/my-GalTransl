@@ -95,6 +95,25 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
 
         shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_writer_survives_multiple_event_loops(self) -> None:
+        # 复现单例队列跨多次 asyncio.run（每次新 loop）复用导致的
+        # "bound to a different event loop"：模拟 server 模式连续多次任务。
+        from GalTransl.ApiLogger import api_logger
+
+        tmp = tempfile.mkdtemp()
+
+        async def _job(label: str) -> None:
+            tid = api_logger.begin(tmp, backend="b", model="m", file=f"{label}.txt")
+            api_logger.record(tid, status="success", latency_ms=10)
+            await api_logger.shutdown()
+
+        asyncio.run(_job("first"))
+        asyncio.run(_job("second"))  # 旧代码第二次会令 writer 崩溃、日志缺失
+
+        content = open(os.path.join(tmp, "api_calls.log"), encoding="utf-8").read()
+        self.assertEqual(content.count(">>>"), 2)
+        shutil.rmtree(tmp, ignore_errors=True)
+
     async def test_record_without_writer_ignored(self) -> None:
         from GalTransl.ApiLogger import api_logger
 

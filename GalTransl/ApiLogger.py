@@ -31,6 +31,8 @@ import time
 import uuid
 from typing import Any, Optional
 
+from GalTransl import LOGGER
+
 
 class ApiLogger:
     def __init__(self) -> None:
@@ -111,6 +113,10 @@ class ApiLogger:
     # ── 内部 ──
 
     def _start_writer(self, project_dir: str) -> None:
+        # 每次启动 writer 都重建队列，使其 _loop 在当前 event loop 首次 get() 时惰性绑定，
+        # 避免单例跨多次 asyncio.run（每次新 loop）复用旧 loop 绑定的队列而抛异常。
+        self._queue = asyncio.Queue()
+        LOGGER.debug("ApiLogger 为新 event loop 重建写入队列")
         self._close_file()
         os.makedirs(project_dir, exist_ok=True)
         self._file_path = os.path.join(project_dir, "api_calls.log")
@@ -118,7 +124,7 @@ class ApiLogger:
             self._file_handle = open(self._file_path, "a", encoding="utf-8", buffering=1)
         except OSError:
             self._file_handle = None
-        self._writer_task = asyncio.ensure_future(self._writer_loop())
+        self._writer_task = asyncio.get_running_loop().create_task(self._writer_loop())
 
     def _close_file(self) -> None:
         if self._file_handle:
