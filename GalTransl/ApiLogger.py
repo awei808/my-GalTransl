@@ -60,7 +60,7 @@ class ApiLogger:
         self._queue.put_nowait({
             "_stage": "request",
             "trace_id": trace_id,
-            "ts": _localtime_str(),
+            "ts_req": _localtime_str(),
             "backend": backend,
             "file": file,
             "model": model,
@@ -88,7 +88,7 @@ class ApiLogger:
         self._queue.put_nowait({
             "_stage": "response",
             "trace_id": trace_id,
-            "ts": _localtime_str(),
+            "ts_resp": _localtime_str(),
             "status": status,
             "latency_ms": round(latency_ms, 1),
             "retry_count": retry_count,
@@ -165,7 +165,7 @@ class ApiLogger:
             _s = "stream" if entry.get("stream") else "nonstream"
             _f = f' file={entry["file"]}' if entry.get("file") else ""
             lines.append(
-                f'[{entry.get("ts_req", entry.get("ts", "?"))}][API] {tid} >>> '
+                f'[{entry.get("ts_req", "?")}][API] {tid} >>> '
                 f'{entry.get("backend","")} {entry.get("model","")}'
                 f' {entry.get("endpoint","")} {_s}{_f}'
             )
@@ -175,7 +175,7 @@ class ApiLogger:
             if prompt:
                 _pt = entry.get("prompt_tokens", 0) or 0
                 _pt_info = f" tokens={_pt}" if _pt else ""
-                lines.append(f'[{entry.get("ts", "?")}][API] {tid} -REQ{_pt_info}')
+                lines.append(f'[{entry.get("ts_resp", "?")}][API] {tid} -REQ{_pt_info}')
                 for pline in prompt.split("\n"):
                     lines.append(pline if pline else " ")
 
@@ -187,7 +187,7 @@ class ApiLogger:
                 _lt = entry.get("latency_ms", 0)
                 _ct = entry.get("completion_tokens", 0) or 0
                 lines.append(
-                    f'[{entry.get("ts", "?")}][API] {tid} -RESP '
+                    f'[{entry.get("ts_resp", "?")}][API] {tid} -RESP '
                     f'success {_lt}ms {_ct}t'
                     f'{"" if not entry.get("retry_count") else f" retry={entry.get("retry_count")}"}'
                 )
@@ -195,13 +195,13 @@ class ApiLogger:
                 if reason:
                     # 思考内容单独标记输出，便于与译文区分
                     lines.append(
-                        f'[{entry.get("ts", "?")}][API] {tid} -REASONING'
+                        f'[{entry.get("ts_resp", "?")}][API] {tid} -REASONING'
                     )
                     for rline in reason.split("\n"):
                         lines.append(rline if rline else " ")
                     if resp:
                         lines.append(
-                            f'[{entry.get("ts", "?")}][API] {tid} -CONTENT'
+                            f'[{entry.get("ts_resp", "?")}][API] {tid} -CONTENT'
                         )
                 if resp:
                     for rline in resp.split("\n"):
@@ -209,14 +209,14 @@ class ApiLogger:
             elif err:
                 _lt = entry.get("latency_ms", 0)
                 lines.append(
-                    f'[{entry.get("ts_resp", entry.get("ts", "?"))}][API] {tid} <<< '
+                    f'[{entry.get("ts_resp", "?")}][API] {tid} <<< '
                     f'{entry.get("status", "error")} {_lt}ms '
                     f'retry={entry.get("retry_count",0)}'
                 )
                 lines.append(err)
             else:
                 lines.append(
-                    f'[{entry.get("ts", "?")}][API] {tid} <<< '
+                    f'[{entry.get("ts_resp", "?")}][API] {tid} <<< '
                     f'{entry.get("status", "?")}'
                 )
 

@@ -443,7 +443,7 @@ class CNormalDic:
                         find_ifword_text = input_tran.pre_src
                     case "post_src" | "post_jp":
                         find_ifword_text = input_tran.post_src
-                    case "pre_dst" | "pre_dst":
+                    case "pre_dst" | "pre_zh":
                         find_ifword_text = input_tran.pre_dst
                     case "post_dst" | "post_zh":
                         find_ifword_text = input_tran.post_dst
