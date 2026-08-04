@@ -85,8 +85,11 @@ export function BackendProfilesPage() {
   }
   function setTokens(tokens: TokenEntry[]) {
     setEditConfig((prev) => {
+      const cur = (prev["OpenAI-Compatible"] as OpenAICompatConfig) ?? {};
       const next: Record<string, unknown> = { ...prev };
-      next["OpenAI-Compatible"] = { tokens };
+      // 保留 stream/provider/thinking_mode 等既有字段，仅更新 tokens，
+      // 否则每次编辑 token 都会清空其它 API 参数（含流式），导致无法传回后端。
+      next["OpenAI-Compatible"] = { ...cur, tokens };
       delete next["SakuraLLM"];
       return next;
     });
@@ -97,8 +100,10 @@ export function BackendProfilesPage() {
   }
   function setEndpoints(endpoints: string[]) {
     setEditConfig((prev) => {
+      const cur = (prev["SakuraLLM"] as SakuraConfig) ?? {};
       const next: Record<string, unknown> = { ...prev };
-      next["SakuraLLM"] = { endpoints };
+      // 保留 SakuraLLM 其它字段，仅更新 endpoints，对称修复清空问题。
+      next["SakuraLLM"] = { ...cur, endpoints };
       delete next["OpenAI-Compatible"];
       return next;
     });
@@ -106,6 +111,13 @@ export function BackendProfilesPage() {
 
   function getOpenAI(): OpenAICompatConfig {
     return (editConfig()["OpenAI-Compatible"] as OpenAICompatConfig) ?? {};
+  }
+  // 加载既有 profile 时，若 OpenAI-Compatible.stream 缺失或非布尔，归一化为默认 true，
+  // 与 UI 勾选框（checked={stream ?? true}）及后端默认保持一致。
+  function ensureStreamDefault(config: Record<string, unknown>): Record<string, unknown> {
+    const oc = config["OpenAI-Compatible"] as OpenAICompatConfig | undefined;
+    if (!oc || typeof oc.stream === "boolean") return config;
+    return { ...config, "OpenAI-Compatible": { ...oc, stream: true } };
   }
   function setOpenAIField(patch: Partial<OpenAICompatConfig>) {
     setEditConfig((prev) => {
@@ -173,7 +185,7 @@ export function BackendProfilesPage() {
   function changeType(t: ProfileType) {
     setEditType(t);
     if (t === "OpenAI-Compatible") {
-      setEditConfig({ "OpenAI-Compatible": { tokens: [{ endpoint: "", modelName: "", token: "" }] } });
+      setEditConfig({ "OpenAI-Compatible": { stream: true, tokens: [{ endpoint: "", modelName: "", token: "" }] } });
     } else {
       setEditConfig({ "SakuraLLM": { endpoints: [""] } });
     }
@@ -185,7 +197,7 @@ export function BackendProfilesPage() {
     setEditorIsNew(true);
     setEditName("");
     setEditType("OpenAI-Compatible");
-    setEditConfig({ "OpenAI-Compatible": { tokens: [{ endpoint: "", modelName: "", token: "" }] } });
+    setEditConfig({ "OpenAI-Compatible": { stream: true, tokens: [{ endpoint: "", modelName: "", token: "" }] } });
     setModelsByIndex({});
     setOpenModelIdx(null);
     setEditorOpen(true);
@@ -197,7 +209,7 @@ export function BackendProfilesPage() {
     setEditorIsNew(false);
     setEditName(name);
     setEditType(getProfileType(p.config));
-    setEditConfig({ ...p.config });
+    setEditConfig(ensureStreamDefault({ ...p.config }));
     setModelsByIndex({});
     setOpenModelIdx(null);
     setEditorOpen(true);

@@ -186,9 +186,16 @@ export function getSelectedBackendProfileJobPayload(
 ): Pick<SubmitJobPayload, "backend_profile" | "backend_profile_data"> {
   const { name, profile } = resolveSelectedBackendProfile(projectDir);
   if (!profile) return {};
+  // 防御性兜底：OpenAI-Compatible.stream 缺失或非布尔时默认 true，
+  // 确保后端无论哪处读取（token pool 默认 False / 实际请求默认 True）都拿到确定布尔。
+  const openai = profile["OpenAI-Compatible"] as Record<string, unknown> | undefined;
+  const normalized: Record<string, unknown> =
+    openai && typeof openai.stream !== "boolean"
+      ? { ...profile, "OpenAI-Compatible": { ...openai, stream: true } }
+      : profile;
   return {
     ...(name ? { backend_profile: name } : {}),
-    ...(profile ? { backend_profile_data: profile } : {}),
+    ...(normalized ? { backend_profile_data: normalized } : {}),
   };
 }
 
