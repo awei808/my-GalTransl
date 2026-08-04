@@ -1510,11 +1510,12 @@ class ForGalJsonMulitChat(BaseTranslate):
         """按批次级元数据语义段边界对句子分组。
 
         每组句子 ``runtime_index`` 同属一个语义段（边界对齐、不跨段），段外句入尾组。
-        无/空元数据或零有效段时返回 ``[translist_unhit]``（调用方退化为原固定切片）。
+        无/空元数据或零有效段时返回 ``[translist_unhit]``（调用方退化为原固定切片，待废弃）。
         有元数据时每段作单一翻译单元发送，大段不二次切割（Option A：共用文件对话）。
         """
         bm = self._resolve_batch_metadata(filename)
         if bm is None or not getattr(bm, "batches", None):
+            # 待废弃：无/空 BatchMetadata 时退化为整文件一次翻译（count 切批入口），将由 BatchMetadata 取代
             return [list(translist_unhit)]
 
         segs = []
@@ -1527,6 +1528,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             segs.append((rng[0], rng[1], b))
         segs.sort(key=lambda x: (x[0], x[1]))
         if not segs:
+            # 待废弃：无/空 BatchMetadata 时退化为整文件一次翻译（count 切批入口），将由 BatchMetadata 取代
             return [list(translist_unhit)]
 
         def _gi(t):
@@ -1553,6 +1555,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         groups = [lst for lst in seg_lists if lst]
         if ungrouped:
             groups.append(ungrouped)
+        # 待废弃：全部未分组时退化为整文件一次翻译（count 切批入口），将由 BatchMetadata 取代
         return groups if groups else [list(translist_unhit)]
 
     @staticmethod
@@ -1915,6 +1918,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         groups = self._group_by_batch_metadata(translist_unhit, filename)
 
         # 有元数据时每段作单一翻译单元（大段不二次切割）；无元数据走原固定切片
+        # 待废弃：下述「无元数据」分支即 count-based 切批（num_pre_request），将被 BatchMetadata 取代
         bm = self._resolve_batch_metadata(filename)
         if bm is None or not getattr(bm, "batches", None):
             return await self._batch_translate_common(

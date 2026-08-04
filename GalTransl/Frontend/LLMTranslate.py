@@ -708,14 +708,21 @@ async def doLLMTranslate(
             projectConfig.gpt_dic.sort_dic()
         gptapi = await init_gptapi(projectConfig)
         total = len(file_json_lists)
-        LOGGER.info(f"[改进轮] 开始为 {total} 个文件执行译文质量改进评估")
+        # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
+        _workers_raw = projectConfig.getKey("workersPerProject")
+        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        worker_count = max(1, workers_per_project)
+        projectConfig.active_workers = worker_count
+        LOGGER.info(f"[改进轮] 开始为 {total} 个文件执行译文质量改进评估，并发 {worker_count} worker")
         _update_runtime(projectConfig, stage="译文质量改进")
         num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
             num_better = int(num_better) if num_better else 100
         except (TypeError, ValueError):
             num_better = 100
-        for file_path, json_list in file_json_lists.items():
+
+        async def _improve_single_file(file_path: str, json_list: list) -> None:
+            """处理单个文件的改进轮：重建句子、命中缓存、评估并写回备选译文。"""
             _check_stop_requested(projectConfig)
             file_name = (
                 file_path.replace(input_dir, "")
@@ -725,7 +732,7 @@ async def doLLMTranslate(
             cache_file_path = joinpath(cache_dir, file_name)
             if not isPathExists(cache_file_path):
                 LOGGER.warning(f"[改进轮] {file_name} 无缓存译文，跳过")
-                continue
+                return
             # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
             # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
             from GalTransl.Loader import load_transList
@@ -774,6 +781,45 @@ async def doLLMTranslate(
                 LOGGER.warning(
                     f"[改进轮] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
                 )
+
+        # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
+        file_queue: asyncio.Queue = asyncio.Queue()
+        for file_path, json_list in file_json_lists.items():
+            file_queue.put_nowait((file_path, json_list))
+        for _ in range(worker_count):
+            file_queue.put_nowait(None)
+
+        async def _improve_worker_loop(worker_index: int) -> None:
+            # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+            worker_token = WORKER_ID_CTX.set(str(worker_index))
+            LOGGER.debug(
+                f"[改进轮] worker_loop[{worker_index}] 启动, "
+                f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+            )
+            try:
+                while True:
+                    _check_stop_requested(projectConfig)
+                    item = await file_queue.get()
+                    if item is None:
+                        return
+                    file_path, json_list = item
+                    await _improve_single_file(file_path, json_list)
+            finally:
+                WORKER_ID_CTX.reset(worker_token)
+
+        improve_tasks = [
+            asyncio.create_task(_improve_worker_loop(i)) for i in range(worker_count)
+        ]
+        try:
+            await asyncio.gather(*improve_tasks)
+        except Exception:
+            # 任一 worker 抛出未捕获异常（缓存读取/写盘失败等）：取消其余 worker，
+            # 避免孤儿任务继续处理导致状态不一致
+            for task in improve_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*improve_tasks, return_exceptions=True)
+            raise
         LOGGER.info("[改进轮] 译文质量改进完成")
         _update_runtime(projectConfig, stage="译文质量改进完成")
         return True
@@ -1755,6 +1801,7 @@ async def doLLMTranslSingleChunk(
         tPlugins = projectConfig.tPlugins
         eng_type = projectConfig.select_translator
 
+        # 待废弃：以下 chunk 索引来自 splitter 文件级分块，未来由 BatchMetadata 语义段取代
         total_splits = split_chunk.total_chunks
         file_index = split_chunk.chunk_index
         input_file_path = file_path
@@ -1802,6 +1849,7 @@ async def doLLMTranslSingleChunk(
             # 注入文件级元数据（仅支持 set_file_metadata 的后端，如 ForGal-json-multi-chat）
             file_metadata = getattr(projectConfig, "file_metadata", None)
             if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
+                # 待废弃：_file_index 后缀桶键由 splitter 分块驱动，未来随 BatchMetadata 语义段移除
                 _batch_file_name = file_name + (
                     f"_{file_index}" if total_splits > 1 else ""
                 )
@@ -1819,7 +1867,7 @@ async def doLLMTranslSingleChunk(
                 translist_unhit=translist_unhit,
             )
 
-            # 执行校对（如果启用）
+            # 弃用的死代码：旧版 GPT4 自动校对；gpt.enableProofRead 已从默认配置移除且现无 gpt4 引擎，分支永不执行
             if projectConfig.getKey("gpt.enableProofRead"):
                 _check_stop_requested(projectConfig)
                 if "gpt4" in eng_type:
