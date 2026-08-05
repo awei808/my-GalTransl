@@ -29,7 +29,7 @@ export type ActiveView =
 
 export type ConnectionPhase = "offline" | "connecting" | "online" | "reconnecting";
 
-export type SidebarTab = "explorer" | "find" | "problems" | null;
+export type SidebarTab = "explorer" | "find" | "problems" | "alt" | null;
 
 export interface AppState {
   // 导航

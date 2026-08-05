@@ -2,7 +2,7 @@ import { Match, Switch, createSignal, createEffect, createMemo, onCleanup, Show,
 import { appState, setAppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
-import { searchCache, replaceCache, fetchProjectProblems, deleteCacheFiles, fetchProjectFiles, revealInFileManager } from "../lib/api/project";
+import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager } from "../lib/api/project";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
 import { getErrorMessage } from "../lib/errors";
@@ -10,6 +10,7 @@ import { problemTypesOf } from "../lib/problems";
 import type {
   FileNode,
   ProblemEntry,
+  AltTransEntry,
   CacheSearchResult,
   CacheSearchField,
 } from "../lib/api/types";
@@ -478,11 +479,10 @@ function FindReplacePanel() {
 function ProblemList() {
   const [problems, setProblems] = createSignal<ProblemEntry[]>([]);
   const [filterType, setFilterType] = createSignal("all");
-  // 已收起的文件集合（默认展开，点击文件行右侧图标收起；内联读取以启用细粒度追踪）
-
-  const [collapsedFiles, setCollapsedFiles] = createSignal<Set<string>>(new Set());
+  // 已展开的文件集合（默认折叠，点击文件行右侧图标展开；内联读取以启用细粒度追踪）
+  const [expandedFiles, setExpandedFiles] = createSignal<Set<string>>(new Set());
   function toggleFile(filename: string) {
-    setCollapsedFiles((prev) => {
+    setExpandedFiles((prev) => {
       const next = new Set(prev);
       if (next.has(filename)) next.delete(filename);
       else next.add(filename);
@@ -596,16 +596,17 @@ function ProblemList() {
                 <div class="problem-group">
                   {/* 文件行：左侧文件名，右侧展开/收起切换图标 */}
                   <div class="problem-filename-row">
-                    <span class="problem-filename">{filename}</span>
-                    <button
-                      class="problem-toggle"
-                      data-open={!collapsedFiles().has(filename)}
-                      aria-expanded={!collapsedFiles().has(filename)}
-                      aria-label={
-                        collapsedFiles().has(filename) ? "展开问题列表" : "收起问题列表"
+                  <span class="problem-filename">{filename}</span>
+                  <span class="problem-filename-count" style={{ marginLeft: "6px", color: "var(--c-text-muted, #8a8f98)", fontSize: "12px" }}>{entries.length}</span>
+                  <button
+                    class="problem-toggle"
+                    data-open={expandedFiles().has(filename)}
+                    aria-expanded={expandedFiles().has(filename)}
+                    aria-label={
+                        expandedFiles().has(filename) ? "收起问题列表" : "展开问题列表"
                       }
-                      onClick={() => toggleFile(filename)}
-                    >
+                    onClick={() => toggleFile(filename)}
+                  >
                       {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
                       <svg
                         class="problem-toggle-icon"
@@ -625,7 +626,7 @@ function ProblemList() {
                       </svg>
                     </button>
                   </div>
-                  <Show when={!collapsedFiles().has(filename)}>
+                  <Show when={expandedFiles().has(filename)}>
                     <For each={entries}>
                       {(entry) => (
                         <div
@@ -645,6 +646,119 @@ function ProblemList() {
                 </div>
               );
             }}
+          </For>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+/* ── 查看备选（对照 ProblemList，分组默认折叠以防大列表卡顿） ── */
+function AltList() {
+  const [alts, setAlts] = createSignal<AltTransEntry[]>([]);
+  // 已展开的文件集合（默认折叠，点击文件行右侧图标展开；内联读取以启用细粒度追踪）
+  const [expandedFiles, setExpandedFiles] = createSignal<Set<string>>(new Set());
+  function toggleFile(filename: string) {
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) next.delete(filename);
+      else next.add(filename);
+      return next;
+    });
+  }
+
+  createEffect(() => {
+    const pid = appState.activeProjectId;
+    // 复用问题列表版本号：任一缓存文件变化都刷新备选列表（覆盖外部修改盲区）
+    void appState.problemVersion;
+    if (!pid || appState.sidebarTab !== "alt") {
+      setAlts([]);
+      return;
+    }
+    fetchProjectAltTranslations(pid)
+      .then((res) => setAlts(res.alts ?? []))
+      .catch(() => {});
+  });
+
+  // 按文件名分组
+  const grouped = () => {
+    const map = new Map<string, AltTransEntry[]>();
+    for (const a of alts()) {
+      const list = map.get(a.filename) ?? [];
+      list.push(a);
+      map.set(a.filename, list);
+    }
+    return [...map.entries()];
+  };
+
+  function jumpToEntry(filename: string, index: number) {
+    const patch: Record<string, unknown> = {
+      activeView: "review",
+      reviewJumpToIndex: index,
+    };
+    // 仅当切换文件时才设 activeFilePath，同文件跳转不用重载
+    if (filename !== appState.activeFilePath) {
+      patch.activeFilePath = filename;
+    }
+    setAppState(patch as any);
+  }
+
+  return (
+    <div class="sidebar-panel">
+      <div class="sidebar-header">查看备选</div>
+      <div class="sidebar-content">
+        <Show when={alts().length > 0} fallback={<p class="sidebar-placeholder">暂无备选译文</p>}>
+          <div class="problem-stats">
+            <span class="problem-stats-total">共 {alts().length} 条备选译文</span>
+          </div>
+          <For each={grouped()}>
+            {([filename, entries]) => (
+              <div class="problem-group">
+                {/* 文件行：左侧文件名，右侧展开/收起切换图标 */}
+                <div class="problem-filename-row">
+                  <span class="problem-filename">{filename}</span>
+                  <span class="problem-filename-count" style={{ marginLeft: "6px", color: "var(--c-text-muted, #8a8f98)", fontSize: "12px" }}>{entries.length}</span>
+                  <button
+                    class="problem-toggle"
+                    data-open={expandedFiles().has(filename)}
+                    aria-expanded={expandedFiles().has(filename)}
+                    aria-label={expandedFiles().has(filename) ? "收起备选列表" : "展开备选列表"}
+                    onClick={() => toggleFile(filename)}
+                  >
+                    {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
+                    <svg
+                      class="problem-toggle-icon"
+                      viewBox="0 0 16 16"
+                      width="14"
+                      height="14"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M4 6l4 4 4-4"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <Show when={expandedFiles().has(filename)}>
+                  <For each={entries}>
+                    {(entry) => (
+                      <div
+                        class="problem-entry"
+                        onClick={() => jumpToEntry(entry.filename, entry.index)}
+                      >
+                        <span class="problem-index">#{entry.index}</span>
+                        <span class="problem-desc">{entry.alt_dst?.slice(0, 50)}</span>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </div>
+            )}
           </For>
         </Show>
       </div>
@@ -705,6 +819,9 @@ export function SidebarPanel() {
         </Match>
         <Match when={tab() === "problems"}>
           <ProblemList />
+        </Match>
+        <Match when={tab() === "alt"}>
+          <AltList />
         </Match>
         <Match when={!tab()}>
           <EmptySidebar />

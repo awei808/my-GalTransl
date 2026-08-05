@@ -398,6 +398,24 @@ export type ProjectProblemsResponse = {
   total: number;
 };
 
+export type AltTransEntry = {
+  filename: string;
+  index: number;
+  speaker: string | string[];
+  post_src: string;
+  pre_dst: string;
+  alt_dst: string;
+  trans_by: string;
+  post_jp?: string;
+  pre_zh?: string;
+};
+
+export type ProjectAltTransResponse = {
+  project_dir: string;
+  alts: AltTransEntry[];
+  total: number;
+};
+
 /** POST /api/projects/:id/cache/check 单条目重检结果 */
 export type CacheCheckResult = {
   index: number;

@@ -27,6 +27,7 @@ import type {
   ProjectFilesResponse,
   ProjectLogsResponse,
   ProjectProblemsResponse,
+  ProjectAltTransResponse,
   CacheCheckResponse,
   ProjectProgressResponse,
   ProjectRuntimeResponse,
@@ -371,6 +372,13 @@ export async function deleteCommonDictionaryFile(payload: { filename: string }) 
 export async function fetchProjectProblems(projectId: string, file?: string) {
   const q = file ? `?file=${encodeURIComponent(file)}` : "";
   return apiRequest<ProjectProblemsResponse>(`/api/projects/${projectId}/problems${q}`);
+}
+
+// ---- Project alt translations ----
+
+export async function fetchProjectAltTranslations(projectId: string, file?: string) {
+  const q = file ? `?file=${encodeURIComponent(file)}` : "";
+  return apiRequest<ProjectAltTransResponse>(`/api/projects/${projectId}/alt-translations${q}`);
 }
 
 /** 对给定缓存条目重新运行问题检测；persist=true 时写回缓存文件（单文件范围），供"保存并重检"同步侧栏 */

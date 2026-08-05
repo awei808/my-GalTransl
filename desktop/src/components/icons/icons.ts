@@ -150,6 +150,12 @@ export const ICON_PATHS: Record<string, IconDef> = {
   edit: {
     d: "M4 20h4L18 10l-4-4L4 16v4ZM14 6l4 4",
   },
+  swap: {
+    d: [
+      "M7 16V4m0 0L3 8m4-4l4 4",
+      "M17 8v12m0 0l4-4m-4 4l-4-4",
+    ],
+  },
   copy: {
     d: "M8 4h10a2 2 0 0 1 2 2v10M6 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z",
   },

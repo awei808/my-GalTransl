@@ -1,5 +1,5 @@
 import { Icon } from "./icons/Icon";
-import { appState, setAppState, navigateTo, type ActiveView } from "../stores/appStore";
+import { appState, setAppState, navigateTo, type ActiveView, type SidebarTab } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { confirm } from "../stores/confirmStore";
 import { buildProjectOutput, validateBuild } from "../lib/api/project";
@@ -16,6 +16,7 @@ const tabs: TabDef[] = [
   { icon: "edit", view: "review", label: "校对审核" },
   { icon: "search", view: "search", label: "查找替换" },
   { icon: "alert-circle", view: "problems", label: "问题检测" },
+  { icon: "swap", view: "alt", label: "查看备选" },
   { icon: "book", view: "dict", label: "字典管理" },
   { icon: "terminal", view: "build-output", label: "构建输出" },
   { icon: "settings", view: "settings", label: "设置" },
@@ -78,6 +79,13 @@ async function handleBuildOutput() {
   }
 }
 
+// 侧栏类按钮（查找/问题检测/查看备选）的 view -> SidebarTab 映射，消除硬编码三元
+const SIDEBAR_TAB_OF: Record<string, SidebarTab> = {
+  search: "find",
+  problems: "problems",
+  alt: "alt",
+};
+
 function handleTabClick(tab: TabDef) {
   if (tab.view === "build-output") {
     handleBuildOutput();
@@ -88,26 +96,30 @@ function handleTabClick(tab: TabDef) {
   if (fullPageViews.includes(tab.view)) {
     navigateTo(tab.view as ActiveView);
     setAppState({ sidebarOpen: false });
-  } else if (["search", "problems"].includes(tab.view)) {
-    const alreadyOpen =
-      appState.sidebarOpen && appState.sidebarTab === (tab.view === "search" ? "find" : tab.view);
+    return;
+  }
+
+  const sidebarTab = SIDEBAR_TAB_OF[tab.view];
+  if (sidebarTab) {
+    const alreadyOpen = appState.sidebarOpen && appState.sidebarTab === sidebarTab;
     setAppState({
       sidebarOpen: !alreadyOpen,
-      sidebarTab: alreadyOpen ? null : tab.view === "search" ? "find" : (tab.view as "problems"),
+      sidebarTab: alreadyOpen ? null : sidebarTab,
     });
-  } else {
-    navigateTo(tab.view as "translate" | "review");
-    setAppState({
-      sidebarOpen: true,
-      sidebarTab: tab.view === "review" ? "explorer" : null,
-    });
+    return;
   }
+
+  navigateTo(tab.view as "translate" | "review");
+  setAppState({
+    sidebarOpen: true,
+    sidebarTab: tab.view === "review" ? "explorer" : null,
+  });
 }
 
 function isActive(tab: TabDef) {
-  const state = appState;
-  if (tab.view === state.activeView) return true;
-  if (["search", "problems"].includes(tab.view) && tab.view === state.sidebarTab) return true;
+  if (tab.view === appState.activeView) return true;
+  const sidebarTab = SIDEBAR_TAB_OF[tab.view];
+  if (sidebarTab && sidebarTab === appState.sidebarTab) return true;
   return false;
 }
 
