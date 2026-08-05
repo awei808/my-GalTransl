@@ -80,13 +80,17 @@ class ForBRStation(ForGalJsonMulitChat):
         Returns:
             CTransList: 与输入一致（alt_dst 已就地更新）。
         """
-        # 仅筛选带有「换行位置异常」问题标注、且已有有效译文的句子
+        # 仅筛选带有「换行位置异常」问题标注、且已有有效译文的句子。
+        # 显式排除 skip_check：用户标记「跳过检查」的句子一律不再送审（独立硬过滤，
+        # 与「重检清除 problem」的间接副作用解耦——避免重检失败时 problem 残留
+        # 导致该句仍被发送给 AI 的不一致行为）。
         target_trans_list = [
             t
             for t in trans_list
             if t.post_src != ""
             and t.pre_dst != ""
             and "(Failed)" not in t.pre_dst
+            and not getattr(t, "skip_check", False)
             and self._has_newline_anomaly(t)
         ]
         total = len(target_trans_list)
