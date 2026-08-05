@@ -2058,6 +2058,23 @@ textarea {
   margin-top: var(--space-1);
 }
 
+.settings-hint-inline {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-left: 6px;
+}
+
+.settings-select {
+  padding: 6px 10px;
+  font-size: var(--font-base);
+  font-family: var(--font-sans);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  max-width: 200px;
+}
+
 .settings-error {
   font-size: var(--font-sm);
   color: var(--color-status-error);
@@ -4284,6 +4301,23 @@ a:hover {
   border-bottom: 1px solid var(--color-border-default);
   background: var(--color-bg-app);
   color: var(--color-text-primary);
+}
+
+/* 项目设置二级子分组（如「翻译处理 → 接口与并发」） */
+.pc-subsection {
+  margin: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.pc-subsection-title {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-2);
+  margin: 0;
+  border-bottom: 1px solid var(--color-border-muted);
+  color: var(--color-text-secondary);
 }
 
 /* 全局后端配置接管提示横幅（项目设置中 OpenAI 兼容组） */

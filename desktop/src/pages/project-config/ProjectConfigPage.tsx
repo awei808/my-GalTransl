@@ -3,7 +3,10 @@ import { appState, getActiveConfigFileName, navigateTo } from "../../stores/appS
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
-import { fetchTranslationGuidelines, fetchPlugins } from "../../lib/api/general";
+import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../../lib/api/general";
+import type { ProblemTypeInfo } from "../../lib/api/types";
+import { classifyKeys } from "../../lib/settings-taxonomy";
+import type { FixedCardKind } from "../../lib/settings-taxonomy";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
 type ConfigValue =
@@ -35,24 +38,30 @@ const GUIDELINE_KEY = "common.gpt.translation_guideline";
 const HIDDEN_CONFIG_KEYS = new Set<string>([
   "common.gpt.dynamicNumPerRequestTranslate.min",
   "common.gpt.dynamicNumPerRequestTranslate.max",
-  // 改为专用多行「游戏外部信息」输入框（见页面顶部卡片），不再以单行英文框出现在通用列表
+  // 改为专用多行「游戏外部信息」输入框（见页面「翻译后端-全局提示词」卡片），不再以单行英文框出现在通用列表
   "externals.gameInfo",
-  // problemAnalyze 功能已在程序全局设置中有更完善的配置项，项目设置中不再暴露
+  // 以下为「仅在无批次级元数据时启用」退化分支：已规划弃用，前端一律不显示且不可修改
+  "common.gpt.numPerRequestTranslate",
+  "common.gpt.dynamicNumPerRequestTranslate",
+  "common.splitFile",
+  "common.splitFileNum",
+  "common.splitFileCrossNum",
+  // 以下为程序设置页「日志」板块专属（随项目 config.common 保存，但仅在程序设置页暴露）
+  "common.loggingLevel",
+  "common.saveLog",
+]);
+// problemAnalyze 已移回项目设置「问题检测」专用卡片渲染（随保存配置按钮写回 YAML）。
+// 此处仅让该键不出现在通用列表里（避免与专用卡片重复），不再整体隐藏。
+const LIST_OMITTED_KEYS = new Set<string>([
   "problemAnalyze.problemList",
 ]);
 // 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口
 const REMOVED_CONFIG_KEYS = new Set<string>([
   "common.gpt.contextNum",
 ]);
-// 「仅在无批次级元数据时启用」板块：这些项在有批次级元数据（ForBatchMetaData）时
-// 被 force_static 等逻辑强制忽略，仅无元数据的退化分支生效
-const CONDITIONAL_SECTION_KEYS = new Set<string>([
-  "common.gpt.numPerRequestTranslate",
-  "common.gpt.dynamicNumPerRequestTranslate",
-  "common.splitFile",
-  "common.splitFileNum",
-  "common.splitFileCrossNum",
-]);
+// 注：「仅在无批次级元数据时启用」的退化分支键（numPerRequestTranslate / splitFile* /
+// dynamicNumPerRequestTranslate*）已整体弃用，移入 HIDDEN_CONFIG_KEYS 不再显示；
+// 故 CONDITIONAL_SECTION_KEYS 与 conditionalItems 板块已移除。
 const FIELD_UI: Record<string, FieldUI> = {
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
     label: "令牌轮询策略",
@@ -152,11 +161,6 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "单轮 Token 上限（Sakura）",
     hint: "0 表示不限制，用于避免上下文溢出。仅 Sakura 引擎。",
   },
-  "common.loggingLevel": {
-    label: "日志级别",
-    hint: "debug：最详细；info：常规；warning：仅警告。",
-  },
-  "common.saveLog": { label: "日志写入文件" },
   "internals.pipeline.maxInputChars": {
     label: "全局分析最大字符数",
     hint: "压缩后发送给大模型的最大字符数，默认 0.95M（约 95 万字符）。",
@@ -203,14 +207,14 @@ const FIELD_UI: Record<string, FieldUI> = {
  * - 后端全局管理前缀：交全局后端配置页维护
  * - HIDDEN_CONFIG_KEYS：旧版本残留/由专用卡片接管的键
  * - REMOVED_CONFIG_KEYS：暂不在前端暴露的键（如 contextNum）
- * - GUIDELINE_KEY：改为顶部固定「翻译规范文件」卡片渲染
- * - CONDITIONAL_SECTION_KEYS：移入「仅在无批次级元数据时启用」板块（见页面）
- * 注意：DYNAMIC_NUM_KEY 不在通用列表，而在「仅在无批次级元数据时启用」板块由专用开关渲染。
+ * - GUIDELINE_KEY：改为「翻译规范文件」固定卡片渲染
+ * - 弃用键（numPerRequestTranslate / splitFile* / dynamicNumPerRequestTranslate*）：移入 HIDDEN_CONFIG_KEYS
  */
 function isOmittedFromList(key: string): boolean {
   if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return true;
   if (HIDDEN_CONFIG_KEYS.has(key)) return true;
   if (REMOVED_CONFIG_KEYS.has(key)) return true;
+  if (LIST_OMITTED_KEYS.has(key)) return true;
   if (key === GUIDELINE_KEY) return true;
   return false;
 }
@@ -271,19 +275,6 @@ const KEYWORD_LABELS: Record<string, string> = {
   auto: "自动适应 (auto)",
 };
 
-/** 分组标题英→中映射 */
-const GROUP_LABELS: Record<string, string> = {
-  backendSpecific: "后端配置",
-  plugin: "插件",
-  common: "通用设置",
-  gpt: "GPT 参数",
-  proxy: "代理",
-  dictionary: "字典",
-  internals: "内部参数",
-  _root: "其他",
-  externals: "外部信息",
-};
-
 export function ProjectConfigPage() {
   const [config, setConfig] = createSignal<Record<string, ConfigValue>>({});
   const [schemaDesc, setSchemaDesc] = createSignal<Record<string, string>>({});
@@ -295,6 +286,70 @@ export function ProjectConfigPage() {
   const [filePlugins, setFilePlugins] = createSignal<string[]>([]);
   // 当前翻译规范值（响应式读取，供固定卡片展示）
   const guidelineCurrent = () => String(getValue(GUIDELINE_KEY) ?? "");
+
+  // ── 问题检测（problemAnalyze）：已移回项目设置，随「保存配置」按钮统一写回 YAML ──
+  const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
+  const [enabledProblemTypes, setEnabledProblemTypes] = createSignal<string[]>([]);
+  const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
+  const [problemTypesLoading, setProblemTypesLoading] = createSignal(false);
+
+  function toggleProblemType(name: string) {
+    const current = enabledProblemTypes();
+    const next = current.includes(name)
+      ? current.filter((n) => n !== name)
+      : [...current, name];
+    setEnabledProblemTypes(next);
+    setValue("problemAnalyze.problemList", next);
+  }
+
+  function setAvgThresholdValue(v: number) {
+    setAvgThreshold(v);
+    setValue("problemAnalyze.avgSentenceLengthThreshold", v);
+  }
+
+  // 当前项目/配置名切换后，从后端拉取候选列表并同步当前勾选与阈值
+  createEffect(() => {
+    if (!pid()) {
+      setProblemTypes([]);
+      return;
+    }
+    if (!appState.configNameDetecting) void loadProblemTypes(pid()!, getActiveConfigFileName());
+  });
+
+  async function loadProblemTypes(projectId: string, configFileName: string) {
+    setProblemTypesLoading(true);
+    try {
+      const [types, cfg] = await Promise.all([
+        fetchProblemTypes(),
+        fetchProjectConfig(projectId, configFileName),
+      ]);
+      setProblemTypes(types);
+      const problemAnalyze =
+        ((cfg.config ?? {}) as Record<string, unknown>)["problemAnalyze"] as
+          | Record<string, unknown>
+          | undefined;
+      const section = problemAnalyze ?? {};
+      const rawList = section["problemList"];
+      let list = Array.isArray(rawList)
+        ? rawList.map((x) => String(x)).filter((x) => x)
+        : [];
+      if (list.length === 0 && !("problemList" in section)) {
+        const rawGpt35 = section["GPT35"];
+        if (Array.isArray(rawGpt35)) {
+          list = rawGpt35.map((x) => String(x)).filter((x) => x);
+        }
+      }
+      setEnabledProblemTypes(list);
+      const rawThreshold = section["avgSentenceLengthThreshold"];
+      setAvgThreshold(
+        typeof rawThreshold === "number" && Number.isFinite(rawThreshold) ? rawThreshold : 17
+      );
+    } catch {
+      setProblemTypes([]);
+    } finally {
+      setProblemTypesLoading(false);
+    }
+  }
 
   const pid = () => appState.activeProjectId;
 
@@ -343,14 +398,24 @@ export function ProjectConfigPage() {
     }
   }
 
-  /** 将嵌套配置展平为点分键（如 "common.workersPerProject"），按前缀分组 */
-  // 结构签名缓存：编辑字段「值」不应触发列表重建。
-  // 仅当「键集合 / 分组」变化时返回新数组；否则复用同一引用，
-  // 否则 <For> 会在每次 setValue（按键）时按引用判定为「全新项」而重建所有 <input>，
-  // 导致输入框失焦、输入法（IME）中断。元组内携带的 value 实际未被 JSX 使用
-  // （值始终由响应式 getValue(key) 读取），故缓存过期值亦无副作用。
+  /**
+   * 将嵌套配置按「统一分类表（settings-taxonomy）」归类，而非按物理前缀。
+   * 结构签名缓存：编辑字段「值」不应触发列表重建。
+   * 仅当「键集合 / 分组」变化时返回新数组；否则复用同一引用，
+   * 否则 <For> 会在每次 setValue（按键）时按引用判定为「全新项」而重建所有 <input>，
+   * 导致输入框失焦、输入法（IME）中断。元组内携带的 value 实际未被 JSX 使用
+   * （值始终由响应式 getValue(key) 读取），故缓存过期值亦无副作用。
+   */
   let _groupedSig = "";
-  let _groupedCache: [string, [string, ConfigValue, string][]][] | null = null;
+  let _groupedCache: {
+    section: import("../../lib/settings-taxonomy").TaxonomySection;
+    directItems: [string, ConfigValue, string][];
+    subsections: {
+      subsection: import("../../lib/settings-taxonomy").TaxonomySubsection;
+      items: [string, ConfigValue, string][];
+    }[];
+    fixedCards: import("../../lib/settings-taxonomy").FixedCardKind[];
+  }[] | null = null;
 
   /** 仅收集键路径生成签名（不含值），编辑值不会改变签名 */
   function keySignature(obj: Record<string, ConfigValue>, prefix = ""): string {
@@ -367,20 +432,19 @@ export function ProjectConfigPage() {
     return parts.join("|");
   }
 
-  const groupedKeys = () => {
+  const classifiedGroups = () => {
     const c = config();
     const sig = keySignature(c);
     if (_groupedSig === sig && _groupedCache) return _groupedCache;
 
-    const flat: [string, ConfigValue, string][] = []; // [key, value, displayType]
+    // 1) 展平为点分键（过滤掉 omitt / conditional），并保留 dtype 供 renderFieldRow
+    const flatItemByKey = new Map<string, [string, ConfigValue, string]>();
 
     function walk(obj: Record<string, ConfigValue>, prefix: string) {
       for (const [k, v] of Object.entries(obj)) {
         const key = prefix ? `${prefix}.${k}` : k;
-        // 这些键不进入通用列表（专用卡片/隐藏行/「仅在无批次级元数据时启用」板块），直接跳过
+        // 这些键不进入通用列表（专用卡片/隐藏行/已弃用键），直接跳过
         if (isOmittedFromList(key)) continue;
-        // 移入「仅在无批次级元数据时启用」板块，不出现在通用分组
-        if (CONDITIONAL_SECTION_KEYS.has(key)) continue;
         if (v !== null && typeof v === "object" && !Array.isArray(v)) {
           walk(v as Record<string, ConfigValue>, key);
         } else {
@@ -392,52 +456,36 @@ export function ProjectConfigPage() {
                 ? "object-array" // 如 tokens: [{token,endpoint,...}]
                 : "array"; // 如 [1,2,3] 或 ["a","b"]
           }
-          flat.push([key, v, dtype]);
+          flatItemByKey.set(key, [key, v, dtype]);
         }
       }
     }
     walk(c, "");
 
-    const groups = new Map<string, [string, ConfigValue, string][]>();
-    for (const item of flat) {
-      const key = item[0];
-      const dot = key.indexOf(".");
-      const group = dot > 0 ? key.slice(0, dot) : "_root";
-      if (!groups.has(group)) groups.set(group, []);
-      groups.get(group)!.push(item);
-    }
-    // 丢弃没有任何可见项的空分组（如 gpt 组在规范键移出后可能只剩被隐藏项）
-    _groupedCache = [...groups.entries()]
-      .filter(([, items]) => items.length > 0)
-      .sort(([a], [b]) => a.localeCompare(b));
+    // 2) 按 taxonomy 显式归类（未声明键自动归入「其他设置」并告警）
+    const { groups, unclassified } = classifyKeys([...flatItemByKey.keys()]);
+
+    // 3) 把 taxonomy 的 key 列表映射回展平元组
+    const cache = groups.map((g) => ({
+      section: g.section,
+      directItems: g.directKeys
+        .map((k) => flatItemByKey.get(k))
+        .filter((x): x is [string, ConfigValue, string] => !!x),
+      subsections: g.subsections.map((sub) => ({
+        subsection: sub.subsection,
+        items: sub.keys
+          .map((k) => flatItemByKey.get(k))
+          .filter((x): x is [string, ConfigValue, string] => !!x),
+      })),
+      fixedCards: g.fixedCards,
+    }));
+    void unclassified;
+    _groupedCache = cache;
     _groupedSig = sig;
     return _groupedCache;
   };
 
-  /**
-   * 「仅在无批次级元数据时启用」板块的项：始终列出全部 CONDITIONAL_SECTION_KEYS，
-   * 不再因“后端 config 未含该键”而跳过。这些参数属于「退化分支才生效」的可配置项，
-   * 理应始终可被编辑；若 config 未显式声明（依赖默认值/精简配置），getValue 返回空，
-   * 输入框留空、用户填写后由 setValue 写回即可。原先的 v==="" 跳过会令板块在缺键配置下
-   * 永久隐藏、无法设置，属于设计缺陷。
-   */
-  const conditionalItems = (): [string, ConfigValue, string][] => {
-    const result: [string, ConfigValue, string][] = [];
-    for (const key of CONDITIONAL_SECTION_KEYS) {
-      const v = getValue(key);
-      let dtype = "scalar";
-      if (Array.isArray(v)) {
-        dtype =
-          v.length > 0 && typeof v[0] === "object" && v[0] !== null
-            ? "object-array"
-            : "array";
-      }
-      result.push([key, v, dtype]);
-    }
-    return result;
-  };
-
-  /** 单个配置项的渲染（通用列表与「仅在无批次级元数据时启用」板块共用） */
+  /** 单个配置项的渲染（通用列表） */
   function renderFieldRow(item: [string, ConfigValue, string]) {
     const [key, , dtype] = item;
     // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
@@ -649,6 +697,144 @@ export function ProjectConfigPage() {
             </Switch>
           </Show>
         </div>
+      </div>
+    );
+  }
+
+  /** 固定卡片渲染（由 taxonomy section.fixedCards 驱动）：游戏外部信息 / 翻译规范文件 / 问题检测 */
+  function renderFixedCard(kind: FixedCardKind) {
+    if (kind === "externalInfo") {
+      return (
+        <div class="pc-external-info">
+          <div class="pc-row-label">
+            <span class="pc-label">游戏外部信息</span>
+            <div class="pc-key-hint">
+              <code class="pc-key">externals.gameInfo</code>
+            </div>
+            <p class="pc-desc">
+              提供给「全局分析（ForGlobalPrompt）」的外部背景资料——游戏名称、简介、制作公司、世界观、已有角色等自由文本。
+              生成全局提示词时会注入 [ExternalInfo] 占位符，帮助模型产出更准确的游戏概况与角色档案。
+              留空则提示词显示「（未提供外部信息）」。
+            </p>
+          </div>
+          <textarea
+            class="pc-external-info__textarea"
+            rows="6"
+            value={String(getValue("externals.gameInfo") ?? "")}
+            onInput={(e) => setValue("externals.gameInfo", e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const ta = e.currentTarget as HTMLTextAreaElement;
+              const pos = ta.selectionStart;
+              const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+              setValue("externals.gameInfo", newVal);
+              requestAnimationFrame(() => {
+                ta.selectionStart = ta.selectionEnd = pos + 1;
+              });
+            }}
+            placeholder={"例如：\n游戏名：星之轨迹\n类型：科幻 ADV\n制作：某社\n简介：……"}
+            spellcheck={false}
+          />
+        </div>
+      );
+    }
+    if (kind === "translationGuideline") {
+      return (
+        <div class="pc-external-info">
+          <div class="pc-row-label">
+            <span class="pc-label">翻译规范文件</span>
+            <div class="pc-key-hint">
+              <code class="pc-key">{GUIDELINE_KEY}</code>
+            </div>
+            <p class="pc-desc">
+              位于 translation_guidelines 目录，影响文风与措辞。运行对应后端或完整流水线时，
+              该文件内容会被注入到翻译提示词中。
+            </p>
+          </div>
+          <div class="pc-row-control" style="margin-top: 4px">
+            <select
+              class="field__input pc-input pc-select"
+              value={guidelineCurrent()}
+              onChange={(e) => setValue(GUIDELINE_KEY, e.currentTarget.value)}
+            >
+              <Show when={guidelines().length === 0 && !guidelineCurrent()}>
+                <option value="">（未找到翻译规范文件）</option>
+              </Show>
+              <Show when={guidelineCurrent() && !guidelines().includes(guidelineCurrent())}>
+                <option value={guidelineCurrent()}>{guidelineCurrent()}</option>
+              </Show>
+              <For each={guidelines()}>
+                {(g) => <option value={g}>{g}</option>}
+              </For>
+            </select>
+          </div>
+        </div>
+      );
+    }
+    // kind === "problemAnalyze"
+    return (
+      <div>
+        <Show
+          when={!problemTypesLoading()}
+          fallback={<p class="pc-status">加载问题类型中…</p>}
+        >
+          <Show
+            when={problemTypes().length > 0}
+            fallback={<p class="pc-status">未连接到后端，无法获取问题类型列表。</p>}
+          >
+            <For each={problemTypes()}>
+              {(pt) => (
+                <div class="pc-row">
+                  <div class="pc-row-label">
+                    <label class="pc-label" for={`problem-${pt.name}`}>
+                      {pt.name}
+                    </label>
+                    <p class="pc-desc">{pt.description}</p>
+                  </div>
+                  <div class="pc-row-control">
+                    <label class="settings-toggle">
+                      <input
+                        id={`problem-${pt.name}`}
+                        type="checkbox"
+                        checked={enabledProblemTypes().includes(pt.name)}
+                        onChange={() => toggleProblemType(pt.name)}
+                      />
+                      <span class="settings-toggle-knob" />
+                    </label>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Show>
+        </Show>
+        <div class="pc-row">
+          <div class="pc-row-label">
+            <label class="pc-label" for="avg-sentence-length-threshold">
+              平均分句长度阈值（长句丢失换行）
+            </label>
+            <p class="pc-desc">译文平均分句长度超过该值即报「长句丢失换行」，建议 15~25。</p>
+          </div>
+          <div class="pc-row-control">
+            <input
+              id="avg-sentence-length-threshold"
+              class="field__input pc-input pc-input--num"
+              type="number"
+              min={10}
+              max={50}
+              step={1}
+              value={avgThreshold()}
+              onChange={(e) => {
+                const raw = Number((e.target as HTMLInputElement).value);
+                setAvgThresholdValue(Number.isFinite(raw) ? raw : 17);
+              }}
+            />
+          </div>
+        </div>
+        <p class="pc-desc" style="padding: var(--space-1) var(--space-2)">
+          已启用 {enabledProblemTypes().length} / {problemTypes().length} 个检测项。
+          {enabledProblemTypes().length === 0 && " ⚠️ 未选择任何检测项时将不会发现问题。"}
+        </p>
       </div>
     );
   }
@@ -877,98 +1063,26 @@ export function ProjectConfigPage() {
 
       <Show when={!loading()} fallback={<p class="pc-status">加载中…</p>}>
         <Show
-          when={pid() && groupedKeys().length > 0}
+          when={pid() && classifiedGroups().length > 0}
           fallback={<p class="pc-status">{!pid() ? "请先打开一个项目" : "暂无可编辑的配置参数"}</p>}
         >
-          {/* 游戏外部信息（ForGlobalPrompt 外部信息接口）：多行文本，绑定 externals.gameInfo，
-              由页面底部「保存配置」统一写回 config.yaml，流水线/独立后端均会读取 */}
-          <div class="pc-external-info">
-            <div class="pc-row-label">
-              <span class="pc-label">游戏外部信息</span>
-              <div class="pc-key-hint">
-                <code class="pc-key">externals.gameInfo</code>
-              </div>
-              <p class="pc-desc">
-                提供给「全局分析（ForGlobalPrompt）」的外部背景资料——游戏名称、简介、制作公司、世界观、已有角色等自由文本。
-                生成全局提示词时会注入 [ExternalInfo] 占位符，帮助模型产出更准确的游戏概况与角色档案。
-                留空则提示词显示「（未提供外部信息）」。
-              </p>
-            </div>
-            <textarea
-              class="pc-external-info__textarea"
-              rows="6"
-              value={String(getValue("externals.gameInfo") ?? "")}
-              onInput={(e) => setValue("externals.gameInfo", e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                const ta = e.currentTarget as HTMLTextAreaElement;
-                const pos = ta.selectionStart;
-                const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
-                setValue("externals.gameInfo", newVal);
-                requestAnimationFrame(() => {
-                  ta.selectionStart = ta.selectionEnd = pos + 1;
-                });
-              }}
-              placeholder={"例如：\n游戏名：星之轨迹\n类型：科幻 ADV\n制作：某社\n简介：……"}
-              spellcheck={false}
-            />
-          </div>
+          {/* 所有配置分区（含固定卡片）统一由 classifiedGroups() 按 taxonomy 渲染；
+              游戏外部信息、翻译规范文件、问题检测卡片均通过 section.fixedCards 归位，
+              不再以顶部独立块渲染。 */}
 
-          {/* 翻译规范文件：顶部固定卡片，无条件渲染（不再依赖扁平键列表里是否存在该键），
-              修复「旧键 common.gpt.translation_guideline 被隐藏、新键 gpt.translation_guideline 不存在
-              → 配置项整行消失」的 bug。选项来自 translation_guidelines 目录文件名。 */}
-          <div class="pc-external-info">
-            <div class="pc-row-label">
-              <span class="pc-label">翻译规范文件</span>
-              <div class="pc-key-hint">
-                <code class="pc-key">{GUIDELINE_KEY}</code>
-              </div>
-              <p class="pc-desc">
-                位于 translation_guidelines 目录，影响文风与措辞。运行对应后端或完整流水线时，
-                该文件内容会被注入到翻译提示词中。
-              </p>
-            </div>
-            <div class="pc-row-control" style="margin-top: 4px">
-              <select
-                class="field__input pc-input pc-select"
-                value={guidelineCurrent()}
-                onChange={(e) => setValue(GUIDELINE_KEY, e.currentTarget.value)}
-              >
-                <Show when={guidelines().length === 0 && !guidelineCurrent()}>
-                  <option value="">（未找到翻译规范文件）</option>
-                </Show>
-                {/* 当前值不在目录下（如历史遗留/自定义），保留一个可选项避免丢失 */}
-                <Show when={guidelineCurrent() && !guidelines().includes(guidelineCurrent())}>
-                  <option value={guidelineCurrent()}>{guidelineCurrent()}</option>
-                </Show>
-                <For each={guidelines()}>
-                  {(g) => <option value={g}>{g}</option>}
-                </For>
-              </select>
-            </div>
-          </div>
-
-          {/* 「仅在无批次级元数据时启用」：这些项在有批次级元数据（ForBatchMetaData）时
-              被 force_static 等逻辑强制忽略，仅无元数据的退化分支生效 */}
-          <Show when={conditionalItems().length > 0}>
-            <div class="pc-group">
-              <h3 class="pc-group-title">仅在无批次级元数据时启用</h3>
-              <p class="pc-desc">
-                以下参数仅在「无批次级元数据」的退化分支生效；使用批次级元数据（ForBatchMetaData）时将被强制忽略，由批次划分逻辑接管。
-              </p>
-              <For each={conditionalItems()}>
-                {(item) => renderFieldRow(item)}
-              </For>
-            </div>
-          </Show>
-
+          {/* 问题检测（problemAnalyze）：已移回项目设置，随底部「保存配置」统一写回 YAML。
+              作为固定卡片由 taxonomy 的「问题检测」section 渲染。 */}
           <div class="pc-field-list">
-            <For each={groupedKeys()}>
-              {([group, items]) => (
+            <For each={classifiedGroups()}>
+              {(g) => (
                 <div class="pc-group">
-                  <h3 class="pc-group-title">{GROUP_LABELS[group] || group}</h3>
-                  <Show when={group === "backendSpecific"}>
+                  <h3 class="pc-group-title">{g.section.title}</h3>
+                  <Show when={g.section.desc}>
+                    <p class="pc-desc">{g.section.desc}</p>
+                  </Show>
+
+                  {/* 后端专属：OpenAI 兼容接口跳转到全局后端配置 */}
+                  <Show when={g.section.title === "后端专属"}>
                     <div class="pc-global-banner">
                       <div class="pc-global-banner__text">
                         <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「后端配置」统一管理，不再在项目设置中维护。
@@ -981,8 +1095,29 @@ export function ProjectConfigPage() {
                       </button>
                     </div>
                   </Show>
-                  <For each={items}>
+
+                  {/* 固定卡片（游戏外部信息 / 翻译规范文件 / 问题检测），按 taxonomy 顺序渲染 */}
+                  <For each={g.fixedCards}>
+                    {(kind) => renderFixedCard(kind)}
+                  </For>
+
+                  {/* 一级直接字段（无二级时） */}
+                  <For each={g.directItems}>
                     {(item) => renderFieldRow(item)}
+                  </For>
+
+                  {/* 二级子分组 */}
+                  <For each={g.subsections}>
+                    {(sub) => (
+                      <div class="pc-subsection">
+                        <Show when={sub.subsection.title}>
+                          <h4 class="pc-subsection-title">{sub.subsection.title}</h4>
+                        </Show>
+                        <For each={sub.items}>
+                          {(item) => renderFieldRow(item)}
+                        </For>
+                      </div>
+                    )}
                   </For>
                 </div>
               )}

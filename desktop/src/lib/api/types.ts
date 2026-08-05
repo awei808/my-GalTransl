@@ -484,6 +484,8 @@ export type PluginInfo = {
 
 export type AppSettings = {
   printTranslationLogInTerminal: boolean;
+  maxConcurrentJobs?: number;
+  writeApiCallLog?: boolean;
 };
 
 export type ThemeMode = "light" | "dark" | "system";

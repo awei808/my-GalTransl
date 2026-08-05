@@ -32,6 +32,7 @@ import uuid
 from typing import Any, Optional
 
 from GalTransl import LOGGER
+from GalTransl.AppSettings import load_app_settings
 
 
 class ApiLogger:
@@ -113,6 +114,11 @@ class ApiLogger:
     # ── 内部 ──
 
     def _start_writer(self, project_dir: str) -> None:
+        # 按 AppSettings.writeApiCallLog 决定是否落盘 api_calls.log。
+        # 关闭时不启动 writer task，record() 因 writer_task 为 None 会自动跳过，安全无副作用。
+        if not load_app_settings().get("writeApiCallLog", True):
+            LOGGER.debug("按 AppSettings.writeApiCallLog=false，跳过 api_calls.log 写入")
+            return
         # 每次启动 writer 都重建队列，使其 _loop 在当前 event loop 首次 get() 时惰性绑定，
         # 避免单例跨多次 asyncio.run（每次新 loop）复用旧 loop 绑定的队列而抛异常。
         self._queue = asyncio.Queue()

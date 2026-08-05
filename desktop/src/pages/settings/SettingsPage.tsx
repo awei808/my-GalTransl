@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onMount, Show, For } from "solid-js";
+import { createSignal, createEffect, onMount, Show } from "solid-js";
 import { appState, navigateTo, getActiveConfigFileName } from "../../stores/appStore";
 import {
   getThemeModePreference,
@@ -23,9 +23,10 @@ import {
   CACHE_BROWSER_FONT_SIZE_MIN,
   CACHE_BROWSER_FONT_SIZE_MAX,
 } from "../../lib/api/preferences";
-import { fetchVersion, fetchVersionCheck, fetchProblemTypes } from "../../lib/api/general";
+import { fetchVersion, fetchVersionCheck, fetchAppSettings, updateAppSettings } from "../../lib/api/general";
+import { APP_SETTINGS_TAXONOMY } from "../../lib/settings-taxonomy";
 import { fetchProjectConfig, updateProjectConfig } from "../../lib/api/project";
-import type { ThemeMode, ProblemTypeInfo } from "../../lib/api/types";
+import type { ThemeMode } from "../../lib/api/types";
 import { applyThemePreference } from "../../lib/theme";
 import { compressImageToDataUrl } from "./imageCompress";
 import { getErrorMessage } from "../../lib/errors";
@@ -58,17 +59,20 @@ export function SettingsPage() {
   const [checkingVer, setCheckingVer] = createSignal(true);
   const [verError, setVerError] = createSignal("");
 
-  // ── 问题检测项 ──
-  const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
-  // 勾选状态来源：当前项目 config 的 problemAnalyze.problemList，保存时写回 YAML
-  const [enabledProblemTypes, setEnabledProblemTypesSignal] = createSignal<string[]>([]);
-  // 长句丢失换行的平均分句长度阈值（写回 problemAnalyze.avgSentenceLengthThreshold）
-  const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
-  const [problemLoading, setProblemLoading] = createSignal(false);
-  const [configLoading, setConfigLoading] = createSignal(false);
-  const [configLoadError, setConfigLoadError] = createSignal("");
-  const [saveState, setSaveState] = createSignal<"idle" | "saving" | "ok" | "error">("idle");
-  const [saveError, setSaveError] = createSignal("");
+  // ── 日志开关 ──
+  // GalTransl.log：写在当前打开项目的 config.common.saveLog（项目级）
+  const [saveGalTranslLog, setSaveGalTranslLog] = createSignal(false);
+  const [galLogLoading, setGalLogLoading] = createSignal(false);
+  const [galLogError, setGalLogError] = createSignal("");
+  // 日志级别：写在当前打开项目的 config.common.loggingLevel（项目级）
+  const [loggingLevel, setLoggingLevel] = createSignal("info");
+  const [logLevelLoading, setLogLevelLoading] = createSignal(false);
+  const [logLevelError, setLogLevelError] = createSignal("");
+  // api_calls.log：写在后端全局 AppSettings.writeApiCallLog
+  const [writeApiCallLog, setWriteApiCallLog] = createSignal(true);
+  const [apiLogLoading, setApiLogLoading] = createSignal(false);
+  const [apiLogSaving, setApiLogSaving] = createSignal(false);
+  const [apiLogError, setApiLogError] = createSignal("");
 
   onMount(() => {
     fetchVersion()
@@ -84,12 +88,12 @@ export function SettingsPage() {
       .catch((e: Error) => setVerError(e.message))
       .finally(() => setCheckingVer(false));
 
-    // 加载问题检测项候选列表（勾选状态由当前项目配置决定）
-    setProblemLoading(true);
-    fetchProblemTypes()
-      .then((types) => setProblemTypes(types))
+    // 加载后端全局日志开关（api_calls.log）
+    setApiLogLoading(true);
+    fetchAppSettings()
+      .then((s) => setWriteApiCallLog(s.writeApiCallLog ?? true))
       .catch(() => {})
-      .finally(() => setProblemLoading(false));
+      .finally(() => setApiLogLoading(false));
   });
 
   // ── 处理函数 ──
@@ -190,94 +194,125 @@ export function SettingsPage() {
     setBgError("");
   }
 
-  function toggleProblemType(name: string) {
-    const current = enabledProblemTypes();
-    const next = current.includes(name) ? current.filter((n) => n !== name) : [...current, name];
-    setEnabledProblemTypesSignal(next);
-  }
-
-  // 切换当前项目/配置名后，重新从项目 YAML 读取问题检测项
+  // 切换当前项目/配置名后，重新从项目 YAML 读取 GalTransl.log 开关
   createEffect(() => {
     const pid = appState.activeProjectId;
     if (!pid || appState.configNameDetecting) return;
-    void loadProjectProblemTypes(pid, getActiveConfigFileName());
+    void loadGalTranslLogState(pid, getActiveConfigFileName());
   });
 
-  async function loadProjectProblemTypes(projectId: string, configFileName: string) {
-    setConfigLoading(true);
-    setConfigLoadError("");
-    setSaveState("idle");
+  async function loadGalTranslLogState(projectId: string, configFileName: string) {
+    setGalLogLoading(true);
+    setGalLogError("");
     try {
       const res = await fetchProjectConfig(projectId, configFileName);
       const config = (res.config ?? {}) as Record<string, unknown>;
-      const problemAnalyze = config["problemAnalyze"] as Record<string, unknown> | undefined;
-      const section = problemAnalyze ?? {};
-      const rawList = section["problemList"];
-      let list = Array.isArray(rawList) ? rawList.map((x) => String(x)).filter((x) => x) : [];
-      if (list.length === 0 && !("problemList" in section)) {
-        // 兼容旧版：problemList 未配置时后端会回退读 GPT35 段，这里同步展示
-        const rawGpt35 = section["GPT35"];
-        if (Array.isArray(rawGpt35)) {
-          list = rawGpt35.map((x) => String(x)).filter((x) => x);
-        }
-      }
-      setEnabledProblemTypesSignal(list);
-      const rawThreshold = section["avgSentenceLengthThreshold"];
-      setAvgThreshold(
-        typeof rawThreshold === "number" && Number.isFinite(rawThreshold)
-          ? rawThreshold
-          : 17
-      );
+      const common = (config["common"] as Record<string, unknown> | undefined) ?? {};
+      setSaveGalTranslLog(Boolean(common["saveLog"] ?? false));
+      setLoggingLevel(String(common["loggingLevel"] ?? "info"));
     } catch (e) {
-      setConfigLoadError(`加载问题检测配置失败：${getErrorMessage(e)}`);
-      setEnabledProblemTypesSignal([]);
+      setGalLogError(`读取 GalTransl.log 设置失败：${getErrorMessage(e)}`);
     } finally {
-      setConfigLoading(false);
+      setGalLogLoading(false);
     }
   }
 
-  async function saveProblemTypes() {
+  async function applyGalTranslLog(enabled: boolean) {
     const pid = appState.activeProjectId;
-    if (!pid) {
-      setSaveError("请先打开一个项目，再保存问题检测项");
-      setSaveState("error");
-      return;
-    }
+    if (!pid) return;
     const configFileName = getActiveConfigFileName();
-    setSaveState("saving");
-    setSaveError("");
+    setGalLogError("");
     try {
-      // 读最新配置再合并，避免覆盖其他字段的修改
+      // 读最新配置再合并，避免覆盖其他字段
       const res = await fetchProjectConfig(pid, configFileName);
       const config = { ...(res.config ?? {}) } as Record<string, unknown>;
-      const problemAnalyze = {
-        ...((config["problemAnalyze"] as Record<string, unknown> | undefined) ?? {}),
-      };
-      problemAnalyze["problemList"] = enabledProblemTypes();
-      problemAnalyze["avgSentenceLengthThreshold"] = avgThreshold();
-      config["problemAnalyze"] = problemAnalyze;
-      await updateProjectConfig(pid, {
-        config,
-        config_file_name: configFileName,
-      });
-      setSaveState("ok");
+      const common = { ...((config["common"] as Record<string, unknown> | undefined) ?? {}) };
+      common["saveLog"] = enabled;
+      config["common"] = common;
+      await updateProjectConfig(pid, { config, config_file_name: configFileName });
+      setSaveGalTranslLog(enabled);
     } catch (e) {
-      setSaveError(`保存失败：${getErrorMessage(e)}`);
-      setSaveState("error");
+      setGalLogError(`保存 GalTransl.log 设置失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  async function applyLoggingLevel(level: string) {
+    const pid = appState.activeProjectId;
+    if (!pid) return;
+    const configFileName = getActiveConfigFileName();
+    setLogLevelError("");
+    setLogLevelLoading(true);
+    try {
+      // 读最新配置再合并，避免覆盖其他字段
+      const res = await fetchProjectConfig(pid, configFileName);
+      const config = { ...(res.config ?? {}) } as Record<string, unknown>;
+      const common = { ...((config["common"] as Record<string, unknown> | undefined) ?? {}) };
+      common["loggingLevel"] = level;
+      config["common"] = common;
+      await updateProjectConfig(pid, { config, config_file_name: configFileName });
+      setLoggingLevel(level);
+    } catch (e) {
+      setLogLevelError(`保存日志级别失败：${getErrorMessage(e)}`);
+    } finally {
+      setLogLevelLoading(false);
+    }
+  }
+
+  async function applyApiCallLog(enabled: boolean) {
+    setApiLogSaving(true);
+    setApiLogError("");
+    try {
+      const cur = await fetchAppSettings();
+      const next = { ...cur, writeApiCallLog: enabled };
+      await updateAppSettings(next);
+      setWriteApiCallLog(enabled);
+    } catch (e) {
+      setApiLogError(`保存 api_calls.log 设置失败：${getErrorMessage(e)}`);
+    } finally {
+      setApiLogSaving(false);
     }
   }
 
   return (
     <div class="page page-settings">
       <h2 class="page-title">设置</h2>
-      <p class="page-description">管理应用配置和后端连接。</p>
+      <p class="page-description">管理应用配置、后端连接与日志。</p>
 
       <div class="settings-content">
-        {/* ── 项目设置 ── */}
+        {/* ── 1. AI API 调用接口相关 ── */}
         <section class="settings-section">
           <div class="settings-section-header">
-            <h3>项目设置</h3>
-            <p>编辑当前打开项目的翻译配置参数（config.yaml）。</p>
+            <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "ai-api")!.title}</h3>
+            <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "ai-api")!.desc}</p>
+          </div>
+
+          <div
+            class="settings-field"
+            style="cursor:pointer"
+            onClick={() => navigateTo("backend-profiles")}
+          >
+            <span class="settings-label">后端配置</span>
+            <span class="settings-about-value settings-about-link">管理 API 地址与模型 →</span>
+          </div>
+          <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("plugins")}>
+            <span class="settings-label">插件管理</span>
+            <span class="settings-about-value settings-about-link">查看已安装插件 →</span>
+          </div>
+          <div
+            class="settings-field"
+            style="cursor:pointer; border-bottom:none"
+            onClick={() => navigateTo("prompt-templates")}
+          >
+            <span class="settings-label">提示词模板</span>
+            <span class="settings-about-value settings-about-link">编辑默认提示词 →</span>
+          </div>
+        </section>
+
+        {/* ── 2. 后端服务配置 ── */}
+        <section class="settings-section">
+          <div class="settings-section-header">
+            <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "backend")!.title}</h3>
+            <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "backend")!.desc}</p>
           </div>
           <div
             class="settings-field"
@@ -287,16 +322,16 @@ export function SettingsPage() {
               if (appState.activeProjectId) navigateTo("project-config");
             }}
           >
-            <span class="settings-label">编辑项目配置</span>
-            <span class="settings-about-value settings-about-link">后端、插件、字典等参数 →</span>
+            <span class="settings-label">编辑后端与问题修复配置</span>
+            <span class="settings-about-value settings-about-link">翻译/元数据/修复后端 →</span>
           </div>
         </section>
 
-        {/* ── 外观 ── */}
+        {/* ── 3. 前端显示相关 ── */}
         <section class="settings-section">
           <div class="settings-section-header">
-            <h3>外观</h3>
-            <p>设置界面主题风格，以及半透明的全局自定义背景。</p>
+            <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "display")!.title}</h3>
+            <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "display")!.desc}</p>
           </div>
 
           <div class="settings-field">
@@ -428,12 +463,10 @@ export function SettingsPage() {
             {bgDataUrl() ? "已启用自定义背景。" : "未设置自定义背景。"}
             主题、背景和容器透明度设置会即时生效。
           </div>
-        </section>
 
-        {/* ── 首页记忆 ── */}
-        <section class="settings-section">
-          <div class="settings-section-header">
-            <h3>首页记忆保留</h3>
+          {/* 首页记忆保留（并入前端显示相关） */}
+          <div class="settings-subheader">
+            <h4>首页记忆保留</h4>
             <p>控制首页历史项目与翻译任务列表保留条数。</p>
           </div>
 
@@ -470,129 +503,119 @@ export function SettingsPage() {
           </div>
         </section>
 
-        {/* ── 配置管理 ── */}
+        {/* ── 4. 日志相关 ── */}
         <section class="settings-section">
           <div class="settings-section-header">
-            <h3>配置管理</h3>
-            <p>管理后端连接配置、翻译插件、以及各翻译引擎的提示词模板。</p>
+            <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "log")!.title}</h3>
+            <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "log")!.desc}</p>
           </div>
 
           <div
             class="settings-field"
-            style="cursor:pointer"
-            onClick={() => navigateTo("backend-profiles")}
+            classList={{ "settings-field--disabled": !appState.activeProjectId }}
           >
-            <span class="settings-label">后端配置</span>
-            <span class="settings-about-value settings-about-link">管理 API 地址与模型 →</span>
+            <span class="settings-label">
+              GalTransl.log 写入文件
+              <span class="settings-hint-inline">（写入当前项目 config.common.saveLog）</span>
+            </span>
+            <label class="settings-toggle">
+              <input
+                type="checkbox"
+                checked={saveGalTranslLog()}
+                disabled={!appState.activeProjectId || galLogLoading()}
+                onChange={(e) => void applyGalTranslLog(e.currentTarget.checked)}
+              />
+              <span class="settings-toggle-knob" />
+            </label>
           </div>
-          <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("plugins")}>
-            <span class="settings-label">插件管理</span>
-            <span class="settings-about-value settings-about-link">查看已安装插件 →</span>
-          </div>
+          <Show when={galLogError()}>
+            <div class="settings-error">{galLogError()}</div>
+          </Show>
+          <Show when={!appState.activeProjectId}>
+            <div class="settings-hint">请先打开一个项目，才能设置 GalTransl.log 写入。</div>
+          </Show>
+
           <div
             class="settings-field"
-            style="cursor:pointer; border-bottom:none"
-            onClick={() => navigateTo("prompt-templates")}
+            classList={{ "settings-field--disabled": !appState.activeProjectId }}
           >
-            <span class="settings-label">提示词模板</span>
-            <span class="settings-about-value settings-about-link">编辑默认提示词 →</span>
+            <span class="settings-label">
+              日志级别
+              <span class="settings-hint-inline">（写入当前项目 config.common.loggingLevel）</span>
+            </span>
+            <select
+              class="settings-select"
+              value={loggingLevel()}
+              disabled={!appState.activeProjectId || logLevelLoading()}
+              onChange={(e) => void applyLoggingLevel(e.currentTarget.value)}
+            >
+              <option value="debug">debug（最详细）</option>
+              <option value="info">info（常规）</option>
+              <option value="warning">warning（仅警告）</option>
+            </select>
+          </div>
+          <Show when={logLevelError()}>
+            <div class="settings-error">{logLevelError()}</div>
+          </Show>
+          <Show when={!appState.activeProjectId}>
+            <div class="settings-hint">请先打开一个项目，才能设置日志级别。</div>
+          </Show>
+
+          <div class="settings-field">
+            <span class="settings-label">
+              api_calls.log 写入文件
+              <span class="settings-hint-inline">（后端全局设置，重启翻译任务后生效）</span>
+            </span>
+            <label class="settings-toggle">
+              <input
+                type="checkbox"
+                checked={writeApiCallLog()}
+                disabled={apiLogLoading() || apiLogSaving()}
+                onChange={(e) => void applyApiCallLog(e.currentTarget.checked)}
+              />
+              <span class="settings-toggle-knob" />
+            </label>
+          </div>
+          <Show when={apiLogError()}>
+            <div class="settings-error">{apiLogError()}</div>
+          </Show>
+
+          <div class="settings-field">
+            <span class="settings-label">
+              error.log 写入文件
+              <span class="settings-hint-inline">（始终写入，不可关闭）</span>
+            </span>
+            <label class="settings-toggle">
+              <input type="checkbox" checked={true} disabled={true} readOnly={true} />
+              <span class="settings-toggle-knob" />
+            </label>
           </div>
         </section>
 
-        {/* ── 校对审核（问题检测项） ── */}
+        {/* ── 5. 缓存 / 校对 / 字典相关 ── */}
         <section class="settings-section">
           <div class="settings-section-header">
-            <h3>校对审核</h3>
-            <p>
-              选择校对审核时需要检测的问题类型。检测项保存在当前项目 config 文件的
-              problemAnalyze.problemList，未选中的类型在检测时会被跳过。
-            </p>
+            <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "cache")!.title}</h3>
+            <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "cache")!.desc}</p>
           </div>
-
-          {problemLoading() || configLoading() ? (
-            <p class="settings-hint">加载问题类型中…</p>
-          ) : problemTypes().length === 0 ? (
-            <p class="settings-hint">未连接到后端，无法获取问题类型列表。</p>
-          ) : (
-            <div class="settings-problem-types">
-              <For each={problemTypes()}>
-                {(pt) => (
-                  <label class="settings-problem-item">
-                    <input
-                      type="checkbox"
-                      checked={enabledProblemTypes().includes(pt.name)}
-                      disabled={!appState.activeProjectId}
-                      onChange={() => toggleProblemType(pt.name)}
-                    />
-                    <span class="settings-problem-info">
-                      <span class="settings-problem-name">{pt.name}</span>
-                      <span class="settings-problem-desc">{pt.description}</span>
-                    </span>
-                  </label>
-                )}
-              </For>
-            </div>
-          )}
-
-          {/* 长句丢失换行阈值 */}
-          <div class="settings-field" style="margin-top: 12px">
-            <label class="settings-label" for="avg-sentence-length-threshold">
-              平均分句长度阈值（长句丢失换行）
-            </label>
-            <input
-              id="avg-sentence-length-threshold"
-              class="field__input settings-number-sm"
-              type="number"
-              min={10}
-              max={50}
-              step={1}
-              value={avgThreshold()}
-              disabled={!appState.activeProjectId}
-              onChange={(e) => {
-                const raw = Number((e.target as HTMLInputElement).value);
-                setAvgThreshold(Number.isFinite(raw) ? raw : 17);
-              }}
-            />
-            <span class="settings-hint">译文平均分句长度超过该值即报「长句丢失换行」，建议 15~25。</span>
-          </div>
-
-          <Show when={configLoadError()}>
-            <div class="settings-error">{configLoadError()}</div>
-          </Show>
-          <Show when={saveError()}>
-            <div class="settings-error">{saveError()}</div>
-          </Show>
-
-          <div class="settings-hint">
-            已启用 {enabledProblemTypes().length} / {problemTypes().length} 个检测项。
-            {enabledProblemTypes().length === 0 && " ⚠️ 未选择任何检测项时将不会发现问题。"}
-          </div>
-
-          <div class="settings-field" style="margin-top: 10px; border-bottom: none">
-            <button
-              class="btn btn--sm btn--primary"
-              disabled={!appState.activeProjectId || saveState() === "saving"}
-              onClick={saveProblemTypes}
-            >
-              {saveState() === "saving"
-                ? "保存中…"
-                : appState.activeProjectId
-                  ? "保存到当前项目"
-                  : "请先打开项目"}
-            </button>
-            <Show when={saveState() === "ok"}>
-              <span class="settings-hint" style="margin-left: 8px">
-                已保存到当前项目配置。
-              </span>
-            </Show>
+          <div
+            class="settings-field"
+            classList={{ "settings-field--disabled": !appState.activeProjectId }}
+            style="cursor:pointer; border-bottom:none"
+            onClick={() => {
+              if (appState.activeProjectId) navigateTo("project-config");
+            }}
+          >
+            <span class="settings-label">编辑缓存 / 校对 / 字典</span>
+            <span class="settings-about-value settings-about-link">缓存、问题检测、字典 →</span>
           </div>
         </section>
 
         {/* ── 关于 ── */}
         <section class="settings-section">
           <div class="settings-section-header">
-            <h3>关于</h3>
-            <p>查看项目基础信息与版本更新状态。</p>
+            <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "about")!.title}</h3>
+            <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "about")!.desc}</p>
           </div>
 
           <div class="settings-about-list">
