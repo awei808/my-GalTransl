@@ -3473,6 +3473,60 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"project_dir": project_dir, "problems": all_problems, "total": len(all_problems)})
                 return
 
+            # GET /api/projects/:id/alt-translations
+            # 列出所有 alt_dst（备选译文）非空的缓存条目，供前端"查看备选"侧边栏使用。
+            if sub_path == "/alt-translations":
+                cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                query = parse_qs(urlparse(self.path).query)
+                file_filter = (query.get("file", [""])[0] or "").strip()
+                all_alts = []
+                name_dict = _load_project_name_dict(project_dir)
+                scanned = 0
+
+                def _collect_alt(fp_rel: str) -> None:
+                    fp_rel = fp_rel.replace("\\", "/")
+                    fp = os.path.join(cache_dir, fp_rel)
+                    if not os.path.isfile(fp) or not fp.endswith(".json"):
+                        return
+                    nonlocal scanned
+                    scanned += 1
+                    try:
+                        import orjson
+                        with open(fp, "rb") as f:
+                            entries = orjson.loads(f.read())
+                        if not isinstance(entries, list):
+                            return
+                        for e in entries:
+                            if isinstance(e, dict) and e.get("alt_dst", ""):
+                                all_alts.append({
+                                    "filename": fp_rel,
+                                    "index": e.get("index", 0),
+                                    "speaker": _lookup_name(e.get("name", ""), name_dict),
+                                    "post_src": e.get("post_src", "") or e.get("post_jp", ""),
+                                    "pre_dst": e.get("pre_dst", "") or e.get("pre_zh", ""),
+                                    "alt_dst": e.get("alt_dst", ""),
+                                    "trans_by": e.get("trans_by", ""),
+                                })
+                    except Exception as exc:
+                        LOGGER.debug(f"alt-translations: 跳过无法解析的缓存文件 {fp_rel}: {exc}")
+                        return
+
+                if file_filter:
+                    # 路径穿越防护：与 /problems 端点一致
+                    norm = os.path.normpath(file_filter.replace("\\", "/"))
+                    if norm != ".." and not norm.startswith(".." + os.sep) and not os.path.isabs(norm):
+                        _collect_alt(norm)
+                elif os.path.isdir(cache_dir):
+                    for root, _dirs, files in os.walk(cache_dir):
+                        for name in sorted(files):
+                            if name.endswith(".json"):
+                                fp = os.path.join(root, name)
+                                rel = os.path.relpath(fp, cache_dir).replace("\\", "/")
+                                _collect_alt(rel)
+                LOGGER.debug(f"alt-translations: 扫描 {scanned} 个缓存文件，命中 {len(all_alts)} 条备选译文")
+                self._send_json({"project_dir": project_dir, "alts": all_alts, "total": len(all_alts)})
+                return
+
             # GET /api/projects/:id/logs?source=engine|frontend
             # source 默认 engine 以保持向后兼容；engine 读项目级 GalTransl.log，
             # frontend 读由 POST /api/log 统一收集的前端日志（全局 frontend.log）。

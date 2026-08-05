@@ -2,8 +2,8 @@
 改进轮（AI 备选译文）单元测试 —— 针对独立后端 ForImproveTranslation
 
 覆盖：
-  - 缓存序列化：CSentense.alt_zh <-> 缓存条目 alt_dst 的往返
-  - _parse_improve_jsonline_text：按 id 稀疏解析（better -> alt_zh）、乱行容错
+  - 缓存序列化：CSentense.alt_dst <-> 缓存条目 alt_dst 的往返
+  - _parse_improve_jsonline_text：按 id 稀疏解析（better -> alt_dst）、乱行容错
   - _build_improve_first_round_content：首轮含改进提示词/术语表/剧情元数据
   - batch_translate（翻译接口）集成：稀疏输出 / 无改进空输出 / 分批 / 解析失败跳过
 """
@@ -63,12 +63,12 @@ def make_translator():
 
 
 class CacheAltDstSerializationTests(unittest.TestCase):
-    """CSentense.alt_zh 与缓存条目 alt_dst 的序列化。"""
+    """CSentense.alt_dst 与缓存条目 alt_dst 的序列化。"""
 
-    def test_alt_zh_written_when_non_empty(self) -> None:
+    def test_alt_dst_written_when_non_empty(self) -> None:
         tran = CSentense("原文", index=0)
         tran.pre_dst = "译文"
-        tran.alt_zh = "备选译文"
+        tran.alt_dst = "备选译文"
         obj = _build_cache_obj(tran, post_save=True)
         self.assertIsNotNone(obj)
         self.assertEqual(obj["alt_dst"], "备选译文")
@@ -76,7 +76,26 @@ class CacheAltDstSerializationTests(unittest.TestCase):
     def test_alt_dst_omitted_when_empty(self) -> None:
         tran = CSentense("原文", index=0)
         tran.pre_dst = "译文"
-        tran.alt_zh = ""
+        tran.alt_dst = ""
+        obj = _build_cache_obj(tran, post_save=True)
+        self.assertIsNotNone(obj)
+        self.assertNotIn("alt_dst", obj)
+
+    def test_alt_dst_omitted_when_equal_to_pre_dst(self) -> None:
+        # 落盘防御：alt_dst 与初译相同不应写入缓存
+        tran = CSentense("原文", index=0)
+        tran.pre_dst = "译文"
+        tran.alt_dst = "译文"
+        obj = _build_cache_obj(tran, post_save=True)
+        self.assertIsNotNone(obj)
+        self.assertNotIn("alt_dst", obj)
+
+    def test_alt_dst_omitted_when_equal_to_proofread_zh(self) -> None:
+        # 落盘防御：alt_dst 与校对结果相同不应写入缓存
+        tran = CSentense("原文", index=0)
+        tran.pre_dst = "初译"
+        tran.proofread_zh = "校对"
+        tran.alt_dst = "校对"
         obj = _build_cache_obj(tran, post_save=True)
         self.assertIsNotNone(obj)
         self.assertNotIn("alt_dst", obj)
@@ -90,7 +109,7 @@ class CacheAltDstSerializationTests(unittest.TestCase):
             await get_transCache_from_json(trans_list, path)
             return trans_list[0]
 
-    def test_roundtrip_loads_alt_zh(self) -> None:
+    def test_roundtrip_loads_alt_dst(self) -> None:
         tran = asyncio.run(
             self._roundtrip(
                 {
@@ -104,12 +123,12 @@ class CacheAltDstSerializationTests(unittest.TestCase):
                 }
             )
         )
-        self.assertEqual(tran.alt_zh, "备选译文")
+        self.assertEqual(tran.alt_dst, "备选译文")
         self.assertEqual(tran.pre_dst, "译文")
 
 
 class ParseImproveJsonlineTests(unittest.TestCase):
-    """_parse_improve_jsonline_text：按 id 稀疏解析 better -> alt_zh。"""
+    """_parse_improve_jsonline_text：按 id 稀疏解析 better -> alt_dst。"""
 
     def setUp(self) -> None:
         self.t = make_translator()
@@ -124,9 +143,9 @@ class ParseImproveJsonlineTests(unittest.TestCase):
         )
         count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
         self.assertEqual(count, 2)
-        self.assertEqual(self.trans_list[0].alt_zh, "备0")
-        self.assertEqual(self.trans_list[1].alt_zh, "")
-        self.assertEqual(self.trans_list[2].alt_zh, "备2")
+        self.assertEqual(self.trans_list[0].alt_dst, "备0")
+        self.assertEqual(self.trans_list[1].alt_dst, "")
+        self.assertEqual(self.trans_list[2].alt_dst, "备2")
         self.assertEqual(self.trans_list[0].pre_dst, "译0")
 
     def test_sig_anchored_lines_accepted(self) -> None:
@@ -136,7 +155,7 @@ class ParseImproveJsonlineTests(unittest.TestCase):
         result_text = sig_list[1] + '|{"id":1,"better":"备1"}\n'
         count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
         self.assertEqual(count, 1)
-        self.assertEqual(self.trans_list[1].alt_zh, "备1")
+        self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
     def test_garbage_lines_ignored(self) -> None:
         result_text = (
@@ -148,14 +167,42 @@ class ParseImproveJsonlineTests(unittest.TestCase):
         )
         count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
         self.assertEqual(count, 1)
-        self.assertEqual(self.trans_list[0].alt_zh, "")
-        self.assertEqual(self.trans_list[1].alt_zh, "备1")
+        self.assertEqual(self.trans_list[0].alt_dst, "")
+        self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
     def test_empty_or_garbled_better_rejected(self) -> None:
         result_text = '{"id":1,"better":""}\n{"id":2,"better":"\ufffd\x8c"}\n'
         count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
         self.assertEqual(count, 0)
-        self.assertTrue(all(tr.alt_zh == "" for tr in self.trans_list))
+        self.assertTrue(all(tr.alt_dst == "" for tr in self.trans_list))
+
+    def test_better_equal_to_pre_dst_is_rejected(self) -> None:
+        # 模型逐字回显初译：better 与 pre_dst 相同应被跳过
+        self.trans_list[0].pre_dst = "译文A"
+        result_text = '{"id":0,"better":"译文A"}\n{"id":1,"better":"备1"}\n'
+        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
+        self.assertEqual(count, 1)
+        self.assertEqual(self.trans_list[0].alt_dst, "")
+        self.assertEqual(self.trans_list[1].alt_dst, "备1")
+
+    def test_better_equal_to_proofread_zh_is_rejected(self) -> None:
+        # 已校对的句子：基准应为 proofread_zh，better 与之相同应跳过
+        self.trans_list[0].pre_dst = "初译A"
+        self.trans_list[0].proofread_zh = "校对A"
+        result_text = '{"id":0,"better":"校对A"}\n{"id":1,"better":"备1"}\n'
+        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
+        self.assertEqual(count, 1)
+        self.assertEqual(self.trans_list[0].alt_dst, "")
+        self.assertEqual(self.trans_list[1].alt_dst, "备1")
+
+    def test_better_differs_only_by_br_vs_newline_is_rejected(self) -> None:
+        # 模型按 prompt 用 <br> 换行，pre_dst 用 \r\n：归一化后相同应跳过
+        self.trans_list[0].pre_dst = "前\r\n后"
+        result_text = '{"id":0,"better":"前<br>后"}\n{"id":1,"better":"备1"}\n'
+        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "\r\n")
+        self.assertEqual(count, 1)
+        self.assertEqual(self.trans_list[0].alt_dst, "")
+        self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
 
 class BuildImproveFirstRoundTests(unittest.TestCase):
@@ -227,9 +274,9 @@ class BatchTranslateImproveTests(unittest.IsolatedAsyncioTestCase):
         trans_list = self._make_trans_list(3)
         result = await t.batch_translate("f.json", "f.json", trans_list, 100)
         self.assertIs(result, trans_list)
-        self.assertEqual(trans_list[0].alt_zh, "备0")
-        self.assertEqual(trans_list[1].alt_zh, "")
-        self.assertEqual(trans_list[2].alt_zh, "备2")
+        self.assertEqual(trans_list[0].alt_dst, "备0")
+        self.assertEqual(trans_list[1].alt_dst, "")
+        self.assertEqual(trans_list[2].alt_dst, "备2")
         # 正式译文与引擎标记不受影响
         self.assertEqual(trans_list[0].pre_dst, "译0")
         self.assertEqual(trans_list[0].trans_by, "")
@@ -239,14 +286,14 @@ class BatchTranslateImproveTests(unittest.IsolatedAsyncioTestCase):
         t.ask_chatbot = MethodType(self._make_better_ask(set()), t)
         trans_list = self._make_trans_list(3)
         await t.batch_translate("f.json", "f.json", trans_list, 100)
-        self.assertTrue(all(tr.alt_zh == "" for tr in trans_list))
+        self.assertTrue(all(tr.alt_dst == "" for tr in trans_list))
 
     async def test_batch_splitting_respects_num_per_request(self) -> None:
         t = self._translator_with_better(num_per_request=2)
         t.ask_chatbot = MethodType(self._make_better_ask({0, 1, 2}), t)
         trans_list = self._make_trans_list(3)
         await t.batch_translate("f.json", "f.json", trans_list, 2)
-        self.assertEqual([tr.alt_zh for tr in trans_list], ["备0", "备1", "备2"])
+        self.assertEqual([tr.alt_dst for tr in trans_list], ["备0", "备1", "备2"])
         conv = t.conversations.get("f.json", [])
         # system + 首轮 user/assistant + 续轮 user/assistant
         self.assertEqual(conv[0]["role"], "system")
@@ -262,7 +309,7 @@ class BatchTranslateImproveTests(unittest.IsolatedAsyncioTestCase):
         t.ask_chatbot = MethodType(fake_bad, t)
         trans_list = self._make_trans_list(2)
         await t.batch_translate("f.json", "f.json", trans_list, 100)
-        self.assertTrue(all(tr.alt_zh == "" for tr in trans_list))
+        self.assertTrue(all(tr.alt_dst == "" for tr in trans_list))
         self.assertEqual(trans_list[0].pre_dst, "译0")
         self.assertNotIn("(Failed)", trans_list[0].pre_dst)
 
@@ -272,8 +319,8 @@ class BatchTranslateImproveTests(unittest.IsolatedAsyncioTestCase):
         trans_list = self._make_trans_list(2)
         trans_list[1].pre_dst = "(Failed)xxx"
         await t.batch_translate("f.json", "f.json", trans_list, 100)
-        self.assertEqual(trans_list[0].alt_zh, "备0")
-        self.assertEqual(trans_list[1].alt_zh, "")
+        self.assertEqual(trans_list[0].alt_dst, "备0")
+        self.assertEqual(trans_list[1].alt_dst, "")
 
 
 class ProblemInjectTests(unittest.TestCase):
@@ -345,6 +392,36 @@ class ProblemInjectTests(unittest.TestCase):
         )
         self.assertIn("残留日文：xx", input_src)
         self.assertNotIn("独白男他", input_src)
+
+    def test_build_input_jsonlines_replaces_line_break_in_dst(self) -> None:
+        # 输入侧：dst 应与 src 采用同一换行表示（n_symbol -> <br>）
+        t = make_translator()
+        tr = CSentense("前\r\n后", index=0)
+        tr.pre_dst = "译前\r\n译后"
+        _, _, n_symbol, input_src = t._build_input_jsonlines([tr], True, "f.json")
+        self.assertEqual(n_symbol, "\r\n")
+        self.assertIn("译前<br>译后", input_src)
+        self.assertNotIn("译前\\r\\n译后", input_src)
+
+    def test_build_input_jsonlines_dst_uses_proofread_zh_with_replace(self) -> None:
+        # 已校对句：基准取 proofread_zh，同样做换行替换
+        t = make_translator()
+        tr = CSentense("前\r\n后", index=0)
+        tr.pre_dst = "初译前\r\n初译后"
+        tr.proofread_zh = "校对前\r\n校对后"
+        _, _, _, input_src = t._build_input_jsonlines([tr], True, "f.json")
+        self.assertIn("校对前<br>校对后", input_src)
+        self.assertNotIn("初译前", input_src)
+
+    def test_build_input_jsonlines_no_replace_when_no_line_break(self) -> None:
+        # n_symbol 为空（原文单行）时不得改动 dst
+        t = make_translator()
+        tr = CSentense("单行原文", index=0)
+        tr.pre_dst = "单行译文"
+        _, _, n_symbol, input_src = t._build_input_jsonlines([tr], True, "f.json")
+        self.assertEqual(n_symbol, "")
+        self.assertIn("单行译文", input_src)
+        self.assertNotIn("<br>", input_src)
 
     def test_coerce_problem_type_list(self) -> None:
         t = make_translator()

@@ -43,7 +43,7 @@ class CSentense:
         self.trans_conf = 0.0  # 翻译可信度 For GPT4
         self.doub_content = ""  # 用于记录疑问句的内容 For GPT4
         self.unknown_proper_noun = ""  # 用于记录未知的专有名词 For GPT4
-        self.alt_zh = ""  # AI 备选译文（改进轮产出，前端可交换为正式译文）
+        self._alt_dst = ""  # AI 备选译文（改进轮产出，前端可交换为正式译文）
 
         self.prev_tran: CSentense = None  # 指向上一个tran
         self.next_tran: CSentense = None  # 指向下一个tran
@@ -89,7 +89,15 @@ class CSentense:
     @post_zh.setter
     def post_zh(self, value: str) -> None:
         self.post_dst = value
-    
+
+    @property
+    def alt_dst(self) -> str:
+        return self._alt_dst
+
+    @alt_dst.setter
+    def alt_dst(self, value: str) -> None:
+        self._alt_dst = value
+
     def get_speaker_name(self) -> str:
         if isinstance(self.speaker, str):
             return self.speaker

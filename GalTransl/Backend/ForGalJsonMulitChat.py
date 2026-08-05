@@ -722,13 +722,17 @@ class ForGalJsonMulitChat(BaseTranslate):
                 }
             else:
                 # 校对模式：额外携带 dst（已有译文），让 LLM 在已有基础上校对
+                dst_text = (
+                    trans.pre_dst if trans.proofread_zh == "" else trans.proofread_zh
+                )
+                # dst 与 src 采用同一换行表示（n_symbol -> <br>），否则模型两侧换行基准错位
+                if n_symbol:
+                    dst_text = dst_text.replace(n_symbol, "<br>")
                 tmp_obj = {
                     "id": trans.index,
                     "name": speaker,
                     "src": src_text,
-                    "dst": (
-                        trans.pre_dst if trans.proofread_zh == "" else trans.proofread_zh
-                    ),
+                    "dst": dst_text,
                 }
 
             # 可选注入译文问题（problem）：供改进轮评估参考；翻译轮不传 problem_types 不生效

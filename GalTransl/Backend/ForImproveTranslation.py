@@ -15,7 +15,7 @@ from GalTransl.Utils import extract_code_blocks, fix_quotes
 class ForImproveTranslation(ForGalJsonMulitChat):
     """
     改进轮后端：向 AI 发送「文件级元数据 + 翻译规范 + 评估标准 + 原文 + 译文」，
-    让模型评估哪些句子的译文还能翻译得更好，并把备选译文写入各句 alt_zh。
+    让模型评估哪些句子的译文还能翻译得更好，并把备选译文写入各句 alt_dst。
 
     作为完整流水线的第 8 阶段使用；也可被独立选中对已翻译文件执行改进评估。
     引擎标识：ForImproveTranslation
@@ -58,7 +58,7 @@ class ForImproveTranslation(ForGalJsonMulitChat):
 
         与 ForGalJsonMulitChat.batch_translate 同名同签名（"翻译接口"），
         使 LLMTranslate 能以统一的 batch_translate 驱动本后端。
-        改进轮不改写 pre_dst / trans_by，仅把模型给出的备选译文写入各句 alt_zh；
+        改进轮不改写 pre_dst / trans_by，仅把模型给出的备选译文写入各句 alt_dst；
         输入输出的 trans_list 保持一致。
 
         Args:
@@ -69,7 +69,7 @@ class ForImproveTranslation(ForGalJsonMulitChat):
             gpt_dic: 术语表对象（每批按本批句子注入，供术语一致性评估）。
 
         Returns:
-            CTransList: 与输入一致（alt_zh 已就地更新）。
+            CTransList: 与输入一致（alt_dst 已就地更新）。
         """
         # 是否向提示词注入译文问题（problem）及类型白名单（空=注入全部）
         problem_types = None
@@ -258,7 +258,7 @@ class ForImproveTranslation(ForGalJsonMulitChat):
     def _parse_improve_jsonline_text(
         self, result_text: str, trans_list: CTransList, n_symbol: str
     ) -> int:
-        """按 id 稀疏解析改进轮输出，把 better 写入对应句子的 alt_zh。
+        """按 id 稀疏解析改进轮输出，把 better 写入对应句子的 alt_dst。
 
         改进轮只输出有改进空间的句子（稀疏序列，序号不连续），
         与翻译轮的"逐行按顺序对应"解析不兼容，故按 id 定位句子。
@@ -301,9 +301,16 @@ class ForImproveTranslation(ForGalJsonMulitChat):
                 continue
             if "�" in better:
                 continue
-            tran.alt_zh = self._normalize_parsed_translation_text(
-                better, tran, n_symbol
-            )
+            # 换行符替换与恢复：复用翻译轮的归一化（<BR>/真实换行→<br>→n_symbol），
+            # 使 better 与送入模型的当前译文处于同一换行表示后再比较
+            normalized = self._normalize_parsed_translation_text(better, tran, n_symbol)
+            # 当前主译文：校对结果优先，否则初译
+            current_dst = tran.proofread_zh if tran.proofread_zh != "" else tran.pre_dst
+            # 未实际改进（含仅换行表示差异）：跳过，不写 alt_dst、不计改进数
+            if current_dst != "" and normalized.strip() == current_dst.strip():
+                LOGGER.debug(f"[改进轮] 句子 {line_id} 的 better 与当前译文相同，跳过")
+                continue
+            tran.alt_dst = normalized
             success_count += 1
         return success_count
 

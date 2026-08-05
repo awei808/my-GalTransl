@@ -146,8 +146,10 @@ def _build_cache_obj(tran: CSentense, post_save: bool = False) -> Optional[dict]
         cache_obj["doub_content"] = tran.doub_content
     if tran.unknown_proper_noun != "":
         cache_obj["unknown_proper_noun"] = tran.unknown_proper_noun
-    if tran.alt_zh != "":
-        cache_obj["alt_dst"] = tran.alt_zh
+    # 落盘防御：仅当 alt_dst 非空且与当前主译文（校对结果优先，否则初译）不同时写入，
+    # 丢弃"改进轮未实际改进却产出相同译文"的脏数据（与 ForImproveTranslation 去重策略一致）
+    if tran.alt_dst != "" and tran.alt_dst != tran.pre_dst and tran.alt_dst != tran.proofread_zh:
+        cache_obj["alt_dst"] = tran.alt_dst
     if post_save:
         cache_obj["post_dst_preview"] = tran.post_dst
 
@@ -517,7 +519,7 @@ async def get_transCache_from_json(
         if "unknown_proper_noun" in cache_dict[cache_key]:
             tran.unknown_proper_noun = cache_dict[cache_key]["unknown_proper_noun"]
         if "alt_dst" in cache_dict[cache_key]:
-            tran.alt_zh = cache_dict[cache_key]["alt_dst"]
+            tran.alt_dst = cache_dict[cache_key]["alt_dst"]
         if "skip_check" in cache_dict[cache_key]:
             tran.skip_check = cache_dict[cache_key]["skip_check"]
         if "problem" in cache_dict[cache_key]:

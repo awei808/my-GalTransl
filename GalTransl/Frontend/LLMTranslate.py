@@ -767,7 +767,7 @@ async def doLLMTranslate(
             # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
             # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
             has_content = any(
-                t.pre_dst != "" or t.alt_zh != "" or t.proofread_zh != ""
+                t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
                 for t in trans_list
             )
             if has_content:
@@ -1919,7 +1919,7 @@ async def postprocess_results(
     随后合并所有 chunk 的结果，套用 name 替换表并经文件插件写出最终译文。
 
     若开启 gpt.enableBetterTranslation 且后端支持，会在保存快照前先执行改进轮，
-    把模型给出的备选译文写入各句 alt_zh，随快照一并落盘。
+    把模型给出的备选译文写入各句 alt_dst，随快照一并落盘。
     """
 
     proj_dir = projectConfig.getProjectDir()
@@ -1931,7 +1931,7 @@ async def postprocess_results(
     name_replaceDict = projectConfig.name_replaceDict
 
     # 改进轮（可选，流水线第 8 流程）：整文件翻译+校对完成后，用独立后端
-    # ForImproveTranslation 评估译文质量并生成备选译文（写入各句 alt_zh）。
+    # ForImproveTranslation 评估译文质量并生成备选译文（写入各句 alt_dst）。
     # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
     if projectConfig.getKey("gpt.enableBetterTranslation"):
         from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
