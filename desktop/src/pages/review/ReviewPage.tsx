@@ -536,9 +536,9 @@ export function ReviewPage() {
 
   // ── 快捷筛选 ──
   const [filterProblemsOnly, setFilterProblemsOnly] = createSignal(false);
-  const [filterResidualJa, setFilterResidualJa] = createSignal(false);
   const [filterProblemType, setFilterProblemType] = createSignal("all");
   const [filterSpeaker, setFilterSpeaker] = createSignal("all");
+  const [filterAltOnly, setFilterAltOnly] = createSignal(false);
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
 
   // 根据查找条件 + 快捷筛选过滤条目（createMemo 避免模板中重复遍历）
@@ -554,7 +554,7 @@ export function ReviewPage() {
       );
     }
     if (filterProblemsOnly()) list = list.filter((e) => !!e.problem);
-    if (filterResidualJa()) list = list.filter((e) => problemTypesOf(e.problem).includes("残留日文"));
+    if (filterAltOnly()) list = list.filter((e) => !!e.alt_dst);
     const ptype = filterProblemType();
     if (ptype !== "all") list = list.filter((e) => problemTypesOf(e.problem).includes(ptype));
     const spk = filterSpeaker();
@@ -569,12 +569,12 @@ export function ReviewPage() {
   const problemCount = createMemo(() => filteredEntries().filter((e) => !!e.problem).length);
   const hasFilter = () =>
     filterProblemsOnly() ||
-    filterResidualJa() ||
+    filterAltOnly() ||
     filterProblemType() !== "all" ||
     filterSpeaker() !== "all";
   function clearFilters() {
     setFilterProblemsOnly(false);
-    setFilterResidualJa(false);
+    setFilterAltOnly(false);
     setFilterProblemType("all");
     setFilterSpeaker("all");
   }
@@ -1434,7 +1434,7 @@ export function ReviewPage() {
           </div>
         </Show>
 
-        {/* 快捷筛选：只看有问题 / 残留日文 / 类型 / 说话人 */}
+        {/* 快捷筛选：只看有问题 / 备选 / 类型 / 说话人 */}
         <div class="review-filter-bar">
           <button
             class={`review-filter-chip ${filterProblemsOnly() ? "review-filter-chip--active" : ""}`}
@@ -1443,10 +1443,10 @@ export function ReviewPage() {
             只看有问题
           </button>
           <button
-            class={`review-filter-chip ${filterResidualJa() ? "review-filter-chip--active" : ""}`}
-            onClick={() => setFilterResidualJa(!filterResidualJa())}
+            class={`review-filter-chip ${filterAltOnly() ? "review-filter-chip--active" : ""}`}
+            onClick={() => setFilterAltOnly(!filterAltOnly())}
           >
-            残留日文
+            只看备选
           </button>
           <select
             class="review-filter-select"

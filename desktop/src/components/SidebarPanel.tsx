@@ -597,7 +597,7 @@ function ProblemList() {
                   {/* 文件行：左侧文件名，右侧展开/收起切换图标 */}
                   <div class="problem-filename-row">
                   <span class="problem-filename">{filename}</span>
-                  <span class="problem-filename-count" style={{ marginLeft: "6px", color: "var(--c-text-muted, #8a8f98)", fontSize: "12px" }}>{entries.length}</span>
+                  <span class="problem-filename-count">{entries.length}</span>
                   <button
                     class="problem-toggle"
                     data-open={expandedFiles().has(filename)}
@@ -717,7 +717,7 @@ function AltList() {
                 {/* 文件行：左侧文件名，右侧展开/收起切换图标 */}
                 <div class="problem-filename-row">
                   <span class="problem-filename">{filename}</span>
-                  <span class="problem-filename-count" style={{ marginLeft: "6px", color: "var(--c-text-muted, #8a8f98)", fontSize: "12px" }}>{entries.length}</span>
+                  <span class="problem-filename-count">{entries.length}</span>
                   <button
                     class="problem-toggle"
                     data-open={expandedFiles().has(filename)}
