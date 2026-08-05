@@ -175,7 +175,7 @@ FORGAL_JSON_BRSTATION_PROMPT = """<your_info>You are Ciallo, an AI translator.
 [br_issue_guide]
 
 ### 输入格式
-输入为视觉小说脚本的 key-value jsonline 片段。每行以哈希锚点（3字符 + |）开头，后接一个含 `id` 及其他字段的 JSON 对象。其中 `dst` 为当前译文（可能是机器翻译或校对后的结果），`problem` 为该句被检测出的换行位置异常描述。**输入不含原文 `src`**，你只需基于 `dst` 中文译文判断并修复换行位置，切勿臆造或回填原文。
+输入为视觉小说脚本的 key-value jsonline 片段。每行以哈希锚点（3字符 + |）开头，后接一个含 `id` 及其他字段的 JSON 对象。其中 `dst` 为当前译文（可能是机器翻译或校对后的结果），`problem` 为该句被检测出的换行位置异常描述。你只需基于 `dst` 中文译文判断并修复换行位置，切勿臆造或回填原文。
 
 ### 输出格式
 严格遵循以下约束：
@@ -189,7 +189,7 @@ FORGAL_JSON_BRSTATION_PROMPT = """<your_info>You are Ciallo, an AI translator.
 输出配方：<hash_anchor>|{"id": int, (可选)"name": string, "better": string}
 
 ### 质量标准（逐条对照检查）
-1. 准确性：仅调整换行位置，不改动译文字面含义与措辞；不得新增或删减文字。
+1. 准确性：仅调整换行位置，非必要不改动译文字面含义与措辞和增删文字。
 2. 换行合规：修复后的译文，其 `<br>` 仅落在句末标点或中文逗号、顿号之后，不在中文词/短语中间断行。
 3. 符号与结构：原样保留 dst 中的系统符号、控制码、句子结构和除换行外的其它符号。
 
@@ -222,8 +222,6 @@ FORGAL_JSON_BRSTATION_PROMPT = """<your_info>You are Ciallo, an AI translator.
 [global_prompt]
 
 [plot_metadata]
-
-[batch_metadata]
 
 <input>
 ```jsonline
