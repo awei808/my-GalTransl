@@ -558,7 +558,8 @@ export function ReviewPage() {
     const ptype = filterProblemType();
     if (ptype !== "all") list = list.filter((e) => problemTypesOf(e.problem).includes(ptype));
     const spk = filterSpeaker();
-    if (spk !== "all") list = list.filter((e) => (e.name ?? "") === spk);
+    if (spk === "__no_speaker__") list = list.filter((e) => !String(e.name ?? "").trim());
+    else if (spk !== "all") list = list.filter((e) => (e.name ?? "") === spk);
     return list;
   });
 
@@ -1464,6 +1465,7 @@ export function ReviewPage() {
             onChange={(e) => setFilterSpeaker(e.currentTarget.value)}
           >
             <option value="all">全部说话人</option>
+            <option value="__no_speaker__">旁白独白</option>
             <For each={speakers()}>
               {(s) => <option value={s}>{s}</option>}
             </For>
