@@ -77,8 +77,12 @@ TRANSLATOR_SUPPORTED = {
         "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports FileMetaData and BatchMetadata injection."
     },
     "ForImproveTranslation": {
-        "zh-cn": "(openai接口)译文质量改进：整文件翻译完成后评估译文，对可改进的句子生成备选译文(写入缓存alt_dst)，可在校对审核页一键交换。",
+        "zh-cn": "(openai接口)译文质量改进：整文件翻译完成后评估译文，对可改进的句子生成备选译文，可在校对审核页一键交换。",
         "en": "Translation quality improvement: evaluates the whole file after translation, generates alternative translations (alt_dst in cache), swappable in review page."
+    },
+    "ForBRStation": {
+        "zh-cn": "(openai接口)换行位置异常修复：仅对带有「换行位置异常」问题标注的译文，生成备选译文，可在校对审核页一键交换。",
+        "en": "Line-break position fix: for sentences flagged with 'line-break position anomaly', generates alternative translations (alt_dst in cache), swappable in review page."
     },
     "ForFileMetaData": {
         "zh-cn": "(openai接口)由剧本文件生成文件级元数据(FileMetaData)，不翻译、无多轮、无系统提示词，结果写入 gt_input/FileMetaData.json。",
@@ -109,7 +113,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForBatchMetaData": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "GenDic", "ForFileMetaData", "ForBatchMetaData"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "GenDic", "ForFileMetaData", "ForBatchMetaData"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

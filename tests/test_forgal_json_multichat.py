@@ -239,6 +239,32 @@ class BuildInputJsonlinesTests(unittest.TestCase):
         self.assertIn("dst", obj)
         self.assertEqual(obj["dst"], "已有译文")
 
+    def test_proofread_default_still_includes_src(self):
+        # 回归：默认 include_src=True 时校对模式仍注入 src，翻译/改进轮行为不变
+        trans = CSentense("原文日文", speaker="", index=0)
+        trans.pre_dst = "已有译文"
+        t, (input_list, sig_list, n_symbol, input_src) = self._build([trans], proofread=True)
+        obj = json.loads(input_list[0].split("|", 1)[1])
+        self.assertIn("src", obj)
+        self.assertEqual(obj["src"], "原文日文")
+        self.assertIn("dst", obj)
+
+    def test_include_src_false_omits_src_keeps_dst_and_problem(self):
+        # 纯译文修复（如换行位置修复）：include_src=False 时去掉 src，保留 dst 与 problem
+        trans = CSentense("原文日文", speaker="", index=0)
+        trans.pre_dst = "中文译文"
+        trans.problem = "换行位置异常：第1行"
+        t = make_translator()
+        input_list, sig_list, n_symbol, input_src = t._build_input_jsonlines(
+            [trans], True, "f.json",
+            problem_types=["换行位置异常"],
+            include_src=False,
+        )
+        obj = json.loads(input_list[0].split("|", 1)[1])
+        self.assertNotIn("src", obj)
+        self.assertEqual(obj["dst"], "中文译文")
+        self.assertEqual(obj["problem"], "换行位置异常：第1行")
+
     def test_combined_newline_detected_once(self):
         # 仅第二句含换行符，整批应仍能检测到 \n（仅在批首判定一次）
         t_list = [

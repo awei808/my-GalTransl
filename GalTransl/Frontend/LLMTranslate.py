@@ -687,6 +687,145 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 
+    # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）----
+    if eng_type == "ForBRStation":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+        # 载入字典：主流程的字典初始化位于翻译阶段，独立分支需自行加载，
+        # 否则 projectConfig.pre_dic 为 None 导致 preprocess_trans_list 崩溃
+        projectConfig.pre_dic = CNormalDic(
+            initDictList(pre_dic_list, default_dic_dir, project_dir)
+        )
+        projectConfig.post_dic = CNormalDic(
+            initDictList(post_dic_list, default_dic_dir, project_dir)
+        )
+        projectConfig.gpt_dic = CGptDict(
+            initDictList(gpt_dic_list, default_dic_dir, project_dir)
+        )
+        if projectConfig.getDictCfgSection().get("sortDict", True):
+            projectConfig.pre_dic.sort_dic()
+            projectConfig.post_dic.sort_dic()
+            projectConfig.gpt_dic.sort_dic()
+        gptapi = await init_gptapi(projectConfig)
+        total = len(file_json_lists)
+        # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
+        _workers_raw = projectConfig.getKey("workersPerProject")
+        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        worker_count = max(1, workers_per_project)
+        projectConfig.active_workers = worker_count
+        LOGGER.info(
+            f"[换行修复] 开始为 {total} 个文件执行换行位置异常修复，并发 {worker_count} worker"
+        )
+        _update_runtime(projectConfig, stage="换行位置异常修复")
+        num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+        try:
+            num_better = int(num_better) if num_better else 100
+        except (TypeError, ValueError):
+            num_better = 100
+
+        async def _br_single_file(file_path: str, json_list: list) -> None:
+            """处理单个文件的换行修复：重建句子、命中缓存、修复并写回备选译文。"""
+            _check_stop_requested(projectConfig)
+            file_name = (
+                file_path.replace(input_dir, "")
+                .lstrip(os_sep)
+                .replace(os_sep, "-}")
+            )
+            cache_file_path = joinpath(cache_dir, file_name)
+            if not isPathExists(cache_file_path):
+                LOGGER.warning(f"[换行修复] {file_name} 无缓存译文，跳过")
+                return
+            # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
+            # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
+            from GalTransl.Loader import load_transList
+
+            trans_list, _ = load_transList(json_list)
+            preprocess_trans_list(
+                trans_list,
+                projectConfig,
+                projectConfig.pre_dic,
+                projectConfig.tPlugins,
+            )
+            await get_transCache_from_json(
+                trans_list,
+                cache_file_path,
+                retry_failed=False,
+                proofread=False,
+                retran_key="",
+                eng_type=eng_type,
+            )
+            # 注入文件级元数据（供首轮修复）
+            file_metadata = getattr(projectConfig, "file_metadata", None)
+            if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
+                gptapi.set_file_metadata(file_metadata, file_name)
+            _update_runtime(projectConfig, current_file=file_name)
+            await gptapi.batch_translate(
+                file_name,
+                cache_file_path,
+                trans_list,
+                num_better,
+                gpt_dic=projectConfig.gpt_dic,
+            )
+            # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
+            # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
+            has_content = any(
+                t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
+                for t in trans_list
+            )
+            if has_content:
+                await save_transCache_to_json(
+                    trans_list,
+                    cache_file_path,
+                    post_save=True,
+                    project_dir=_runtime_project_dir(projectConfig),
+                )
+            else:
+                LOGGER.warning(
+                    f"[换行修复] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                )
+
+        # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
+        file_queue: asyncio.Queue = asyncio.Queue()
+        for file_path, json_list in file_json_lists.items():
+            file_queue.put_nowait((file_path, json_list))
+        for _ in range(worker_count):
+            file_queue.put_nowait(None)
+
+        async def _br_worker_loop(worker_index: int) -> None:
+            # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+            worker_token = WORKER_ID_CTX.set(str(worker_index))
+            LOGGER.debug(
+                f"[换行修复] worker_loop[{worker_index}] 启动, "
+                f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+            )
+            try:
+                while True:
+                    _check_stop_requested(projectConfig)
+                    item = await file_queue.get()
+                    if item is None:
+                        return
+                    file_path, json_list = item
+                    await _br_single_file(file_path, json_list)
+            finally:
+                WORKER_ID_CTX.reset(worker_token)
+
+        br_tasks = [
+            asyncio.create_task(_br_worker_loop(i)) for i in range(worker_count)
+        ]
+        try:
+            await asyncio.gather(*br_tasks)
+        except Exception:
+            # 任一 worker 抛出未捕获异常（缓存读取/写盘失败等）：取消其余 worker，
+            # 避免孤儿任务继续处理导致状态不一致
+            for task in br_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*br_tasks, return_exceptions=True)
+            raise
+        LOGGER.info("[换行修复] 换行位置异常修复完成")
+        _update_runtime(projectConfig, stage="换行位置异常修复完成")
+        return True
+
     # ---- 2.7 独立引擎：译文质量改进（ForImproveTranslation）----
     if eng_type == "ForImproveTranslation":
         _check_stop_requested(projectConfig)
@@ -2050,6 +2189,9 @@ async def init_gptapi(
         case "ForImproveTranslation":
             from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
             return ForImproveTranslation(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForBRStation":
+            from GalTransl.Backend.ForBRStation import ForBRStation
+            return ForBRStation(projectConfig, eng_type, proxyPool, tokenPool)
         case "GenDic":
             from GalTransl.Backend.GenDic import GenDic
             return GenDic(projectConfig, eng_type, proxyPool, tokenPool)

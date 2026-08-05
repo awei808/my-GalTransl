@@ -655,6 +655,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         proofread: bool,
         filename: str,
         problem_types: Optional[list] = None,
+        include_src: bool = True,
     ) -> tuple:
         """
         输入内容处理与拼接（流程第 1 步）。
@@ -666,6 +667,8 @@ class ForGalJsonMulitChat(BaseTranslate):
           - 为每句生成唯一 3 位签名 sig（防串行校验）
           - 翻译模式构建 {id,name,src}；校对模式额外携带 dst
           - problem_types 非 None 时可选注入 problem（译文问题，供改进轮参考）
+          - include_src=False 时校对模式仅注入 dst（不注入原文），供纯译文修复
+            （如换行位置修复）使用，避免模型回显/依赖原文
           - 无说话人时删除 name 字段（表示旁白/独白）
         最终将所有 jsonline 行拼接为待译输入文本。
 
@@ -675,6 +678,8 @@ class ForGalJsonMulitChat(BaseTranslate):
             filename: 文件名（预留，当前用于潜在扩展）
             problem_types: 允许注入的译文问题类型白名单（CProblemType 或其中文名）；
                 None=不注入；空列表=注入全部；非空=仅注入白名单内类型。
+            include_src: 校对模式下是否注入 src 原文；默认 True（保持既有行为）。
+                设为 False 时只注入 dst（当前译文），供换行位置修复等纯译文任务使用。
 
         Returns:
             (input_list, sig_list, n_symbol, input_src)
@@ -728,12 +733,21 @@ class ForGalJsonMulitChat(BaseTranslate):
                 # dst 与 src 采用同一换行表示（n_symbol -> <br>），否则模型两侧换行基准错位
                 if n_symbol:
                     dst_text = dst_text.replace(n_symbol, "<br>")
-                tmp_obj = {
-                    "id": trans.index,
-                    "name": speaker,
-                    "src": src_text,
-                    "dst": dst_text,
-                }
+                if include_src:
+                    tmp_obj = {
+                        "id": trans.index,
+                        "name": speaker,
+                        "src": src_text,
+                        "dst": dst_text,
+                    }
+                else:
+                    # 纯译文任务（如换行位置修复）：仅注入 dst，不注入原文 src，
+                    # 避免模型回显原文或依赖原文做无关重译
+                    tmp_obj = {
+                        "id": trans.index,
+                        "name": speaker,
+                        "dst": dst_text,
+                    }
 
             # 可选注入译文问题（problem）：供改进轮评估参考；翻译轮不传 problem_types 不生效
             if problem_types is not None:
