@@ -81,7 +81,6 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.gpt.enhance_jailbreak",
           "common.gpt.change_prompt",
           "common.gpt.prompt_content",
-          "common.linebreakSymbol",
         ],
       },
     ],

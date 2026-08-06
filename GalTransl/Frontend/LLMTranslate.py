@@ -567,8 +567,18 @@ async def doLLMTranslate(
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
         LOGGER.info(f"[GenDic] 开始为 {len(all_jsons)} 条文本生成 GPT 字典")
-        await gptapi.batch_translate(all_jsons)
-        LOGGER.info("[GenDic] GPT 字典生成完成")
+        dic_ok = await gptapi.batch_translate(all_jsons)
+        # 与完整流水线阶段 3 一致：仅硬失败（分词模型加载失败）时按 abortOnDicFailure 决定是否中止。
+        if not dic_ok:
+            abort = projectConfig.getKey("internals.pipeline.abortOnDicFailure", False)
+            if abort:
+                LOGGER.error("[GenDic] 术语表生成失败，按 abortOnDicFailure 配置中止流水线")
+                raise RuntimeError(
+                    "术语表生成失败（分词模型加载失败），已按 abortOnDicFailure=true 中止流水线"
+                )
+            LOGGER.warning("[GenDic] 术语表生成失败，abortOnDicFailure=false 继续")
+        else:
+            LOGGER.info("[GenDic] GPT 字典生成完成")
         return True
 
     if eng_type == "ForFileMetaData":
@@ -1478,8 +1488,20 @@ async def _run_full_pipeline(
         all_jsons = []
         for json_list in file_json_lists.values():
             all_jsons.extend(json_list)
-        await gptapi_dic.batch_translate(all_jsons)
-        LOGGER.info("[流水线] 阶段 3 完成：术语表已生成")
+        dic_ok = await gptapi_dic.batch_translate(all_jsons)
+        # internals.pipeline.abortOnDicFailure：术语表构建失败（如分词模型加载失败）时中止流水线。
+        # batch_translate 仅在硬失败（分词模型无法加载）时返回 False；分片级失败已被记录但
+        # 视为部分成功（与流水线容错设计一致），不中止，避免误伤"文本无可提取词条"的合法场景。
+        if not dic_ok:
+            abort = projectConfig.getKey("internals.pipeline.abortOnDicFailure", False)
+            if abort:
+                LOGGER.error("[流水线] 阶段 3：术语表生成失败，按 abortOnDicFailure 配置中止流水线")
+                raise RuntimeError(
+                    "术语表生成失败（分词模型加载失败），已按 abortOnDicFailure=true 中止流水线"
+                )
+            LOGGER.warning("[流水线] 阶段 3：术语表生成失败，abortOnDicFailure=false 继续流水线")
+        else:
+            LOGGER.info("[流水线] 阶段 3 完成：术语表已生成")
 
     # ── 阶段 4：文件级元数据生成 ──
     LOGGER.info("[流水线] 阶段 4/6：文件级剧情元数据")

@@ -115,6 +115,19 @@ class CProblemType(Enum):
     换行位置异常 = 14
 
 
+def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
+    """递归展平嵌套字典为点分键，如 {'pipeline': {'maxInputChars': 1}}
+    变为 {'pipeline.maxInputChars': 1}。遇到列表等值则原样保留。"""
+    result: dict = {}
+    for k, v in obj.items():
+        full = f"{prefix}.{k}" if prefix else str(k)
+        if isinstance(v, dict):
+            result.update(_flatten_dotted_keys(v, full))
+        else:
+            result[full] = v
+    return result
+
+
 class CProjectConfig:
     def __init__(self, projectPath: str, config_name: str = CONFIG_FILENAME) -> None:
         self.projectConfig = loadConfigFile(path.join(projectPath, config_name))
@@ -133,15 +146,29 @@ class CProjectConfig:
             path.abspath(path.join(projectPath, CACHE_FOLDERNAME))
         )
         self.keyValues = dict()
-        for k, v in self.projectConfig["common"].items():
+        for k, v in self.projectConfig.get("common", {}).items():
             self.keyValues[k] = v
+        # 将 internals / externals 段递归展平为点分键并入 keyValues，
+        # 使 getKey("internals.xxx") / getKey("externals.xxx") 能读到真实配置
+        # （此前 getKey 仅读取 common 段，导致这两段配置永远取默认值而失效）。
+        _injected = 0
+        for section in ("internals", "externals"):
+            for k, v in _flatten_dotted_keys(
+                self.projectConfig.get(section, {})
+            ).items():
+                self.keyValues[f"{section}.{k}"] = v
+                _injected += 1
         self.refreshProxyEnabledFlag()
         LOGGER.debug(
-            "inputPath: %s, outputPath: %s, cachePath: %s,keyValues: %s",
+            "inputPath: %s, outputPath: %s, cachePath: %s",
             self.inputPath,
             self.outputPath,
             self.cachePath,
-            self.keyValues,
+        )
+        LOGGER.info(
+            "已注入 internals/externals 配置项 %d 个；keyValues 总键数 %d",
+            _injected,
+            len(self.keyValues),
         )
 
         self.select_translator = ""  # 本次选择的翻译器

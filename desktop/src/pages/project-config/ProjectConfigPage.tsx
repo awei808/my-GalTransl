@@ -136,10 +136,6 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "定时启动时间",
     hint: "留空表示立即启动，格式如 00:30（24 小时制）。",
   },
-  "common.linebreakSymbol": {
-    label: "换行符类型",
-    hint: "JSON 内换行符种类，供问题检测/自动修复使用，不改变翻译语义。",
-  },
   "common.skipH": { label: "跳过敏感句" },
   "common.smartRetry": { label: "智能重试" },
   "common.retranslFail": { label: "重启时重翻失败句" },
