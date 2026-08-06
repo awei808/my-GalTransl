@@ -23,9 +23,24 @@ GalTransl Windows 发布版构建脚本
 
 import argparse
 import ast
+import io
 import os
 import shutil
 import subprocess
+import sys
+
+# 中文 Windows 下 stdout/stderr 默认 GBK，打印非 ASCII 字符（如 ✓、中文）会
+# 触发 UnicodeEncodeError。强制以 UTF-8 输出，避免构建脚本自身崩溃。
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 import sys
 from pathlib import Path
 
@@ -66,15 +81,15 @@ def log_info(msg: str):
 
 
 def log_ok(msg: str):
-    print(f"\033[32m  ✓ {msg}\033[0m")
+    print(f"\033[32m  [OK] {msg}\033[0m")
 
 
 def log_warn(msg: str):
-    print(f"\033[33m  ⚠ {msg}\033[0m")
+    print(f"\033[33m  [WARN] {msg}\033[0m")
 
 
 def log_err(msg: str):
-    print(f"\033[31m  ✗ {msg}\033[0m")
+    print(f"\033[31m  [ERR] {msg}\033[0m")
 
 
 def run(cmd: str, cwd: Path | None = None, check: bool = True, env: dict | None = None) -> int:
@@ -212,30 +227,20 @@ def build_backend():
     log_info("安装全量运行时依赖 (requirements.txt)...")
     run(f'"{venv_pip}" install -r "{ROOT / "requirements.txt"}"', env=utf8_env)
 
-    # 扫描插件的隐式导入
+    # 扫描插件的隐式导入（yapsy 动态加载 plugins/*.py，需单独收集）
     auto_hidden = []
     if PLUGINS_DIR.exists():
         auto_hidden = scan_plugin_hidden_imports()
         if auto_hidden:
             log_info(f"插件依赖: {', '.join(auto_hidden)}")
 
-    # 固定隐藏导入
-    hidden = [
-        "GalTransl", "GalTransl.server", "GalTransl.Service",
-        "GalTransl.Runner", "GalTransl.Cache", "GalTransl.CSentense",
-        "GalTransl.CSerialize", "GalTransl.CSplitter",
-        "GalTransl.Dictionary", "GalTransl.ConfigHelper",
-        "GalTransl.AppSettings", "GalTransl.COpenAI",
-        "GalTransl.Name", "GalTransl.i18n", "GalTransl.Problem",
-        "GalTransl.Utils", "GalTransl.TerminalOutput",
-        "GalTransl.yapsy", "GalTransl.Frontend",
-        "GalTransl.Frontend.LLMTranslate",
-        # 常见运行时依赖
-        "requests", "yaml", "pyyaml",
-    ]
-    hidden.extend(auto_hidden)
-    hidden = sorted(set(hidden))
-    hidden_args = " ".join(f'--hidden-import="{m}"' for m in hidden)
+    # 收集 GalTransl 顶层包：直接逐个列举 --hidden-import 在 Windows 上常因
+    # 分析器未定位到包物理路径而失效（表现为运行时 ModuleNotFoundError）。
+    # 改用 --paths 显式加入 ROOT 搜索路径 + --collect-submodules 递归收集整包，
+    # 一次性覆盖 Backend/Frontend/yapsy 等所有子模块，避免手工列表脱节。
+    collect_args = f'--paths="{ROOT}" --collect-submodules=GalTransl'
+    hidden_args = " ".join(f'--hidden-import="{m}"' for m in sorted(set(auto_hidden)))
+    log_info(f"后端打包收集策略: {collect_args}")
 
     # 执行 PyInstaller
     cmd = (
@@ -243,6 +248,7 @@ def build_backend():
         f"--noconfirm --clean "
         f"--onefile "
         f"--name {BACKEND_DIST_NAME} "
+        f"{collect_args} "
         f"{hidden_args} "
         f"--distpath dist "
         f"--workpath build "

@@ -4229,7 +4229,8 @@ def build_handler(registry: JobRegistry) -> type:
                 with open(log_path, "a", encoding="utf-8") as _f:
                     for line in message.split("\n"):
                         # 去掉回车，避免 CRLF 在日志中造成错位
-                        _f.write(f"[{ts}] [{level}] [{source}] {line.replace("\r", "")}\n")
+                        stripped = line.replace("\r", "")
+                        _f.write(f"[{ts}] [{level}] [{source}] {stripped}\n")
                 self._send_json({"ok": True})
             except OSError as exc:
                 self._send_json({"error": f"failed to write log: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)

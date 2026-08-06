@@ -12,6 +12,7 @@ import os
 # 桌面端 webview 与本地开发/后端自带页面的合法源
 _DEFAULT_ALLOWED_ORIGINS = (
     "tauri://localhost",
+    "http://tauri.localhost",
     "http://localhost:1420",
     "http://127.0.0.1:1420",
     "http://localhost:12333",
