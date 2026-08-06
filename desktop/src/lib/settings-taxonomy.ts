@@ -139,12 +139,12 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-完整流水线",
-    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、术语表生成与容错策略。",
+    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、翻译后处理后端、术语表生成与容错策略。",
     subsections: [
       {
         title: "",
         keys: [
-          "common.gpt.enableBetterTranslation",
+          "common.gpt.afterTranslation",
           "internals.pipeline.forceRegenDic",
           "internals.pipeline.abortOnDicFailure",
         ],

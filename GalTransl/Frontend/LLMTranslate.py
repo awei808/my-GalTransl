@@ -2079,8 +2079,9 @@ async def postprocess_results(
     写完整 jsonl 快照（这也是唯一一次把 append 日志合并入主快照的时机）。
     随后合并所有 chunk 的结果，套用 name 替换表并经文件插件写出最终译文。
 
-    若开启 gpt.enableBetterTranslation 且后端支持，会在保存快照前先执行改进轮，
-    把模型给出的备选译文写入各句 alt_dst，随快照一并落盘。
+    若 gpt.afterTranslation 配置为 improve/brfix（或组合 improve+brfix），会在保存
+    快照前先执行对应后处理后端（独立实例、逐文件），把模型给出的备选译文写入各句
+    alt_dst，随快照一并落盘。none 则跳过。
     """
 
     proj_dir = projectConfig.getProjectDir()
@@ -2091,57 +2092,59 @@ async def postprocess_results(
     gpt_dic = projectConfig.gpt_dic
     name_replaceDict = projectConfig.name_replaceDict
 
-    # 改进轮（可选，流水线第 8 流程）：整文件翻译+校对完成后，用独立后端
-    # ForImproveTranslation 评估译文质量并生成备选译文（写入各句 alt_dst）。
+    # 后处理阶段（替代原"向多轮对话追加改进轮"）：整文件翻译+校对完成后，
+    # 按 gpt.afterTranslation 配置逐文件调度改进轮/换行修复后端（none 跳过）。
     # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
-    if projectConfig.getKey("gpt.enableBetterTranslation"):
-        from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
-
-        _better_api = None
+    _after_mode = _resolve_after_translation_mode(projectConfig)
+    if _after_mode != "none":
+        merged_trans = []
+        for _chunk in resultChunks:
+            merged_trans.extend(_chunk.trans_list)
+        _orig_name = (
+            resultChunks[0].file_path.replace(input_dir, "")
+            .lstrip(os_sep)
+            .replace(os_sep, "-}")
+        )
+        _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
-            merged_trans = []
-            for _chunk in resultChunks:
-                merged_trans.extend(_chunk.trans_list)
-            _orig_name = (
-                resultChunks[0].file_path.replace(input_dir, "")
-                .lstrip(os_sep)
-                .replace(os_sep, "-}")
+            _num_better = int(_num_better) if _num_better else 100
+        except (TypeError, ValueError):
+            _num_better = 100
+        # 组合 improve+brfix 按序执行，brfix 最后定稿 alt_dst
+        for _m in _after_mode.split("+"):
+            _update_runtime(projectConfig, stage=f"后处理-{_m}")
+            LOGGER.info(
+                f"[后处理] 开始：{_m}，文件={_orig_name}"
             )
-            _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
             try:
-                _num_better = int(_num_better) if _num_better else 100
-            except (TypeError, ValueError):
-                _num_better = 100
-            _update_runtime(projectConfig, stage="译文质量改进")
-            _better_api = ForImproveTranslation(
-                projectConfig,
-                "ForImproveTranslation",
-                projectConfig.proxyPool,
-                projectConfig.tokenPool,
-            )
-            # 注入文件级元数据（与翻译轮一致，供首轮评估使用）
-            _fm = getattr(projectConfig, "file_metadata", None)
-            if _fm is not None and hasattr(_better_api, "set_file_metadata"):
-                _better_api.set_file_metadata(_fm, _orig_name)
-            await _better_api.batch_translate(
-                _orig_name,
-                _orig_name + ".json",
-                merged_trans,
-                _num_better,
-                gpt_dic=projectConfig.gpt_dic,
-            )
-        except Exception as e:
-            from GalTransl.Service import JobCancelledError
+                await _run_after_trans_single_file(
+                    _m,
+                    _orig_name,
+                    resultChunks[0].file_path,
+                    merged_trans,
+                    projectConfig,
+                    _num_better,
+                )
+                LOGGER.info(f"[后处理] 完成：{_m}，文件={_orig_name}")
+            except Exception as e:
+                from GalTransl.Service import JobCancelledError
 
-            if isinstance(e, JobCancelledError):
-                raise
-            LOGGER.warning(
-                f"[改进轮] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
-            )
-        finally:
-            # 独立实例用完即关，避免每文件泄漏一个 API 客户端
-            if _better_api is not None:
-                await _better_api.shutdown()
+                if isinstance(e, JobCancelledError):
+                    raise
+                LOGGER.warning(
+                    f"[后处理/{_m}] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
+                )
+                # 上报到控制台"最近错误"
+                try:
+                    from GalTransl.server import record_runtime_error
+
+                    record_runtime_error(
+                        _runtime_project_dir(projectConfig),
+                        kind="api",
+                        message=f"[后处理/{_m}] {resultChunks[0].file_path}: {e}",
+                    )
+                except Exception as _re:
+                    LOGGER.warning(f"[后处理] 错误上报失败：{_re}")
 
     # 对每个分块执行错误检查和缓存保存
     for i, chunk in enumerate(resultChunks):
@@ -2179,6 +2182,88 @@ async def postprocess_results(
         makedirs(dirname(output_file_path), exist_ok=True)
         save_func(output_file_path, final_result)
         LOGGER.info(f"+++ 结果保存 (project_dir){output_file_path.replace(proj_dir,'')}")
+
+
+def _resolve_after_translation_mode(projectConfig: CProjectConfig) -> str:
+    """解析流水线翻译后处理后端配置。
+
+    读取 gpt.afterTranslation（none/improve/brfix/improve+brfix 组合）。
+    缺省时回退 gpt.enableBetterTranslation（true→improve）以兼容旧项目配置。
+    """
+    mode = projectConfig.getKey("gpt.afterTranslation")
+    if not mode:
+        # 旧项目兼容：enableBetterTranslation 已废弃，true 等价于 improve
+        if projectConfig.getKey("gpt.enableBetterTranslation"):
+            LOGGER.debug(
+                "[后处理] gpt.afterTranslation 缺省，回退 enableBetterTranslation=true→improve"
+            )
+            return "improve"
+        return "none"
+    mode = str(mode).strip().lower()
+    # 仅保留白名单内 token，过滤非法配置
+    allowed = {"none", "improve", "brfix"}
+    parts = [p for p in mode.split("+") if p in allowed]
+    if not parts:
+        LOGGER.warning(f"[后处理] gpt.afterTranslation 非法值 '{mode}'，回退 none")
+        return "none"
+    return "+".join(parts)
+
+
+async def _run_after_trans_single_file(
+    mode: str,
+    orig_name: str,
+    file_path: str,
+    merged_trans: list,
+    projectConfig: CProjectConfig,
+    num_better: int,
+) -> None:
+    """对单个文件执行一种后处理后端（improve 改进轮 / brfix 换行修复）。
+
+    直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/tokenPool/
+    pre_dic/post_dic/gpt_dic/file_metadata，不重新 initDictList、不调
+    ensure_model_available、不碰 select_translator）。用完 shutdown 释放连接。
+    异常 caller 负责捕获：JobCancelledError 上抛，其余由 caller 记录。
+    """
+    # JobCancelledError 必须在函数内 import：GalTransl.Service 会反向 import 本模块
+    # （Service→Runner→LLMTranslate），模块级 import 会触发循环依赖。
+    from GalTransl.Service import JobCancelledError
+    from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
+    from GalTransl.Backend.ForBRStation import ForBRStation
+
+    _api = None
+    try:
+        if mode == "improve":
+            _api = ForImproveTranslation(
+                projectConfig,
+                "ForImproveTranslation",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+        elif mode == "brfix":
+            _api = ForBRStation(
+                projectConfig,
+                "ForBRStation",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+        else:
+            LOGGER.warning(f"[后处理] 未知模式 '{mode}'，跳过")
+            return
+        # 注入文件级元数据（与翻译轮一致）
+        _fm = getattr(projectConfig, "file_metadata", None)
+        if _fm is not None and hasattr(_api, "set_file_metadata"):
+            _api.set_file_metadata(_fm, orig_name)
+        await _api.batch_translate(
+            orig_name,
+            orig_name + ".json",
+            merged_trans,
+            num_better,
+            gpt_dic=projectConfig.gpt_dic,
+        )
+    finally:
+        if _api is not None:
+            # 独立实例用完即关，避免每文件泄漏一个 API 客户端
+            await _api.shutdown()
 
 
 async def init_gptapi(

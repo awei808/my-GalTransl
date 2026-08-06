@@ -49,6 +49,9 @@ const HIDDEN_CONFIG_KEYS = new Set<string>([
   // 以下为程序设置页「日志」板块专属（随项目 config.common 保存，但仅在程序设置页暴露）
   "common.loggingLevel",
   "common.saveLog",
+  // gpt.enableBetterTranslation 已废弃，由 gpt.afterTranslation 取代；
+  // 旧值经 migrateBetterTranslationKey 迁移（true→afterTranslation=improve）后隐藏，避免遗留项误导用户
+  "common.gpt.enableBetterTranslation",
 ]);
 // problemAnalyze 已移回项目设置「问题检测」专用卡片渲染（随保存配置按钮写回 YAML）。
 // 此处仅让该键不出现在通用列表里（避免与专用卡片重复），不再整体隐藏。
@@ -63,6 +66,10 @@ const REMOVED_CONFIG_KEYS = new Set<string>([
 // dynamicNumPerRequestTranslate*）已整体弃用，移入 HIDDEN_CONFIG_KEYS 不再显示；
 // 故 CONDITIONAL_SECTION_KEYS 与 conditionalItems 板块已移除。
 const FIELD_UI: Record<string, FieldUI> = {
+  "common.gpt.afterTranslation": {
+    label: "翻译后处理后端",
+    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；两者都做（improve+brfix，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation 手动触发。",
+  },
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
     label: "令牌轮询策略",
     hint: "random：随机轮询多个令牌；fallback：优先用第一个，出错时自动切换下一个。",
@@ -266,9 +273,101 @@ function migrateGuidelineKey(obj: Record<string, ConfigValue>): Record<string, C
   return next;
 }
 
+/**
+ * gpt.enableBetterTranslation 已废弃，由 gpt.afterTranslation 取代。
+ * 加载/保存时把旧值迁移：enableBetterTranslation=true 且无 afterTranslation 时，写入
+ * common 段扁平键 gpt.afterTranslation=improve（与后端 _resolve_after_translation_mode 兼容回退一致），
+ * 并清理三处旧键残留（common 扁平键 / common.gpt 嵌套 / 顶层 gpt），避免遗留项误导用户。
+ */
+function migrateBetterTranslationKey(obj: Record<string, ConfigValue>): Record<string, ConfigValue> {
+  const next: Record<string, ConfigValue> = { ...obj };
+  const common = next.common as Record<string, ConfigValue> | undefined;
+  const commonNested =
+    common &&
+    typeof common.gpt === "object" &&
+    common.gpt !== null &&
+    !Array.isArray(common.gpt)
+      ? (common.gpt as Record<string, ConfigValue>)
+      : undefined;
+  const gpt = next.gpt as Record<string, ConfigValue> | undefined;
+
+  // 取值优先级：common 扁平键 > common.gpt 嵌套 > 顶层 gpt（与后端 getKey 一致）
+  let oldVal: ConfigValue | undefined = common?.["gpt.enableBetterTranslation"];
+  if (oldVal === undefined || oldVal === null) oldVal = commonNested?.enableBetterTranslation;
+  if (oldVal === undefined || oldVal === null) oldVal = gpt?.enableBetterTranslation;
+  // 旧值非真（false / 缺省 / 其它），无需迁移
+  const enabled = oldVal === true || oldVal === "true" || oldVal === 1 || oldVal === "1";
+
+  // afterTranslation 是否已设置（任意位置有值即视为已显式配置，勿覆盖）
+  const hasNew =
+    (common && common["gpt.afterTranslation"] !== undefined && common["gpt.afterTranslation"] !== null) ||
+    (commonNested && commonNested.afterTranslation !== undefined) ||
+    (gpt && gpt.afterTranslation !== undefined);
+
+  if (!enabled) {
+    // 旧键残留清理（即使为 false，避免遗留废弃项）
+    cleanupBetterTranslation(next, common, commonNested, gpt, false);
+    // 补全默认值：老项目若从未设置过 afterTranslation，按出厂默认补 none，
+    // 否则该配置项不会出现在前端通用列表（walk 只遍历 config 中存在的键）。
+    if (!hasNew && common && typeof common === "object") {
+      const commonCopy = { ...common };
+      commonCopy["gpt.afterTranslation"] = "none";
+      next.common = commonCopy;
+    }
+    return next;
+  }
+
+  // enableBetterTranslation=true 且无 afterTranslation：按兼容语义迁移为 improve
+  if (!hasNew && common && typeof common === "object") {
+    const commonCopy = { ...common };
+    commonCopy["gpt.afterTranslation"] = "improve";
+    next.common = commonCopy;
+  }
+  cleanupBetterTranslation(next, common, commonNested, gpt, true);
+  return next;
+}
+
+/** 删除三处 enableBetterTranslation 残留键 */
+function cleanupBetterTranslation(
+  next: Record<string, ConfigValue>,
+  common: Record<string, ConfigValue> | undefined,
+  commonNested: Record<string, ConfigValue> | undefined,
+  gpt: Record<string, ConfigValue> | undefined,
+  force: boolean,
+) {
+  if (!force && next.common && typeof next.common === "object") {
+    const commonCopy = { ...(next.common as Record<string, ConfigValue>) };
+    delete commonCopy["gpt.enableBetterTranslation"];
+    next.common = commonCopy;
+  }
+  if (force) {
+    if (common && typeof common === "object") {
+      const commonCopy = { ...common };
+      delete commonCopy["gpt.enableBetterTranslation"];
+      if (commonNested) {
+        const nestedCopy = { ...commonNested };
+        delete nestedCopy.enableBetterTranslation;
+        if (Object.keys(nestedCopy).length === 0) delete commonCopy.gpt;
+        else commonCopy.gpt = nestedCopy;
+      }
+      next.common = commonCopy;
+    }
+    if (gpt && typeof gpt === "object") {
+      const gptCopy = { ...gpt };
+      delete gptCopy.enableBetterTranslation;
+      if (Object.keys(gptCopy).length === 0) delete next.gpt;
+      else next.gpt = gptCopy;
+    }
+  }
+}
+
 /** 枚举关键字的友好显示（仅用于混合/枚举控件的选项文案） */
 const KEYWORD_LABELS: Record<string, string> = {
   auto: "自动适应 (auto)",
+  none: "无（不追加）",
+  improve: "改进轮",
+  brfix: "换行修复",
+  "improve+brfix": "改进轮 + 换行修复（按顺序）",
 };
 
 export function ProjectConfigPage() {
@@ -370,7 +469,11 @@ export function ProjectConfigPage() {
         fetchProjectConfig(pid()!, getActiveConfigFileName()),
         fetchConfigSchema(pid()!).catch(() => ({ parameters: {} })),
       ]);
-      setConfig({ ...migrateGuidelineKey(cfg.config as Record<string, ConfigValue>) });
+      setConfig({
+        ...migrateBetterTranslationKey(
+          migrateGuidelineKey(cfg.config as Record<string, ConfigValue>),
+        ),
+      });
       setSchemaDesc(sch?.parameters || {});
       // 翻译规范文件下拉选项（与配置加载并行，失败不阻塞主配置）
       fetchTranslationGuidelines()
@@ -1027,7 +1130,9 @@ export function ProjectConfigPage() {
     try {
       // 保存前归一化翻译规范键：统一写入 common 段扁平键 gpt.translation_guideline
       //（后端 BaseTranslate/getKey 只读该位置），并清理顶层 gpt 段与 common.gpt 嵌套残留。
-      const cleaned = migrateGuidelineKey({ ...config() } as Record<string, ConfigValue>);
+      const cleaned = migrateBetterTranslationKey(
+        migrateGuidelineKey({ ...config() } as Record<string, ConfigValue>),
+      );
       setConfig(cleaned);
       await updateProjectConfig(pid()!, {
         config: cleaned,

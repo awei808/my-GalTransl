@@ -863,7 +863,7 @@ export function TranslateConsole() {
                     <li><b>文件级元数据</b>：AI 分析每个文件的剧情和角色身份，生成文件级提示词。可使用后端ForFileMetaData完成或人工创建</li>
                     <li><b>划分区间</b>：把文件按剧情拆成几个批次并生成批次级提示词。跳过本步将按照项目设置的每次请求句数来进行下步。可使用后端ForBatchMetaData完成或人工创建</li>
                     <li><b>翻译执行</b>：逐文件、逐批次交给 AI 翻译，注入全局、文件级、批次级提示词提高翻译效果（若有）。使用后端ForGalJsonMulitChat完成</li>
-                    <li><b>译文质量改进</b>：AI 评估整个文件的译文，对可改进的句子给出备选译文，可在校对审核页一键交换。需在项目设置开启 gpt.enableBetterTranslation，或直接使用后端ForImproveTranslation执行</li>
+                    <li><b>翻译后处理（改进/换行修复）</b>：完整流水线翻译完成后，可按项目设置「翻译后处理后端」(gpt.afterTranslation) 逐文件追加改进轮（给出备选译文）或换行修复（修复异常换行）；也可直接选后端 ForImproveTranslation / ForBRStation 手动执行。</li>
                     <li><b>校对审核</b>：你在界面里逐条检查、修改译文。</li>
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>
