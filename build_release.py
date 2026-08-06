@@ -77,10 +77,16 @@ def log_err(msg: str):
     print(f"\033[31m  ✗ {msg}\033[0m")
 
 
-def run(cmd: str, cwd: Path | None = None, check: bool = True) -> int:
-    """执行命令并实时输出"""
+def run(cmd: str, cwd: Path | None = None, check: bool = True, env: dict | None = None) -> int:
+    """执行命令并实时输出
+
+    env: 额外注入到子进程的环境变量（会与当前 os.environ 合并）。
+    """
     log_info(cmd)
-    result = subprocess.run(cmd, shell=True, cwd=cwd or ROOT)
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+    result = subprocess.run(cmd, shell=True, cwd=cwd or ROOT, env=run_env)
     if check and result.returncode != 0:
         log_err(f"命令失败 (exit code {result.returncode})")
         sys.exit(1)
@@ -198,10 +204,13 @@ def build_backend():
     run(f'"{sys.executable}" -m venv "{VENV_DIR}" --clear')
 
     # 安装 PyInstaller（构建工具）与全量运行时依赖
+    # 注入 PYTHONUTF8=1：requirements.txt 含 UTF-8 中文注释，中文 Windows
+    # 下 pip 默认以 GBK 读取会触发 UnicodeDecodeError，强制 UTF-8 模式可根治。
+    utf8_env = {"PYTHONUTF8": "1"}
     log_info("安装构建工具 (PyInstaller)...")
-    run(f'"{venv_pip}" install pyinstaller')
+    run(f'"{venv_pip}" install pyinstaller', env=utf8_env)
     log_info("安装全量运行时依赖 (requirements.txt)...")
-    run(f'"{venv_pip}" install -r "{ROOT / "requirements.txt"}"')
+    run(f'"{venv_pip}" install -r "{ROOT / "requirements.txt"}"', env=utf8_env)
 
     # 扫描插件的隐式导入
     auto_hidden = []

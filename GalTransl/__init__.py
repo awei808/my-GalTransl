@@ -51,9 +51,9 @@ PROGRAM_SPLASH4 = r"""
 ALL_BANNERS = [PROGRAM_SPLASH1, PROGRAM_SPLASH2, PROGRAM_SPLASH3, PROGRAM_SPLASH4]
 PROGRAM_SPLASH = ALL_BANNERS[localtime().tm_mday % 4]
 
-GALTRANSL_VERSION = "7.3.0"
-AUTHOR = "xd2333"
-CONTRIBUTORS = "ryank231231, PiDanShouRouZhouXD, Noriverwater, Isotr0py, adsf0427, pipixia244, gulaodeng, sakura-umi, lifegpc, natsumerinchan, szyzbg"
+GALTRANSL_VERSION = "0.1.0"
+AUTHOR = "awei808"
+CONTRIBUTORS = "xd2333 (原作者), ryank231231, PiDanShouRouZhouXD, Noriverwater, Isotr0py, adsf0427, pipixia244, gulaodeng, sakura-umi, lifegpc, natsumerinchan, szyzbg"
 
 CONFIG_FILENAME = "config.yaml"
 INPUT_FOLDERNAME = "gt_input"

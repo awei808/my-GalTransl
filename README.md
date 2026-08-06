@@ -2,59 +2,73 @@
 <div align=center><img width="150" height="150" src="./img/logo.png"/></div>
 
 <h1><p align='center' >GalTransl</p></h1>
-<div align=center><img src="https://img.shields.io/github/v/release/XD2333/GalTransl"/>   <img src="https://img.shields.io/github/license/XD2333/GalTransl"/>   <img src="https://img.shields.io/github/stars/XD2333/GalTransl"/></div>
-<p align='center' >支持GPT-4/Claude/Deepseek/Sakura等大语言模型的Galgame自动化翻译解决方案</p>
+<p align='center' >支持Deepseek等大语言模型的Galgame自动化翻译解决方案</p>
 
-  [English](https://github.com/XD2333/GalTransl/blob/main/README_EN.md)
-  
-  GalTransl是一套将数个基础功能上的微小创新与对GPT提示工程（Prompt Engineering）的深度利用相结合的Galgame自动化翻译工具，用于制作内嵌式翻译补丁。现在提供**桌面端图形界面**，无需命令行操作即可完成翻译全流程。
-   
-   <img width="2044" height="1397" alt="image" src="https://github.com/user-attachments/assets/f85e4782-e53e-4b03-ae24-cd77b453c6e3" />
+  GalTransl是一套将数个基础功能上的微小创新与对GPT提示工程（Prompt Engineering）的深度利用相结合的Galgame自动化翻译工具，用于制作内嵌式翻译补丁。重构后的版本提供**桌面端图形界面**，无需命令行操作即可完成翻译全流程。
 
 ## 前言
-&ensp;&ensp;&ensp;&ensp;GalTransl的核心是一组自动化翻译脚本，解决了使用ChatGPT自动化翻译Gal过程中已知的大部分问题，并提高了整体的翻译质量。同时，通过与其他项目的组合，打通了制作补丁的完整流程，一定程度降低了上手门槛。对此感兴趣的朋友可以通过本项目更容易的构建具有一定质量的机翻补丁，并(或许)可以尝试在此框架的基础上高效的构建更高质量的汉化补丁。  
+&ensp;&ensp;&ensp;&ensp;GalTransl的核心是一组自动化翻译脚本与配套的桌面工作台，解决了使用大模型自动化翻译Gal过程中已知的大部分问题，并提高了整体的翻译质量。同时，通过与其他项目的组合，打通了制作补丁的完整流程，一定程度降低了上手门槛。对此感兴趣的朋友可以通过本项目更容易的构建具有一定质量的机翻补丁，并(或许)可以尝试在此框架的基础上高效的构建更高质量的汉化补丁。  
+
+* **原作者声明**：GalTransl 的原作者是 [xd2333](https://github.com/XD2333/GalTransl)，本项目（my-GalTransl）是基于原项目**个人重构并扩展功能**的派生版本，非原作者官方维护。原项目的核心设计、提示工程与算法思路均归原作者所有，特此致谢。本项目的任何问题与缺陷不代表原作者。
+
+* **关于本项目**：my-GalTransl 是个人使用 AI（vibecoding）迭代开发的版本。**但请不必过于担心代码质量**——当前代码中仍存在一些层级混乱、尚未重构的重复代码，未来在功能完善后会逐步整理与重构。当前阶段以功能可用与快速迭代为先。
+
+## 与原项目的不同处速览
+&ensp;&ensp;&ensp;&ensp;本项目的重构目的是**探索如何实现更高质量的 AI 汉化**，必定带来更高的token开销。在原项目基础上做了以下主要调整：
+
+1. **前端界面完全重构**：采用 Tauri 2 + SolidJS 重写桌面端，界面风格与原项目存在巨大差异，重新划分界面。
+2. **聚焦大模型、放弃本地小模型**：完全针对云端大模型（GPT-4/Claude/Deepseek 等 OpenAI 兼容接口）做适配与优化；本地小模型仅保留配置接口，**可能无法正常使用**。
+3. **仅适配 Galgame 汉化**：重点面向 galgame 文本翻译场景；epub、字幕等原项目的通用文件功能**可能无法正常使用**。
+4. **更多流水线与更丰富的提示词**：在翻译流程中加入更多阶段，并在提示词中注入更多信息与规范（如全局分析、文件级/批次级元数据等），以追求更好的翻译质量。
+5. **翻译后 AI 改善译文**：翻译流程完成后，支持调用 AI 对译文进行改善（ForImproveTranslation）。
+6. **新增问题检测项**：在原问题检测基础上新增 **长句丢失换行** 与 **换行符位置异常** 两项。
+7. **备选译文功能**：让 AI 评价并输出可改善的译文，或针对特定问题项让 AI 提供修复后的译文作为备选；用户可在校对审核页自由切换备选译文与当前译文。
+8. **已知待修复问题**：项目中的**全局撤销/重做机制、查找替换功能存在明显 bug，暂未修复**。
+9. **缓存结构变化**：为适配多流程翻译（全局分析 → 文件级元数据 → 翻译执行等多阶段），翻译缓存结构做了必要调整，与原项目不兼容。
+10. **其他细小变化**：JSON 内统一使用 `\n` 换行符（替代 `\r\n`），字典统一使用 PSV 格式等。
+11. **命令行未适配**：重构主要围绕桌面端展开，命令行版本（CLI）**尚未做适配，可能无法正常使用**。
 
   * 特性：   
-  1. 🖥️ **桌面端图形界面**——基于Tauri + React构建的现代桌面应用，无需命令行操作，支持深色模式、自定义背景、多项目管理等
-  2. 支持**GPT-4/Claude/Deepseek/Sakura**等大语言模型，并通过提示工程提高了GPT的翻译质量   
-  3. 首创**GPT字典**，让GPT了解人设，准确翻译人名、人称代词与生词   
-  4. 通过译前、译后字典与条件字典实现灵活的自动化字典系统   
-  5. 实时保存缓存、自动断点续翻   
-  6. 结合其他项目支持多引擎脚本一键解包与注入，提供完整教程降低上手难度
-  7. 支持直接翻译srt、lrc、vtt字幕文件，mtool json文件，t++ excel文件，epub文件
-  8. 🤗 [Galtransl-7B-v3.5](https://huggingface.co/SakuraLLM/GalTransl-7B-v2)是为视觉小说翻译任务专项优化的本地模型，可在6G VRAM以上显卡部署，由sakuraumi和xd2333共同构建
-  9. 🤗 [GalTransl-14B-v3](https://huggingface.co/SakuraLLM/Sakura-GalTransl-14B-v3)是GalTransl-v3模型的14b版本，得益于更大的底模及改进的对齐训练，GalTransl-14B-v3整体质量好于GalTransl-7B-v3   
+  1. 🖥️ **桌面端图形界面**——基于 Tauri 2 + Rust + **SolidJS** 构建的现代桌面应用，无需命令行操作即可完成新建项目、导入文件、配置后端、翻译、校对审核、构建输出全流程
+  2. 支持**GPT-4/Claude/Deepseek**等大语言模型，后端配置统一管理多套 OpenAI 兼容接口（本地小模型接口已保留但可能无法正常使用）
+  3. **GPT字典**，让模型了解人设，准确翻译人名、人称代词与生词
+  4. 通过译前（预处理）、译后（后处理）字典与条件字典实现灵活的自动化字典系统，并支持**人名替换表**（CSV/XLSX）
+  5. 实时保存缓存、自动断点续翻，翻译过程中可视化展示提示词、译文拼接、并发进度与速度
+  6. 完整流水线：输入校验 → 文本压缩 → 全局游戏分析 → 自动构建术语表 → 文件级元数据 → 批次划分 → 翻译执行，多阶段提示词注入提升翻译质量
+  7. 内置**校对审核**工作台：逐句检查修改、问题检测、备选译文交换、撤销/重做、跨文件查找替换
+  8. 重点适配 galgame 文本翻译场景，其他通用文件格式（srt、epub 等）可能无法正常使用
+  9. 支持**插件系统**：自定义文件格式与文本处理流水线，扩展性强
 
 <b>❗❗使用本工具翻译并在未做全文校对/润色的前提下发布时，请在最显眼的位置标注"GPT翻译/AI翻译补丁"，而不是"个人汉化"或"AI汉化"补丁。</b>
 
 ## 近期更新
+* 2026.8：个人重构 v0.1.0，使用**桌面端图形界面**（Tauri 2 + SolidJS + Rust），支持可视化翻译工作台、校对审核、后端配置统一管理、人名替换表、完整流水线等
 * 2026.4: 更新v7，新增**桌面端图形界面**（Tauri + React），支持深色模式、自定义背景、多项目管理、可视化翻译工作台等
 * 2025.5: 更新v6，新增翻译模板ForGal、新增GalTransl-14B-v3模型
 * 2024.5：更新v5，新增GalTransl-7B模型，新增多种文件类型支持   
-* 2024.2：更新v4版，主要支持了插件系统  
-* 2023.12：更新v3版，支持基于文件的多线程 by @ryank231231
-* 2023.7：更新v2版，主要重构了代码 by @ryank231231
-* 2023.6：v1初版发布
+* 2024.2：更新 v4 版，主要支持了插件系统  
+* 2023.12：更新 v3 版，支持基于文件的多线程
+* 2023.7：更新 v2 版，主要重构了代码
+* 2023.6：v1 初版发布
 
 ## 导航
-* [环境准备](https://github.com/XD2333/GalTransl#环境准备)：环境与软件的安装   
-* [上手教程](https://github.com/XD2333/GalTransl#上手教程)：全流程介绍如何制作一个机翻补丁，**只想看怎么使用本工具的话，可以直接跳转第2章的2.2节**   
-* [配置文件与翻译引擎设置](https://github.com/XD2333/GalTransl#配置文件与翻译引擎设置)：本篇详细介绍各个翻译引擎API的调用与配置方式。   
-* [GalTransl核心功能介绍](https://github.com/XD2333/GalTransl#galtransl核心功能介绍)：介绍GPT字典、缓存、普通字典、找问题等功能。
-* 后续教程已经[转移至Wiki](https://github.com/xd2333/GalTransl/wiki)
+* [环境准备](#环境准备)：环境与软件的安装   
+* [上手教程](#上手教程)：全流程介绍如何制作一个机翻补丁，**只想看怎么使用本工具的话，可以直接跳转第2章的2.2节**   
+* [配置文件与翻译引擎设置](#配置文件与翻译引擎设置)：介绍翻译后端（OpenAI 兼容接口/SakuraLLM）的配置方式。   
+* [GalTransl核心功能介绍](#galtransl核心功能介绍)：介绍GPT字典、缓存、普通字典、找问题等功能。
 
 ## 环境准备
   * **桌面版（推荐）**   
-  从 [Release](https://github.com/XD2333/GalTransl/releases/) 下载最新版压缩包，解压后双击 `GalTransl Desktop.exe` 即可使用，**无需安装Python或任何依赖**。桌面端会自动启动后端服务。
+  从 [Release](https://github.com/awei808/my-GalTransl/releases) 下载最新版压缩包，解压后双击 `GalTransl Desktop.exe` 即可使用，**无需安装Python或任何依赖**。桌面端会自动启动后端服务。
    
   * **命令行版（开发者/高级用户）**   
   如需使用命令行版本或参与开发：
 
-  1. [下载本项目](https://github.com/XD2333/GalTransl/releases/) 或 clone 仓库，解压到任意位置
-  2. 安装 Python 3.11.9。 [下载](https://www.python.org/downloads/release/python-3119/)   
+  1. 下载本项目或 clone 仓库，解压到任意位置
+  2. 安装 Python 3.11+。 [下载](https://www.python.org/downloads/)   
   **安装时勾选下方 add Python to path**
-  3. 安装Python依赖：双击 `安装、更新依赖.bat`，或手动执行 `pip install -r requirements.txt`
-  4. （桌面端开发）安装 Node.js，在 `desktop` 目录执行 `npm install`，然后运行 `run_desktop_dev.bat`
+  3. 安装Python依赖：执行 `pip install -r requirements.txt`
+  4. （桌面端开发）安装 Node.js 18+，在 `desktop` 目录执行 `npm install`，然后运行 `run_desktop_dev.bat`
 
 ## 实用工具
 | 名称 | 说明 |
@@ -129,19 +143,29 @@
 &ensp;&ensp;&ensp;&ensp;PS. GalTransl只支持指定格式的json文件输入，但并不是说GalTransl就与VNTextPatch工具绑定了，也可以使用SExtractor工具，现在也支持导出GalTransl需要的name-message格式JSON   
 
 * **【2.2. 使用桌面端翻译（推荐）】**
-&ensp;&ensp;&ensp;&ensp;从 [Release](https://github.com/XD2333/GalTransl/releases/) 下载最新版，解压后双击 `GalTransl Desktop.exe` 启动桌面端。桌面端会自动启动后端服务，无需手动操作。
+&ensp;&ensp;&ensp;&ensp;从 [Release](https://github.com/awei808/my-GalTransl/releases) 下载最新版，解压后双击 `GalTransl Desktop.exe` 启动桌面端。桌面端会自动启动后端服务，无需手动操作。
 
-&ensp;&ensp;&ensp;&ensp;启动后的基本流程：
-1. **新建项目**：在首页点击"新建项目"，选择项目存放位置，导入待翻译文件
-2. **配置翻译后端**：在新建项目向导中选择翻译后端（如Deepseek、OpenAI等），填入API Key和Endpoint。也可以在左侧"后端配置"页面预先配置多个后端方案
-3. **设置字典**：在项目的"项目字典"页面配置GPT字典和常规字典（建议至少配置人名字典）
-4. **开始翻译**：在"翻译工作台"页面点击开始翻译，实时查看翻译进度和结果
-5. **查看缓存与问题**：翻译完成后在"缓存与问题"页面查看自动找错结果，修正缓存后重新生成
+&ensp;&ensp;&ensp;&ensp;启动后通过左侧活动栏切换功能视图：**翻译控制台 / 校对审核 / 查找替换 / 问题检测 / 查看备选 / 字典管理 / 构建输出 / 设置**。
+
+&ensp;&ensp;&ensp;&ensp;**① 新建项目（5步向导）**：在首页点击"新建项目"，按向导依次完成：
+1. **项目位置**：输入项目名称，自动创建于后端工作区根目录（含 `gt_input` / `gt_output` / `transl_cache` 与 `config.yaml`）
+2. **导入文件**：将待翻译的 JSON 文件拖放到窗口或点击"选择文件"导入到 `gt_input`
+3. **翻译后端**：选择全局"后端配置"中的某个方案，或跳过使用项目自身配置
+4. **常用设置**：文件插件、文本插件、并发文件数、单次翻译句数、目标语言、翻译规范
+5. **提取人名**：完成并打开项目时自动从源文件提取人名表
+
+&ensp;&ensp;&ensp;&ensp;**② 配置翻译后端**：在"后端配置"页面预先配置多套方案（`OpenAI-Compatible` 类型支持多 token、endpoint、modelName，`SakuraLLM` 类型支持多端点），并可将某套设为"默认"。翻译时直接选用，无需手动编辑 YAML。
+
+&ensp;&ensp;&ensp;&ensp;**③ 设置字典**：在"字典管理"页面配置四类字典：**预处理（译前）**、**GPT 字典**、**后处理（译后）**、**人名替换**（建议至少配置人名字典与 GPT 字典）。
+
+&ensp;&ensp;&ensp;&ensp;**④ 开始翻译**：在"翻译控制台"选择后端并点击"启动流程"，实时查看翻译进度、速度、当前提示词与译文拼接结果，可随时停止。
+
+&ensp;&ensp;&ensp;&ensp;**⑤ 校对审核**：翻译完成后到"校对审核"页面逐条检查、修改译文，可利用问题检测、备选译文交换、查找替换与撤销/重做提升效率，改好后点击"构建输出"生成最终文件。
 
 &ensp;&ensp;&ensp;&ensp;桌面端支持同时打开多个项目、深色模式、自定义背景等功能，具体可在"设置"页面调整。
 
 * **【2.2b. 使用命令行翻译（高级用户）】**
-&ensp;&ensp;&ensp;&ensp;如需使用命令行版本，在项目示例文件夹`sampleProject`中，将`config.inc.yaml`重命名为`config.yaml`，将日文json文件放入`gt_input`文件夹，编辑`config.yaml`配置翻译后端：
+&ensp;&ensp;&ensp;&ensp;如需使用命令行版本，在项目示例文件夹`sampleProject`中，将`config.inc.yaml`重命名为`config.yaml`，将日文json文件放入`gt_input`文件夹，将`项目GPT字典.txt`、`项目字典_译前.txt`、`项目字典_译后.txt`复制到项目根目录，然后在`config.yaml`中配置翻译后端：
 
 ```yaml
 # 翻译后端相关设置
@@ -165,11 +189,15 @@ backendSpecific:
         endpoint: https://api.siliconflow.cn # 请求地址，加不加v1都可以
 ```   
    
-&ensp;&ensp;&ensp;&ensp;修改好项目设置后，确保你已经安装了需要的依赖（见环境准备），然后双击`run_GalTransl_terminal.bat`，输入项目路径即可开始翻译。
+&ensp;&ensp;&ensp;&ensp;修改好项目设置后，确保你已经安装了需要的依赖（见环境准备），然后双击`run_GalTransl_terminal.bat`，输入项目路径即可开始翻译。也可以直接用命令行调用：
 
-&ensp;&ensp;&ensp;&ensp;**但是，不建议就这样开始翻译了**，请至少要先学会[GPT字典的使用](https://github.com/XD2333/GalTransl#gpt字典)，或者选择GenDic来生成一个人名字典，为你要翻译的gal设定好各角色的人名字典，这样才能保证基本的翻译质量。   
+```bash
+python -m GalTransl -p <项目目录> -t <翻译引擎> [-l info]
+```
 
-&ensp;&ensp;&ensp;&ensp;翻译完成后，**记得修修缓存**，因为大模型经常会犯错。GalTransl会自动查找一些常见问题并记录于缓存中。可以对缓存进行修正，并重新运行程序来基于缓存重新生成结果json，见[自动化找错章节和翻译缓存章节](https://github.com/GalTransl/GalTransl#%E8%87%AA%E5%8A%A8%E5%8C%96%E6%89%BE%E9%94%99)
+&ensp;&ensp;&ensp;&ensp;**但是，不建议就这样开始翻译了**，请至少要先学会[GPT字典的使用](#gpt字典)，或者选择GenDic来生成一个人名字典，为你要翻译的gal设定好各角色的人名字典，这样才能保证基本的翻译质量。   
+
+&ensp;&ensp;&ensp;&ensp;翻译完成后，**记得修修缓存**，因为大模型经常会犯错。GalTransl会自动查找一些常见问题并记录于缓存中。可以对缓存进行修正，并重新运行程序来基于缓存重新生成结果json，见[自动化找错章节](#自动化找错)和[翻译缓存章节](#翻译缓存)
 
 * **【2.3. 构建中文脚本】**   
 &ensp;&ensp;&ensp;&ensp;如果你是使用GalTransl提取注入工具提取的脚本，构建同理，选择日文脚本目录、中文json目录、中文脚本保存目录，然后点'注入'，即可将文本注入回脚本。但这里面有一些坑，第四章会提到。
@@ -244,8 +272,8 @@ GalTransl提取注入工具的VNTextPatch模式注入脚本时默认是以sjis�
 <summary>   
    
 ### GPT字典
-&ensp;&ensp;&ensp;&ensp;GPT字典系统是使用GalTransl翻译时想提高质量的关键功能，通过补充设定的方式大幅提高翻译质量，是GPT翻译区别于传统机翻的核心。适用于gpt35、gpt4、newbing。   
-在程序目录中，`Dict`文件夹内有"通用GPT字典.txt"，在项目文件夹内可以新建"项目GPT字典.txt"，一般人名定义写进项目字典，通用提高翻译质量的词汇写进通用字典。   
+&ensp;&ensp;&ensp;&ensp;GPT字典系统是使用GalTransl翻译时想提高质量的关键功能，通过补充设定的方式大幅提高翻译质量，是GPT翻译区别于传统机翻的核心。适用于各类 OpenAI 兼容后端。   
+在程序目录中，`Dict`文件夹内有"通用GPT字典.txt"，在项目文件夹内可以新建"项目GPT字典.txt"，一般人名定义写进项目字典，通用提高翻译质量的词汇写进通用字典。在桌面端"字典管理"页面的 **GPT 字典** 标签页中即可编辑项目/通用 GPT 字典。   
    
 </summary>   
 
@@ -284,9 +312,7 @@ $str20	$str20	player's codename, boy
 只有当本次发送给GPT的人名和句子中有这个词，这个词的解释才会被送进本轮的对话中。   
 **但不要什么词都往里加**，~~什么都往里加只会害了你~~，推荐只写**各角色的设定**和**总是会翻错的词**。 
 
-运行时字典会动态的展示在每一次请求里：
-
-![img_start](./img/img_start.png)
+此外，你还可以使用 **GenDic** 后端让 AI 从源文本自动生成 GPT 字典，或使用**人名替换表**（CSV/XLSX）集中管理角色名的替换。
 
 </details>   
    
@@ -295,7 +321,7 @@ $str20	$str20	player's codename, boy
 <summary>   
 
 ### 常规字典
-在GalTransl中，常规字典是分为"译前字典"与"译后字典"的。译前字典是在翻译前对日文的a to b替换处理，译后字典是对译后中文的a to b替换处理。   
+在GalTransl中，常规字典是分为"译前字典"与"译后字典"的（桌面端"字典管理"页面对应为 **预处理** 与 **后处理** 标签页）。译前字典是在翻译前对日文的 a to b 替换处理，译后字典是对译后中文的 a to b 替换处理。   
 
 </summary>   
 
@@ -308,6 +334,7 @@ $str20	$str20	player's codename, boy
 * 判断词可以在开头加"!"代表"不存在则替换"，否则一般是代表"存在则替换"。   
 * 判断词可以使用`[or]`或`[and]`关键字连接，多个`[or]`连接代表"有一个条件满足就进入替换"，多个`[and]`连接代表"条件都满足才进入替换"。   
 * 查找词、替换词，同普通字典，将a替换成b。   
+* 桌面端"字典管理"页面的 **人名替换** 标签页提供独立的人名替换表（CSV/XLSX），可批量维护角色名。
 
 </details>
 
@@ -316,17 +343,17 @@ $str20	$str20	player's codename, boy
 <summary>   
 
 ### 翻译缓存
-开始翻译后，可以在transl_cache目录内找到翻译缓存。   
+开始翻译后，可以在 `transl_cache/pass3_cache` 目录内找到翻译缓存文件。在桌面端可直接在"校对审核"页面打开缓存并逐条修改。   
 </summary>  
 
-翻译缓存与json_jp是一一对应的，在翻译过程中，翻译结果会优先写进缓存里，当一个文件被翻译完成后，才会出现在json_cn里。   
+翻译缓存与 `gt_input` 中的源 JSON 一一对应，在翻译过程中，翻译结果会优先写进缓存里，当一个文件被翻译完成后，才会出现在 `gt_output`（结果 JSON）里。   
 
 首先，总结一些要点：   
-1. 当你想重翻某句时，打开对应的翻译缓存文件，删掉该句的pre_zh整行(**不要留空行**)   
-2. 当你想整段重翻时，直接删对应的数个object块，重翻某文件时，直接删对应的翻译缓存文件。   
+1. 当你想重翻某句时，打开对应的翻译缓存文件，删掉该句的 pre_zh 整行(**不要留空行**)   
+2. 当你想整段重翻时，直接删对应的数个 object 块，重翻某文件时，直接删对应的翻译缓存文件。   
 3. 当GalTransl正在翻译时，不要修改正在翻译的文件的缓存，改了也会被覆写回去。   
-4. json_cn结果文件 = 翻译缓存内的pre_zh/proofread_zh + 译后字典替换 + 恢复对话框   
-5. 当新的post_jp与缓存内的post_jp不一致时，会触发重翻，一般发生在添加了新的译前字典时
+4. `gt_output` 结果文件 = 翻译缓存内的 pre_zh/proofread_zh + 译后字典替换 + 恢复对话框   
+5. 当新的 post_jp 与缓存内的 post_jp 不一致时，会触发重翻，一般发生在添加了新的译前字典时
 
 下面是翻译缓存的典型样例：   
 ```json
@@ -345,23 +372,25 @@ $str20	$str20	player's codename, boy
 * 基本参数：   
 `index`  序号   
 `name`  人名   
-`pre_jp`  原始日文   
-`post_jp`  处理后日文。一般来讲，post_jp = pre_jp 去除对话框 + 译前字典替换。你会代码的话也可以在此处加入自己的处理   
-`pre_zh`  原始中文   
-`proofread_zh`  校对的中文   
-（没有post_zh，post_zh在结果文件夹里。）   
+`pre_jp`  原始日文（`pre_src` 的兼容别名）   
+`post_jp`  处理后日文（`post_src`）。一般来讲，post_jp = pre_jp 去除对话框 + 译前字典替换。你会代码的话也可以在此处加入自己的处理   
+`pre_zh`  原始中文（`pre_dst` 的兼容别名）   
+`proofread_zh`  校对的中文（`proofread_dst`）   
+（没有 post_zh，post_zh 在结果文件夹里。）   
 `trans_by`  翻译引擎/翻译者   
 `proofread_by`  校对引擎/校对者    
 `problem`  存储问题。见下方自动化找错。   
-`post_zh_preview`  用于预览json_cn，但**对它的修改并不会应用到json_cn**，要修改`pre_jp`/`proofread_zh`
+`post_zh_preview`  用于预览 `gt_output`，但**对它的修改并不会应用到输出**，要修改 `pre_zh`/`proofread_zh`
 
-* 简单讲下如何用Emeditor修缓存：选中一个文件，先右键-Emeditor打开，然后把transl_cache内所有文件全选拖进去。   
+* **推荐使用桌面端修缓存**：在"校对审核"页面直接打开缓存文件，逐条修改译文，支持撤销/重做、问题筛选、备选译文交换与"保存并重检问题"，改好后点击"构建输出"即可生成新的结果 JSON。
+
+* 命令行用户也可以用 **EmEditor** 修缓存：选中一个文件，右键-EmEditor 打开，然后把 `transl_cache` 内所有文件全选拖进去。   
 这时候标签可能会占很大位置，右键标签-自定义标签页，将"标签不合适时"改成"无"，这样标签就只会在一行了（需要使用Emeditor专业版）。   
-接着ctrl+f搜索，搜索你感兴趣的关键字（如problem、doub_content），勾选"搜索组群中所有文档"，即可快速在所有文件中搜索，或点提取快速预览所有的问题。
+接着 ctrl+f 搜索，搜索你感兴趣的关键字（如 problem、doub_content），勾选"搜索组群中所有文档"，即可快速在所有文件中搜索，或点提取快速预览所有的问题。
 
-* **VSCode**也是非常好的修缓存工具，只要使用VsCode打开缓存文件夹，然后全局搜索如problem，就可以快速定位所有问题   
+* **VSCode**也是非常好的修缓存工具，只要使用 VsCode 打开缓存文件夹，然后全局搜索如 problem，就可以快速定位所有问题   
 
-* 在确定需要修改的内容后，直接修改对应句子的`pre_zh`，或`proofread_zh`，然后**重新跑一遍Galtransl**，很快就会生成新的json_cn
+* 在确定需要修改的内容后，直接修改对应句子的`pre_zh`，或`proofread_zh`，然后**重新跑一遍 GalTransl**，很快就会生成新的结果 JSON
   
 </details>
 
@@ -393,15 +422,20 @@ problemAnalyze:
 
 目前支持找以上问题，有的项目被#号注释，可以取消来开启，或手动加上#号关闭对应问题的查找。
 
-找到问题后会存在翻译缓存里，见翻译缓存章节，使用Emeditor批量提取problem关键字就可以看到目前所有的问题了，并通过修改缓存的pre_jp来修正问题。
-   
-（新） 现在还可以通过在config.yaml中配置retranslKey来批量重翻某个问题，例如  retranslKey: "残留日文"   
+找到问题后会存在翻译缓存里，见翻译缓存章节。桌面端在"校对审核"页面可使用 **问题检测** 侧栏批量查看所有问题，并通过修改缓存来修正问题。
+
+（新） 现在还可以通过在 config.yaml 中配置 `retranslKey` 来批量重翻某个问题，例如  `retranslKey: "残留日文"`   
 
 </details> 
 
 ## 配置文件与翻译引擎设置
 
-桌面端通过图形界面管理翻译后端配置（左侧"后端配置"页面），无需手动编辑YAML。项目级配置可在"配置编辑"页面修改。
+桌面端通过图形界面管理翻译后端配置（"后端配置"页面），无需手动编辑 YAML。支持两种类型的配置方案：
+
+* **OpenAI-Compatible**：OpenAI 兼容接口通用，可配置多个 token，每个 token 含 `endpoint`、`modelName`、`stream` 等参数，适配 DeepSeek、OpenRouter、硅基流动等各类中转服务。
+* **SakuraLLM**：本地/远程 Sakura 模型，可配置多个端点。
+
+可将某套方案设为"默认"，翻译时在"翻译控制台"直接选用即可。项目级配置可在"项目配置"页面修改。
 
 命令行版本的详细设置项可以直接阅读 `config.yaml` 配置文件注释，目前已经比较详细。
 
