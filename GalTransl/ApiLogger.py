@@ -192,10 +192,12 @@ class ApiLogger:
             if entry.get("status") == "success":
                 _lt = entry.get("latency_ms", 0)
                 _ct = entry.get("completion_tokens", 0) or 0
+                _retry = entry.get("retry_count")
+                _retry_part = "" if not _retry else f" retry={_retry}"
                 lines.append(
                     f'[{entry.get("ts_resp", "?")}][API] {tid} -RESP '
                     f'success {_lt}ms {_ct}t'
-                    f'{"" if not entry.get("retry_count") else f" retry={entry.get("retry_count")}"}'
+                    f'{_retry_part}'
                 )
                 reason = entry.get("reasoning", "") or ""
                 if reason:
