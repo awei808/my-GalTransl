@@ -41,7 +41,6 @@ if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
-import sys
 from pathlib import Path
 
 # ─── 配置 ───────────────────────────────────────────────
@@ -236,9 +235,10 @@ def build_backend():
 
     # 收集 GalTransl 顶层包：直接逐个列举 --hidden-import 在 Windows 上常因
     # 分析器未定位到包物理路径而失效（表现为运行时 ModuleNotFoundError）。
-    # 改用 --paths 显式加入 ROOT 搜索路径 + --collect-submodules 递归收集整包，
-    # 一次性覆盖 Backend/Frontend/yapsy 等所有子模块，避免手工列表脱节。
-    collect_args = f'--paths="{ROOT}" --collect-submodules=GalTransl'
+    # 改用 --paths 显式加入 ROOT 搜索路径（不加引号，引号包裹在 Windows 上
+    # 会让路径失效）+ --collect-submodules 递归收集整包，一次性覆盖
+    # Backend/Frontend/yapsy 等所有子模块，避免手工列表脱节。
+    collect_args = f"--paths={ROOT} --collect-submodules=GalTransl"
     hidden_args = " ".join(f'--hidden-import="{m}"' for m in sorted(set(auto_hidden)))
     log_info(f"后端打包收集策略: {collect_args}")
 
@@ -270,7 +270,13 @@ def assemble_release(frontend_exe: Path | None, backend_exe: Path | None):
     log_info("═══ 组装发布包 ═══")
 
     if BUILD_DIR.exists():
-        shutil.rmtree(BUILD_DIR)
+        # 兜底：旧 backend.exe 可能仍被占用（上一轮进程未退出），先尝试结束
+        # 相关进程再删目录。taskkill 匹配不到时返回非零，故 check=False 忽略。
+        subprocess.run(
+            f'taskkill /F /IM "{backend_exe_name()}"',
+            shell=True, capture_output=True, check=False,
+        )
+        shutil.rmtree(BUILD_DIR, ignore_errors=True)
     BUILD_DIR.mkdir(parents=True)
 
     if frontend_exe and frontend_exe.exists():
@@ -372,6 +378,16 @@ def main():
     print(f"\033[1mGalTransl v{VERSION} 发布版构建\033[0m")
     print(f"输出目录: {RELEASE_DIR}\n")
 
+    # 版本要求：项目统一使用 Python 3.12+（f-string 引号/反斜杠兼容性、
+    # 开放网络分发不依赖固定路径）。低于 3.12 直接失败，提示用 py -3.12。
+    if sys.version_info < (3, 12):
+        log_err(
+            f"构建脚本要求 Python 3.12+，当前为 "
+            f"{sys.version_info.major}.{sys.version_info.minor}。"
+            f"请用 `py -3.12 build_release.py` 运行。"
+        )
+        sys.exit(1)
+
     if args.clean:
         clean()
 
@@ -402,7 +418,7 @@ def main():
     if not args.no_zip:
         create_zip()
 
-    print(f"\n\033[32m✅ 构建完成!\033[0m")
+    print(f"\n\033[32m[OK] 构建完成!\033[0m")
     print(f"   发布目录: {BUILD_DIR}")
     if not args.no_zip:
         print(f"   压缩包:   {RELEASE_DIR / ZIP_NAME}")
