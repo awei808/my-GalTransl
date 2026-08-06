@@ -22,7 +22,7 @@ import sys
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
+from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, AUTHOR, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
 from GalTransl.Dictionary import parse_dict_line, DictRow
 from GalTransl.Utils import get_n_symbol
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
@@ -3592,7 +3592,7 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_html(INDEX_HTML)
                 return
             if path == "/api/version":
-                self._send_json({"version": GALTRANSL_VERSION})
+                self._send_json({"version": GALTRANSL_VERSION, "author": AUTHOR})
                 return
             if path == "/api/version/check":
                 latest_version = new_version[0] if new_version else None

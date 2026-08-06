@@ -21,13 +21,14 @@ import type {
   TranslatorOption,
   TranslatorsResponse,
   VersionCheckResponse,
+  VersionResponse,
 } from "./types";
 
 // ---- Version ----
 
 export async function fetchVersion() {
-  const response = await apiRequest<{ version: string }>("/api/version");
-  return response.version;
+  const response = await apiRequest<VersionResponse>("/api/version");
+  return response;
 }
 
 export async function fetchVersionCheck() {

@@ -73,7 +73,7 @@ export function HomePage() {
     requestAnimationFrame(() => requestAnimationFrame(autoActivateBackend));
 
     fetchVersion()
-      .then((v) => setVersion(v))
+      .then((v) => setVersion(v.version))
       .catch(() => {})
       .finally(() => setLoadingVersion(false));
 
@@ -133,9 +133,9 @@ export function HomePage() {
         <div class="home-info">
           <p>
             项目地址：
-            <a href="https://github.com/xxnuo/GalTransl" target="_blank" rel="noopener">
-              github.com/xxnuo/GalTransl
-            </a>
+                <a href="https://github.com/awei808/my-GalTransL" target="_blank" rel="noopener">
+                  github.com/awei808/my-GalTransL
+                </a>
           </p>
         </div>
       </div>

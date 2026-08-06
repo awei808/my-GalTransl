@@ -31,8 +31,7 @@ import { applyThemePreference } from "../../lib/theme";
 import { compressImageToDataUrl } from "./imageCompress";
 import { getErrorMessage } from "../../lib/errors";
 
-const PROJECT_HOMEPAGE = "https://github.com/GalTransl/GalTransl";
-const PROJECT_AUTHOR = "xd2333";
+const PROJECT_HOMEPAGE = "https://github.com/awei808/my-GalTransL";
 
 export function SettingsPage() {
   // ── 外观 ──
@@ -54,6 +53,7 @@ export function SettingsPage() {
 
   // ── 关于 ──
   const [coreVersion, setCoreVersion] = createSignal("");
+  const [coreAuthor, setCoreAuthor] = createSignal("");
   const [latestVersion, setLatestVersion] = createSignal("");
   const [updateAvail, setUpdateAvail] = createSignal(false);
   const [checkingVer, setCheckingVer] = createSignal(true);
@@ -76,7 +76,10 @@ export function SettingsPage() {
 
   onMount(() => {
     fetchVersion()
-      .then((v) => setCoreVersion(v))
+      .then((v) => {
+        setCoreVersion(v.version);
+        setCoreAuthor(v.author ?? "awei808");
+      })
       .catch(() => {});
 
     fetchVersionCheck()
@@ -659,7 +662,7 @@ export function SettingsPage() {
             </Show>
             <div class="settings-about-row">
               <span class="settings-about-label">作者</span>
-              <span class="settings-about-value">{PROJECT_AUTHOR}</span>
+              <span class="settings-about-value">{coreAuthor() || "awei808"}</span>
             </div>
           </div>
 

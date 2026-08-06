@@ -363,7 +363,7 @@ def get_n_symbol(src_text: str) -> list[str]:
 
 def check_for_tool_updates(new_version: list[str]) -> None:
     try:
-        release_api = "https://api.github.com/repos/xd2333/GalTransl/releases/latest"
+        release_api = "https://api.github.com/repos/awei808/my-GalTransL/releases/latest"
         response = requests.get(release_api, timeout=5).json()
         latest_release = response["tag_name"]
         new_version.append(latest_release)

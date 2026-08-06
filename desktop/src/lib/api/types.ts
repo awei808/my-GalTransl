@@ -530,6 +530,13 @@ export type VersionCheckResponse = {
   version: string;
   latest_version: string | null;
   update_available: boolean;
+  author?: string;
+};
+
+/** GET /api/version 返回：版本号 + 作者（以后端 AUTHOR 为准） */
+export type VersionResponse = {
+  version: string;
+  author?: string;
 };
 
 // ---- Backend Profiles API types ----
