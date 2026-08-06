@@ -29,25 +29,17 @@ from playwright.async_api import async_playwright
 # 全局状态
 _page = None
 _browser = None
-_playwright = None
 _console_messages = []
 _network_requests = []
 _connected = False
-_reconnecting = False
-# 保活阶段的阻塞事件；断开时由 _on_disconnect 置位，唤醒主循环回到 while 顶部重连
-_reconnect_event = asyncio.Event()
 
 
-async def connect_to_webview(cdp_port: int, delay: float = 5.0) -> None:
+async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
     """
     通过 CDP 连接到 Tauri WebView2。
-
-    行为分两个阶段：
-      1. 首次连接：无限轮询等待 WebView2 就绪，不会因连接失败而退出；
-      2. 运行期保活：连接成功后进入保活状态，监听 page/browser 断开事件，
-         一旦 traul 窗口关闭或崩溃，自动回到等待分支重新连接（自动重连）。
+    无限轮询等待 WebView2 就绪，不会因为连接失败而退出。
     """
-    global _page, _browser, _playwright, _console_messages, _network_requests, _connected, _reconnecting
+    global _page, _browser, _console_messages, _network_requests, _connected
 
     attempt = 0
     while True:
@@ -55,7 +47,6 @@ async def connect_to_webview(cdp_port: int, delay: float = 5.0) -> None:
         p = None
         try:
             p = await async_playwright().start()
-            _playwright = p
             _browser = await p.chromium.connect_over_cdp(
                 f"http://127.0.0.1:{cdp_port}"
             )
@@ -94,22 +85,10 @@ async def connect_to_webview(cdp_port: int, delay: float = 5.0) -> None:
                 "failure": _safe_failure_text(req),
             }))
 
-            # 注册断开事件，触发自动重连
-            _page.on("close", lambda: asyncio.ensure_future(_on_disconnect("close")))
-            _page.on("crash", lambda: asyncio.ensure_future(_on_disconnect("crash")))
-            _browser.on("disconnected", lambda: asyncio.ensure_future(_on_disconnect("disconnected")))
-
             _connected = True
-            _reconnecting = False
-            if attempt == 1:
-                print(f"[tauri-webview-mcp] 已连接到 WebView2 (CDP 端口 {cdp_port})",
-                      file=sys.stderr, flush=True)
-            else:
-                print(f"[tauri-webview-mcp] 已恢复 WebView2 连接 (CDP 端口 {cdp_port})",
-                      file=sys.stderr, flush=True)
-            # 进入保活阶段：阻塞直到断开事件置位，再回到 while 顶部重连
-            _reconnect_event.clear()
-            await _reconnect_event.wait()
+            print(f"[tauri-webview-mcp] 已连接到 WebView2 (CDP 端口 {cdp_port})",
+                  file=sys.stderr, flush=True)
+            return
 
         except asyncio.CancelledError:
             # MCP 会话结束时任务被取消，清理 Playwright 实例避免 driver 残留
@@ -123,9 +102,6 @@ async def connect_to_webview(cdp_port: int, delay: float = 5.0) -> None:
             if attempt == 1:
                 print(f"[tauri-webview-mcp] 正在等待 Tauri WebView2 (CDP 端口 {cdp_port}) 就绪...",
                       file=sys.stderr, flush=True)
-            else:
-                print(f"[tauri-webview-mcp] 重连失败，{delay}s 后重试: {type(e).__name__}: {e}",
-                      file=sys.stderr, flush=True)
             if p is not None:
                 try:
                     await p.stop()
@@ -134,43 +110,8 @@ async def connect_to_webview(cdp_port: int, delay: float = 5.0) -> None:
             await asyncio.sleep(delay)
 
 
-async def _on_disconnect(reason: str) -> None:
-    """
-    连接断开回调（由 page/browser 事件触发）。
-    置重连标志并切断当前连接，主循环会从保活阶段回到等待分支自动重连。
-    """
-    global _connected, _reconnecting, _page, _browser, _playwright
-
-    if _reconnecting:
-        return  # 已在重连中，避免重复触发
-    _connected = False
-    _reconnecting = True
-    _page = None
-    print(f"[tauri-webview-mcp] WebView2 连接断开，准备重连 (原因: {reason})",
-          file=sys.stderr, flush=True)
-
-    # 关闭失效的 browser / playwright driver，避免子进程残留
-    if _browser is not None:
-        try:
-            await _browser.close()
-        except Exception:
-            pass
-        _browser = None
-    if _playwright is not None:
-        try:
-            await _playwright.stop()
-        except Exception:
-            pass
-        _playwright = None
-
-    # 唤醒主循环的保活阻塞，使其回到 while 顶部重新连接
-    _reconnect_event.set()
-
-
 def _require_page():
     """确保已连接到页面"""
-    if _reconnecting:
-        raise RuntimeError("WebView2 连接已断开，正在重连，请稍后重试")
     if _page is None:
         raise RuntimeError("未连接到 WebView2，请先启动 Tauri 应用并确保 CDP 端口已开启")
     return _page
