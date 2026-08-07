@@ -31,10 +31,12 @@
 5. **翻译后 AI 改善译文**：翻译流程完成后，支持调用 AI 对译文进行改善（ForImproveTranslation）。
 6. **新增问题检测项**：在原问题检测基础上新增 **长句丢失换行** 与 **换行符位置异常** 两项。
 7. **备选译文功能**：让 AI 评价并输出可改善的译文，或针对特定问题项让 AI 提供修复后的译文作为备选；用户可在校对审核页自由切换备选译文与当前译文。
-8. **已知待修复问题**：项目中的**全局撤销/重做机制、查找替换功能存在明显 bug，暂未修复**。
+8. **已知待修复问题**：项目中的**全局撤销/重做机制、查找替换功能、翻译控制台部分板块显示存在明显 bug，暂未修复**。
 9. **缓存结构变化**：为适配多流程翻译（全局分析 → 文件级元数据 → 翻译执行等多阶段），翻译缓存结构做了必要调整，与原项目不兼容。
 10. **其他细小变化**：JSON 内统一使用 `\n` 换行符（替代 `\r\n`），字典统一使用 PSV 格式等。
 11. **命令行未适配**：重构主要围绕桌面端展开，命令行版本（CLI）**尚未做适配，可能无法正常使用**。
+12. **翻译项目路径**：新建的翻译项目只能位于应用程序同目录下，旧项目不受此限制。
+13. **翻译后端采用多轮对话形式**：不再沿用原项目的单轮对话形式，采用多轮对话形式以获得更全面的上下文，打造更好的译文。
 
   * 特性：   
   1. 🖥️ **桌面端图形界面**——基于 Tauri 2 + Rust + **SolidJS** 构建的现代桌面应用，无需命令行操作即可完成新建项目、导入文件、配置后端、翻译、校对审核、构建输出全流程
@@ -42,7 +44,7 @@
   3. **GPT字典**，让模型了解人设，准确翻译人名、人称代词与生词
   4. 通过译前（预处理）、译后（后处理）字典与条件字典实现灵活的自动化字典系统，并支持**人名替换表**（CSV/XLSX）
   5. 实时保存缓存、自动断点续翻，翻译过程中可视化展示提示词、译文拼接、并发进度与速度
-  6. 完整流水线：输入校验 → 文本压缩 → 全局游戏分析 → 自动构建术语表 → 文件级元数据 → 批次划分 → 翻译执行，多阶段提示词注入提升翻译质量
+  6. 完整流水线：输入校验 → 文本压缩 → 全局游戏分析 → 自动构建术语表 → 文件级元数据 → 批次划分 → 翻译执行，多阶段分批提示词注入提升翻译质量
   7. 内置**校对审核**工作台：逐句检查修改、问题检测、备选译文交换、撤销/重做、跨文件查找替换
   8. 重点适配 galgame 文本翻译场景，其他通用文件格式（srt、epub 等）可能无法正常使用
   9. 支持**插件系统**：自定义文件格式与文本处理流水线，扩展性强
@@ -100,7 +102,7 @@
 3. 封包为资源包/免封包 -> 接4.
 4. 引擎支持unicode的话，直接玩 -> 引擎是shift jis的，尝试2种路线使其支持显示中文   
 
-我会分成以上4个模块分步讲解，这个段落为了让没做过的朋友也能有机会上手，会写的更照顾小白一些。   
+原作者会分成以上4个模块分步讲解，这个段落为了让没做过的朋友也能有机会上手，会写的更照顾小白一些。   
 
 * 建议先只跑开头一个文件的翻译，或先随便添加一些中文，导回游戏确认可以正常显示再全部翻译   
    
@@ -134,7 +136,7 @@
 * **【2.1. 提取脚本文本】**   
 &ensp;&ensp;&ensp;&ensp;通常情况下，本项目是结合[VNTextPatch工具](https://github.com/arcusmaximus/VNTranslationTools)来解包脚本的。 VNTextPatch是由外国大佬arcusmaximus开发的[支持许多引擎](https://github.com/arcusmaximus/VNTranslationTools#vntextpatch)脚本的提取与注入的通用工具。（但并不是这些引擎都能搞定了，实测有的游戏是会提取失败的）   
    
-&ensp;&ensp;&ensp;&ensp;VNTextPatch是使用cmd操作的，为了降低上手难度，我搓了一个图形化的界面，你可以在项目的useful_tools/GalTransl_DumpInjector内找到，点击GalTransl_DumpInjector.exe运行。   
+&ensp;&ensp;&ensp;&ensp;VNTextPatch是使用cmd操作的，为了降低上手难度，原作者搓了一个图形化的界面，你可以在项目的useful_tools/GalTransl_DumpInjector内找到，点击GalTransl_DumpInjector.exe运行。   
 &ensp;&ensp;&ensp;&ensp;现在，你只需要选择日文脚本目录，然后选择保存提取的日文json的目录，这里一般将日文脚本放到叫script_jp的文件夹，再新建一个gt_input目录，用于存储提取出的脚本：   
 ![图1](./img/img_dumper.png)
 &ensp;&ensp;&ensp;&ensp;需要注意GalTransl全程是使用name-message格式的JSON输入、处理和输出的。[JSON是什么](http://c.biancheng.net/json/what-is-json.html)   
@@ -167,6 +169,47 @@
 &ensp;&ensp;&ensp;&ensp;**③ 设置字典**：在"字典管理"页面配置四类字典：**预处理（译前）**、**GPT 字典**、**后处理（译后）**、**人名替换**（建议至少配置人名字典与 GPT 字典）。
 
 &ensp;&ensp;&ensp;&ensp;**④ 开始翻译**：在"翻译控制台"选择后端并点击"启动流程"，实时查看翻译进度、速度、当前提示词与译文拼接结果，可随时停止。
+
+<details>
+<summary>④-详解：翻译流水线各阶段与文件流向</summary>
+
+&nbsp;&nbsp;&nbsp;&nbsp;"启动流程"默认走 `ForGal-full-pipeline`，按固定顺序执行：**文本压缩 → 全局剧情/角色分析 → 文件级剧情元数据 → 批次划分 → 多轮对话翻译 →（可选）译后改进**。各阶段中间产物写入 `transl_cache` 下 `pass0~pass3` 三个文件夹。切换"启动流程"上方的后端选择框，可单独运行某一阶段或改用其它后端。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**通用规则：缓存命中跳过（所有阶段通用）**
+&nbsp;&nbsp;&nbsp;&nbsp;每一阶段在调用模型前先查自身缓存，**缓存存在则跳过该阶段、直接复用旧产物**，支持断点续翻。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**阶段一 · 文本压缩（TextCompressor）**
+&nbsp;&nbsp;&nbsp;&nbsp;对全文做 JSON 结构无损压缩以降低 token 消耗，属流水线内部步骤，不产生独立落盘文件，压缩结果仅驻留内存供全局分析使用。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**阶段二 · 全局剧情/角色分析（ForGlobalPrompt）**
+&nbsp;&nbsp;&nbsp;&nbsp;读取压缩后的游戏全文与外部信息（名称、制作公司等），生成全局剧情概要、角色档案与行文风格，写入 `transl_cache/pass0_cache/GlobalPrompt.json`（存在即跳过）。作为全局上下文注入后续翻译提示词，保证全作风格与角色口吻统一，并为下游的翻译补充必要信息。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**阶段三 · 文件级剧情元数据（ForFileMetaData）**
+&nbsp;&nbsp;&nbsp;&nbsp;逐文件分析剧本，生成该文件剧情梗概与出场角色等元数据（不翻译、无多轮），写入缓存 `transl_cache/pass1_cache/{文件名}.meta.json`（存在即跳过该文件）。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**阶段四 · 批次划分（ForBatchMetaData）**
+&nbsp;&nbsp;&nbsp;&nbsp;依据文件级元数据，将每个剧本切成若干**连续区间（批次）**，标注视角/氛围/H 场景/用词色彩，写入缓存 `transl_cache/pass2_cache/{文件名}.batch.json`（存在即跳过）。批次是多轮对话的上下文边界：同批内模型可见前文，跨批则上下文重置。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**阶段五 · 多轮对话翻译（ForGal-json-multi-chat）**
+&nbsp;&nbsp;&nbsp;&nbsp;按批次以多轮对话逐句翻译，保留批次内上下文，并注入 GPT 字典与预处理（译前）字典。返回结果写入 `transl_cache/pass3_cache/{文件名}.append.jsonl`（逐句追加、已翻译句命中缓存则跳过），每句含 `pre_jp`(原文)、`post_jp`(清洗后日文)、`pre_zh`(初译)、`proofread_zh`(校对后)、`trans_by`、`problem` 等字段。文件全部句子译完后，生成 `transl_cache/pass3_cache/{文件名}.json`
+
+&nbsp;&nbsp;&nbsp;&nbsp;**（可选）译后改进（ForImproveTranslation / ForBRStation）**
+&nbsp;&nbsp;&nbsp;&nbsp;整文件译完后评估质量，对可改进句生成备选译文写入缓存的 `alt_dst` 字段（如换行位置异常修复），可在"校对审核"页替换为正文。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**字典的生效位置**
+&nbsp;&nbsp;&nbsp;&nbsp;- 预处理（译前）字典：翻译前替换日文原文中的专名/术语。
+&nbsp;&nbsp;&nbsp;&nbsp;- GPT 字典：作为术语表注入提示词，约束译名统一。
+&nbsp;&nbsp;&nbsp;&nbsp;- 人名替换表：专用于 `name` 字段的翻译/替换。
+&nbsp;&nbsp;&nbsp;&nbsp;- 后处理（译后）字典：在生成 `gt_output` 时对中文译文做最终替换；改动后须重跑以重新生成 `gt_output` 方生效。
+
+&nbsp;&nbsp;&nbsp;&nbsp;**生成文件的使用与回改**
+&nbsp;&nbsp;&nbsp;&nbsp;- `gt_output/` 为最终产物，可直接交注入工具导回游戏（见 2.3 节）。
+&nbsp;&nbsp;&nbsp;&nbsp;- 改单句译文：编辑 `pass3_cache/{文件名}.json` 中的 `proofread_zh`，或删除整行 `pre_zh` 触发该句重翻。
+&nbsp;&nbsp;&nbsp;&nbsp;- `transl_cache` 下 `pass1/pass2/pass0` 的所有缓存文件均可直接修改，文件自动保存，pass3内的文件除外。
+
+&nbsp;&nbsp;&nbsp;&nbsp;文件流向可记为：`gt_input/*.json`（原始剧本）→ `pass0~pass3` 缓存（各阶段中间产物，带缓存跳过）→ `gt_output/*.json`（最终成品）。
+
+</details>
 
 &ensp;&ensp;&ensp;&ensp;**⑤ 校对审核**：翻译完成后到"校对审核"页面逐条检查、修改译文，可利用问题检测、备选译文交换、查找替换与撤销/重做提升效率，改好后点击"构建输出"生成最终文件。
 
@@ -238,7 +281,7 @@ python -m GalTransl -p <项目目录> -t <翻译引擎> [-l info]
 
 </summary>
 
-&ensp;&ensp;&ensp;&ensp;在这一章首先需要了解一下unicode、sjis(shift jis)、gbk编码的基础知识，为了偷懒在这里我还是放[Dir-A佬的文章](https://www.bilibili.com/read/cv12367744/)，如果你对这块不了解的话，先去读一下。   
+&ensp;&ensp;&ensp;&ensp;在这一章首先需要了解一下unicode、sjis(shift jis)、gbk编码的基础知识，为了偷懒在这里原作者还是放[Dir-A佬的文章](https://www.bilibili.com/read/cv12367744/)，如果你对这块不了解的话，先去读一下。   
 
 如果你在做的引擎支持unicode编码，例如krkr、Artemis引擎等，一般就可以直接玩了。但如果引擎是使用sjis编码的话，直接打开会是乱码，这时候需要通过2种路线尝试使其可以正常显示中文：   
 
@@ -259,7 +302,7 @@ GalTransl提取注入工具的VNTextPatch模式注入脚本时默认是以sjis�
 
 当使用sjis隧道模式时，将`script_cn`内的`sjis_ext.bin`文件移动到游戏目录内，然后将useful_tools\VNTextProxy内的所有dll逐个丢到游戏目录内(一般推荐先试version.dll，或使用PEID/DIE等工具查输入表)，运行游戏，看有没有哪个dll可以正确的hook游戏并让不显示的文本可以正常显示（不正常的话那些地方会是空的）。不正常的话，删掉这个DLL，换下一个。[详细设置见此](https://github.com/XD2333/GalTransl/tree/main/useful_tools/VNTextProxy)
 
-**jis替换**：来自AtomCrafty大佬的[UniversalInjectorFramework(通用注入框架)](https://github.com/AtomCrafty/UniversalInjectorFramework#character-substitution)项目，也是通过DLL劫持技术HOOK游戏，并可以将某个字符根据设置替换成指定的另一个字符，不限编码。我建立了[一套替换字典](https://github.com/XD2333/GalTransl_DumpInjector/blob/main/hanzi2kanji_table.txt)，按一些规则梳理了jis编码内不支持的简中汉字与jis支持的日文汉字的映射关系，可以满足99.99%常用简体中文汉字的正常显示(见hanzi2kanji_table.txt)，并将替换功能写在了GalTransl提取注入工具内(新：现在[SExtractor](https://github.com/satan53x/SExtractor)也支持替换，并且更好用)。在替换后结合UniversalInjectorFramework的动态Hook替换功能在游戏中将这些日文汉字替换回简中文字，实现游戏的正常显示。
+**jis替换**：来自AtomCrafty大佬的[UniversalInjectorFramework(通用注入框架)](https://github.com/AtomCrafty/UniversalInjectorFramework#character-substitution)项目，也是通过DLL劫持技术HOOK游戏，并可以将某个字符根据设置替换成指定的另一个字符，不限编码。原作者建立了[一套替换字典](https://github.com/XD2333/GalTransl_DumpInjector/blob/main/hanzi2kanji_table.txt)，按一些规则梳理了jis编码内不支持的简中汉字与jis支持的日文汉字的映射关系，可以满足99.99%常用简体中文汉字的正常显示(见hanzi2kanji_table.txt)，并将替换功能写在了GalTransl提取注入工具内(新：现在[SExtractor](https://github.com/satan53x/SExtractor)也支持替换，并且更好用)。在替换后结合UniversalInjectorFramework的动态Hook替换功能在游戏中将这些日文汉字替换回简中文字，实现游戏的正常显示。
 
 当使用sjis替换模式时，可以先运行一遍GalTransl提取注入工具的注入文本，获取游戏不支持的文字列表（注入后会提示"sjis_ext.bin包含文字：xxx"），然后，勾选"sjis替换模式注入"，把这些文字复制到右边的文本框内，再点击注入。注入后会获得一个sjis替换模式配置。
 
@@ -299,7 +342,7 @@ GalTransl提取注入工具的VNTextPatch模式注入脚本时默认是以sjis�
 $str20	$str20	player's codename, boy
 ```
 这几条字典都是定义角色用的：   
-* 第一条可以理解为我想告诉GPT：“假名フラン的翻译是芙兰，这是人名，是位女士，是老师”。这样GPT在翻译フラン先生的时候就会翻译成芙兰老师而不会是芙兰医生。   
+* 第一条可以理解为原作者想告诉GPT：“假名フラン的翻译是芙兰，这是人名，是位女士，是老师”。这样GPT在翻译フラン先生的时候就会翻译成芙兰老师而不会是芙兰医生。   
 * 二三条是同一个人的日本姓和名，经测试姓名必须拆成两行写，不然GPT3.5会不认识。
 * 第四条是设定主角的推荐写法。**注意即使日文和中文相同，也要再重复一遍**   
 * 第五条是主角在脚本中使用占位符而不是名字时的推荐写法。
@@ -335,7 +378,7 @@ $str20	$str20	player's codename, boy
 
 译前字典多用于一些口齿不清的矫正情况，以及多个词代表同个意思的话，可以用译前字典先统一，减少GPT字典的输入。   
    
-译后字典就是比较常见的字典，在译后将某个词替换成另一个词，但是此处我改进了一个叫"条件字典"的东西。条件字典实际上就是在替换前增加了一步判断，用于避免误替换、过度替换等情况。   
+译后字典就是比较常见的字典，在译后将某个词替换成另一个词，但是此处原作者改进了一个叫"条件字典"的东西。条件字典实际上就是在替换前增加了一步判断，用于避免误替换、过度替换等情况。   
 每行格式为`pre_jp/post_jp[tab]判断词[tab]查找词[tab]替换词`   
 * pre_jp/post_jp代表判断词查找的位置，定义在"翻译缓存"章节讲
 * 判断词：如果在查找位置(pre_jp/post_jp)中找到判断词，才会激活后面的替换。   

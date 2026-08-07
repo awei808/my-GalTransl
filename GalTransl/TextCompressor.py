@@ -31,11 +31,12 @@ class TextCompressor:
     绝不动语义内容——不删行、不改 message、不改 name、不改换行符。
     """
 
-    def __init__(self, max_chars: int = 80000):
+    def __init__(self, max_chars: int = 950000):
         """
         Args:
-            max_chars: 压缩后目标最大字符数。0 表示不限制。
-                       如果结构性压缩后仍超限，会记录 WARNING 但不强制截断。
+            max_chars: 压缩后文本的“软阈值”最大字符数。0 表示不检查。
+                       如果结构性压缩后仍超限，会记录 WARNING 但不强制截断
+                       （截断=丢失信息=违反无损原则）。该值仅作提示，不影响发送内容。
         """
         self.max_chars = max_chars
 

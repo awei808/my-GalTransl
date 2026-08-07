@@ -1010,7 +1010,7 @@ async def doLLMTranslate(
         LOGGER.info("[GlobalPrompt] 阶段 1/2：文本无损压缩")
         _update_runtime(projectConfig, stage="文本无损压缩")
         max_chars = projectConfig.getKey(
-            "internals.pipeline.maxInputChars", 80000
+            "internals.pipeline.maxInputChars", 950000
         )
         compressor = TextCompressor(max_chars=max_chars)
         compressed_texts: Dict[str, str] = {}
@@ -1351,7 +1351,7 @@ async def _run_full_pipeline(
 
     from GalTransl.TextCompressor import TextCompressor
 
-    max_chars = projectConfig.getKey("internals.pipeline.maxInputChars", 80000)
+    max_chars = projectConfig.getKey("internals.pipeline.maxInputChars", 950000)
     compressor = TextCompressor(max_chars=max_chars)
 
     # 逐文件压缩（保留文件边界，供 ForGlobalPrompt 按文件注入上下文）

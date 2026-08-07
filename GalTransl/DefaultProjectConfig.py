@@ -86,7 +86,7 @@ common:
 internals:
   # === 完整流水线配置 ===
   pipeline:
-    maxInputChars: 950000         # 全局分析阶段发送给 LLM 的最大字符数（压缩后）[1000-1000000]
+    maxInputChars: 950000         # 全局分析阶段压缩后文本的“软阈值”：超过此值仅打印告警、不做截断（无损原则，绝不删行）。0 表示不检查。[1000-1000000]
     forceRegenDic: false          # 是否强制重新生成术语表（即使已存在）[True/False]
     abortOnDicFailure: false      # 是否在术语表生成失败时中止流水线 [True/False]
   # ForGlobalPrompt 后端专用配置

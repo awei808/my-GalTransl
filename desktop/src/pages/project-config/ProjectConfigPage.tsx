@@ -165,8 +165,8 @@ const FIELD_UI: Record<string, FieldUI> = {
     hint: "0 表示不限制，用于避免上下文溢出。仅 Sakura 引擎。",
   },
   "internals.pipeline.maxInputChars": {
-    label: "全局分析最大字符数",
-    hint: "压缩后发送给大模型的最大字符数，默认 0.95M（约 95 万字符）。",
+    label: "全局分析最大字符数（软阈值）",
+    hint: "压缩后文本超过该值时仅打印告警、不做截断（无损原则，绝不删行），仅作提示。0 表示不检查。默认 95 万字符。",
   },
   "internals.pipeline.forceRegenDic": { label: "强制重新生成术语表" },
   "internals.pipeline.abortOnDicFailure": { label: "术语表失败即中止" },
