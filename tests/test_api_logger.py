@@ -4,9 +4,20 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        # 产品默认 writeApiCallLog=False；此处显式开启以测试"开启路径"，
+        # 与 GalTransl.AppSettings.DEFAULT_APP_SETTINGS 的新默认解耦。
+        self._patch = patch(
+            "GalTransl.ApiLogger.load_app_settings",
+            return_value={"writeApiCallLog": True},
+        )
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+
     async def test_basic_logging(self) -> None:
         from GalTransl.ApiLogger import api_logger
 
@@ -143,6 +154,22 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content.count("---"), 10)
 
         shutil.rmtree(tmp, ignore_errors=True)
+
+    async def test_api_calls_log_not_written_by_default(self) -> None:
+        # 产品新默认 writeApiCallLog=False：默认不生成 api_calls.log
+        from GalTransl.ApiLogger import api_logger
+
+        with patch(
+            "GalTransl.ApiLogger.load_app_settings",
+            return_value={"writeApiCallLog": False},
+        ):
+            tmp = tempfile.mkdtemp()
+            t = api_logger.begin(tmp, backend="x", model="y", prompt_preview="p")
+            api_logger.record(t, status="success")
+            await api_logger.shutdown()
+            logfile = os.path.join(tmp, "api_calls.log")
+            self.assertFalse(os.path.exists(logfile))
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

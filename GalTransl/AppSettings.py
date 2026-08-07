@@ -8,7 +8,8 @@ from typing import Any
 DEFAULT_APP_SETTINGS: dict[str, Any] = {
     "printTranslationLogInTerminal": True,
     "maxConcurrentJobs": 4,
-    "writeApiCallLog": True,
+    "writeApiCallLog": False,
+    "writeFrontendLog": False,
 }
 
 _SETTINGS_PATH = os.path.join(
@@ -36,6 +37,12 @@ def _normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:
             source.get(
                 "writeApiCallLog",
                 DEFAULT_APP_SETTINGS["writeApiCallLog"],
+            )
+        ),
+        "writeFrontendLog": bool(
+            source.get(
+                "writeFrontendLog",
+                DEFAULT_APP_SETTINGS["writeFrontendLog"],
             )
         ),
     }

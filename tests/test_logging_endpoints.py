@@ -7,6 +7,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 from GalTransl import server as _server_mod
 from GalTransl.server_runtime import encode_project_dir
@@ -29,8 +30,20 @@ def _start_server(workspace_root: str, token: str = ""):
 
 
 class _Base(unittest.TestCase):
+    # 产品默认 writeFrontendLog=False；此处显式开启以测试"开启路径"，
+    # 与 GalTransl.AppSettings.DEFAULT_APP_SETTINGS 的新默认解耦。
+    _settings_override = {"writeFrontendLog": True}
+
     @classmethod
     def setUpClass(cls) -> None:
+        # patch 源头 GalTransl.AppSettings.load_app_settings：_start_server 内
+        # 会 importlib.reload(server)，server 模块重新执行
+        # `from .AppSettings import load_app_settings`，从而绑定到此处 patch 后的函数。
+        cls._patch = patch(
+            "GalTransl.AppSettings.load_app_settings",
+            return_value=dict(cls._settings_override),
+        )
+        cls._patch.start()
         cls.tmp = tempfile.mkdtemp()
         cls.server, cls.port = _start_server(cls.tmp)
         cls.root = cls.tmp
@@ -39,6 +52,7 @@ class _Base(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.server.shutdown()
         cls.server.server_close()
+        cls._patch.stop()
 
     def _req(self, method, path, body=None, headers=None, raw=None, content_type=None):
         url = f"http://127.0.0.1:{self.port}{path}"
@@ -212,6 +226,44 @@ class LogsEndpointTests(_Base):
         self.assertEqual(status, 200)
         self.assertTrue(body["exists"])
         self.assertTrue(any("projline" in line for line in body["lines"]))
+
+
+class FrontendLogDefaultOffTests(_Base):
+    """覆盖产品新默认：writeFrontendLog=False 时 frontend.log 不落盘。"""
+
+    _settings_override = {"writeFrontendLog": False}
+
+    def test_frontend_log_not_written_by_default(self) -> None:
+        # 默认关闭时，POST /api/log 不应生成 workspace 根 frontend.log
+        status, body = self._req("POST", "/api/log", body={"level": "error", "message": "boom"})
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertTrue(body.get("skipped", False))
+        root_fe = os.path.join(self.root, "frontend.log")
+        self.assertFalse(os.path.isfile(root_fe))
+
+    def test_frontend_log_read_default_exists_false(self) -> None:
+        # 读取路径也应反映"无 frontend.log"
+        _, init = self._init_project("off_lp")
+        pid = init["project_id"]
+        status, body = self._req("GET", f"/api/projects/{pid}/logs?source=frontend")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["source"], "frontend")
+        self.assertFalse(body["exists"])
+        self.assertEqual(body["lines"], [])
+
+    def test_frontend_log_respects_project_id_off(self) -> None:
+        # 即使携带合法 project_id，默认关闭时也不在项目目录生成 frontend.log
+        _, init = self._init_project("off_pid")
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        status, body = self._req(
+            "POST", "/api/log", body={"level": "info", "message": "inproject", "project_id": pid}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        proj_fe = os.path.join(pdir, "frontend.log")
+        self.assertFalse(os.path.isfile(proj_fe))
 
 
 if __name__ == "__main__":

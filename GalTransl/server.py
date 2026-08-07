@@ -4202,6 +4202,12 @@ def build_handler(registry: JobRegistry) -> type:
             if not isinstance(payload, dict):
                 self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            # 按 AppSettings.writeFrontendLog 决定是否落盘 frontend.log。
+            # 默认关闭（新建项目/未自定义时），仅 error.log 保留写入。
+            if not load_app_settings().get("writeFrontendLog", False):
+                LOGGER.debug("按 AppSettings.writeFrontendLog=false，跳过 frontend.log 写入")
+                self._send_json({"ok": True, "skipped": True})
+                return
             source = _sanitize_log_field(str(payload.get("source", "frontend"))) or "frontend"
             raw_level = _sanitize_log_field(str(payload.get("level", "info"))).lower()
             level = raw_level if raw_level in _VALID_LOG_LEVELS else "info"
