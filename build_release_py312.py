@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.12
 """
 GalTransl Windows 发布版构建脚本
 
@@ -655,8 +655,11 @@ def preflight(args) -> None:
 
     # Python 版本要求：项目统一使用 3.12+
     if sys.version_info < (3, 12):
+        # 打印实际命中的解释器路径，便于排查 py 启动器/shebang 选错版本的环境歧义
+        log_debug(f"当前解释器: {sys.executable} (Python {sys.version_info.major}.{sys.version_info.minor})")
         problems.append(
             f"需要 Python 3.12+（当前 {sys.version_info.major}.{sys.version_info.minor}），"
+            f"实际解释器: {sys.executable}，"
             f"请用 `py -3.12 build_release_py312.py` 运行"
         )
 
