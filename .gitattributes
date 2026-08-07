@@ -6,6 +6,10 @@
 #       与生成器（Rust/Tauri）写出的 LF 一致，从而不再被标记为 modified。
 * text=auto eol=lf
 
+# Windows 批处理脚本必须用 CRLF，否则 cmd.exe 解析会按 LF 错误切分导致闪退
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
 # 显式声明常见源码类型使用 LF（冗余但清晰，便于协作）
 *.json text eol=lf
 *.toml text eol=lf
