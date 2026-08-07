@@ -38,7 +38,8 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
 
         logfile = os.path.join(tmp, "api_calls.log")
         self.assertTrue(os.path.exists(logfile))
-        content = open(logfile, encoding="utf-8").read()
+        with open(logfile, encoding="utf-8") as fh:
+            content = fh.read()
 
         # 验证关键标记
         self.assertIn(">>>", content)
@@ -64,7 +65,8 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
         await api_logger.shutdown()
 
         logfile = os.path.join(tmp, "api_calls.log")
-        content = open(logfile, encoding="utf-8").read()
+        with open(logfile, encoding="utf-8") as fh:
+            content = fh.read()
         self.assertIn("orphan prompt", content)
         self.assertNotIn("RESP", content)  # 未配对，无响应
 
@@ -80,7 +82,8 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
         api_logger.record(t2, status="success", latency_ms=200, retry_count=2)
         await api_logger.shutdown()
 
-        content = open(os.path.join(tmp, "api_calls.log"), encoding="utf-8").read()
+        with open(os.path.join(tmp, "api_calls.log"), encoding="utf-8") as fh:
+            content = fh.read()
         self.assertEqual(content.count(">>>"), 2)
         self.assertIn("<<< error", content)
         self.assertIn("-RESP success", content)
@@ -99,7 +102,8 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
         api_logger.record(t2, status="success")
         await api_logger.shutdown()
 
-        content = open(os.path.join(tmp, "api_calls.log"), encoding="utf-8").read()
+        with open(os.path.join(tmp, "api_calls.log"), encoding="utf-8") as fh:
+            content = fh.read()
         self.assertEqual(content.count(">>>"), 2)
         self.assertIn(">>> a m", content)
         self.assertIn(">>> b m", content)
@@ -121,7 +125,8 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
         asyncio.run(_job("first"))
         asyncio.run(_job("second"))  # 旧代码第二次会令 writer 崩溃、日志缺失
 
-        content = open(os.path.join(tmp, "api_calls.log"), encoding="utf-8").read()
+        with open(os.path.join(tmp, "api_calls.log"), encoding="utf-8") as fh:
+            content = fh.read()
         self.assertEqual(content.count(">>>"), 2)
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -148,7 +153,8 @@ class ApiLoggerTests(unittest.IsolatedAsyncioTestCase):
                               prompt_tokens=10, completion_tokens=5)
         await api_logger.shutdown()
 
-        content = open(os.path.join(tmp, "api_calls.log"), encoding="utf-8").read()
+        with open(os.path.join(tmp, "api_calls.log"), encoding="utf-8") as fh:
+            content = fh.read()
         self.assertEqual(content.count(">>>"), 10)
         self.assertEqual(content.count("RESP success"), 10)
         self.assertEqual(content.count("---"), 10)
