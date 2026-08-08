@@ -16,6 +16,7 @@ from GalTransl.Cache import (
     get_transCache_from_json,
     save_transCache_to_json,
 )
+from GalTransl.ConfigHelper import CProblemType
 from GalTransl.CSentense import CSentense
 
 
@@ -28,8 +29,10 @@ class FakeProblemConfig:
         return {}
 
     def getProblemAnalyzeConfig(self, key):
+        # 注意：find_problems 内部用 `CProblemType.xxx in find_type` 判定，
+        # 因此这里必须返回枚举成员，而非裸字符串。
         if key == "problemList":
-            return ["残留日文"]
+            return [CProblemType.残留日文]
         return []
 
     def getlbSymbol(self):
@@ -99,6 +102,51 @@ class CacheProblemRefreshTests(unittest.IsolatedAsyncioTestCase):
                 refreshed[0],
                 msg=f"problem 字段未被刷新: {refreshed[0]}",
             )
+
+
+    async def test_old_problem_not_accumulated_on_recheck(self) -> None:
+        from GalTransl.Problem import find_problems
+
+        # 模拟真实重检链路：从缓存读出带旧 problem 的 tran 对象后再次 find_problems。
+        # 旧 problem 来自上一次写回（如"残留日文：おはよう"），若 find_problems 使用
+        # += 追加，则会累积；正确行为应以其本次检测结果覆盖，旧值被丢弃。
+        pre_src = "おはよう"
+        post_src = pre_src
+        tran = CSentense(pre_src, speaker="", index=0)
+        tran.post_src = post_src
+        # pre_dst 仍含日文 -> 本次检测应命中"残留日文"；同时没有其它问题
+        tran.pre_dst = "おはよう 早上好"
+        tran.proofread_zh = "おはよう 早上好"
+        # 关键：先塞入一个"旧缓存 problem"，模拟上一次重检遗留
+        tran.problem = "旧缓存残留日文, 丢失换行"
+        # 残留日文判定要求 pre_dst 与 post_dst 同时含日文，故这里补齐 post_dst
+        tran.post_dst = "おはよう 早上好"
+
+        trans_list = [tran]
+        config = FakeProblemConfig()
+        find_problems(trans_list, config, None)
+
+        # 旧 problem 不得残留 / 不得与本次结果拼接
+        self.assertNotIn("旧缓存残留日文", tran.problem)
+        self.assertNotIn("丢失换行", tran.problem)
+        # 本次检测出的问题应完整写入（以"残留日文："前缀标识，且整体为单次覆盖结果）
+        self.assertTrue(tran.problem.startswith("残留日文："))
+        self.assertNotIn(", ", tran.problem)  # 不应出现旧值+新值的拼接痕迹
+
+    async def test_empty_problem_clears_old_value(self) -> None:
+        from GalTransl.Problem import find_problems
+
+        # 无问题时也应以 "" 覆盖旧 problem，而非保留
+        pre_src = "こんにちは"
+        post_src = pre_src
+        tran = CSentense(pre_src, speaker="", index=0)
+        tran.post_src = post_src
+        tran.pre_dst = "你好"  # 无问题
+        tran.proofread_zh = "你好"
+        tran.problem = "旧缓存残留日文"
+
+        find_problems([tran], FakeProblemConfig(), None)
+        self.assertEqual(tran.problem, "")
 
 
 if __name__ == "__main__":

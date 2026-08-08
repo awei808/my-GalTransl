@@ -195,5 +195,6 @@ def find_problems(
         if "(Failed)" in post_dst:
             problem_list.append("翻译失败")
 
-        if problem_list:
-            tran.problem += ", ".join(problem_list)
+        # 以本次检测结果覆盖 tran.problem（清空旧缓存遗留的问题，避免累积）。
+        # 不要加 if problem_list 判断：无问题时需显式置空以清除旧 problem。
+        tran.problem = ", ".join(problem_list)
