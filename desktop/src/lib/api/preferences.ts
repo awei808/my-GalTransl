@@ -25,6 +25,7 @@ const THEME_MODE_KEY = "galtransl-theme-mode";
 const CUSTOM_BACKGROUND_KEY = "galtransl-custom-background";
 const HIDE_BACKEND_CONSOLE_KEY = "galtransl-hide-backend-console";
 const CACHE_BROWSER_FONT_SIZE_KEY = "galtransl-cache-browser-font-size";
+const CACHE_PAGE_SIZE_KEY = "galtransl-cache-page-size";
 const PROMPT_TEMPLATES_OVERRIDES_KEY = "galtransl_prompt_templates_overrides";
 
 // ---- Defaults & limits ----
@@ -43,6 +44,9 @@ export const HIDE_BACKEND_CONSOLE_DEFAULT = true;
 export const CACHE_BROWSER_FONT_SIZE_MIN = 11;
 export const CACHE_BROWSER_FONT_SIZE_MAX = 20;
 export const CACHE_BROWSER_FONT_SIZE_DEFAULT = 14;
+export const CACHE_PAGE_SIZE_MIN = 0;
+export const CACHE_PAGE_SIZE_MAX = 10000;
+export const CACHE_PAGE_SIZE_DEFAULT = 2000;
 
 // ---- Custom events ----
 
@@ -54,6 +58,7 @@ export const THEME_MODE_CHANGE_EVENT = "galtransl:theme-mode-change";
 export const CUSTOM_BACKGROUND_CHANGE_EVENT = "galtransl:custom-background-change";
 export const HIDE_BACKEND_CONSOLE_CHANGE_EVENT = "galtransl:hide-backend-console-change";
 export const CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT = "galtransl:cache-browser-font-size-change";
+export const CACHE_PAGE_SIZE_CHANGE_EVENT = "galtransl:cache-page-size-change";
 
 // ---- Normalizers ----
 
@@ -94,11 +99,22 @@ function normalizeThemeMode(value: unknown): ThemeMode {
 }
 
 function normalizeCacheBrowserFontSize(value: unknown): number {
+  if (value === null || value === undefined || value === "") return CACHE_BROWSER_FONT_SIZE_DEFAULT;
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) return CACHE_BROWSER_FONT_SIZE_DEFAULT;
   const integer = Math.trunc(numeric);
   if (integer < CACHE_BROWSER_FONT_SIZE_MIN) return CACHE_BROWSER_FONT_SIZE_MIN;
   if (integer > CACHE_BROWSER_FONT_SIZE_MAX) return CACHE_BROWSER_FONT_SIZE_MAX;
+  return integer;
+}
+
+function normalizeCachePageSize(value: unknown): number {
+  if (value === null || value === undefined || value === "") return CACHE_PAGE_SIZE_DEFAULT;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return CACHE_PAGE_SIZE_DEFAULT;
+  const integer = Math.trunc(numeric);
+  if (integer < CACHE_PAGE_SIZE_MIN) return CACHE_PAGE_SIZE_MIN;
+  if (integer > CACHE_PAGE_SIZE_MAX) return CACHE_PAGE_SIZE_MAX;
   return integer;
 }
 
@@ -381,6 +397,33 @@ export function setCacheBrowserFontSizePreference(size: number): number {
     localStorage.setItem(CACHE_BROWSER_FONT_SIZE_KEY, String(normalized));
     window.dispatchEvent(
       new CustomEvent(CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT, { detail: normalized }),
+    );
+  } catch {
+    // ignore storage errors
+  }
+  return normalized;
+}
+
+// ---- Cache page size ----
+// 审阅页“每页条目显示数量”：缓存条目分页查看时每页最多显示的 json 条目数。
+// 默认 2000，可修改，范围 [0, 10000]；0 表示不分页（一次性显示全部条目）。
+// 修改后重新打开缓存文件生效。
+
+export function getCachePageSizePreference(): number {
+  try {
+    const raw = localStorage.getItem(CACHE_PAGE_SIZE_KEY);
+    return normalizeCachePageSize(raw);
+  } catch {
+    return CACHE_PAGE_SIZE_DEFAULT;
+  }
+}
+
+export function setCachePageSizePreference(size: number): number {
+  const normalized = normalizeCachePageSize(size);
+  try {
+    localStorage.setItem(CACHE_PAGE_SIZE_KEY, String(normalized));
+    window.dispatchEvent(
+      new CustomEvent(CACHE_PAGE_SIZE_CHANGE_EVENT, { detail: normalized }),
     );
   } catch {
     // ignore storage errors

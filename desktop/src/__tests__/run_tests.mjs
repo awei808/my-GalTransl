@@ -314,122 +314,82 @@ testGroup("模块 7: loadedFile 竞态回归 — metadata effect 误清 loadedFi
   });
 });
 
-// --- 模块 8: 虚拟滚动截断保存合并（P0 修复） ---
-testGroup("模块 8: 虚拟滚动截断保存合并 (P0)", () => {
-  function mergeVirtualSlice(full, current, loadedIndices) {
-    const mine = new Map(current.map((e) => [e.index, e]));
-    return full
-      .filter((b) => !(loadedIndices.has(b.index) && !mine.has(b.index)))
-      .map((b) => mine.get(b.index) ?? b);
-  }
-
-  // 构造 2000 条完整后端数据（> VIRTUAL_THRESHOLD=1500）
+// --- 模块 8: 分页模式全量加载保存（取代虚拟滚动截断合并） ---
+testGroup("模块 8: 分页全量加载保存 (P0)", () => {
+  // 分页模式下 loadFile 全量加载（setEntries(all)），saveCurrentFile 直接保存 entries()，无合并。
+  // 构造 2000 条数据模拟全量加载后的内存 entries
   const full = Array.from({ length: 2000 }, (_, i) => ({
     index: i + 1,
     pre_dst: `dst-${i + 1}`,
     problem: "",
   }));
-  // 加载区域 = 前 750 条（VIRTUAL_LIMIT）
-  const loadedSlice = full.slice(0, 750);
-  const loadedIndices = new Set(loadedSlice.map((e) => e.index));
 
-  testGroup("  8.1 完整加载（loadedIndices=null）→ 不合并原样保存", () => {
+  testGroup("  8.1 全量加载后保存 → 直接用 entries() 不合并、内容完整", () => {
     const current = full;
-    let toSave = current;
-    if (null !== null) toSave = mergeVirtualSlice(full, current, null); // 不会进入
+    const toSave = current; // 分页模式：无 loadedSliceIndices，直接保存 entries()
     assertEq(toSave.length, 2000, "完整数据长度不变");
     assertEq(toSave[0].pre_dst, "dst-1", "内容不变");
+    assertEq(toSave[1999].pre_dst, "dst-2000", "最后一条也在内存中");
   });
 
-  testGroup("  8.2 截断 + 编辑 index=5 → merged 含新值且不丢 751+", () => {
-    const current = loadedSlice.map((e) =>
+  testGroup("  8.2 全量加载 + 编辑 index=5 → 保存含新值，其余不变", () => {
+    const current = full.map((e) =>
       e.index === 5 ? { ...e, pre_dst: "新译文5" } : e,
     );
-    const merged = mergeVirtualSlice(full, current, loadedIndices);
-    assertEq(merged.length, 2000, "长度仍为 2000（未丢失）");
-    assertEq(merged[4].pre_dst, "新译文5", "编辑生效");
-    assertEq(merged[5].pre_dst, "dst-6", "其余不变");
+    assertEq(current.length, 2000, "长度不变");
+    assertEq(current[4].pre_dst, "新译文5", "编辑生效");
+    assertEq(current[5].pre_dst, "dst-6", "其余不变");
   });
 
-  testGroup("  8.3 截断 + 删除 index=5 → merged 无 index 5，751+ 保留", () => {
-    const current = loadedSlice.filter((e) => e.index !== 5);
-    const merged = mergeVirtualSlice(full, current, loadedIndices);
-    assertEq(merged.length, 1999, "删 1 条后长度 1999");
-    assert(!merged.some((e) => e.index === 5), "index 5 已移除");
-    assert(merged.some((e) => e.index === 2000), "751+ 保留");
+  testGroup("  8.3 全量加载 + 删除 index=5 → 保存无 index 5", () => {
+    const current = full.filter((e) => e.index !== 5);
+    assertEq(current.length, 1999, "删 1 条后长度 1999");
+    assert(!current.some((e) => e.index === 5), "index 5 已移除");
+    assert(current.some((e) => e.index === 2000), "全量加载下其他条目保留");
   });
 
-  testGroup("  8.4 未加载区域 751-2000 全部保留", () => {
-    const current = loadedSlice; // 无编辑
-    const merged = mergeVirtualSlice(full, current, loadedIndices);
-    assert(merged.some((e) => e.index === 751), "index 751 保留");
-    assert(merged.some((e) => e.index === 1500), "index 1500 保留");
-    assert(merged.some((e) => e.index === 2000), "index 2000 保留");
-    assertEq(merged.length, 2000, "总长不变");
+  testGroup("  8.4 分页只渲染当前页，但内存 entries 仍是全量（翻页可访问）", () => {
+    const entries = full; // 内存全量
+    const pageSize = 2000; // 每页条目显示数量
+    // 第 1 页渲染前 2000 条；若有更多则分页
+    const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
+    const page0 = entries.slice(0, pageSize);
+    assertEq(totalPages, 1, "2000 条 / 2000 每页 = 1 页");
+    assertEq(page0.length, 2000, "第 1 页渲染 2000 条");
   });
 
-  testGroup("  8.5 边界：加载区域最后一条 index=750 被删除 → 移除，751 保留", () => {
-    const current = loadedSlice.filter((e) => e.index !== 750);
-    const merged = mergeVirtualSlice(full, current, loadedIndices);
-    assert(!merged.some((e) => e.index === 750), "index 750 已移除");
-    assert(merged.some((e) => e.index === 751), "index 751 保留（未加载区）");
+  testGroup("  8.5 大文件分页：4500 条 / 2000 每页 = 3 页", () => {
+    const count = 4500;
+    const pageSize = 2000;
+    const totalPages = Math.max(1, Math.ceil(count / pageSize));
+    assertEq(totalPages, 3, "4500 / 2000 → 3 页");
+    const lastPageStart = 2 * pageSize;
+    const lastPageLen = count - lastPageStart;
+    assertEq(lastPageLen, 500, "第 3 页 500 条");
   });
 
-  testGroup("  8.6 全删加载区域 → merged 仅剩未加载区域", () => {
-    const current = []; // 用户删除全部可见条目
-    const merged = mergeVirtualSlice(full, current, loadedIndices);
-    assertEq(merged.length, 1250, "剩 2000-750=1250 条");
-    assert(!merged.some((e) => e.index <= 750), "加载区域全删");
-    assertEq(merged[0].index, 751, "从 751 开始");
+  testGroup("  8.6 每页条数为 0（不分页）→ 一次性显示全部", () => {
+    const pageSize = 0;
+    const all = full;
+    const rendered = pageSize > 0 ? all.slice(0, pageSize) : all;
+    assertEq(rendered.length, 2000, "0 = 不分页，显示全部");
   });
 });
 
-// --- 模块 9: P0 加固回归（快照竞态 + loadedFile 失效中止） ---
+// --- 模块 9: P0 加固回归（分页全量加载 + loadedFile 失效中止） ---
 testGroup("模块 9: P0 加固回归", () => {
-  function mergeVirtualSlice(full, current, loadedIndices) {
-    const mine = new Map(current.map((e) => [e.index, e]));
-    return full
-      .filter((b) => !(loadedIndices.has(b.index) && !mine.has(b.index)))
-      .map((b) => mine.get(b.index) ?? b);
-  }
-
-  // 构造 2000 条后端数据 + 截断 750
-  const full = Array.from({ length: 2000 }, (_, i) => ({
-    index: i + 1,
-    pre_dst: `dst-${i + 1}`,
-  }));
-  const loadedSlice = full.slice(0, 750);
-  const loadedIndices = new Set(loadedSlice.map((e) => e.index));
-
-  testGroup("  9.1 快照竞态：await 期间 loadedSliceIndices 变 null，用快照 merge 不崩溃且结果正确", () => {
-    // 模拟保存循环: 快照在 await 前
-    let loadedSliceIndices = loadedIndices; // 截断状态
-    const snapshot = loadedSliceIndices;    // 快照（await 前）
-    loadedSliceIndices = null;              // await 期间被 loadFile 复位（模拟）
-
-    // 若 snapshot 为 null 走完整保存，否则用快照 merge
-    let toSave;
-    if (snapshot === null) {
-      toSave = full;
-    } else {
-      toSave = mergeVirtualSlice(full, loadedSlice, snapshot); // 快照是 Set，不崩溃
-    }
-    assertEq(toSave.length, 2000, "合并不崩溃且长度完整");
+  testGroup("  9.1 分页模式保存直接使用内存 entries（全量，无合并依赖）", () => {
+    const entries = Array.from({ length: 2000 }, (_, i) => ({
+      index: i + 1,
+      pre_dst: `dst-${i + 1}`,
+    }));
+    // 分页模式：saveCurrentFile 直接 const toSave = entries()
+    const toSave = entries;
+    assertEq(toSave.length, 2000, "全量数据直接保存");
     assertEq(toSave[0].pre_dst, "dst-1", "内容正确");
   });
 
-  testGroup("  9.2 快照竞态：entries 已被刷新为完整数据，用旧快照 merge 仍正确", () => {
-    const snapshot = loadedIndices; // 旧快照 {1..750}
-    // entries 已被 loadFile 完整刷新（2000 条，含用户编辑 index=5）
-    const entries = full.map((e) => (e.index === 5 ? { ...e, pre_dst: "新译文5" } : e));
-    const toSave = mergeVirtualSlice(full, entries, snapshot);
-    assertEq(toSave.length, 2000, "长度完整");
-    assertEq(toSave[4].pre_dst, "新译文5", "编辑保留（mine 全覆盖）");
-    // 验证 filter 不移除已存在条目：index ≤ 750 的条目在 mine 中都存在
-    assert(!toSave.some((e) => e.index === 9999), "无多余条目");
-  });
-
-  testGroup("  9.3 loadedFile 失效：加载失败清空后中止保存（不写残缺数据）", () => {
+  testGroup("  9.2 loadedFile 失效：加载失败清空后中止保存（不写残缺数据）", () => {
     // 模拟加载失败: loadedFile 被清空
     let loadedFile = "game/t01.txt.json";
     const myFile = loadedFile; // 循环开始捕获
@@ -445,7 +405,7 @@ testGroup("模块 9: P0 加固回归", () => {
     assert(!saved, "loadedFile 失效时中止保存");
   });
 
-  testGroup("  9.4 loadedFile 正常时保存不中断", () => {
+  testGroup("  9.3 loadedFile 正常时保存不中断", () => {
     let loadedFile = "game/t01.txt.json";
     const myFile = loadedFile;
     // 无失效：不中止

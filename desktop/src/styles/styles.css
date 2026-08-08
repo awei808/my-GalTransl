@@ -1654,9 +1654,29 @@ textarea {
 .review-list {
   flex: 1;
   overflow-y: auto;
+  position: relative;
+}
+
+/* 分页模式条目列表容器：纵向 flex 布局（分页渲染当前页全部条目） */
+.review-list-full {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+/* 分页信息栏与分页控件 */
+.review-pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.review-pagination-info {
+  flex: 1;
+  text-align: center;
 }
 
 .review-placeholder {
@@ -1664,17 +1684,6 @@ textarea {
   font-size: var(--font-sm);
   text-align: center;
   padding: var(--space-6);
-}
-
-/* ── 虚拟滚动横幅 ── */
-.review-virtual-banner {
-  display: flex;
-  align-items: center;
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  background: var(--color-bg-info);
-  border-bottom: 1px solid var(--color-border-default);
 }
 
 /* ── 文件内查找 ── */

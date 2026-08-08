@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Index, Show, For, onCleanup, onMount, createMemo } from "solid-js";
+import { createSignal, createEffect, Show, For, Index, onCleanup, onMount, createMemo } from "solid-js";
 import { appState, setAppState, markDirty, markClean, getActiveConfigFileName } from "../../stores/appStore";
 import { confirm } from "../../stores/confirmStore";
 import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
@@ -9,6 +9,7 @@ import {
   savePerFileMetadata,
   checkCacheProblems,
 } from "../../lib/api/project";
+import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import type { CacheEntry, MetadataEntry, MetadataType, ProblemTypeInfo } from "../../lib/api/types";
@@ -167,6 +168,11 @@ function EntryCard(props: {
   onFieldChange: (field: string, value: string) => void;
   onSwapAlt: () => void;
   onSave?: () => void;
+  // 展开状态受控（父级持有，条目翻页卸载重建后仍能恢复）
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  // 可选：主译文框聚焦状态上报（虚拟滚动"钉住"编辑项用；分页模式不传）
+  onFocusChange?: (focused: boolean) => void;
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
@@ -176,9 +182,6 @@ function EntryCard(props: {
     themeDark();
     return getNameColor(String(e().name || ""));
   });
-
-  // 本地展开状态——仅影响自身，不再触发全量重算
-  const [expanded, setExpanded] = createSignal(false);
 
   // 本地译文草稿——键入时只更新此信号，不触发父级 entries 级联重算，仅在失焦时提交
   let dstRef: HTMLTextAreaElement | undefined;
@@ -241,9 +244,11 @@ function EntryCard(props: {
               // 打字时即标记"未保存"，避免脏指示滞后到失焦才出现
               if (appState.activeFilePath) markDirty(appState.activeFilePath);
             }}
+            onFocus={() => props.onFocusChange?.(true)}
             onBlur={() => {
               // 失焦时把译文草稿提交到内存（实时进入 entries），保存由用户手动触发
               props.onFieldChange("pre_dst", draftDst());
+              props.onFocusChange?.(false);
             }}
             onKeyDown={(e) => {
               if (e.key !== "Enter") return;
@@ -282,7 +287,11 @@ function EntryCard(props: {
               <span class="entry-btn-text">备选译文</span>
             </button>
           </Show>
-          <button class="entry-btn" title="展开/收起全部字段" onClick={() => setExpanded((v) => !v)}>
+          <button
+            class="entry-btn"
+            title="展开/收起全部字段"
+            onClick={props.onToggleExpanded}
+          >
             <svg
               width="14"
               height="14"
@@ -291,7 +300,7 @@ function EntryCard(props: {
               stroke="currentColor"
               stroke-width="2"
             >
-              <path d={expanded() ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+              <path d={props.expanded ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
             </svg>
             <span class="entry-btn-text">展开</span>
           </button>
@@ -347,7 +356,7 @@ function EntryCard(props: {
       </div>
 
       {/* ── 展开全部字段 ── */}
-      <Show when={expanded()}>
+      <Show when={props.expanded}>
         <div class="entry-expanded">
           {ALL_FIELDS.map((field) => {
             const val = e()[field.key];
@@ -639,6 +648,8 @@ export function ReviewPage() {
     document.removeEventListener("galtransl:save", handleMenuSave);
     // 组件卸载时清除跳转标记，避免残留
     setAppState("reviewJumpToIndex", null);
+    // 取消未完成的高亮定位 rAF，避免卸载后继续查询 DOM
+    if (flashRAFId) cancelAnimationFrame(flashRAFId);
   });
 
   // 按 CacheEntry.index（序号）插入，保持条目按序号有序
@@ -714,18 +725,106 @@ export function ReviewPage() {
   }
 
   // 当 activeFilePath 变化时加载文件
-  const VIRTUAL_THRESHOLD = 1500;
-  const VIRTUAL_LIMIT = 750;
+  // 分页条数："每页条目显示数量"。默认 2000，可修改。
+  // 见 lib/api/preferences.ts 的 getCachePageSizePreference。
   const [totalCount, setTotalCount] = createSignal(0);
-  const [showAll, setShowAll] = createSignal(false);
+
+  // ── 分页状态 ──
+  // 每页条数 = 每页条目显示数量（0 表示不分页，一次性显示全部）
+  const pageSize = () => getCachePageSizePreference();
+  const [page, setPage] = createSignal(0);
+  // 分页总数基于当前过滤后的条目集（filteredEntries），而非文件总条数 totalCount，
+  // 避免过滤后每页条数与"共 X 条"不一致导致末页为空。
+  const totalPages = () =>
+    pageSize() > 0 ? Math.max(1, Math.ceil(filteredEntries().length / pageSize())) : 1;
+  // 当前页条目切片（分页渲染用）
+  const currentPageEntries = createMemo(() => {
+    const all = filteredEntries();
+    const ps = pageSize();
+    if (ps <= 0) return all;
+    const start = Math.min(page() * ps, all.length);
+    return all.slice(start, start + ps);
+  });
+  // 过滤条件变化时重置到第 1 页；页码越界时钳制
+  createEffect(() => {
+    const total = filteredEntries().length;
+    const maxPage = pageSize() > 0 ? Math.max(0, Math.ceil(total / pageSize()) - 1) : 0;
+    if (page() > maxPage) setPage(maxPage);
+  });
+  // 过滤条件（问题/说话人/备选）变化时回到第 1 页
+  createEffect(() => {
+    filterProblemsOnly();
+    filterAltOnly();
+    filterProblemType();
+    filterSpeaker();
+    setPage(0);
+  });
+  // 滚动到当前页顶部（翻页后定位到列表起始）
+  const goToPage = (p: number) => {
+    setPage(p);
+    scrollReviewToTop();
+  };
+
+  // 展开状态集合（业务 index）：分页翻页卸载重建后仍能恢复
+  const [expandedSerials, setExpandedSerials] = createSignal<ReadonlySet<number>>(new Set());
+  const toggleExpanded = (serial: number) => {
+    setExpandedSerials((prev) => {
+      const next = new Set(prev);
+      if (next.has(serial)) next.delete(serial);
+      else next.add(serial);
+      return next;
+    });
+  };
+
+  // 业务序号（entry.index）→ filteredEntries 下标；未命中返回 -1
+  const filteredIndexFromSerial = (serial: number): number =>
+    filteredEntries().findIndex((e) => e.index === serial);
+
+  // 滚动当前页列表到顶部（分页翻页后定位到列表起始）
+  const scrollReviewToTop = () => {
+    requestAnimationFrame(() => {
+      document.querySelector(".review-list")?.scrollTo({ top: 0 });
+    });
+  };
+
+  // 高亮指定业务序号对应的条目（分页模式下目标在当前页渲染后逐帧重试）
+  // 重试有帧数上限 + rAF 句柄可取消：避免目标被过滤后无限循环，卸载后停止查询 DOM
+  let flashRAFId = 0;
+  const flashEntry = (serial: number): void => {
+    let frames = 0;
+    const maxFrames = 120; // 约 2 秒（60fps），超过即放弃
+    const tryFlash = () => {
+      const el = document.querySelector(`.review-list [data-index="${serial}"] .entry-card`) as HTMLElement | null;
+      if (!el) {
+        // 目标未渲染（分页切换后）：逐帧重试，超过上限放弃
+        if (frames++ < maxFrames) flashRAFId = requestAnimationFrame(tryFlash);
+        return;
+      }
+      el.scrollIntoView({ block: "center" });
+      el.classList.remove("entry-flash");
+      void el.offsetWidth;
+      el.classList.add("entry-flash");
+      el.addEventListener("animationend", () => el.classList.remove("entry-flash"), { once: true });
+    };
+    flashRAFId = requestAnimationFrame(tryFlash);
+  };
+
+  // 跳转到指定业务序号：先翻到目标条目所在页，再滚动并高亮
+  const scrollToSerial = (serial: number): boolean => {
+    const fi = filteredIndexFromSerial(serial);
+    if (fi < 0) return false;
+    const ps = pageSize();
+    const targetPage = ps > 0 ? Math.floor(fi / ps) : 0;
+    if (targetPage !== page()) setPage(targetPage);
+    flashEntry(serial);
+    return true;
+  };
 
   // 加载（或局部刷新）当前打开的翻译缓存文件
   // loadToken：每次发起加载自增，响应回来时若已被更新的请求取代则丢弃，
   // 同时校验 activeFilePath 仍匹配目标文件——防止 handleBlur 并发覆写后新文件响应对误丢弃。
   let loadToken = 0;
   let loadedFile = ""; // entries() 当前所代表的（最新一次成功加载的）文件路径
-  // 虚拟滚动截断时加载区域的 index 集合；null 表示完整加载。保存时用于合并完整数据，防止覆盖未加载条目
-  let loadedSliceIndices: Set<number> | null = null;
   async function loadFile(pid: string, file: string): Promise<void> {
     const targetFile = file;         // 快照：本次请求的目标文件
     const myToken = ++loadToken;
@@ -736,26 +835,22 @@ export function ReviewPage() {
       if (appState.activeFilePath !== targetFile) return;       // 文件已切走
       const all = res.entries ?? [];
       setTotalCount(all.length);
+      setPage(0); // 切换文件回到第 1 页
+      setExpandedSerials(new Set()); // 切换文件后清空展开状态，避免旧文件的 index 残留
       // 先记录 entries() 所属文件再 setEntries：loadedFile 是非响应式变量，
       // setEntries 会同步触发依赖 entries() 的 effect（含跳转 effect）重跑，
       // 若在 setEntries 之后才赋值 loadedFile，重跑时读到旧值会卡在跳转守卫。
       loadedFile = file;
-      if (all.length > VIRTUAL_THRESHOLD && !showAll()) {
-        setEntries(all.slice(0, VIRTUAL_LIMIT));
-        // 记录加载区域确切 index 集合（不依赖 index 排序），保存时用于合并完整数据
-        loadedSliceIndices = new Set(all.slice(0, VIRTUAL_LIMIT).map((e) => e.index));
-      } else {
-        setEntries(all);
-        loadedSliceIndices = null; // 完整加载，无需合并
-      }
+      setEntries(all); // 分页模式下全量加载，渲染层按页切片显示
       baselineKey = snapshotKey(entries());                     // 重置编辑基线
     } catch {
       // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
       if (myToken === loadToken && appState.activeFilePath === targetFile) {
         setEntries([]);
         loadedFile = "";
-        loadedSliceIndices = null; // 失败清空时同步复位，防残留旧截断标记
         setTotalCount(0);
+        setPage(0);
+        setExpandedSerials(new Set());
       }
     } finally {
       if (myToken === loadToken) setLoading(false);
@@ -896,9 +991,8 @@ export function ReviewPage() {
     if (!pid || !file) {
       setEntries([]);
       loadedFile = "";
-      loadedSliceIndices = null; // 无文件时复位截断标记
       setTotalCount(0);
-      setShowAll(false);
+      setPage(0);
       clearUndo();
       return;
     }
@@ -934,45 +1028,12 @@ export function ReviewPage() {
     if (idx === null) return;
     // 文件尚未加载完成：等下一轮（loadedFile 在 loadFile 成功后先于 setEntries 更新）
     if (entries().length === 0 || loadedFile !== appState.activeFilePath) return;
-    // 强制展开全部条目，确保目标在 DOM 中
-    setShowAll(true);
-    // 推迟到 DOM 渲染完成后执行滚动；跨文件加载时目标条目可能尚未渲染，
-    // 逐帧重试直到出现（避免单次尝试失败后清除标记导致跳转失效）
-    const tryScroll = (attempt: number) => {
-      const el = document.getElementById(`entry-${idx}`);
-      if (el) {
-        // 立即定位到目标条目（不做滚动动画），高亮动画保留
-        el.scrollIntoView({ block: "center" });
-        // 高亮动画：先移除再强制 reflow 重加，保证重复跳转同一条目也能重新触发
-        const card = el.querySelector(".entry-card") as HTMLElement | null;
-        if (card) {
-          card.classList.remove("entry-flash");
-          void card.offsetWidth; // 强制重排重置动画
-          card.classList.add("entry-flash");
-          card.addEventListener(
-            "animationend",
-            () => card.classList.remove("entry-flash"),
-            { once: true },
-          );
-        }
-        setAppState("reviewJumpToIndex", null);
-      } else if (attempt < 60) {
-        // 每帧重试一次（约 1 秒），等待跨文件切换的目标条目渲染完成
-        requestAnimationFrame(() => tryScroll(attempt + 1));
-      } else {
-        // 超时放弃并清除标记，防止死循环
-        setAppState("reviewJumpToIndex", null);
-      }
-    };
-    requestAnimationFrame(() => tryScroll(0));
+    // 分页：scrollToSerial 内部自动翻到目标条目所在页并高亮
+    if (filteredIndexFromSerial(idx) >= 0) {
+      scrollToSerial(idx);
+      setAppState("reviewJumpToIndex", null);
+    }
   });
-
-  function handleShowAll() {
-    setShowAll(true);
-    const pid = appState.activeProjectId;
-    const file = appState.activeFilePath;
-    if (pid && file) loadFile(pid, file);
-  }
 
   // ── 元数据加载 / 保存（per-file 模式）──
   createEffect(() => {
@@ -1230,24 +1291,12 @@ export function ReviewPage() {
       toast.warning("跳转失败：条目序号需为正整数");
       return;
     }
-    const el = document.getElementById(`entry-${val}`);
-    if (!el) {
+    if (filteredIndexFromSerial(val) < 0) {
       toast.warning(`跳转失败：条目 #${val} 不存在`);
       return;
     }
-    el.scrollIntoView({ block: "center" }); // 立即定位，不做滚动动画
-    // 高亮动画：与问题侧栏跳转一致（先移除再强制 reflow 重加，重复跳转同一条目也能重触发）
-    const card = el.querySelector(".entry-card") as HTMLElement | null;
-    if (card) {
-      card.classList.remove("entry-flash");
-      void card.offsetWidth;
-      card.classList.add("entry-flash");
-      card.addEventListener(
-        "animationend",
-        () => card.classList.remove("entry-flash"),
-        { once: true },
-      );
-    }
+    // 分页：scrollToSerial 内部自动翻到目标所在页并高亮
+    scrollToSerial(val);
     const fileName = (appState.activeFilePath ?? "").split("/").pop() || "";
     toast.success(`跳转到 ${fileName} 第 ${val} 条成功`);
   }
@@ -1269,21 +1318,12 @@ export function ReviewPage() {
       // 直到“保存瞬间与完成瞬间无新改动”，保证最终落盘的是最新状态
       let revAfterSave = entriesRev;
       // 虚拟滚动截断时缓存后端完整数据，供保存循环内复用（用户编辑期间后端文件未变）
-      let fullBackend: CacheEntry[] | null = null;
       while (true) {
         const myRev = entriesRev;
         // entries 已失效（loadFile 失败清空 loadedFile）时中止保存，避免写残缺数据
         if (loadedFile !== myFile) return;
-        // 快照本次循环的截断状态：避免 await 期间 loadFile 复位为 null 导致崩溃
-        const sliceIndices = loadedSliceIndices;
-        let toSave = entries();
-        if (sliceIndices !== null) {
-          if (fullBackend === null) {
-            const res = await fetchCacheFile(pid, myFile);
-            fullBackend = res.entries ?? [];
-          }
-          toSave = mergeVirtualSlice(fullBackend, entries(), sliceIndices);
-        }
+        // 分页模式全量加载，直接保存内存中的全部条目
+        const toSave = entries();
         const resp = await saveCacheFile(pid, myFile, toSave, getActiveConfigFileName());
         // 检查后端返回：保存未确认成功时不 markClean，避免误报"已保存"
         if (resp && resp.success === false) {
@@ -1352,12 +1392,8 @@ export function ReviewPage() {
   /** 对当前条目强制重新问题检测（POST /cache/check，persist 时写盘），按 index 合并 problem 结果 */
   async function recheckProblems(pid: string, myFile: string, persist = false) {
     try {
-      // 虚拟滚动截断时合并后端完整数据，保证检测覆盖全部条目
-      let full = entries();
-      if (loadedSliceIndices !== null) {
-        const res = await fetchCacheFile(pid, myFile);
-        full = mergeVirtualSlice(res.entries ?? [], entries(), loadedSliceIndices);
-      }
+      // 分页模式全量加载，直接检测内存中的全部条目
+      const full = entries();
       const resp = await checkCacheProblems(pid, myFile, full, getActiveConfigFileName(), persist);
       if (!resp || !resp.success) {
         toast.warning("重新问题检测失败，已保留原检测结果");
@@ -1370,18 +1406,6 @@ export function ReviewPage() {
     } catch {
       toast.warning("重新问题检测失败，已保留原检测结果");
     }
-  }
-
-  /** 合并虚拟滚动加载区域与后端完整数据：内存编辑覆盖、已删除移除、未加载区域原样保留 */
-  function mergeVirtualSlice(
-    full: CacheEntry[],
-    current: CacheEntry[],
-    loadedIndices: Set<number>,
-  ): CacheEntry[] {
-    const mine = new Map(current.map((e) => [e.index, e]));
-    return full
-      .filter((b) => !(loadedIndices.has(b.index) && !mine.has(b.index)))
-      .map((b) => mine.get(b.index) ?? b);
   }
 
   const file = () => appState.activeFilePath;
@@ -1485,6 +1509,7 @@ export function ReviewPage() {
       </div>
 
       {/* ── 条目列表 ── */}
+      {/* review-list 为条目列表滚动容器：同时承载元数据与翻译校对两种模式，overflow-y:auto */}
       <div class="review-list">
         {/* 元数据模式：渲染 per-file 元数据 JSON 条目 */}
         <Show when={reviewMode() === "metadata"}>
@@ -1522,31 +1547,54 @@ export function ReviewPage() {
               </p>
             }
           >
-            {/* 虚拟滚动提示 */}
-            <Show when={totalCount() > VIRTUAL_THRESHOLD && !showAll()}>
-              <div class="review-virtual-banner">
-                共 {totalCount()} 条，当前仅显示前 {VIRTUAL_LIMIT} 条
-                <button class="btn btn--sm" onClick={handleShowAll} style="margin-left:8px">
-                  显示全部
+            {/* 分页信息栏：仅当条目数超过每页条数（需分页）时才显示 */}
+            <Show when={totalPages() > 1}>
+              <div class="review-pagination">
+                共 {filteredEntries().length} 条
+                {filteredEntries().length !== totalCount() && <span>（文件共 {totalCount()} 条）</span>}
+                ，每页 {pageSize() > 0 ? pageSize() : "全部"} 条，共 {totalPages()} 页
+              </div>
+            </Show>
+            {/* 当前页条目全量渲染（分页模式，<Index> 简单可靠，高度自适应无重叠） */}
+            <div class="review-list-full">
+              <Index each={currentPageEntries()}>
+                {(entrySignal) => (
+                  <div data-index={entrySignal().index}>
+                    <EntryCard
+                      entry={entrySignal()}
+                      expanded={expandedSerials().has(entrySignal().index)}
+                      onToggleExpanded={() => toggleExpanded(entrySignal().index)}
+                      onSkip={() => handleSkip(entrySignal().index)}
+                      onDelete={() => handleDelete(entrySignal().index)}
+                      onSwapAlt={() => handleSwapAlt(entrySignal().index)}
+                      onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
+                    />
+                  </div>
+                )}
+              </Index>
+            </div>
+            {/* 分页控件：仅当需分页时才显示 */}
+            <Show when={totalPages() > 1}>
+              <div class="review-pagination">
+                <button
+                  class="btn btn--sm"
+                  onClick={() => goToPage(page() - 1)}
+                  disabled={page() <= 0}
+                >
+                  上一页
+                </button>
+                <span class="review-pagination-info">
+                  第 {page() + 1} / {totalPages()} 页
+                </span>
+                <button
+                  class="btn btn--sm"
+                  onClick={() => goToPage(page() + 1)}
+                  disabled={page() >= totalPages() - 1}
+                >
+                  下一页
                 </button>
               </div>
             </Show>
-            {/* 用 <Index> 按索引复用 DOM：handleFieldChange 每次生成新的 entry 对象，
-                若用 <For>（按引用复用）会把正在编辑的那条 <input> 销毁重建，导致失焦 / IME 中断。
-                <Index> 保留节点，仅更新 props 与绑定，输入焦点不丢。 */}
-            <Index each={filteredEntries()}>
-              {(entrySignal) => (
-                <div id={`entry-${entrySignal().index}`}>
-                  <EntryCard
-                    entry={entrySignal()}
-                    onSkip={() => handleSkip(entrySignal().index)}
-                    onDelete={() => handleDelete(entrySignal().index)}
-                    onSwapAlt={() => handleSwapAlt(entrySignal().index)}
-    onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
-    />
-                </div>
-              )}
-            </Index>
           </Show>
         </Show>
         </Show>

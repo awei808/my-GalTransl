@@ -10,6 +10,8 @@ import {
   clearCustomBackgroundPreference,
   getCacheBrowserFontSizePreference,
   setCacheBrowserFontSizePreference,
+  getCachePageSizePreference,
+  setCachePageSizePreference,
   getHomeHistoryRetentionLimit,
   setHomeHistoryRetentionLimit,
   getHomeJobRetentionLimit,
@@ -22,6 +24,8 @@ import {
   HOME_LIST_LIMIT_MAX,
   CACHE_BROWSER_FONT_SIZE_MIN,
   CACHE_BROWSER_FONT_SIZE_MAX,
+  CACHE_PAGE_SIZE_MIN,
+  CACHE_PAGE_SIZE_MAX,
 } from "../../lib/api/preferences";
 import { fetchVersion, fetchVersionCheck, fetchAppSettings, updateAppSettings } from "../../lib/api/general";
 import { APP_SETTINGS_TAXONOMY } from "../../lib/settings-taxonomy";
@@ -44,6 +48,7 @@ export function SettingsPage() {
     String(getCustomBackgroundPreference().surfaceOpacity),
   );
   const [fontSize, setFontSize] = createSignal(String(getCacheBrowserFontSizePreference()));
+  const [pageSizeLimit, setPageSizeLimit] = createSignal(String(getCachePageSizePreference()));
   const [bgBusy, setBgBusy] = createSignal(false);
   const [bgError, setBgError] = createSignal("");
 
@@ -114,6 +119,12 @@ export function SettingsPage() {
 
   function applyFontSize(raw: string) {
     setFontSize(String(setCacheBrowserFontSizePreference(Number(raw) || NaN)));
+  }
+
+  function applyPageSizeLimit(raw: string) {
+    // 注意：不能写 Number(raw) || NaN，否则合法的 0 会被当成 falsy 转成 NaN，
+    // 进而被 normalizeCachePageSize 回退为默认值 2000，导致"设为 0 不生效"。
+    setPageSizeLimit(String(setCachePageSizePreference(raw.trim() === "" ? NaN : Number(raw))));
   }
 
   function applyHistoryLimit(raw: string) {
@@ -460,6 +471,21 @@ export function SettingsPage() {
                 onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLElement).blur()}
               />
             </div>
+          </div>
+
+          <div class="settings-field">
+            <span class="settings-label">每页条目显示数量</span>
+            <input
+              type="number"
+              class="field__input settings-control settings-number"
+              min={CACHE_PAGE_SIZE_MIN}
+              max={CACHE_PAGE_SIZE_MAX}
+              value={pageSizeLimit()}
+              onInput={(e) => setPageSizeLimit(e.currentTarget.value)}
+              onBlur={() => applyPageSizeLimit(pageSizeLimit())}
+              onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLElement).blur()}
+            />
+            <p class="settings-hint">0 = 不分页，一次性显示全部条目；默认 2000。</p>
           </div>
 
           <div class="settings-hint">
