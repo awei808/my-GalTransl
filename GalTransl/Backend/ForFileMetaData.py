@@ -120,7 +120,7 @@ class ForFileMetaData(BaseTranslate):
             guideline = ""
         guideline = (guideline or "").strip()
         if guideline:
-            block = f"# 翻译规范（translation_guideline）\n{guideline}\n"
+            block = f"# 翻译规范\n{guideline}\n"
         else:
             block = ""
         prompt_req = prompt_req.replace("[translation_guideline]", block)
