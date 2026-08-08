@@ -17,6 +17,7 @@ import {
   updateProjectConfig,
   initProject,
   importProjectFiles,
+  fetchWorkspaceRoot,
 } from "../../lib/api/project";
 import { ensureDesktopBackendReady, ApiError } from "../../lib/api/client";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
@@ -72,6 +73,8 @@ export function NewProjectWizard() {
   const [projectCreated, setProjectCreated] = createSignal(false);
   const [projectDir, setProjectDir] = createSignal("");
   const [projectId, setProjectId] = createSignal("");
+  // 后端 workspace 根目录（应用程序同目录下），用于实时预览项目完整路径
+  const [workspaceRoot, setWorkspaceRoot] = createSignal("");
 
   // Step 2
   const [importedFiles, setImportedFiles] = createSignal<string[]>([]);
@@ -85,7 +88,6 @@ export function NewProjectWizard() {
   const [textPlugins, setTextPlugins] = createSignal<PluginInfo[]>([]);
   const [selectedTextPlugin, setSelectedTextPlugin] = createSignal("text_common_normalfix");
   const [workersPerProject, setWorkersPerProject] = createSignal(16);
-  const [numPerRequest, setNumPerRequest] = createSignal(16);
   const [language, setLanguage] = createSignal("zh-cn");
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
   const [translationGuideline, setTranslationGuideline] = createSignal("");
@@ -103,6 +105,22 @@ export function NewProjectWizard() {
     if (!d) return "";
     const sep = d.includes("/") ? "/" : "\\";
     return `${d}${sep}gt_input`;
+  });
+
+  // 实时预览：输入项目名即拼接后端 workspace 根目录下的完整预期路径
+  const previewDir = createMemo(() => {
+    const root = workspaceRoot();
+    const name = projectName().trim();
+    if (!root || !name) return "";
+    const sep = root.includes("/") ? "/" : "\\";
+    return `${root}${sep}${name}`;
+  });
+
+  // 进入向导即拉取后端 workspace 根目录（位于应用程序同目录下）
+  createEffect(() => {
+    fetchWorkspaceRoot()
+      .then((res) => setWorkspaceRoot(res.workspace_root))
+      .catch(() => setWorkspaceRoot(""));
   });
 
   // 创建项目（全部走后端 /api/projects/init，含目录布局、config.yaml 与示例缓存）
@@ -236,9 +254,8 @@ export function NewProjectWizard() {
         ...((config.common as Record<string, unknown>) || {}),
         workersPerProject: workersPerProject(),
         language: language(),
-        "gpt.numPerRequestTranslate": numPerRequest(),
-        // 动态句数调整默认开启：值 = 上限(64)/4 = 16（前端“是否启用动态句数调整”开关据此判断启用）
-        "gpt.dynamicNumPerRequestTranslate": 16,
+        // 动态句数调整默认开启（已取代原"单次翻译句数 gpt.numPerRequestTranslate"，后者由后端默认值接管）
+        "gpt.dynamicNumPerRequestTranslate": false,
         "gpt.contextNum": 8,
       };
       // 翻译规范文件：写入 common 段扁平键 gpt.translation_guideline（后端 CProjectConfig.getKey
@@ -413,6 +430,7 @@ export function NewProjectWizard() {
             <StepProjectInfo
               projectName={projectName()}
               projectDir={projectDir()}
+              previewDir={previewDir()}
               projectCreated={projectCreated()}
               onProjectNameChange={setProjectName}
               onProjectCreatedChange={setProjectCreated}
@@ -439,7 +457,6 @@ export function NewProjectWizard() {
               selectedFilePlugin={selectedFilePlugin()}
               selectedTextPlugin={selectedTextPlugin()}
               workersPerProject={workersPerProject()}
-              numPerRequest={numPerRequest()}
               language={language()}
               translationGuideline={translationGuideline()}
               guidelines={guidelines()}
@@ -448,7 +465,6 @@ export function NewProjectWizard() {
               onFilePluginChange={setSelectedFilePlugin}
               onTextPluginChange={setSelectedTextPlugin}
               onWorkersChange={setWorkersPerProject}
-              onNumPerRequestChange={setNumPerRequest}
               onLanguageChange={setLanguage}
               onGuidelineChange={setTranslationGuideline}
               onSaveSettings={handleSaveSettings}

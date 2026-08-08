@@ -60,6 +60,13 @@ export async function initProject(name: string, overwrite = false) {
   });
 }
 
+/** 获取后端 workspace 根目录（项目创建位置，位于应用程序同目录下）。 */
+export async function fetchWorkspaceRoot() {
+  return apiRequest<{ workspace_root: string }>("/api/projects/workspace-root", {
+    method: "GET",
+  });
+}
+
 /** 将用户选中的本地源路径交给后端读取并导入 gt_input（所有磁盘 IO 走后端）。 */
 export async function importProjectFiles(projectId: string, sourcePaths: string[]) {
   return apiRequest<{ imported: string[]; skipped: string[] }>(

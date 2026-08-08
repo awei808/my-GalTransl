@@ -4,7 +4,6 @@ interface StepSettingsProps {
   selectedFilePlugin: string;
   selectedTextPlugin: string;
   workersPerProject: number;
-  numPerRequest: number;
   language: string;
   translationGuideline: string;
   guidelines: string[];
@@ -13,7 +12,6 @@ interface StepSettingsProps {
   onFilePluginChange: (v: string) => void;
   onTextPluginChange: (v: string) => void;
   onWorkersChange: (v: number) => void;
-  onNumPerRequestChange: (v: number) => void;
   onLanguageChange: (v: string) => void;
   onGuidelineChange: (v: string) => void;
   onSaveSettings: () => void;
@@ -75,16 +73,6 @@ export function StepSettings(props: StepSettingsProps) {
             min={1}
             value={props.workersPerProject}
             onInput={(e) => props.onWorkersChange(Number(e.currentTarget.value))}
-          />
-        </div>
-        <div class="field">
-          <span class="field__label">单次翻译句数</span>
-          <input
-            class="field__input"
-            type="number"
-            min={1}
-            value={props.numPerRequest}
-            onInput={(e) => props.onNumPerRequestChange(Number(e.currentTarget.value))}
           />
         </div>
         <div class="field wizard-settings-grid__full">

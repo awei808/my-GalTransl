@@ -3689,6 +3689,10 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"guidelines": _list_translation_guidelines()})
                 return
 
+            if path == "/api/projects/workspace-root":
+                self._send_json({"workspace_root": _workspace_root()})
+                return
+
             if path.startswith("/api/projects/"):
                 parts = path.split("/", 4)  # /api/projects/:id/sub...
                 if len(parts) < 4:

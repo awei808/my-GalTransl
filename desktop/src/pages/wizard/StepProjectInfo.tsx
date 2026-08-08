@@ -1,6 +1,7 @@
 interface StepProjectInfoProps {
   projectName: string;
   projectDir: string;
+  previewDir: string;
   projectCreated: boolean;
   onProjectNameChange: (v: string) => void;
   onProjectCreatedChange: (v: boolean) => void;
@@ -12,8 +13,8 @@ export function StepProjectInfo(props: StepProjectInfoProps) {
     <div class="wizard-panel">
       <h3 class="wizard-panel-title">项目位置</h3>
       <p class="wizard-panel-desc">
-        输入项目名称，项目将创建在后端工作区根目录下（含 gt_input / gt_output /
-        transl_cache 与 config.yaml）。
+        输入项目名称，项目将创建在应用程序同目录下的后端工作区根目录（含 gt_input /
+        gt_output / transl_cache 与 config.yaml）。
       </p>
       <div class="wizard-form-grid">
         <div class="field">
@@ -32,10 +33,10 @@ export function StepProjectInfo(props: StepProjectInfoProps) {
         <div class="wizard-path-preview">
           <span class="wizard-path-preview__label">将创建目录</span>
           <code class="wizard-path-preview__path">
-            {props.projectDir || "创建后显示完整路径"}
+            {props.projectDir || props.previewDir || "请输入项目名称以预览完整路径"}
           </code>
           <div class="wizard-path-preview__meta">
-            包含 gt_input / gt_output / transl_cache 与 config.yaml
+            位于应用程序同目录下，包含 gt_input / gt_output / transl_cache 与 config.yaml
           </div>
         </div>
       </div>
