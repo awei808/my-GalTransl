@@ -341,9 +341,6 @@ class BaseTranslate:
         self.reasoning_effort = config.getBackendConfigSection(section_name).get(
             "reasoning_effort", ""
         )
-        self.thinking_budget = int(
-            config.getBackendConfigSection(section_name).get("thinking_budget", 0) or 0
-        )
         self.extra_body_raw = config.getBackendConfigSection(section_name).get(
             "extra_body", ""
         )
@@ -842,7 +839,6 @@ class BaseTranslate:
         provider = getattr(self, "provider", "auto") or "auto"
         mode = getattr(self, "thinking_mode", "default") or "default"
         effort = (getattr(self, "reasoning_effort", "") or "").strip().lower()
-        budget = int(getattr(self, "thinking_budget", 0) or 0)
         extra_raw = getattr(self, "extra_body_raw", "") or ""
 
         if provider == "auto":
@@ -885,8 +881,6 @@ class BaseTranslate:
             elif provider == "qwen":
                 # 阿里百炼官方：enable_thinking=true（qwen3 混合思考）
                 extra["enable_thinking"] = True
-                if budget > 0:
-                    extra["thinking_budget"] = budget
             elif provider == "zhipu":
                 extra["thinking"] = {"type": "enabled"}
             elif provider == "kimi":

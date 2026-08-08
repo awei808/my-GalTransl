@@ -23,7 +23,6 @@ interface OpenAICompatConfig {
   provider?: string;
   thinking_mode?: string;
   reasoning_effort?: string;
-  thinking_budget?: number;
   extra_body?: string;
 }
 interface SakuraConfig {
@@ -492,24 +491,6 @@ export function BackendProfilesPage() {
                         <option value="high">高</option>
                         <option value="max">最大</option>
                       </select>
-                    </span>
-                  </div>
-                  <div class="pc-row">
-                    <span class="pc-row-label">思考预算 (thinking_budget)</span>
-                    <span class="pc-row-control">
-                      <input
-                        class="field__input pc-input--num"
-                        type="number"
-                        min="0"
-                        value={getOpenAI().thinking_budget ?? 0}
-                        onInput={(e) =>
-                          setOpenAIField({
-                            thinking_budget:
-                              e.currentTarget.value === "" ? 0 : Number(e.currentTarget.value),
-                          })
-                        }
-                        title="Anthropic / Gemini 等平台的思考 token 预算，0 表示不设置"
-                      />
                     </span>
                   </div>
                   <div class="pc-row">
