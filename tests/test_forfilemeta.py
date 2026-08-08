@@ -254,9 +254,10 @@ class TestForFileMetaData(unittest.TestCase):
         # 脚本正文确实进入了提示词
         self.assertIn("夢", prompt)
         # 默认开启注入，且本项目已配置翻译规范 -> 规范块应进入提示词
+        # 注意：下方断言中的标题须与 ForFileMetaData 的 block 定义保持同步
         guideline = getattr(self.backend.pj_config, "translation_guideline", "") or ""
         if guideline.strip():
-            self.assertIn("# 翻译规范（translation_guideline）", prompt)
+            self.assertIn("# 翻译规范", prompt)
 
     # ---------------------------------------------------------------- 7
     def test_guideline_injection_toggle(self):
@@ -267,7 +268,7 @@ class TestForFileMetaData(unittest.TestCase):
             self.backend._inject_guideline = True
             self.backend.pj_config.translation_guideline = "【测试规范】专有名词须保留原文。"
             out = self.backend._build_prompt_request("SCRIPT", "GLOSS")
-            self.assertIn("# 翻译规范（translation_guideline）", out)
+            self.assertIn("# 翻译规范", out)
             self.assertIn("【测试规范】专有名词须保留原文。", out)
             self.assertNotIn("[translation_guideline]", out)
             self.assertIn("SCRIPT", out)
@@ -276,14 +277,14 @@ class TestForFileMetaData(unittest.TestCase):
             # 情形 B：关闭注入 -> 规范块（含标题）完全不出现
             self.backend._inject_guideline = False
             out2 = self.backend._build_prompt_request("SCRIPT", "GLOSS")
-            self.assertNotIn("# 翻译规范（translation_guideline）", out2)
+            self.assertNotIn("# 翻译规范", out2)
             self.assertNotIn("【测试规范】", out2)
 
             # 情形 C：开启但规范为空 -> 不留悬挂标题、不留占位符
             self.backend._inject_guideline = True
             self.backend.pj_config.translation_guideline = ""
             out3 = self.backend._build_prompt_request("SCRIPT", "GLOSS")
-            self.assertNotIn("# 翻译规范（translation_guideline）", out3)
+            self.assertNotIn("# 翻译规范", out3)
             self.assertNotIn("[translation_guideline]", out3)
         finally:
             self.backend.pj_config.translation_guideline = saved
