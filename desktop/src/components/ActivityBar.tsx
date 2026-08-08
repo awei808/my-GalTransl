@@ -4,6 +4,53 @@ import { toast } from "../stores/toastStore";
 import { confirm } from "../stores/confirmStore";
 import { buildProjectOutput, validateBuild } from "../lib/api/project";
 import { getErrorMessage } from "../lib/errors";
+import type { FileNode } from "../lib/api/types";
+
+const SAMPLE_CACHE_FILENAME = "_示例缓存文件.json";
+const PASS3_PREFIX = "pass3_cache/";
+
+/**
+ * 在翻译控制台点击查找/问题/备选时自动选一个默认缓存文件显示到主界面。
+ * 优先级：上次打开的文件 → 文件夹中第一个非示例译文缓存文件 → 示例缓存文件 → 不显示(null)。
+ */
+function pickDefaultCacheFile(): string | null {
+  const tree = appState.cacheTree;
+
+  // 1) 上次打开的文件（会话内仍保留且仍存在树中）
+  const last = appState.activeFilePath;
+  if (last) {
+    const exists = (() => {
+      const walk = (ns: FileNode[]): boolean => {
+        for (const n of ns) {
+          if (n.is_file && n.path === last) return true;
+          if (!n.is_file && n.children && walk(n.children)) return true;
+        }
+        return false;
+      };
+      return walk(tree);
+    })();
+    if (exists) return last;
+  }
+
+  // 收集 pass3_cache 下的译文缓存文件（示例文件被后端过滤，不在此列）
+  const pass3Files: string[] = [];
+  const collect = (ns: FileNode[]) => {
+    for (const n of ns) {
+      if (!n.is_file) {
+        if (n.children) collect(n.children);
+        continue;
+      }
+      if (n.path.startsWith(PASS3_PREFIX)) pass3Files.push(n.path);
+    }
+  };
+  collect(tree);
+
+  // 2) 第一个非示例译文缓存文件
+  if (pass3Files.length > 0) return pass3Files[0];
+  // 3) 示例缓存文件：后端 _collect_cache_files 会过滤下划线前缀文件，
+  //    故示例文件不会出现在 cacheTree 中；按后端新建项目约定回退到固定路径
+  return `${PASS3_PREFIX}${SAMPLE_CACHE_FILENAME}`;
+}
 
 interface TabDef {
   icon: string;
@@ -89,6 +136,18 @@ const SIDEBAR_TAB_OF: Record<string, SidebarTab> = {
 function handleTabClick(tab: TabDef) {
   if (tab.view === "build-output") {
     handleBuildOutput();
+    return;
+  }
+
+  // 查找替换 / 问题检测 / 查看备选 属于校对审核场景的侧边栏工具；
+  // 翻译控制台下默认不渲染侧边栏，点这几个按钮直接跳转到校对审核页并打开对应面板
+  if (tab.view === "search" || tab.view === "problems" || tab.view === "alt") {
+    navigateTo("review");
+    setAppState({
+      sidebarOpen: true,
+      sidebarTab: SIDEBAR_TAB_OF[tab.view],
+      activeFilePath: pickDefaultCacheFile(),
+    });
     return;
   }
 
