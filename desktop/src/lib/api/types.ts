@@ -184,6 +184,7 @@ export type CacheSearchResult = {
   pre_dst: string;
   match_src: boolean;
   match_dst: boolean;
+  match_speaker: boolean;
   match_problem: boolean;
   problem: string;
   trans_by: string;

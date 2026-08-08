@@ -1720,6 +1720,118 @@ textarea {
   color: var(--color-text-primary);
 }
 
+/* ── 应用级「可见文本」查找浮层（Ctrl+F，浏览器式 DOM 查找） ── */
+.global-find {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: var(--z-tooltip);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-focus);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+.global-find-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.global-find-input-row .find-input {
+  flex: 1;
+  min-width: 220px;
+  padding: 4px 8px;
+  font-size: var(--font-sm);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+}
+
+.global-find-input-row .find-input:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.global-find-count {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.global-find-count--none {
+  color: var(--color-text-tertiary);
+}
+
+.global-find-close {
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.global-find-close:hover {
+  border-color: var(--color-border-focus);
+}
+
+.global-find-nav {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.global-find-prev,
+.global-find-next {
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 28px;
+  text-align: center;
+}
+
+.global-find-prev:hover,
+.global-find-next:hover {
+  border-color: var(--color-border-focus);
+}
+
+.global-find-prev:active,
+.global-find-next:active {
+  background: var(--color-bg-panel);
+}
+
+/* CSS Custom Highlight API：可见文本查找高亮（不改 DOM，不破坏 Solid 绑定） */
+::highlight(galtransl-find-all) {
+  background-color: rgba(255, 213, 79, 0.45);
+  color: inherit;
+}
+
+::highlight(galtransl-find-current) {
+  background-color: rgba(255, 152, 0, 0.85);
+  color: #1a1a1a;
+}
+
+/* 表单输入（译文框/字典词条等）命中：CSS Highlight API 无法高亮 input 内部文本，
+   改用外框高亮 + 跳转时滚动定位 */
+.global-find-input-hit {
+  outline: 2px solid rgba(255, 152, 0, 0.9);
+  outline-offset: 1px;
+}
+
 /* ── 条目卡片 ── */
 .entry-card {
   background: var(--color-bg-panel);

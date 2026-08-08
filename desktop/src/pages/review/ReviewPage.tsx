@@ -9,9 +9,9 @@ import {
   savePerFileMetadata,
   checkCacheProblems,
 } from "../../lib/api/project";
-import type { CacheEntry, MetadataEntry, MetadataType, ProblemTypeInfo } from "../../lib/api/types";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
+import type { CacheEntry, MetadataEntry, MetadataType, ProblemTypeInfo } from "../../lib/api/types";
 import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
 import { isDarkTheme, themeDark } from "../../lib/theme";
@@ -530,9 +530,6 @@ export function ReviewPage() {
   // 当前打开的元数据文件完整路径（切换保存时用于推导旧文件的 metaType/sourceFile）
   let metaLoadedFullPath = "";
 
-  // ── 文件内查找 ──
-  const [findOpen, setFindOpen] = createSignal(false);
-  const [findQuery, setFindQuery] = createSignal("");
 
   // ── 快捷筛选 ──
   const [filterProblemsOnly, setFilterProblemsOnly] = createSignal(false);
@@ -541,18 +538,9 @@ export function ReviewPage() {
   const [filterAltOnly, setFilterAltOnly] = createSignal(false);
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
 
-  // 根据查找条件 + 快捷筛选过滤条目（createMemo 避免模板中重复遍历）
+  // 根据快捷筛选过滤条目（文件内查找已改为 Ctrl+F 全局查找浮层，不再在此过滤）
   const filteredEntries = createMemo(() => {
     let list = entries();
-    const q = findQuery().toLowerCase().trim();
-    if (q) {
-      list = list.filter(
-        (e) =>
-          (e.pre_src && e.pre_src.toLowerCase().includes(q)) ||
-          (e.pre_dst && e.pre_dst.toLowerCase().includes(q)) ||
-          (e.problem && e.problem.toLowerCase().includes(q)),
-      );
-    }
     if (filterProblemsOnly()) list = list.filter((e) => !!e.problem);
     if (filterAltOnly()) list = list.filter((e) => !!e.alt_dst);
     const ptype = filterProblemType();
@@ -580,10 +568,6 @@ export function ReviewPage() {
     setFilterSpeaker("all");
   }
 
-  function handleFindInFile() {
-    setFindOpen(!findOpen());
-    if (findOpen()) setFindQuery("");
-  }
 
   // ── 键盘快捷键（撤销/重做） ──
   function handleKeyDown(e: KeyboardEvent) {
@@ -637,7 +621,6 @@ export function ReviewPage() {
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("galtransl:undo", handleMenuUndo);
     document.addEventListener("galtransl:redo", handleMenuRedo);
-    document.addEventListener("galtransl:find-in-file", handleFindInFile);
     document.addEventListener("galtransl:save", handleMenuSave);
     void fetchProblemTypes().then((r) => {
       if (r) setProblemTypes(r);
@@ -653,7 +636,6 @@ export function ReviewPage() {
     document.removeEventListener("keydown", handleExpandFieldEnter);
     document.removeEventListener("galtransl:undo", handleMenuUndo);
     document.removeEventListener("galtransl:redo", handleMenuRedo);
-    document.removeEventListener("galtransl:find-in-file", handleFindInFile);
     document.removeEventListener("galtransl:save", handleMenuSave);
     // 组件卸载时清除跳转标记，避免残留
     setAppState("reviewJumpToIndex", null);
@@ -1413,27 +1395,6 @@ export function ReviewPage() {
           <span class="review-filename">{file()}</span>
         </Show>
 
-        {/* 文件内查找 */}
-        <Show when={findOpen()}>
-          <div class="find-in-file">
-            <input
-              class="find-input"
-              placeholder="查找（原文/译文/问题）"
-              value={findQuery()}
-              onInput={(e) => setFindQuery(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Escape" && handleFindInFile()}
-              autofocus
-            />
-            <Show when={findQuery().trim()}>
-              <span class="find-in-file-count">
-                {filteredEntries().length}/{entries().length}
-              </span>
-            </Show>
-            <button class="find-in-file-close" onClick={handleFindInFile}>
-              ×
-            </button>
-          </div>
-        </Show>
 
         {/* 快捷筛选：只看有问题 / 备选 / 类型 / 说话人 */}
         <div class="review-filter-bar">
@@ -1470,7 +1431,7 @@ export function ReviewPage() {
               {(s) => <option value={s}>{s}</option>}
             </For>
           </select>
-          <Show when={hasFilter() || findQuery().trim()}>
+          <Show when={hasFilter()}>
             <span class="review-filter-count">
               {filteredEntries().length}/{entries().length} 条
               {problemCount() > 0 ? ` · 问题 ${problemCount()}` : ""}
@@ -1555,7 +1516,7 @@ export function ReviewPage() {
               <p class="review-placeholder">
                 {appState.activeProjectId && !file()
                   ? "请在侧栏中选择一个文件"
-                  : findQuery().trim()
+                  : filteredEntries().length === 0
                     ? "未找到匹配条目"
                     : "该文件暂无条目"}
               </p>

@@ -6,6 +6,7 @@ import { TitleBar } from "./components/TitleBar";
 import { ActivityBar } from "./components/ActivityBar";
 import { SidebarPanel } from "./components/SidebarPanel";
 import { MainArea } from "./components/MainArea";
+import { GlobalFind } from "./components/GlobalFind";
 import { StatusBar } from "./components/StatusBar";
 import { ToastHost } from "./components/toast/ToastHost";
 import { ConfirmHost } from "./components/confirm/ConfirmHost";
@@ -28,9 +29,15 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
   if (!e.ctrlKey && !e.metaKey) return;
 
   switch (e.key) {
-    case "f":
+    // [暂时取消] 应用级「可见文本」查找原由 Ctrl+F 接管全部界面；
+    //   现暂时放开 Ctrl+F 走默认行为，改用 Ctrl+G 打开浮层（代码保留，待验证后恢复）。
+    // case "f":
+    //   e.preventDefault();
+    //   setAppState({ globalFindOpen: true });
+    //   break;
+    case "g":
       e.preventDefault();
-      document.dispatchEvent(new CustomEvent("galtransl:find-in-file"));
+      setAppState({ globalFindOpen: true });
       break;
     case "h":
       e.preventDefault();
@@ -82,6 +89,7 @@ export function App() {
         </Show>
         <MainArea />
       </div>
+      <GlobalFind />
       <StatusBar />
       <ToastHost />
       <ConfirmHost />

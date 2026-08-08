@@ -65,6 +65,14 @@ export interface AppState {
   prevJobStatus: string;
   /** 侧边栏问题列表请求跳转到的条目索引（ReviewPage 加载文件后执行滚动，完成后自动清空） */
   reviewJumpToIndex: number | null;
+
+  // 应用级「可见文本」查找（浏览器式 Ctrl+F，扫描 main-area 当前渲染文本）
+  globalFindOpen: boolean;
+  globalFindQuery: string;
+  /** 当前匹配项序号（从 1 开始；无匹配为 -1） */
+  globalFindIndex: number;
+  /** 匹配总数 */
+  globalFindCount: number;
 }
 
 // ── 默认状态 ──
@@ -88,6 +96,10 @@ export const defaultState: AppState = {
   modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   prevJobStatus: "",
   reviewJumpToIndex: null,
+  globalFindOpen: false,
+  globalFindQuery: "",
+  globalFindIndex: -1,
+  globalFindCount: 0,
 };
 
 // ── Store ──

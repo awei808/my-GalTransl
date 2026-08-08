@@ -2598,49 +2598,71 @@ def build_handler(registry: JobRegistry) -> type:
                     results = []
                     total_matches = 0
                     if os.path.isdir(cache_dir):
-                        for name in sorted(os.listdir(cache_dir)):
-                            if not name.endswith(".json"):
-                                continue
-                            fp = os.path.join(cache_dir, name)
-                            if not os.path.isfile(fp):
-                                continue
-                            try:
-                                import orjson
-                                with open(fp, "rb") as f:
-                                    entries = orjson.loads(f.read())
-                                for e in entries:
-                                    if not isinstance(e, dict):
-                                        continue
-                                    src_text = e.get("post_src", "") or e.get("post_jp", "") or e.get("pre_src", "") or e.get("pre_jp", "")
-                                    dst_text = e.get("pre_dst", "") or e.get("pre_zh", "") or e.get("proofread_dst", "") or e.get("proofread_zh", "")
-                                    problem_text = e.get("problem", "")
-                                    match_src = query.lower() in src_text.lower()
-                                    match_dst = query.lower() in dst_text.lower()
-                                    match_problem = query.lower() in problem_text.lower()
-                                    if field == "src" and not match_src:
-                                        continue
-                                    if field == "dst" and not match_dst:
-                                        continue
-                                    if field == "problem" and not match_problem:
-                                        continue
-                                    if field == "all" and not match_src and not match_dst and not match_problem:
-                                        continue
-                                    total_matches += 1
-                                    if len(results) < max_results:
-                                        results.append({
-                                            "filename": name,
-                                            "index": e.get("index", 0),
-                                            "speaker": e.get("name", ""),
-                                            "post_src": src_text,
-                                            "pre_dst": dst_text,
-                                            "match_src": match_src,
-                                            "match_dst": match_dst,
-                                            "match_problem": match_problem,
-                                            "problem": e.get("problem", ""),
-                                            "trans_by": e.get("trans_by", ""),
-                                        })
-                            except Exception:
-                                continue
+                        for root, _dirs, names in os.walk(cache_dir):
+                            for name in sorted(names):
+                                if not name.endswith(".json"):
+                                    continue
+                                if name == "GlobalPrompt.json" or name.startswith("_"):
+                                    continue
+                                if name.endswith(".meta.json") or name.endswith(".batch.json"):
+                                    continue
+                                fp = os.path.join(root, name)
+                                if not os.path.isfile(fp):
+                                    continue
+                                rel = os.path.relpath(fp, cache_dir).replace("\\", "/")
+                                try:
+                                    import orjson
+                                    with open(fp, "rb") as f:
+                                        entries = orjson.loads(f.read())
+                                    for e in entries:
+                                        if not isinstance(e, dict):
+                                            continue
+                                        # 可见文本对齐页面渲染：原文行显示 pre_src（post_src 为更底层原文，页面不展示）
+                                        src_text = (
+                                            e.get("pre_src", "")
+                                            or e.get("post_src", "")
+                                            or e.get("post_jp", "")
+                                            or e.get("pre_jp", "")
+                                        )
+                                        dst_text = e.get("pre_dst", "") or e.get("pre_zh", "") or e.get("proofread_dst", "") or e.get("proofread_zh", "")
+                                        problem_text = e.get("problem", "")
+                                        # 说话人徽章（name 可能为字符串或 names 列表）也是页面可见文本
+                                        raw_name = e.get("name", "") or e.get("names", "")
+                                        if isinstance(raw_name, list):
+                                            speaker_text = " ".join(str(x) for x in raw_name)
+                                        else:
+                                            speaker_text = str(raw_name) if raw_name else ""
+                                        match_src = query.lower() in src_text.lower()
+                                        match_dst = query.lower() in dst_text.lower()
+                                        match_problem = query.lower() in problem_text.lower()
+                                        match_speaker = bool(speaker_text) and query.lower() in speaker_text.lower()
+                                        if field == "src" and not match_src:
+                                            continue
+                                        if field == "dst" and not match_dst:
+                                            continue
+                                        if field == "problem" and not match_problem:
+                                            continue
+                                        if field == "all" and not match_src and not match_dst and not match_problem and not match_speaker:
+                                            continue
+                                        total_matches += 1
+                                        if len(results) < max_results:
+                                            results.append({
+                                                "filename": rel,
+                                                "index": e.get("index", 0),
+                                                "speaker": raw_name,
+                                                "post_src": src_text,
+                                                "pre_dst": dst_text,
+                                                "match_src": match_src,
+                                                "match_dst": match_dst,
+                                                "match_problem": match_problem,
+                                                "match_speaker": match_speaker,
+                                                "problem": e.get("problem", ""),
+                                                "trans_by": e.get("trans_by", ""),
+                                            })
+                                except Exception as exc:
+                                    LOGGER.warning(f"cache/search 跳过无法解析的缓存文件 {rel}: {exc}")
+                                    continue
+                    LOGGER.info(f"cache/search 完成: query={query!r} field={field} 命中 {total_matches} 条")
                     self._send_json({"results": results, "total": total_matches})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)

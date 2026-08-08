@@ -118,9 +118,9 @@ const menus: MenuDef[] = [
       { label: "粘贴", shortcut: "Ctrl+V", action: () => {} },
       { label: "", separator: true },
       {
-        label: "文件内查找",
-        shortcut: "Ctrl+F",
-        action: () => document.dispatchEvent(new CustomEvent("galtransl:find-in-file")),
+        label: "查找",
+        shortcut: "Ctrl+G",
+        action: () => setAppState({ globalFindOpen: true }),
       },
       {
         label: "文件夹替换",
