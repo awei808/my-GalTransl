@@ -57,6 +57,8 @@ const HIDDEN_CONFIG_KEYS = new Set<string>([
 // 此处仅让该键不出现在通用列表里（避免与专用卡片重复），不再整体隐藏。
 const LIST_OMITTED_KEYS = new Set<string>([
   "problemAnalyze.problemList",
+  // 阈值由「问题检测」固定卡片内专属输入框渲染，避免与通用列表重复显示
+  "problemAnalyze.avgSentenceLengthThreshold",
 ]);
 // 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口
 const REMOVED_CONFIG_KEYS = new Set<string>([
@@ -377,6 +379,9 @@ export function ProjectConfigPage() {
   const [saving, setSaving] = createSignal(false);
   // 翻译规范文件下拉选项（translation_guidelines 目录下的文件名）
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
+  // 翻译规范列表是否已加载完成（加载中/失败均置 true；用于避免下拉在 options 未就绪前渲染，
+  // 从而防止 <select> 因 value 匹配不到异步 options 而回退显示列表第一项 Basic.md）
+  const [guidelinesLoaded, setGuidelinesLoaded] = createSignal(false);
   // 文件格式插件下拉选项（plugins 目录下 type 为 file 的插件名）
   const [filePlugins, setFilePlugins] = createSignal<string[]>([]);
   // 当前翻译规范值（响应式读取，供固定卡片展示）
@@ -478,7 +483,8 @@ export function ProjectConfigPage() {
       // 翻译规范文件下拉选项（与配置加载并行，失败不阻塞主配置）
       fetchTranslationGuidelines()
         .then((list) => setGuidelines(list))
-        .catch(() => setGuidelines([]));
+        .catch(() => setGuidelines([]))
+        .finally(() => setGuidelinesLoaded(true));
       // 文件格式插件下拉选项（与配置加载并行，失败不阻塞主配置）
       fetchPlugins()
         .then((plugins) =>
@@ -852,21 +858,35 @@ export function ProjectConfigPage() {
             </p>
           </div>
           <div class="pc-row-control" style="margin-top: 4px">
-            <select
-              class="field__input pc-input pc-select"
-              value={guidelineCurrent()}
-              onChange={(e) => setValue(GUIDELINE_KEY, e.currentTarget.value)}
+            {/* 列表加载完成前不渲染 select，避免 value 匹配不到异步 options 而回退显示列表第一项(Basic.md) */}
+            <Show
+              when={guidelinesLoaded()}
+              fallback={
+                <input
+                  class="field__input pc-input"
+                  type="text"
+                  value={guidelineCurrent()}
+                  readOnly
+                  title="翻译规范文件列表加载中…"
+                />
+              }
             >
-              <Show when={guidelines().length === 0 && !guidelineCurrent()}>
-                <option value="">（未找到翻译规范文件）</option>
-              </Show>
-              <Show when={guidelineCurrent() && !guidelines().includes(guidelineCurrent())}>
-                <option value={guidelineCurrent()}>{guidelineCurrent()}</option>
-              </Show>
-              <For each={guidelines()}>
-                {(g) => <option value={g}>{g}</option>}
-              </For>
-            </select>
+              <select
+                class="field__input pc-input pc-select"
+                value={guidelineCurrent()}
+                onChange={(e) => setValue(GUIDELINE_KEY, e.currentTarget.value)}
+              >
+                {/* 常驻占位项：当前值无法读取或列表为空时稳定显示，绝不静默回退到列表第一项 */}
+                <option value="">（未选择翻译规范）</option>
+                {/* 当前值不在文件列表时动态插入，保证首帧即匹配，避免时序回退 */}
+                <Show when={guidelineCurrent() && !guidelines().includes(guidelineCurrent())}>
+                  <option value={guidelineCurrent()}>{guidelineCurrent()}</option>
+                </Show>
+                <For each={guidelines()}>
+                  {(g) => <option value={g}>{g}</option>}
+                </For>
+              </select>
+            </Show>
           </div>
         </div>
       );
