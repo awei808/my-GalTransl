@@ -88,6 +88,14 @@ internals:
     maxInputChars: 950000         # 全局分析阶段压缩后文本的“软阈值”：超过此值仅打印告警、不做截断（无损原则，绝不删行）。0 表示不检查。[1000-1000000]
     forceRegenDic: false          # 是否强制重新生成术语表（即使已存在）[True/False]
     abortOnDicFailure: false      # 是否在术语表生成失败时中止流水线 [True/False]
+    # === 流水线阶段开关（false 则跳过该阶段）===
+    enableValidate: true          # 阶段0 输入数据校验 [True/False]
+    enableCompress: true          # 阶段1 文本无损压缩（仅全局分析需要）[True/False]
+    enableGlobalPrompt: true      # 阶段2 全局游戏分析 [True/False]
+    enableGenDic: true            # 阶段3 术语表构建 [True/False]
+    enableFileMeta: true          # 阶段4 文件级元数据 [True/False]
+    enableBatchMeta: true         # 阶段5 批次级元数据 [True/False]
+    enableTranslate: true         # 阶段6 翻译执行 [True/False]
   # ForGlobalPrompt 后端专用配置
   forglobalprompt:
     inject_guideline: false       # 是否将翻译规范注入全局分析提示词 [True/False]

@@ -70,6 +70,18 @@ common:
 
 # 内部流程参数
 internals:
+  pipeline: # 完整流水线（ForGal-full-pipeline）阶段开关与参数
+    maxInputChars: 950000 # 全局分析阶段压缩后文本的“软阈值”：超过此值仅打印告警、不做截断（无损原则，绝不删行）。0 表示不检查。[1000-1000000]
+    forceRegenDic: false # 是否强制重新生成术语表（即使已存在）[True/False]
+    abortOnDicFailure: false # 是否在术语表生成失败时中止流水线 [True/False]
+    # === 流水线阶段开关（false 则跳过该阶段）===
+    enableValidate: true # 阶段0 输入数据校验 [True/False]
+    enableCompress: true # 阶段1 文本无损压缩（仅全局分析需要）[True/False]
+    enableGlobalPrompt: true # 阶段2 全局游戏分析 [True/False]
+    enableGenDic: true # 阶段3 术语表构建 [True/False]
+    enableFileMeta: true # 阶段4 文件级元数据 [True/False]
+    enableBatchMeta: true # 阶段5 批次级元数据 [True/False]
+    enableTranslate: true # 阶段6 翻译执行 [True/False]
   forbatchmeta: # 批次级元数据（翻译区间划分）设置
     max_batches: 20 # 翻译区间（批次）最大数量，超过将自动合并相邻区间 [1-200]
     min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间尽量与相邻区间合并 [1-1000]

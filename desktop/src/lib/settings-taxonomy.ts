@@ -139,7 +139,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-完整流水线",
-    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、翻译后处理后端、术语表生成与容错策略。",
+    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、翻译后处理后端、术语表生成与容错策略，以及各阶段独立开关。",
     subsections: [
       {
         title: "",
@@ -147,6 +147,18 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.gpt.afterTranslation",
           "internals.pipeline.forceRegenDic",
           "internals.pipeline.abortOnDicFailure",
+        ],
+      },
+      {
+        title: "流水线阶段开关",
+        keys: [
+          "internals.pipeline.enableValidate",
+          "internals.pipeline.enableCompress",
+          "internals.pipeline.enableGlobalPrompt",
+          "internals.pipeline.enableGenDic",
+          "internals.pipeline.enableFileMeta",
+          "internals.pipeline.enableBatchMeta",
+          "internals.pipeline.enableTranslate",
         ],
       },
     ],

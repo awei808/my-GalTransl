@@ -1317,191 +1317,225 @@ async def _run_full_pipeline(
     LOGGER.info("[流水线] 阶段 0/6：输入数据校验")
     _update_runtime(projectConfig, stage="输入数据校验")
 
-    from GalTransl.DataValidator import validate_input_json
+    if not projectConfig.getKey("internals.pipeline.enableValidate", True):
+        LOGGER.warning("[流水线] 阶段 0 已禁用（enableValidate=false），跳过输入校验")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 0/6：输入校验已禁用，跳过"
+        )
+    else:
+        from GalTransl.DataValidator import validate_input_json
 
-    all_valid = True
-    for file_path, json_list in file_json_lists.items():
-        result = validate_input_json(json_list, file_path)
-        if not result["valid"]:
-            for err in result["errors"]:
-                LOGGER.error(f"[校验失败] {file_path}: {err}")
-            all_valid = False
-        for warn in result["warnings"]:
-            LOGGER.warning(f"[校验警告] {file_path}: {warn}")
-        stats = result["stats"]
-        LOGGER.info(
-            f"[校验通过] {os.path.basename(file_path)}: "
-            f"{stats['total_items']} 条，"
-            f"name={stats['items_with_name']}，"
-            f"无name={stats['items_without_name']}"
+        all_valid = True
+        for file_path, json_list in file_json_lists.items():
+            result = validate_input_json(json_list, file_path)
+            if not result["valid"]:
+                for err in result["errors"]:
+                    LOGGER.error(f"[校验失败] {file_path}: {err}")
+                all_valid = False
+            for warn in result["warnings"]:
+                LOGGER.warning(f"[校验警告] {file_path}: {warn}")
+            stats = result["stats"]
+            LOGGER.info(
+                f"[校验通过] {os.path.basename(file_path)}: "
+                f"{stats['total_items']} 条，"
+                f"name={stats['items_with_name']}，"
+                f"无name={stats['items_without_name']}"
+            )
+        if not all_valid:
+            raise RuntimeError(
+                "输入数据校验失败，流水线中止。请修复上述错误后重试。"
+            )
+        LOGGER.info("[流水线] 阶段 0 完成：所有输入文件校验通过")
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 0/6：输入校验通过（{len(file_list)} 个文件）",
         )
-    if not all_valid:
-        raise RuntimeError(
-            "输入数据校验失败，流水线中止。请修复上述错误后重试。"
-        )
-    LOGGER.info("[流水线] 阶段 0 完成：所有输入文件校验通过")
-    record_runtime_notice(
-        projectConfig.getProjectDir(),
-        f"阶段 0/6：输入校验通过（{len(file_list)} 个文件）",
-    )
 
     # ── 阶段 1：文本压缩 ──
     LOGGER.info("[流水线] 阶段 1/6：文本无损压缩")
     _update_runtime(projectConfig, stage="文本无损压缩")
 
-    from GalTransl.TextCompressor import TextCompressor
-
-    max_chars = projectConfig.getKey("internals.pipeline.maxInputChars", 950000)
-    compressor = TextCompressor(max_chars=max_chars)
-
-    # 逐文件压缩（保留文件边界，供 ForGlobalPrompt 按文件注入上下文）
-    compressed_texts: Dict[str, str] = {}
-    for file_path, json_list in file_json_lists.items():
-        compressed = compressor.compress(
-            {file_path: json_list},
+    if not projectConfig.getKey("internals.pipeline.enableCompress", True):
+        LOGGER.warning("[流水线] 阶段 1 已禁用（enableCompress=false），跳过文本压缩")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 1/6：文本压缩已禁用，跳过"
         )
-        compressed_texts[file_path] = compressed
+        # 置空以便阶段 2 检查：全局分析依赖压缩文本，禁用后阶段 2 自动跳过
+        compressed_texts: Dict[str, str] = {}
+    else:
+        from GalTransl.TextCompressor import TextCompressor
 
-    # 全局压缩（所有文件合并，供完整性校验用）
-    all_compressed_text = compressor.compress(
-        file_json_lists,
-    )
+        max_chars = projectConfig.getKey("internals.pipeline.maxInputChars", 950000)
+        compressor = TextCompressor(max_chars=max_chars)
 
-    # 校验压缩完整性：确保所有 message 和 name 完整保留
-    verify_result = compressor.verify_compression(
-        file_json_lists, all_compressed_text
-    )
-    if not verify_result.get("all_present", False):
-        missing = verify_result.get("missing_messages", [])
-        lost_names = verify_result.get("lost_names", [])
-        if missing:
-            LOGGER.error(
-                f"[压缩错误] {len(missing)} 条 message 丢失！"
-                f"示例：{missing[0][:80] if missing else ''}"
+        # 逐文件压缩（保留文件边界，供 ForGlobalPrompt 按文件注入上下文）
+        compressed_texts: Dict[str, str] = {}
+        for file_path, json_list in file_json_lists.items():
+            compressed = compressor.compress(
+                {file_path: json_list},
             )
-        if lost_names:
-            LOGGER.error(
-                f"[压缩错误] 丢失角色名：{', '.join(lost_names[:10])}"
-            )
-        raise RuntimeError("文本压缩完整性校验失败，流水线中止")
+            compressed_texts[file_path] = compressed
 
-    LOGGER.info(
-        f"[流水线] 阶段 1 完成：文本压缩完毕，"
-        f"压缩后 {len(all_compressed_text)} 字符 "
-        f"全部 message 和角色名校验通过"
-    )
-    record_runtime_notice(
-        projectConfig.getProjectDir(),
-        f"阶段 1/6：文本压缩完成（{len(all_compressed_text)} 字符）",
-    )
+        # 全局压缩（所有文件合并，供完整性校验用）
+        all_compressed_text = compressor.compress(
+            file_json_lists,
+        )
+
+        # 校验压缩完整性：确保所有 message 和 name 完整保留
+        verify_result = compressor.verify_compression(
+            file_json_lists, all_compressed_text
+        )
+        if not verify_result.get("all_present", False):
+            missing = verify_result.get("missing_messages", [])
+            lost_names = verify_result.get("lost_names", [])
+            if missing:
+                LOGGER.error(
+                    f"[压缩错误] {len(missing)} 条 message 丢失！"
+                    f"示例：{missing[0][:80] if missing else ''}"
+                )
+            if lost_names:
+                LOGGER.error(
+                    f"[压缩错误] 丢失角色名：{', '.join(lost_names[:10])}"
+                )
+            raise RuntimeError("文本压缩完整性校验失败，流水线中止")
+
+        LOGGER.info(
+            f"[流水线] 阶段 1 完成：文本压缩完毕，"
+            f"压缩后 {len(all_compressed_text)} 字符 "
+            f"全部 message 和角色名校验通过"
+        )
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 1/6：文本压缩完成（{len(all_compressed_text)} 字符）",
+        )
 
     # ── 阶段 2：全局提示词生成 ──
     LOGGER.info("[流水线] 阶段 2/6：全局游戏分析")
     _update_runtime(projectConfig, stage="生成全局游戏分析")
 
-    from GalTransl.Backend.ForGlobalPrompt import (
-        ForGlobalPrompt,
-        load_global_prompt,
-        _find_global_prompt_path,
-    )
-    from GalTransl.DataValidator import validate_global_prompt
-
-    gp_path = _find_global_prompt_path(projectConfig)
-    force_regen_gp = projectConfig.getKey(
-        "internals.pipeline.forceRegenGlobal", False
-    )
-
-    if os.path.exists(gp_path) and not force_regen_gp:
-        LOGGER.info("[流水线] 阶段 2 跳过：全局分析已存在")
+    if not projectConfig.getKey("internals.pipeline.enableGlobalPrompt", True):
+        LOGGER.warning("[流水线] 阶段 2 已禁用（enableGlobalPrompt=false），跳过全局分析")
         record_runtime_notice(
-            projectConfig.getProjectDir(), "阶段 2/6：全局分析已存在，跳过"
+            projectConfig.getProjectDir(), "阶段 2/6：全局分析已禁用，跳过"
         )
-        success = True
+        # 后续阶段通过 projectConfig.global_prompt 或缓存惰性读取，缺省时自动退化
+        projectConfig.global_prompt = None
+    elif not compressed_texts:
+        LOGGER.warning("[流水线] 阶段 2 跳过：阶段 1 压缩已禁用，无压缩文本可供全局分析")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 2/6：压缩已禁用，全局分析跳过"
+        )
+        projectConfig.global_prompt = None
     else:
-        gptapi_global = ForGlobalPrompt(
-            projectConfig, "ForGlobalPrompt",
-            projectConfig.proxyPool, projectConfig.tokenPool,
+        from GalTransl.Backend.ForGlobalPrompt import (
+            ForGlobalPrompt,
+            load_global_prompt,
+            _find_global_prompt_path,
         )
-        external_info = projectConfig.getKey("externals.gameInfo", "") or ""
-        success = await gptapi_global.batch_translate(
-            compressed_texts, external_info=external_info
-        )
-        if not success:
-            LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
-            raise RuntimeError("全局游戏分析生成失败")
+        from GalTransl.DataValidator import validate_global_prompt
 
-    # 校验 GlobalPrompt.json（跳过或重新生成后均需读取，供后续阶段复用）
-    global_prompt = load_global_prompt(projectConfig)
-    if global_prompt is None:
-        LOGGER.error(
-            "[流水线] GlobalPrompt.json 校验失败，流水线中止"
+        gp_path = _find_global_prompt_path(projectConfig)
+        force_regen_gp = projectConfig.getKey(
+            "internals.pipeline.forceRegenGlobal", False
         )
-        raise RuntimeError("GlobalPrompt.json 不存在或格式错误")
 
-    gp_validation = validate_global_prompt(global_prompt)
-    if not gp_validation["valid"]:
-        for err in gp_validation["errors"]:
-            LOGGER.error(
-                f"[流水线] GlobalPrompt 内容校验失败: {err}"
+        if os.path.exists(gp_path) and not force_regen_gp:
+            LOGGER.info("[流水线] 阶段 2 跳过：全局分析已存在")
+            record_runtime_notice(
+                projectConfig.getProjectDir(), "阶段 2/6：全局分析已存在，跳过"
             )
-        raise RuntimeError("GlobalPrompt 内容校验失败")
-    for warn in gp_validation.get("warnings", []):
-        LOGGER.warning(f"[流水线] GlobalPrompt 警告: {warn}")
+            success = True
+        else:
+            gptapi_global = ForGlobalPrompt(
+                projectConfig, "ForGlobalPrompt",
+                projectConfig.proxyPool, projectConfig.tokenPool,
+            )
+            external_info = projectConfig.getKey("externals.gameInfo", "") or ""
+            success = await gptapi_global.batch_translate(
+                compressed_texts, external_info=external_info
+            )
+            if not success:
+                LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
+                raise RuntimeError("全局游戏分析生成失败")
 
-    # 注入全局提示词到 projectConfig，供后续阶段复用
-    projectConfig.global_prompt = global_prompt
+        # 校验 GlobalPrompt.json（跳过或重新生成后均需读取，供后续阶段复用）
+        global_prompt = load_global_prompt(projectConfig)
+        if global_prompt is None:
+            LOGGER.error(
+                "[流水线] GlobalPrompt.json 校验失败，流水线中止"
+            )
+            raise RuntimeError("GlobalPrompt.json 不存在或格式错误")
 
-    char_count = len(global_prompt.get("角色列表", []))
-    LOGGER.info(
-        f"[流水线] 阶段 2 完成：全局分析已生成，{char_count} 个角色"
-    )
-    record_runtime_notice(
-        projectConfig.getProjectDir(),
-        f"阶段 2/6：全局分析完成（{char_count} 个角色）",
-    )
+        gp_validation = validate_global_prompt(global_prompt)
+        if not gp_validation["valid"]:
+            for err in gp_validation["errors"]:
+                LOGGER.error(
+                    f"[流水线] GlobalPrompt 内容校验失败: {err}"
+                )
+            raise RuntimeError("GlobalPrompt 内容校验失败")
+        for warn in gp_validation.get("warnings", []):
+            LOGGER.warning(f"[流水线] GlobalPrompt 警告: {warn}")
+
+        # 注入全局提示词到 projectConfig，供后续阶段复用
+        projectConfig.global_prompt = global_prompt
+
+        char_count = len(global_prompt.get("角色列表", []))
+        LOGGER.info(
+            f"[流水线] 阶段 2 完成：全局分析已生成，{char_count} 个角色"
+        )
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            f"阶段 2/6：全局分析完成（{char_count} 个角色）",
+        )
 
     # ── 阶段 3：术语表构建（GenDic）──
     LOGGER.info("[流水线] 阶段 3/6：术语表构建")
     _update_runtime(projectConfig, stage="构建术语表")
 
-    force_regen = projectConfig.getKey(
-        "internals.pipeline.forceRegenDic", False
-    )
-
-    # 跳过条件：项目级 gpt 字典已有非空有效条目（不再只看文件是否存在）
-    if _has_nonempty_gpt_dict(projectConfig) and not force_regen:
-        LOGGER.info("[流水线] 阶段 3 跳过：术语表已存在（非空）")
+    if not projectConfig.getKey("internals.pipeline.enableGenDic", True):
+        LOGGER.warning("[流水线] 阶段 3 已禁用（enableGenDic=false），跳过术语表构建")
         record_runtime_notice(
-            projectConfig.getProjectDir(), "阶段 3 跳过：术语表已存在（非空），不重新生成"
+            projectConfig.getProjectDir(), "阶段 3/6：术语表构建已禁用，跳过"
         )
     else:
-        LOGGER.info("[流水线] 阶段 3：开始生成术语表")
-        record_runtime_notice(
-            projectConfig.getProjectDir(), "阶段 3：开始生成术语表"
+        force_regen = projectConfig.getKey(
+            "internals.pipeline.forceRegenDic", False
         )
-        from GalTransl.Backend.GenDic import GenDic
 
-        gptapi_dic = GenDic(
-            projectConfig, "GenDic",
-            projectConfig.proxyPool, projectConfig.tokenPool,
-        )
-        all_jsons = []
-        for json_list in file_json_lists.values():
-            all_jsons.extend(json_list)
-        dic_ok = await gptapi_dic.batch_translate(all_jsons)
-        # internals.pipeline.abortOnDicFailure：术语表构建失败（如分词模型加载失败）时中止流水线。
-        # batch_translate 仅在硬失败（分词模型无法加载）时返回 False；分片级失败已被记录但
-        # 视为部分成功（与流水线容错设计一致），不中止，避免误伤"文本无可提取词条"的合法场景。
-        if not dic_ok:
-            abort = projectConfig.getKey("internals.pipeline.abortOnDicFailure", False)
-            if abort:
-                LOGGER.error("[流水线] 阶段 3：术语表生成失败，按 abortOnDicFailure 配置中止流水线")
-                raise RuntimeError(
-                    "术语表生成失败（分词模型加载失败），已按 abortOnDicFailure=true 中止流水线"
-                )
-            LOGGER.warning("[流水线] 阶段 3：术语表生成失败，abortOnDicFailure=false 继续流水线")
+        # 跳过条件：项目级 gpt 字典已有非空有效条目（不再只看文件是否存在）
+        if _has_nonempty_gpt_dict(projectConfig) and not force_regen:
+            LOGGER.info("[流水线] 阶段 3 跳过：术语表已存在（非空）")
+            record_runtime_notice(
+                projectConfig.getProjectDir(), "阶段 3 跳过：术语表已存在（非空），不重新生成"
+            )
         else:
-            LOGGER.info("[流水线] 阶段 3 完成：术语表已生成")
+            LOGGER.info("[流水线] 阶段 3：开始生成术语表")
+            record_runtime_notice(
+                projectConfig.getProjectDir(), "阶段 3：开始生成术语表"
+            )
+            from GalTransl.Backend.GenDic import GenDic
+
+            gptapi_dic = GenDic(
+                projectConfig, "GenDic",
+                projectConfig.proxyPool, projectConfig.tokenPool,
+            )
+            all_jsons = []
+            for json_list in file_json_lists.values():
+                all_jsons.extend(json_list)
+            dic_ok = await gptapi_dic.batch_translate(all_jsons)
+            # internals.pipeline.abortOnDicFailure：术语表构建失败（如分词模型加载失败）时中止流水线。
+            # batch_translate 仅在硬失败（分词模型无法加载）时返回 False；分片级失败已被记录但
+            # 视为部分成功（与流水线容错设计一致），不中止，避免误伤"文本无可提取词条"的合法场景。
+            if not dic_ok:
+                abort = projectConfig.getKey("internals.pipeline.abortOnDicFailure", False)
+                if abort:
+                    LOGGER.error("[流水线] 阶段 3：术语表生成失败，按 abortOnDicFailure 配置中止流水线")
+                    raise RuntimeError(
+                        "术语表生成失败（分词模型加载失败），已按 abortOnDicFailure=true 中止流水线"
+                    )
+                LOGGER.warning("[流水线] 阶段 3：术语表生成失败，abortOnDicFailure=false 继续流水线")
+            else:
+                LOGGER.info("[流水线] 阶段 3 完成：术语表已生成")
 
     # ── 阶段 4：文件级元数据生成 ──
     LOGGER.info("[流水线] 阶段 4/6：文件级剧情元数据")
@@ -1513,62 +1547,69 @@ async def _run_full_pipeline(
             file_json_lists, projectConfig.getInputPath()
         ),
     )
-
-    from GalTransl.Backend.ForFileMetaData import ForFileMetaData
-    from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
-
-    gptapi_filemeta = ForFileMetaData(
-        projectConfig, "ForFileMetaData",
-        projectConfig.proxyPool, projectConfig.tokenPool,
-    )
-    # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
-    # 已存在的文件级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
-    existing_fm_map = load_file_metadata_map(projectConfig)
-    force_regen_fm = projectConfig.getKey(
-        "internals.pipeline.forceRegenFileMeta", False
-    )
+    # 总文件数在阶段 4/5 共用，先于开关判断定义
     total_files = len(file_json_lists)
-    # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-    # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
-    _workers_raw = projectConfig.getKey("workersPerProject")
-    workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
-    worker_count = max(1, workers_per_project)
-    processed_fm = await _run_meta_worker_pool(
-        projectConfig, gptapi_filemeta, file_json_lists,
-        existing_map=existing_fm_map,
-        worker_count=worker_count,
-        tag="FileMetaData", stage_prefix="文件级元数据",
-        force_regen=force_regen_fm,
-    )
-    skipped_files = total_files - processed_fm
 
-    # 交叉验证 FileMetaData 条目数
-    fm_map = load_file_metadata_map(projectConfig)
-    fm_count = len(fm_map)
-    if fm_count < total_files:
-        LOGGER.warning(
-            f"[流水线] 阶段 4 警告：{fm_count}/{total_files} 个文件"
-            f"生成了元数据，缺失 {total_files - fm_count} 个"
-        )
+    if not projectConfig.getKey("internals.pipeline.enableFileMeta", True):
+        LOGGER.warning("[流水线] 阶段 4 已禁用（enableFileMeta=false），跳过文件级元数据")
         record_runtime_notice(
-            projectConfig.getProjectDir(),
-            f"阶段 4/6 警告：{total_files - fm_count} 个文件未生成文件级元数据",
+            projectConfig.getProjectDir(), "阶段 4/6：文件级元数据已禁用，跳过"
         )
     else:
-        LOGGER.info(
-            f"[流水线] 阶段 4 完成：{fm_count}/{total_files} 个文件"
+        from GalTransl.Backend.ForFileMetaData import ForFileMetaData
+        from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+
+        gptapi_filemeta = ForFileMetaData(
+            projectConfig, "ForFileMetaData",
+            projectConfig.proxyPool, projectConfig.tokenPool,
         )
-        record_runtime_notice(
-            projectConfig.getProjectDir(),
-            f"阶段 4/6：文件级元数据完成（{fm_count}/{total_files} 个文件）",
+        # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
+        # 已存在的文件级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
+        existing_fm_map = load_file_metadata_map(projectConfig)
+        force_regen_fm = projectConfig.getKey(
+            "internals.pipeline.forceRegenFileMeta", False
         )
-    if skipped_files:
-        LOGGER.info(
-            f"[流水线] 阶段 4 跳过 {skipped_files} 个已存在文件级元数据的文件"
+        # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
+        _workers_raw = projectConfig.getKey("workersPerProject")
+        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        worker_count = max(1, workers_per_project)
+        processed_fm = await _run_meta_worker_pool(
+            projectConfig, gptapi_filemeta, file_json_lists,
+            existing_map=existing_fm_map,
+            worker_count=worker_count,
+            tag="FileMetaData", stage_prefix="文件级元数据",
+            force_regen=force_regen_fm,
         )
-    # 同时关闭 ForFileMetaData 后端
-    if hasattr(gptapi_filemeta, "shutdown"):
-        await gptapi_filemeta.shutdown()
+        skipped_files = total_files - processed_fm
+
+        # 交叉验证 FileMetaData 条目数
+        fm_map = load_file_metadata_map(projectConfig)
+        fm_count = len(fm_map)
+        if fm_count < total_files:
+            LOGGER.warning(
+                f"[流水线] 阶段 4 警告：{fm_count}/{total_files} 个文件"
+                f"生成了元数据，缺失 {total_files - fm_count} 个"
+            )
+            record_runtime_notice(
+                projectConfig.getProjectDir(),
+                f"阶段 4/6 警告：{total_files - fm_count} 个文件未生成文件级元数据",
+            )
+        else:
+            LOGGER.info(
+                f"[流水线] 阶段 4 完成：{fm_count}/{total_files} 个文件"
+            )
+            record_runtime_notice(
+                projectConfig.getProjectDir(),
+                f"阶段 4/6：文件级元数据完成（{fm_count}/{total_files} 个文件）",
+            )
+        if skipped_files:
+            LOGGER.info(
+                f"[流水线] 阶段 4 跳过 {skipped_files} 个已存在文件级元数据的文件"
+            )
+        # 同时关闭 ForFileMetaData 后端
+        if hasattr(gptapi_filemeta, "shutdown"):
+            await gptapi_filemeta.shutdown()
 
     # ── 阶段 5：批次级元数据生成 ──
     LOGGER.info("[流水线] 阶段 5/6：翻译区间划分")
@@ -1581,72 +1622,84 @@ async def _run_full_pipeline(
         ),
     )
 
-    from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
-    from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
-
-    gptapi_batchmeta = ForBatchMetaData(
-        projectConfig, "ForBatchMetaData",
-        projectConfig.proxyPool, projectConfig.tokenPool,
-    )
-    # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
-    # 已存在的批次级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
-    existing_bm_map = load_batch_metadata_map(projectConfig)
-    force_regen_bm = projectConfig.getKey(
-        "internals.pipeline.forceRegenBatchMeta", False
-    )
-    # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-    # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
-    _workers_raw = projectConfig.getKey("workersPerProject")
-    workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
-    worker_count = max(1, workers_per_project)
-    processed_bm = await _run_meta_worker_pool(
-        projectConfig, gptapi_batchmeta, file_json_lists,
-        existing_map=existing_bm_map,
-        worker_count=worker_count,
-        tag="BatchMetaData", stage_prefix="批次划分",
-        force_regen=force_regen_bm,
-    )
-    skipped_batches = total_files - processed_bm
-
-    # 交叉验证 BatchMetadata 条目数
-    bm_map = load_batch_metadata_map(projectConfig)
-    bm_count = len(bm_map)
-    if bm_count < total_files:
-        LOGGER.warning(
-            f"[流水线] 阶段 5 警告：{bm_count}/{total_files} 个文件"
-            f"划分了批次，缺失 {total_files - bm_count} 个"
-        )
+    if not projectConfig.getKey("internals.pipeline.enableBatchMeta", True):
+        LOGGER.warning("[流水线] 阶段 5 已禁用（enableBatchMeta=false），跳过批次级元数据")
         record_runtime_notice(
-            projectConfig.getProjectDir(),
-            f"阶段 5/6 警告：{total_files - bm_count} 个文件未划分翻译区间",
+            projectConfig.getProjectDir(), "阶段 5/6：批次级元数据已禁用，跳过"
         )
     else:
-        LOGGER.info(
-            f"[流水线] 阶段 5 完成：{bm_count}/{total_files} 个文件"
+        from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
+        from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
+
+        gptapi_batchmeta = ForBatchMetaData(
+            projectConfig, "ForBatchMetaData",
+            projectConfig.proxyPool, projectConfig.tokenPool,
         )
-        record_runtime_notice(
-            projectConfig.getProjectDir(),
-            f"阶段 5/6：翻译区间划分完成（{bm_count}/{total_files} 个文件）",
+        # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
+        # 已存在的批次级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
+        existing_bm_map = load_batch_metadata_map(projectConfig)
+        force_regen_bm = projectConfig.getKey(
+            "internals.pipeline.forceRegenBatchMeta", False
         )
-    if skipped_batches:
-        LOGGER.info(
-            f"[流水线] 阶段 5 跳过 {skipped_batches} 个已存在批次级元数据的文件"
+        # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
+        _workers_raw = projectConfig.getKey("workersPerProject")
+        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        worker_count = max(1, workers_per_project)
+        processed_bm = await _run_meta_worker_pool(
+            projectConfig, gptapi_batchmeta, file_json_lists,
+            existing_map=existing_bm_map,
+            worker_count=worker_count,
+            tag="BatchMetaData", stage_prefix="批次划分",
+            force_regen=force_regen_bm,
         )
-    if hasattr(gptapi_batchmeta, "shutdown"):
-        await gptapi_batchmeta.shutdown()
+        skipped_batches = total_files - processed_bm
+
+        # 交叉验证 BatchMetadata 条目数
+        bm_map = load_batch_metadata_map(projectConfig)
+        bm_count = len(bm_map)
+        if bm_count < total_files:
+            LOGGER.warning(
+                f"[流水线] 阶段 5 警告：{bm_count}/{total_files} 个文件"
+                f"划分了批次，缺失 {total_files - bm_count} 个"
+            )
+            record_runtime_notice(
+                projectConfig.getProjectDir(),
+                f"阶段 5/6 警告：{total_files - bm_count} 个文件未划分翻译区间",
+            )
+        else:
+            LOGGER.info(
+                f"[流水线] 阶段 5 完成：{bm_count}/{total_files} 个文件"
+            )
+            record_runtime_notice(
+                projectConfig.getProjectDir(),
+                f"阶段 5/6：翻译区间划分完成（{bm_count}/{total_files} 个文件）",
+            )
+        if skipped_batches:
+            LOGGER.info(
+                f"[流水线] 阶段 5 跳过 {skipped_batches} 个已存在批次级元数据的文件"
+            )
+        if hasattr(gptapi_batchmeta, "shutdown"):
+            await gptapi_batchmeta.shutdown()
 
     # ── 阶段 6：翻译（ForGalJsonMulitChat）──
     LOGGER.info("[流水线] 阶段 6/6：翻译执行")
     record_runtime_notice(projectConfig.getProjectDir(), "阶段 6/6：开始翻译")
     _update_runtime(projectConfig, stage="翻译执行中")
 
-    # 翻译阶段复用现有的翻译流程：
-    # 重新进入 doLLMTranslate 的下半部分逻辑
-    # 由于我们已经在 doLLMTranslate 内部，设置标志跳过前处理
-    # 直接执行翻译阶段的核心流程
-    await _run_translation_phase(
-        projectConfig, file_json_lists, file_list
-    )
+    if not projectConfig.getKey("internals.pipeline.enableTranslate", True):
+        LOGGER.warning("[流水线] 阶段 6 已禁用（enableTranslate=false），跳过翻译执行")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 6/6：翻译执行已禁用，跳过"
+        )
+    else:
+        # 翻译阶段复用现有的翻译流程：
+        # 重新进入 doLLMTranslate 的下半部分逻辑
+        # 由于我们已经在 doLLMTranslate 内部，设置标志跳过前处理
+        # 直接执行翻译阶段的核心流程
+        await _run_translation_phase(
+            projectConfig, file_json_lists, file_list
+        )
 
     LOGGER.info("=" * 50)
     LOGGER.info("[流水线] 全部 6 个阶段完成！")

@@ -72,6 +72,34 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "翻译后处理后端",
     hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；两者都做（improve+brfix，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation 手动触发。",
   },
+  "internals.pipeline.enableValidate": {
+    label: "开启阶段 0：输入数据校验",
+    hint: "关闭后跳过输入文件校验，直接进入下一阶段（不建议关闭）。",
+  },
+  "internals.pipeline.enableCompress": {
+    label: "开启阶段 1：文本无损压缩",
+    hint: "压缩全文供全局分析使用；关闭后阶段 2（全局分析）因无压缩文本将自动跳过。",
+  },
+  "internals.pipeline.enableGlobalPrompt": {
+    label: "开启阶段 2：全局游戏分析",
+    hint: "生成世界观与角色档案；关闭后文件级/批次级元数据与翻译将缺少全局上下文（提示词块为空，仍可继续）。",
+  },
+  "internals.pipeline.enableGenDic": {
+    label: "开启阶段 3：术语表构建",
+    hint: "关闭后不生成/不更新 GPT 字典，翻译时无项目术语表。",
+  },
+  "internals.pipeline.enableFileMeta": {
+    label: "开启阶段 4：文件级元数据",
+    hint: "关闭后不生成/不更新 FileMetaData.json，翻译时无文件级剧情背景。",
+  },
+  "internals.pipeline.enableBatchMeta": {
+    label: "开启阶段 5：批次级元数据",
+    hint: "关闭后不划分翻译区间，翻译按每次请求句数直接分块进行。",
+  },
+  "internals.pipeline.enableTranslate": {
+    label: "开启阶段 6：翻译执行",
+    hint: "关闭后流水线只执行前置分析阶段，不进行翻译。",
+  },
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
     label: "令牌轮询策略",
     hint: "random：随机轮询多个令牌；fallback：优先用第一个，出错时自动切换下一个。",
