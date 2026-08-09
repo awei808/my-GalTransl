@@ -28,5 +28,5 @@ budoux
 # hanlp
 
 # MCP 脚本（desktop/scripts/tauri_webview_mcp.py）专用依赖
-mcp
+mcp>=2.0,<3.0  # 使用 2.x API（ServerRequestContext 等）
 playwright

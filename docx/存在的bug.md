@@ -26,6 +26,14 @@
 # 需修复的技术债务
 - 后端文件存在冗余未复用代码和层次不清晰的代码。未来需要提取公用函数并重新划分层级
 - 后端退化读取的文件路径（如：项目根目录 `FileMetaData.json`、`gt_input/FileMetaData.json`）是修改架构不完全的产物，未及时删除
+- 多个依赖存在不兼容：
+  - Rust 侧：windows crate 0.58 与 0.61.3 双主版本并存
+  - Rust 侧：HTML/CSS 解析栈新旧两代分裂
+  - Python 侧开发环境与构建环境不一致： openai 2.44 vs 2.53、httpx-aiohttp 0.1.12 vs 0.2.0、pyreqwest 0.12.0 vs 0.12.2
+  -  Python 侧隐式必需依赖：httpx-aiohttp
+  - 冗余依赖：tiktoken、fasttext-predict 
+  -  Rust 声明滞后
+
 
 # 已知但不打算修复的问题
 - 文件读取和写入默认不鉴权，任意路径读取、读写文件，原因：原项目就有这个问题；后端只绑 127.0.0.1 + CORS 白名单 → 远程攻击面小；
