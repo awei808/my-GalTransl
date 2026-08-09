@@ -1,5 +1,5 @@
 import { createSignal, For, Show, Switch, Match, createEffect } from "solid-js";
-import { appState, getActiveConfigFileName, navigateTo } from "../../stores/appStore";
+import { appState, setAppState, getActiveConfigFileName, navigateTo } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
@@ -461,6 +461,21 @@ export function ProjectConfigPage() {
       return;
     }
     if (!appState.configNameDetecting) loadData();
+  });
+
+  // 处理 ActivityBar 快捷按钮发起的滚动定位（等配置加载完成、问题检测卡片内容稳定后执行并清除标记）
+  createEffect(() => {
+    const target = appState.settingsScrollTarget;
+    if (!target || target !== "pc-group-problem-analyze") return;
+    if (loading() || problemTypesLoading()) return;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(target);
+      if (el) {
+        // 即时定位（不带动画），避免长页面从顶部平滑滚动的延迟感
+        el.scrollIntoView({ block: "start" });
+        setAppState("settingsScrollTarget", null);
+      }
+    });
   });
 
   async function loadData() {
@@ -1196,7 +1211,10 @@ export function ProjectConfigPage() {
           <div class="pc-field-list">
             <For each={classifiedGroups()}>
               {(g) => (
-                <div class="pc-group">
+                <div
+                  class="pc-group"
+                  id={g.section.title === "问题检测" ? "pc-group-problem-analyze" : undefined}
+                >
                   <h3 class="pc-group-title">{g.section.title}</h3>
                   <Show when={g.section.desc}>
                     <p class="pc-desc">{g.section.desc}</p>

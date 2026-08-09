@@ -208,6 +208,26 @@ textarea {
   gap: 2px;
 }
 
+/* 底部快捷入口：贴底显示，上方为「快捷入口」标注 */
+.activitybar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: var(--space-1);
+  width: 100%;
+}
+
+.activitybar-section-label {
+  font-size: var(--font-xs);
+  line-height: 1.2;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-05) 0 var(--space-05);
+  user-select: none;
+}
+
 .activitybar-btn {
   width: 100%;
   min-height: 48px;
@@ -2123,6 +2143,8 @@ textarea {
   border-radius: var(--radius-lg);
   padding: var(--space-3);
   background: var(--color-bg-panel);
+  /* 作为快捷跳转锚点时避免贴顶 */
+  scroll-margin-top: var(--space-3);
 }
 
 .settings-section-header {
@@ -4418,6 +4440,8 @@ a:hover {
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-lg);
   background: var(--color-bg-panel);
+  /* 作为快捷跳转锚点时避免贴顶 */
+  scroll-margin-top: var(--space-3);
 }
 
 .pc-group-title {

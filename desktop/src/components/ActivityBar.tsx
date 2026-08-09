@@ -1,9 +1,11 @@
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Icon } from "./icons/Icon";
 import { appState, setAppState, navigateTo, type ActiveView, type SidebarTab } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { confirm } from "../stores/confirmStore";
 import { buildProjectOutput, validateBuild } from "../lib/api/project";
 import { getErrorMessage } from "../lib/errors";
+import { getShowShortcutButtonsPreference, SHORTCUT_BUTTONS_CHANGE_EVENT } from "../lib/api/preferences";
 import type { FileNode } from "../lib/api/types";
 
 const SAMPLE_CACHE_FILENAME = "_示例缓存文件.json";
@@ -56,6 +58,12 @@ interface TabDef {
   icon: string;
   view: string;
   label: string;
+  /** 快捷按钮跳转的目标视图（点击后 navigateTo 到该视图） */
+  shortcutView?: ActiveView;
+  /** 快捷按钮跳转后要滚动到的目标元素 id */
+  shortcutScrollTarget?: string;
+  /** 快捷按钮是否需要已打开项目 */
+  needsProject?: boolean;
 }
 
 const tabs: TabDef[] = [
@@ -67,6 +75,25 @@ const tabs: TabDef[] = [
   { icon: "book", view: "dict", label: "字典管理" },
   { icon: "terminal", view: "build-output", label: "构建输出" },
   { icon: "settings", view: "settings", label: "设置" },
+];
+
+/** 底部快捷入口按钮（可被「设置 → 前端显示相关」开关隐藏） */
+const shortcutTabs: TabDef[] = [
+  {
+    icon: "server",
+    view: "settings-backend",
+    label: "项目设置",
+    shortcutView: "project-config",
+    needsProject: true,
+  },
+  {
+    icon: "exclamation",
+    view: "project-problems",
+    label: "问题检测项",
+    shortcutView: "project-config",
+    shortcutScrollTarget: "pc-group-problem-analyze",
+    needsProject: true,
+  },
 ];
 
 async function handleBuildOutput() {
@@ -134,6 +161,17 @@ const SIDEBAR_TAB_OF: Record<string, SidebarTab> = {
 };
 
 function handleTabClick(tab: TabDef) {
+  // 快捷按钮：跳转到对应设置类视图并设置滚动目标，由目标页面渲染完成后滚动
+  if (tab.shortcutView) {
+    if (tab.needsProject && !appState.activeProjectId) {
+      toast.warning("请先打开一个项目");
+      return;
+    }
+    navigateTo(tab.shortcutView);
+    setAppState({ sidebarOpen: false, settingsScrollTarget: tab.shortcutScrollTarget });
+    return;
+  }
+
   if (tab.view === "build-output") {
     handleBuildOutput();
     return;
@@ -176,27 +214,48 @@ function handleTabClick(tab: TabDef) {
 }
 
 function isActive(tab: TabDef) {
+  // 底部快捷入口为跳转工具而非视图导航，不参与高亮，避免与常规导航按钮的 active 语义混淆
+  if (tab.shortcutView) return false;
   if (tab.view === appState.activeView) return true;
   const sidebarTab = SIDEBAR_TAB_OF[tab.view];
   if (sidebarTab && sidebarTab === appState.sidebarTab) return true;
   return false;
 }
 
+function renderTabButton(tab: TabDef) {
+  return (
+    <button
+      class={`activitybar-btn ${isActive(tab) ? "active" : ""}`}
+      onClick={() => handleTabClick(tab)}
+      title={tab.label}
+      aria-label={tab.label}
+    >
+      <Icon name={tab.icon} size={22} />
+      <span class="activitybar-label">{tab.label}</span>
+    </button>
+  );
+}
+
 export function ActivityBar() {
+  const [showShortcuts, setShowShortcuts] = createSignal(getShowShortcutButtonsPreference());
+  onMount(() => {
+    const handler = () => setShowShortcuts(getShowShortcutButtonsPreference());
+    window.addEventListener(SHORTCUT_BUTTONS_CHANGE_EVENT, handler);
+    onCleanup(() => window.removeEventListener(SHORTCUT_BUTTONS_CHANGE_EVENT, handler));
+  });
+
+  // 底部快捷入口可由「设置 → 前端显示相关」关闭；用函数形式使其响应 showShortcuts() 变化
+  const visibleShortcutTabs = () =>
+    showShortcuts() ? shortcutTabs.map(renderTabButton) : [];
+
   return (
     <nav class="activitybar">
-      <div class="activitybar-top">
-        {tabs.map((tab) => (
-          <button
-            class={`activitybar-btn ${isActive(tab) ? "active" : ""}`}
-            onClick={() => handleTabClick(tab)}
-            title={tab.label}
-            aria-label={tab.label}
-          >
-            <Icon name={tab.icon} size={22} />
-            <span class="activitybar-label">{tab.label}</span>
-          </button>
-        ))}
+      <div class="activitybar-top">{tabs.map(renderTabButton)}</div>
+      <div class="activitybar-bottom">
+        <Show when={showShortcuts()}>
+          <span class="activitybar-section-label">快捷入口</span>
+          {visibleShortcutTabs()}
+        </Show>
       </div>
     </nav>
   );

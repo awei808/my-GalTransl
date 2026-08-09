@@ -102,6 +102,14 @@ export const ICON_PATHS: Record<string, IconDef> = {
   "alert-circle": {
     d: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8v5M12 16h.01",
   },
+  "alert-triangle": {
+    d: "M12 4 2.5 19h19L12 4Zm0 6v4M12 16h.01",
+  },
+  "exclamation": {
+    // 实心感叹号：竖线 + 圆点，视觉中心在 SVG 中心，左右天然对称
+    d: "M10.5 3.5h3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM12 16.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
+    fill: true,
+  },
 
   // ── Config / Tools ──
   puzzle: {

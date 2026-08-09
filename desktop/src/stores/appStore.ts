@@ -65,6 +65,8 @@ export interface AppState {
   prevJobStatus: string;
   /** 侧边栏问题列表请求跳转到的条目索引（ReviewPage 加载文件后执行滚动，完成后自动清空） */
   reviewJumpToIndex: number | null;
+  /** 设置类页面滚动目标标识（ActivityBar 快捷按钮点击后写入，目标页面渲染完成后滚动并自动清空） */
+  settingsScrollTarget: string | null;
 
   // 应用级「可见文本」查找（浏览器式 Ctrl+F，扫描 main-area 当前渲染文本）
   globalFindOpen: boolean;
@@ -96,6 +98,7 @@ export const defaultState: AppState = {
   modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   prevJobStatus: "",
   reviewJumpToIndex: null,
+  settingsScrollTarget: null,
   globalFindOpen: false,
   globalFindQuery: "",
   globalFindIndex: -1,
@@ -116,6 +119,10 @@ export function navigateTo(view: ActiveView) {
   if (view !== "review") {
     // 离开 review 视图时清除残留的跳转标记，避免切回时误触发滚动
     setAppState("reviewJumpToIndex", null);
+  }
+  if (view !== "settings" && view !== "project-config") {
+    // 离开设置类视图时清除残留的滚动目标，避免切回时误触发滚动
+    setAppState("settingsScrollTarget", null);
   }
 }
 

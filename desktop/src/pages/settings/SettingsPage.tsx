@@ -1,10 +1,12 @@
 import { createSignal, createEffect, onMount, Show } from "solid-js";
-import { appState, navigateTo, getActiveConfigFileName } from "../../stores/appStore";
+import { appState, setAppState, navigateTo, getActiveConfigFileName } from "../../stores/appStore";
 import {
   getThemeModePreference,
   setThemeModePreference,
   getHideBackendConsolePreference,
   setHideBackendConsolePreference,
+  getShowShortcutButtonsPreference,
+  setShowShortcutButtonsPreference,
   getCustomBackgroundPreference,
   setCustomBackgroundPreference,
   clearCustomBackgroundPreference,
@@ -41,6 +43,7 @@ export function SettingsPage() {
   // ── 外观 ──
   const [themeMode, setTheme] = createSignal<ThemeMode>(getThemeModePreference());
   const [hideConsole, setHideConsole] = createSignal(getHideBackendConsolePreference());
+  const [showShortcutButtons, setShowShortcutButtons] = createSignal(getShowShortcutButtonsPreference());
   const [bgDataUrl, setBgDataUrl] = createSignal(getCustomBackgroundPreference().imageDataUrl);
   const [bgName, setBgName] = createSignal(getCustomBackgroundPreference().imageName);
   const [bgOpacity, setBgOpacity] = createSignal(String(getCustomBackgroundPreference().opacity));
@@ -115,6 +118,10 @@ export function SettingsPage() {
 
   function applyHideConsole(enabled: boolean) {
     setHideConsole(setHideBackendConsolePreference(enabled));
+  }
+
+  function applyShowShortcutButtons(enabled: boolean) {
+    setShowShortcutButtons(setShowShortcutButtonsPreference(enabled));
   }
 
   function applyFontSize(raw: string) {
@@ -213,6 +220,19 @@ export function SettingsPage() {
     const pid = appState.activeProjectId;
     if (!pid || appState.configNameDetecting) return;
     void loadGalTranslLogState(pid, getActiveConfigFileName());
+  });
+
+  // 处理 ActivityBar 快捷按钮发起的滚动定位（异步渲染完成后执行并清除标记）
+  createEffect(() => {
+    const target = appState.settingsScrollTarget;
+    if (!target) return;
+    requestAnimationFrame(() => {
+      const el = document.getElementById(target);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        setAppState("settingsScrollTarget", null);
+      }
+    });
   });
 
   async function loadGalTranslLogState(projectId: string, configFileName: string) {
@@ -323,7 +343,7 @@ export function SettingsPage() {
         </section>
 
         {/* ── 2. 后端服务配置 ── */}
-        <section class="settings-section">
+        <section class="settings-section" id="settings-section-backend">
           <div class="settings-section-header">
             <h3>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "backend")!.title}</h3>
             <p>{APP_SETTINGS_TAXONOMY.find((s) => s.id === "backend")!.desc}</p>
@@ -371,6 +391,19 @@ export function SettingsPage() {
               />
               <span class="settings-toggle-knob" />
             </label>
+          </div>
+
+          <div class="settings-field">
+            <span class="settings-label">显示左侧快捷按钮</span>
+            <label class="settings-toggle">
+              <input
+                type="checkbox"
+                checked={showShortcutButtons()}
+                onChange={(e) => applyShowShortcutButtons(e.currentTarget.checked)}
+              />
+              <span class="settings-toggle-knob" />
+            </label>
+            <p class="settings-hint">控制「项目设置」「问题检测项」两个快捷按钮的显示。</p>
           </div>
 
           <div class="settings-field">

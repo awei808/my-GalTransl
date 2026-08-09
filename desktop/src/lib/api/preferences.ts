@@ -24,6 +24,7 @@ const HOME_JOB_LIMIT_KEY = "galtransl-home-job-limit";
 const THEME_MODE_KEY = "galtransl-theme-mode";
 const CUSTOM_BACKGROUND_KEY = "galtransl-custom-background";
 const HIDE_BACKEND_CONSOLE_KEY = "galtransl-hide-backend-console";
+const SHORTCUT_BUTTONS_KEY = "galtransl-show-shortcut-buttons";
 const CACHE_BROWSER_FONT_SIZE_KEY = "galtransl-cache-browser-font-size";
 const CACHE_PAGE_SIZE_KEY = "galtransl-cache-page-size";
 const PROMPT_TEMPLATES_OVERRIDES_KEY = "galtransl_prompt_templates_overrides";
@@ -41,6 +42,7 @@ export const CUSTOM_BACKGROUND_SURFACE_OPACITY_MIN = 18;
 export const CUSTOM_BACKGROUND_SURFACE_OPACITY_MAX = 92;
 export const CUSTOM_BACKGROUND_SURFACE_OPACITY_DEFAULT = 33;
 export const HIDE_BACKEND_CONSOLE_DEFAULT = true;
+export const SHORTCUT_BUTTONS_DEFAULT = true;
 export const CACHE_BROWSER_FONT_SIZE_MIN = 11;
 export const CACHE_BROWSER_FONT_SIZE_MAX = 20;
 export const CACHE_BROWSER_FONT_SIZE_DEFAULT = 14;
@@ -57,6 +59,7 @@ export const HOME_JOB_LIMIT_CHANGE_EVENT = "galtransl:home-job-limit-change";
 export const THEME_MODE_CHANGE_EVENT = "galtransl:theme-mode-change";
 export const CUSTOM_BACKGROUND_CHANGE_EVENT = "galtransl:custom-background-change";
 export const HIDE_BACKEND_CONSOLE_CHANGE_EVENT = "galtransl:hide-backend-console-change";
+export const SHORTCUT_BUTTONS_CHANGE_EVENT = "galtransl:show-shortcut-buttons-change";
 export const CACHE_BROWSER_FONT_SIZE_CHANGE_EVENT = "galtransl:cache-browser-font-size-change";
 export const CACHE_PAGE_SIZE_CHANGE_EVENT = "galtransl:cache-page-size-change";
 
@@ -123,6 +126,13 @@ function normalizeHideBackendConsole(value: unknown): boolean {
   if (value === "true") return true;
   if (value === "false") return false;
   return HIDE_BACKEND_CONSOLE_DEFAULT;
+}
+
+function normalizeShowShortcutButtons(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return SHORTCUT_BUTTONS_DEFAULT;
 }
 
 function defaultCustomBackgroundPreference(): CustomBackgroundPreference {
@@ -448,6 +458,30 @@ export function setHideBackendConsolePreference(enabled: boolean): boolean {
     localStorage.setItem(HIDE_BACKEND_CONSOLE_KEY, String(normalized));
     window.dispatchEvent(
       new CustomEvent(HIDE_BACKEND_CONSOLE_CHANGE_EVENT, { detail: normalized }),
+    );
+  } catch {
+    // ignore storage errors
+  }
+  return normalized;
+}
+
+// ---- Shortcut buttons ----
+
+export function getShowShortcutButtonsPreference(): boolean {
+  try {
+    const raw = localStorage.getItem(SHORTCUT_BUTTONS_KEY);
+    return normalizeShowShortcutButtons(raw);
+  } catch {
+    return SHORTCUT_BUTTONS_DEFAULT;
+  }
+}
+
+export function setShowShortcutButtonsPreference(enabled: boolean): boolean {
+  const normalized = normalizeShowShortcutButtons(enabled);
+  try {
+    localStorage.setItem(SHORTCUT_BUTTONS_KEY, String(normalized));
+    window.dispatchEvent(
+      new CustomEvent(SHORTCUT_BUTTONS_CHANGE_EVENT, { detail: normalized }),
     );
   } catch {
     // ignore storage errors
