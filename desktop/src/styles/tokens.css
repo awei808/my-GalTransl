@@ -64,20 +64,20 @@
   --color-brand-primary-active: #0080dd;
 
   --color-bg-app: #12161c;
-  --color-bg-panel: #1e232a;
-  --color-bg-input: #252b33;
+  --color-bg-panel: #1f252b;
+  --color-bg-input: #2a3038;
   --color-bg-hover: rgba(0, 153, 255, 0.1);
   --color-bg-active: rgba(0, 153, 255, 0.2);
   --color-bg-selected: rgba(0, 153, 255, 0.3);
   --color-bg-overlay: rgba(0, 0, 0, 0.6);
 
-  --color-border-default: #2c323a;
-  --color-border-hover: #3a4149;
+  --color-border-default: #2f363e;
+  --color-border-hover: #3d444c;
   --color-border-focus: #0099ff;
 
-  --color-text-primary: #e5e7eb;
-  --color-text-secondary: #9ca3af;
-  --color-text-tertiary: #6b7280;
+  --color-text-primary: #f3f4f6;
+  --color-text-secondary: #b0b8c4;
+  --color-text-tertiary: #8b95a5;
   --color-text-disabled: #4b5563;
   --color-text-on-brand: #ffffff;
   --color-text-link: #0099ff;
@@ -91,7 +91,7 @@
   --color-bg-warning: rgba(210, 153, 34, 0.12);
   --color-bg-error: rgba(248, 81, 73, 0.12);
   --color-bg-info: rgba(0, 153, 255, 0.12);
-  --color-bg-subtle: #262c33; /* 次级背景（代码块/只读输入/分组行） */
+  --color-bg-subtle: #2a3038; /* 次级背景（代码块/只读输入/分组行） */
 
   --color-progress-complete: #34d399;
   --color-progress-pending: #4b5563;
