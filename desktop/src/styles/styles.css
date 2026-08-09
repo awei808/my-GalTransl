@@ -1890,6 +1890,7 @@ textarea {
 /* 问题行 */
 .entry-problem {
   grid-column: 1 / -1;
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1932,6 +1933,7 @@ textarea {
   word-break: break-word;
   white-space: pre-wrap;
   grid-column: 1;
+  grid-row: 2;
 }
 
 /* 角色名彩色标签（翻译模式条目原文前） */
@@ -1965,6 +1967,7 @@ textarea {
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   grid-column: 1;
+  grid-row: 3;
   /* 多行译文：换行须保留，自动增高撑开 */
   white-space: pre-wrap;
   overflow: hidden;
@@ -1987,10 +1990,12 @@ textarea {
 /* 右侧操作按钮列 */
 .entry-actions {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 2 / 4;
+  align-self: center;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 2px 0 10px 0;
 }
 
 .entry-btn {
@@ -2000,7 +2005,7 @@ textarea {
   gap: 4px;
   width: auto;
   height: auto;
-  padding: 3px 8px;
+  padding: 2px 8px;
   border: none;
   background: transparent;
   color: var(--color-text-tertiary);
