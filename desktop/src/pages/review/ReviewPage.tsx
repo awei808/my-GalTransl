@@ -27,6 +27,26 @@ function toVisibleNewlines(s: unknown): string {
     .replace(/\r/g, "\\r");
 }
 
+// 键盘快捷键分派（可导出纯函数，便于单元测试）
+export type KeyAction = "undo" | "redo" | "save";
+
+export interface KeyEventLike {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}
+
+export function resolveKeyAction(e: KeyEventLike): KeyAction | null {
+  if (!e.ctrlKey && !e.metaKey) return null;
+  // Ctrl+Shift+Z 时 key 为大写 "Z"，统一转小写判断，保证与系统惯例一致
+  const key = e.key.toLowerCase();
+  if (key === "z") return e.shiftKey ? "redo" : "undo";
+  if (key === "y") return "redo";
+  if (key === "s") return "save";
+  return null;
+}
+
 /* ── 角色名颜色生成（黄金角度 + 感知补偿）── */
 
 interface ThemeConfig {
@@ -589,19 +609,12 @@ export function ReviewPage() {
 
   // ── 键盘快捷键（撤销/重做） ──
   function handleKeyDown(e: KeyboardEvent) {
-    if (!e.ctrlKey && !e.metaKey) return;
-    // Ctrl+Shift+Z 时 key 为大写 "Z"，统一转小写判断，保证与系统惯例一致
-    const key = e.key.toLowerCase();
-    if (key === "z") {
-      e.preventDefault();
-      // Ctrl+Shift+Z 是重做（与 Ctrl+Y 等价）；仅 Ctrl+Z 时执行撤销
-      if (e.shiftKey) handleRedo();
-      else handleUndo();
-    } else if (key === "y") {
-      e.preventDefault();
-      handleRedo();
-    } else if (key === "s") {
-      e.preventDefault(); // 阻止浏览器/系统保存网页
+    const action = resolveKeyAction(e);
+    if (!action) return;
+    e.preventDefault();
+    if (action === "undo") handleUndo();
+    else if (action === "redo") handleRedo();
+    else if (action === "save") {
       // handleRefresh 内部会先失焦同步草稿，再保存并重检
       if (reviewMode() === "translate") void handleRefresh();
       else void saveMeta();

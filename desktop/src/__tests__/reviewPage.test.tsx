@@ -27,6 +27,7 @@ import {
   redo,
   undo,
 } from "../stores/undoStore";
+import { resolveKeyAction } from "../pages/review/ReviewPage";
 
 /* ─────────── 模拟 Repair: 保存前的 blur 提交草稿流程 ─────────── */
 
@@ -421,5 +422,39 @@ describe("场景 8：元数据模式撤销/重做（修复：元数据编辑接�
       description: "修改 元数据",
     });
     expect(getUndoState().canRedo).toBe(false);
+  });
+});
+
+describe("场景 9：resolveKeyAction 快捷键分派", () => {
+  it("Ctrl+Z → undo", () => {
+    expect(resolveKeyAction({ key: "z", ctrlKey: true, metaKey: false, shiftKey: false })).toBe("undo");
+  });
+
+  it("Ctrl+Shift+Z（key 为大写 Z）→ redo", () => {
+    expect(resolveKeyAction({ key: "Z", ctrlKey: true, metaKey: false, shiftKey: true })).toBe("redo");
+  });
+
+  it("Caps Lock 时 Ctrl+Z（key 为大写 Z、无 Shift）→ undo", () => {
+    expect(resolveKeyAction({ key: "Z", ctrlKey: true, metaKey: false, shiftKey: false })).toBe("undo");
+  });
+
+  it("Ctrl+Y → redo", () => {
+    expect(resolveKeyAction({ key: "y", ctrlKey: true, metaKey: false, shiftKey: false })).toBe("redo");
+  });
+
+  it("Ctrl+S → save", () => {
+    expect(resolveKeyAction({ key: "s", ctrlKey: true, metaKey: false, shiftKey: false })).toBe("save");
+  });
+
+  it("Mac Cmd+S（metaKey）→ save", () => {
+    expect(resolveKeyAction({ key: "s", ctrlKey: false, metaKey: true, shiftKey: false })).toBe("save");
+  });
+
+  it("无 Ctrl/Meta → null", () => {
+    expect(resolveKeyAction({ key: "z", ctrlKey: false, metaKey: false, shiftKey: false })).toBeNull();
+  });
+
+  it("Ctrl+A → null", () => {
+    expect(resolveKeyAction({ key: "a", ctrlKey: true, metaKey: false, shiftKey: false })).toBeNull();
   });
 });
