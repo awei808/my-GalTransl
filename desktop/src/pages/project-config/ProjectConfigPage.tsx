@@ -1185,7 +1185,7 @@ export function ProjectConfigPage() {
     <div class="page page-project-config">
       <div class="pc-header">
         <div>
-          <h2 class="page-title">项目设置</h2>
+          <h2 class="page-title">后端设置（项目设置）</h2>
           <p class="page-description">编辑当前项目的 {getActiveConfigFileName()} 配置参数。</p>
         </div>
         <button

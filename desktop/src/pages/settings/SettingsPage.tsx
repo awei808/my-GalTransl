@@ -403,7 +403,7 @@ export function SettingsPage() {
               />
               <span class="settings-toggle-knob" />
             </label>
-            <p class="settings-hint">控制「项目设置」「问题检测项」两个快捷按钮的显示。</p>
+            <p class="settings-hint">控制「后端设置（项目设置）」「问题检测项」两个快捷按钮的显示。</p>
           </div>
 
           <div class="settings-field">

@@ -82,7 +82,7 @@ const shortcutTabs: TabDef[] = [
   {
     icon: "server",
     view: "settings-backend",
-    label: "项目设置",
+    label: "后端设置（项目设置）",
     shortcutView: "project-config",
     needsProject: true,
   },
