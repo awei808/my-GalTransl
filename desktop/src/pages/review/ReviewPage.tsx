@@ -590,15 +590,17 @@ export function ReviewPage() {
   // ── 键盘快捷键（撤销/重做） ──
   function handleKeyDown(e: KeyboardEvent) {
     if (!e.ctrlKey && !e.metaKey) return;
-    if (e.key === "z") {
+    // Ctrl+Shift+Z 时 key 为大写 "Z"，统一转小写判断，保证与系统惯例一致
+    const key = e.key.toLowerCase();
+    if (key === "z") {
       e.preventDefault();
       // Ctrl+Shift+Z 是重做（与 Ctrl+Y 等价）；仅 Ctrl+Z 时执行撤销
       if (e.shiftKey) handleRedo();
       else handleUndo();
-    } else if (e.key === "y") {
+    } else if (key === "y") {
       e.preventDefault();
       handleRedo();
-    } else if (e.key === "s") {
+    } else if (key === "s") {
       e.preventDefault(); // 阻止浏览器/系统保存网页
       // handleRefresh 内部会先失焦同步草稿，再保存并重检
       if (reviewMode() === "translate") void handleRefresh();
