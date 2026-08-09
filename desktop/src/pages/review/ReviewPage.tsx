@@ -8,6 +8,7 @@ import {
   fetchPerFileMetadata,
   savePerFileMetadata,
   checkCacheProblems,
+  fetchNameDict,
 } from "../../lib/api/project";
 import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
@@ -180,6 +181,12 @@ function getNameColor(name: string): string {
   return generateColorAt(idx, isDarkTheme() ? DARK_THEME : LIGHT_THEME);
 }
 
+/** 显示层角色名翻译：name 可能是字符串或数组，仅在展示时应用替换表，不修改缓存数据 */
+function displaySpeakerName(name: string | string[], nameDict: Record<string, string>): string {
+  if (Array.isArray(name)) return name.map((n) => nameDict[n] ?? n).join(" / ");
+  return nameDict[name] ?? name;
+}
+
 /* ── 单条 CacheEntry 组件 ── */
 function EntryCard(props: {
   entry: CacheEntry;
@@ -193,6 +200,8 @@ function EntryCard(props: {
   onToggleExpanded: () => void;
   // 可选：主译文框聚焦状态上报（虚拟滚动"钉住"编辑项用；分页模式不传）
   onFocusChange?: (focused: boolean) => void;
+  // 角色名替换表（仅显示层使用，不写入缓存）
+  nameDict: Record<string, string>;
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
@@ -249,7 +258,7 @@ function EntryCard(props: {
                 class="entry-name-badge"
                 style={{ "background-color": nameColor(), color: "#fff" }}
               >
-                {e().name}
+                {displaySpeakerName(e().name, props.nameDict)}
               </span>
             </Show>
             {toVisibleNewlines(e().pre_src)}
@@ -514,6 +523,8 @@ export function ReviewPage() {
   const [entries, setEntries] = createSignal<CacheEntry[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [jumpValue, setJumpValue] = createSignal("");
+  // 角色名替换表：仅在显示层翻译角色名，不写入缓存数据（缓存 name 保持原始值，保证缓存 key 稳定）
+  const [nameDict, setNameDict] = createSignal<Record<string, string>>({});
 
   // ── 模式由打开文件所在的缓存子目录隐式决定，无需手动切换 ──
   // 缓存目录分工（见 CLAUDE.md / GalTransl.__init__）：
@@ -1068,6 +1079,18 @@ export function ReviewPage() {
     }
   }
 
+  // 角色名替换表加载：项目切换时刷新（仅显示层使用）
+  createEffect(() => {
+    const pid = appState.activeProjectId;
+    if (!pid) {
+      setNameDict({});
+      return;
+    }
+    void fetchNameDict(pid)
+      .then((res) => setNameDict(res.name_dict ?? {}))
+      .catch(() => setNameDict({}));
+  });
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     const file = appState.activeFilePath;
@@ -1557,7 +1580,7 @@ export function ReviewPage() {
             <option value="all">全部说话人</option>
             <option value="__no_speaker__">旁白独白</option>
             <For each={speakers()}>
-              {(s) => <option value={s}>{s}</option>}
+              {(s) => <option value={s}>{displaySpeakerName(s, nameDict())}</option>}
             </For>
           </select>
           <Show when={hasFilter()}>
@@ -1667,6 +1690,7 @@ export function ReviewPage() {
                   <div data-index={entrySignal().index}>
                     <EntryCard
                       entry={entrySignal()}
+                      nameDict={nameDict()}
                       expanded={expandedSerials().has(entrySignal().index)}
                       onToggleExpanded={() => toggleExpanded(entrySignal().index)}
                       onSkip={() => handleSkip(entrySignal().index)}

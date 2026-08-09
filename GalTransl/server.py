@@ -2782,11 +2782,8 @@ def build_handler(registry: JobRegistry) -> type:
                     import orjson
                     with open(file_path, "rb") as f:
                         data = orjson.loads(f.read())
-                    if isinstance(data, list):
-                        name_dict = _load_project_name_dict(project_dir)
-                        for e in data:
-                            if isinstance(e, dict) and e.get("name"):
-                                e["name"] = _lookup_name(e["name"], name_dict)
+                    # 原样返回缓存条目：不应用 name 替换表（name 参与缓存 key，
+                    # 若在此替换会污染缓存文件导致后续缓存 key 失配）
                     self._send_json({"project_dir": project_dir, "filename": norm, "entries": data})
                 except Exception as exc:
                     self._send_json({"error": f"failed to read cache: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
