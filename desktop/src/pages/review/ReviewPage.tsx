@@ -538,6 +538,15 @@ export function ReviewPage() {
   let metaJsonInvalidShown = false;
   // 当前打开的元数据文件完整路径（切换保存时用于推导旧文件的 metaType/sourceFile）
   let metaLoadedFullPath = "";
+  // 元数据撤销基线：最近一次提交态快照（编辑入栈基准，撤销/重做后同步更新）
+  let metaUndoBase: MetadataEntry | null = null;
+  // 磁盘态快照：最近一次加载/保存成功后的值（用于正确计算 dirty）
+  let metaDiskSnapshot: MetadataEntry | null = null;
+
+  // 深比较元数据对象：键序变化视为内容变化，与 textarea 文本编辑语义一致
+  function metaEqual(a: MetadataEntry | null | undefined, b: MetadataEntry | null | undefined): boolean {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  }
 
 
   // ── 快捷筛选 ──
@@ -583,7 +592,9 @@ export function ReviewPage() {
     if (!e.ctrlKey && !e.metaKey) return;
     if (e.key === "z") {
       e.preventDefault();
-      handleUndo();
+      // Ctrl+Shift+Z 是重做（与 Ctrl+Y 等价）；仅 Ctrl+Z 时执行撤销
+      if (e.shiftKey) handleRedo();
+      else handleUndo();
     } else if (e.key === "y") {
       e.preventDefault();
       handleRedo();
@@ -660,10 +671,43 @@ export function ReviewPage() {
     return next;
   }
 
+  // 主译文框草稿仅在失焦时提交到 entries 并入 undo 栈，
+  // 撤销/重做前先失焦提交，否则输入中按 Ctrl+Z 时 undo 栈为空且原生撤销已被快捷键拦截
+  function blurDraftInput(): void {
+    const ae = document.activeElement;
+    if (
+      ae instanceof HTMLTextAreaElement &&
+      (ae.classList.contains("entry-dst-input") || ae.classList.contains("meta-content-textarea"))
+    ) {
+      ae.blur();
+    }
+  }
+
   function handleUndo() {
+    blurDraftInput();
+    const currentFile = appState.activeFilePath;
+    // 元数据模式：撤销链路独立于翻译条目栈，按快照入栈、还原走 setMetaEntry
+    if (reviewMode() === "metadata") {
+      // 有未保存编辑时先入栈（pushUndo 会清空 redo 栈），使当前编辑成为可撤销的第一步
+      if (metaDirty && metaEntry() && metaUndoBase && !metaEqual(metaUndoBase, metaEntry())) {
+        pushUndo({
+          id: `${currentFile ?? ""}:meta`,
+          file: currentFile ?? "",
+          index: 0,
+          before: metaUndoBase,
+          after: metaEntry()!,
+          description: "修改 元数据",
+        });
+      }
+      const metaRecord = undo();
+      if (!metaRecord || metaRecord.file !== currentFile) return;
+      setMetaEntry(metaRecord.before as MetadataEntry);
+      metaUndoBase = metaRecord.before as MetadataEntry;
+      metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
+      return;
+    }
     const entry = undo();
     if (!entry) return;
-    const currentFile = appState.activeFilePath;
     if (entry.file !== currentFile) return;
 
     const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
@@ -693,9 +737,29 @@ export function ReviewPage() {
   }
 
   function handleRedo() {
+    blurDraftInput();
+    const currentFile = appState.activeFilePath;
+    // 元数据模式：对称的 redo 分支；redo 前若有未保存编辑先入栈（清空 redo 栈），避免 redo 覆盖未保存编辑
+    if (reviewMode() === "metadata") {
+      if (metaDirty && metaEntry() && metaUndoBase && !metaEqual(metaUndoBase, metaEntry())) {
+        pushUndo({
+          id: `${currentFile ?? ""}:meta`,
+          file: currentFile ?? "",
+          index: 0,
+          before: metaUndoBase,
+          after: metaEntry()!,
+          description: "修改 元数据",
+        });
+      }
+      const metaRecord = redo();
+      if (!metaRecord || metaRecord.file !== currentFile) return;
+      setMetaEntry(metaRecord.after as MetadataEntry);
+      metaUndoBase = metaRecord.after as MetadataEntry;
+      metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
+      return;
+    }
     const entry = redo();
     if (!entry) return;
-    const currentFile = appState.activeFilePath;
     if (entry.file !== currentFile) return;
 
     const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
@@ -884,6 +948,10 @@ export function ReviewPage() {
             const prevInfo = modeInfoOf(metaLoadedFullPath);
             // metaEntry() 在外层 if (metaDirty && metaEntry() && metaLoadedFullPath) 已保证非空
             await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry()!);
+            // 保存即新的撤销起点（与 saveMeta 一致）：防旧文件残留记录在切回时造成撤销错位
+            metaUndoBase = metaEntry();
+            metaDiskSnapshot = metaEntry();
+            clearUndo();
             metaDirty = false;
           } catch (e) {
             toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
@@ -1050,7 +1118,9 @@ export function ReviewPage() {
     }
     void appState.cacheVersion; // 仅 metadata 模式追踪：外部改动元数据文件时自动刷新
     void (async () => {
-      if (loadedFile && loadedFile !== srcFile) {
+      // 切换判断必须用完整路径而非纯源文件名：pass1/pass2 缓存可能含同名源文件（如 00_01），
+      // 纯名相同会误判为"同文件"而跳过加载，导致界面残留旧数据、blur 后旧数据被写入新文件
+      if (metaLoadedFullPath && metaLoadedFullPath !== appState.activeFilePath) {
         // 切换元数据文件：有改动先等待落盘，防 fire-and-forget 的丢失窗口
         if (metaDirty && metaEntry()) {
           // 等待在途失焦保存（saveMeta）完成，防并发写同一文件
@@ -1066,9 +1136,10 @@ export function ReviewPage() {
             await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry()!);
             if (myToken !== metaSwitchToken) return; // 保存期间又切换
             metaDirty = false;
+            clearUndo(); // 保存即新的撤销起点（与 saveMeta 一致），防旧文件残留记录造成撤销错位
           } catch (e) {
             // 保存失败：中止切换，保住未保存编辑（metaDirty 保持 true）
-            toast.error(`保存 ${loadedFile} 失败：${getErrorMessage(e)}`);
+            toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
             return;
           }
         }
@@ -1084,6 +1155,8 @@ export function ReviewPage() {
         if (myToken !== metaSwitchToken) return; // 过期响应不写 metaEntry
         setMetaEntry(res.entry ?? null);
         metaDirty = false; // 新文件即磁盘态，未编辑
+        metaUndoBase = res.entry ?? null; // 重置撤销基线
+        metaDiskSnapshot = res.entry ?? null; // 重置磁盘态快照
         metaJsonInvalidShown = false; // 新文件加载后重置非法 JSON 提示标志
         // activeFilePath 至此非空（正在加载目标文件）；?? "" 仅作类型收窄，与声明类型一致
         metaLoadedFullPath = appState.activeFilePath ?? ""; // 记录当前文件完整路径，供下次切换保存推导
@@ -1091,6 +1164,8 @@ export function ReviewPage() {
         if (myToken !== metaSwitchToken) return;
         setMetaEntry(null);
         metaDirty = false;
+        metaUndoBase = null;
+        metaDiskSnapshot = null;
       } finally {
         if (myToken === metaSwitchToken) setMetaLoading(false);
       }
@@ -1137,15 +1212,30 @@ export function ReviewPage() {
     const srcFile = metaSourceFile();
     const entry = metaEntry();
     // 守卫：保存目标必须是当前实际打开的文件。
-    // metaLoadedFullPath 是完整路径，经 modeInfoOf 提取纯源文件名后与 metaSourceFile() 比较。
-    // 切换期间（metaSourceFile 已是新目标、metaLoadedFullPath 仍是旧文件）跳过，防把旧数据写入新文件
-    if (!pid || !entry || modeInfoOf(metaLoadedFullPath).sourceFile !== metaSourceFile()) {
+    // metaLoadedFullPath 是完整路径，经 modeInfoOf 提取 metaType/sourceFile 后分别与当前目标比较。
+    // 必须同时校验 metaType：pass1/pass2 可能含同名源文件，仅比纯源文件名会漏判，
+    // 导致 pass1 数据被 POST 写入 pass2 文件（切换瞬间 metaSourceFile 相同、metaType 不同）
+    const loadedInfo = modeInfoOf(metaLoadedFullPath);
+    if (!pid || !entry || loadedInfo.sourceFile !== metaSourceFile() || loadedInfo.metaType !== metaType()) {
+      if (import.meta.env?.DEV) {
+        console.debug(
+          `[ReviewPage] 元数据保存被守卫拦截（目标已切换）, loaded=${metaLoadedFullPath}, target=${metaSourceFile()}/${metaType()}`,
+        );
+      }
       metaSavePending = false;
       return;
     }
     try {
       await savePerFileMetadata(pid, metaType(), srcFile, entry);
-      metaDirty = false; // 仅保存成功才清脏
+      metaDiskSnapshot = entry; // 更新磁盘态快照
+      // 撤销基线取界面当前值而非保存值 entry：防保存响应返回时 metaEntry 已被撤销改写（竞态）导致基线错位
+      metaUndoBase = metaEntry();
+      clearUndo(); // 保存即新的撤销起点：清空保存前历史，撤销最多回到最近保存态
+      // 按快照重算 dirty：防保存响应返回时 metaEntry 已被撤销改写（竞态）而错误清脏
+      metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
+      if (import.meta.env?.DEV) {
+        console.debug(`[ReviewPage] 元数据已保存并重置撤销栈, file=${srcFile}`);
+      }
     } catch (e) {
       toast.error(`元数据保存失败：${getErrorMessage(e)}`);
     } finally {

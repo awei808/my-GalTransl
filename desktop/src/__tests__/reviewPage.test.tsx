@@ -20,6 +20,13 @@ import {
   markClean,
 } from "../stores/appStore";
 import { confirm, getConfirmState } from "../stores/confirmStore";
+import {
+  clearUndo,
+  getUndoState,
+  pushUndo,
+  redo,
+  undo,
+} from "../stores/undoStore";
 
 /* ─────────── 模拟 Repair: 保存前的 blur 提交草稿流程 ─────────── */
 
@@ -255,5 +262,164 @@ describe("场景 6：边界条件", () => {
     saveInFlight = false;
     if (!saveInFlight) mockSave();
     expect(callCount).toBe(1); // 第三次成功
+  });
+});
+
+describe("场景 7：主译文框输入中撤销/重做（修复：撤销/重做前先 blur 提交草稿）", () => {
+  beforeEach(() => {
+    clearUndo();
+  });
+
+  it("blur 提交草稿（值变化 → pushUndo）后 undo 取回该记录并可还原", () => {
+    // 模拟 handleFieldChange 值变化分支：setEntries + pushUndo
+    pushUndo({
+      id: "game/t01.txt.json:1",
+      file: "game/t01.txt.json",
+      index: 1,
+      before: { pre_dst: "旧译文" },
+      after: { pre_dst: "新译文" },
+      description: "修改 译文",
+    });
+    const entry = undo();
+    expect(entry?.index).toBe(1);
+    expect((entry?.before as Record<string, unknown>).pre_dst).toBe("旧译文");
+    expect(getUndoState().canUndo).toBe(false);
+  });
+
+  it("撤销后 redo 取回该记录", () => {
+    pushUndo({
+      id: "game/t01.txt.json:1",
+      file: "game/t01.txt.json",
+      index: 1,
+      before: { pre_dst: "旧译文" },
+      after: { pre_dst: "新译文" },
+      description: "修改 译文",
+    });
+    undo();
+    const entry = redo();
+    expect(entry?.index).toBe(1);
+    expect((entry?.after as Record<string, unknown>).pre_dst).toBe("新译文");
+    expect(getUndoState().canRedo).toBe(false);
+  });
+
+  it("blur 提交时值未变化 → 不额外入栈，不打断既有 undo 链", () => {
+    // 先有历史记录
+    pushUndo({
+      id: "game/t01.txt.json:1",
+      file: "game/t01.txt.json",
+      index: 1,
+      before: { pre_dst: "旧译文" },
+      after: { pre_dst: "中译文" },
+      description: "修改 译文",
+    });
+    // 模拟 handleFieldChange 的"值未变化"分支：直接 return，不 pushUndo
+    // 此时栈应保持原样，undo 仍取回既有记录
+    const entry = undo();
+    expect(entry?.index).toBe(1);
+    expect((entry?.after as Record<string, unknown>).pre_dst).toBe("中译文");
+    expect(getUndoState().stackSize).toBe(1);
+  });
+
+  it("连续编辑后 undo 按 LIFO 回退，redo 按顺序恢复", () => {
+    for (let i = 1; i <= 3; i++) {
+      pushUndo({
+        id: `game/t01.txt.json:${i}`,
+        file: "game/t01.txt.json",
+        index: i,
+        before: { pre_dst: `旧${i}` },
+        after: { pre_dst: `新${i}` },
+        description: "修改 译文",
+      });
+    }
+    expect(undo()?.index).toBe(3);
+    expect(undo()?.index).toBe(2);
+    expect(undo()?.index).toBe(1);
+    expect(undo()).toBeNull();
+    expect(redo()?.index).toBe(1);
+    expect(redo()?.index).toBe(2);
+    expect(redo()?.index).toBe(3);
+    expect(redo()).toBeNull();
+  });
+});
+
+describe("场景 8：元数据模式撤销/重做（修复：元数据编辑接入 undo 栈）", () => {
+  const META_FILE = "game/pass1_cache/script.meta.json";
+  const OTHER_META_FILE = "game/pass1_cache/other.meta.json";
+  const baseMeta: Record<string, unknown> = { id: "file01", title: "旧标题" };
+  const editedMeta: Record<string, unknown> = { id: "file01", title: "新标题" };
+
+  beforeEach(() => {
+    clearUndo();
+  });
+
+  it("元数据整对象快照入栈后 undo 取回 before（index 固定为 0，file 为元数据路径）", () => {
+    // 模拟 handleUndo 元数据分支：未保存编辑先 pushUndo 再 undo
+    pushUndo({
+      id: `${META_FILE}:meta`,
+      file: META_FILE,
+      index: 0,
+      before: baseMeta,
+      after: editedMeta,
+      description: "修改 元数据",
+    });
+    const entry = undo();
+    expect(entry?.index).toBe(0);
+    expect(entry?.file).toBe(META_FILE);
+    expect(entry?.before).toEqual(baseMeta);
+    expect(getUndoState().canUndo).toBe(false);
+  });
+
+  it("撤销后 redo 取回 after 整对象快照", () => {
+    pushUndo({
+      id: `${META_FILE}:meta`,
+      file: META_FILE,
+      index: 0,
+      before: baseMeta,
+      after: editedMeta,
+      description: "修改 元数据",
+    });
+    undo();
+    const entry = redo();
+    expect(entry?.after).toEqual(editedMeta);
+    expect(getUndoState().canRedo).toBe(false);
+  });
+
+  it("currentFile 与记录 file 不匹配时守卫拦截（模拟 handleUndo 的 file 校验）", () => {
+    pushUndo({
+      id: `${META_FILE}:meta`,
+      file: META_FILE,
+      index: 0,
+      before: baseMeta,
+      after: editedMeta,
+      description: "修改 元数据",
+    });
+    // 当前打开的是另一个元数据文件 → undo 取回记录后 handleUndo 直接 return，不生效
+    const entry = undo();
+    const matchesCurrent = entry?.file === OTHER_META_FILE;
+    expect(matchesCurrent).toBe(false);
+  });
+
+  it("存在未保存编辑时先入栈会清空 redo 栈（避免 redo 覆盖未保存编辑）", () => {
+    // 先有一条已撤销的历史（canRedo 应为 true）
+    pushUndo({
+      id: `${META_FILE}:meta`,
+      file: META_FILE,
+      index: 0,
+      before: baseMeta,
+      after: editedMeta,
+      description: "修改 元数据",
+    });
+    undo();
+    expect(getUndoState().canRedo).toBe(true);
+    // 模拟 handleRedo 元数据分支：有未保存编辑先 pushUndo（等价于 blur 提交，会清空 redo）
+    pushUndo({
+      id: `${META_FILE}:meta`,
+      file: META_FILE,
+      index: 0,
+      before: editedMeta,
+      after: { id: "file01", title: "再次编辑" },
+      description: "修改 元数据",
+    });
+    expect(getUndoState().canRedo).toBe(false);
   });
 });

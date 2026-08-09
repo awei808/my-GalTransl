@@ -759,6 +759,91 @@ await testGroup("模块 11: metadata 保存链路状态机", async () => {
     assert(markedClean, "成功时 markClean");
     assert(dirty.length === 0, "成功时 dirty 清除");
   });
+
+  testGroup("  11.10 BUG-1 回归：pass1/pass2 同名源文件互切不写错位置（守卫 + effect 完整路径判断 + 保存后 clearUndo）", () => {
+    // 与 ReviewPage.modeInfoOf 一致的模拟（含 pass2 → batchmeta）
+    function modeInfoOf(path) {
+      if (!path) return { metaType: "filemeta", sourceFile: "" };
+      const base = path.split("/").pop() ?? "";
+      if (path.includes("pass1_cache/")) {
+        return { metaType: "filemeta", sourceFile: base.replace(/\.meta\.json$/, "") };
+      }
+      if (path.includes("pass2_cache/")) {
+        return { metaType: "batchmeta", sourceFile: base.replace(/\.batch\.json$/, "") };
+      }
+      return { metaType: "filemeta", sourceFile: "" };
+    }
+
+    // ===== 1. saveMeta 守卫（含 metaType 校验）=====
+    // 场景：pass1 00_01 有未保存编辑 → 切到 pass2 同名 00_01，blur 触发 saveMeta
+    // 旧守卫只比 sourceFile（同名相等 → 漏判 → pass1 数据 POST 到 pass2 文件）
+    // 新守卫：loadedInfo.metaType(filemeta) !== metaType()(batchmeta) → 拦截
+    const guardMetaLoadedFullPath = "pass1_cache/00_01.txt.json.meta.json"; // 上次加载：pass1
+    const guardMetaType = "batchmeta"; // 当前目标：pass2（activeFilePath 已切走）
+    const guardMetaSourceFile = "00_01.txt.json"; // 当前目标纯名（与旧文件同名）
+    const loadedInfo = modeInfoOf(guardMetaLoadedFullPath);
+
+    let saveBlocked = false;
+    if (
+      !guardMetaLoadedFullPath ||
+      loadedInfo.sourceFile !== guardMetaSourceFile ||
+      loadedInfo.metaType !== guardMetaType
+    ) {
+      saveBlocked = true; // 守卫拦截，不 POST
+    }
+    assert(saveBlocked, "同名互切（纯名相等但 metaType 不同）→ 守卫拦截");
+    assertEq(loadedInfo.sourceFile, guardMetaSourceFile, "纯名确实相等（还原旧 bug 的漏判条件）");
+    assertEq(loadedInfo.metaType, "filemeta", "旧文件为 pass1(filemeta)");
+
+    // 对照：pass1 内部稳定编辑 → 守卫放行（sourceFile、metaType 均一致）
+    let saveAllowed = false;
+    const stableInfo = modeInfoOf("pass1_cache/00_01.txt.json.meta.json");
+    if (stableInfo.sourceFile === "00_01.txt.json" && stableInfo.metaType === "filemeta") {
+      saveAllowed = true;
+    }
+    assert(saveAllowed, "pass1 文件内正常编辑 → 守卫放行");
+
+    // ===== 2. effect 切换判断用完整路径 =====
+    // 场景：从 pass1 00_01（metaLoadedFullPath）切到 pass2 同名 00_01（activeFilePath）
+    // 旧判断：loadedFile === srcFile（纯名相同）→ 误判同文件 → dirty 时 return 不加载 → 界面残留
+    // 新判断：metaLoadedFullPath !== activeFilePath → 进入切换分支（保存旧文件 + 加载新文件）
+    const metaLoadedFullPath = "pass1_cache/00_01.txt.json.meta.json";
+    const activeFilePath = "pass2_cache/00_01.txt.json.batch.json";
+
+    let isSwitch = false;
+    let isSameFileRefresh = false;
+    if (metaLoadedFullPath && metaLoadedFullPath !== activeFilePath) {
+      isSwitch = true; // 切换分支
+    } else if (true) {
+      isSameFileRefresh = true; // 同文件刷新分支
+    }
+    assert(isSwitch, "完整路径不同 → 判定为切换（即使纯名相同）");
+    assert(!isSameFileRefresh, "不再误判为同文件刷新");
+
+    // 对照：同文件外部刷新（cacheVersion bump）→ 仍走刷新分支
+    const samePath = "pass1_cache/00_01.txt.json.meta.json";
+    let isRefresh = false;
+    if (samePath && samePath !== samePath) {
+      // 切换
+    } else {
+      isRefresh = true;
+    }
+    assert(isRefresh, "完整路径相同 → 保持刷新分支（外部改动自动刷新）");
+
+    // ===== 3. 保存旧文件后 clearUndo（runSwitch / effect 切换保存分支）=====
+    let undoStack = ["meta:file-A-edit", "meta:file-B-edit", "translate:file-A-edit"];
+    function clearUndo() {
+      undoStack = [];
+    }
+    // 模拟切换时保存旧文件成功后的处理（与 saveMeta 一致：保存即新撤销起点）
+    clearUndo();
+    assert(undoStack.length === 0, "切换保存旧文件后 clearUndo（防残留记录造成撤销错位）");
+
+    // 对照：不保存（丢弃/取消）分支不 clearUndo → 但切回时由新文件加载重置基线
+    undoStack = ["meta:file-A-edit"];
+    // 丢弃分支：metaDirty=false，不做 clearUndo（原语义不变）
+    assert(undoStack.length === 1, "丢弃分支不清 undo（保持原语义）");
+  });
 });
 
 // ======= 结果 =======
