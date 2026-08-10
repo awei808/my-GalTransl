@@ -94,8 +94,14 @@ internals:
     enableGlobalPrompt: true      # 阶段2 全局游戏分析 [True/False]
     enableGenDic: true            # 阶段3 术语表构建 [True/False]
     enableFileMeta: true          # 阶段4 文件级元数据 [True/False]
+    enablePlotRoute: true         # 阶段4.5 剧情路线图 [True/False]
+    forceRegenPlotRoute: false    # 是否强制重新生成剧情路线图（即使已存在）[True/False]
     enableBatchMeta: true         # 阶段5 批次级元数据 [True/False]
     enableTranslate: true         # 阶段6 翻译执行 [True/False]
+  # ForPlotRouteMap 后端专用配置（剧情路线图）
+  plotroute:
+    structureType: "树"           # 剧情结构类型 [线性/树/有向无环图/有向有环图/混合]
+    userOutline: ""               # 用户提供的剧情大纲（纯文本，可空；留空由 AI 根据各文件剧情自行归纳）
   # ForGlobalPrompt 后端专用配置
   forglobalprompt:
     inject_guideline: false       # 是否将翻译规范注入全局分析提示词 [True/False]

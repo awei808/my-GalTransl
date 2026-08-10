@@ -300,7 +300,7 @@ class ForBRStation(ForGalJsonMulitChat):
         prompt_req = prompt_req.replace("[batch_metadata]", "")
         # 全局提示词（GlobalPrompt）：仅首轮注入，与翻译轮一致
         prompt_req = prompt_req.replace(
-            "[global_prompt]", self._format_global_prompt_block() or ""
+            "[global_prompt]", self._format_global_prompt_block(filename) or ""
         )
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)

@@ -484,6 +484,36 @@ def _read_yaml_file(path: str) -> dict:
         return safe_load(f) or {}
 
 
+# 全局缓存：默认配置模板的解析结果，启动后首次使用解析一次
+_DEFAULT_CONFIG_CACHE: dict | None = None
+_DEFAULT_CONFIG_LOCK = threading.Lock()
+
+
+def _get_default_config() -> dict:
+    """返回默认配置模板的解析结果（带缓存，线程安全）。"""
+    global _DEFAULT_CONFIG_CACHE
+    if _DEFAULT_CONFIG_CACHE is None:
+        with _DEFAULT_CONFIG_LOCK:
+            if _DEFAULT_CONFIG_CACHE is None:
+                _DEFAULT_CONFIG_CACHE = safe_load(DEFAULT_PROJECT_CONFIG_YAML) or {}
+    return _DEFAULT_CONFIG_CACHE
+
+
+def _deep_merge_defaults(cfg: dict, defaults: dict) -> dict:
+    """将默认配置深合并进用户配置：仅补齐缺失键，已有键原样保留。
+
+    用于旧项目升级场景——config.yaml 缺少新增配置段时，用默认值补全，
+    使前端设置界面能显示并编辑这些新配置项。list 整体保留（不逐项合并）。
+    """
+    merged = dict(cfg)
+    for key, default_val in defaults.items():
+        if key not in merged:
+            merged[key] = default_val
+        elif isinstance(default_val, dict) and isinstance(merged[key], dict):
+            merged[key] = _deep_merge_defaults(merged[key], default_val)
+    return merged
+
+
 def _write_yaml_file(path: str, data: dict) -> None:
     """Write data to a YAML file atomically."""
     tmp = path + ".tmp"
@@ -583,7 +613,7 @@ def _collect_cache_files(cache_dir: str) -> list[str]:
             # 跳过元数据与示例/临时文件（init 会生成 _示例缓存文件.json）
             if name.endswith(".meta.json") or name.endswith(".batch.json"):
                 continue
-            if name == "GlobalPrompt.json" or name.startswith("_"):
+            if name in ("GlobalPrompt.json", "PlotRouteMap.json") or name.startswith("_"):
                 continue
             rel = os.path.relpath(os.path.join(root, name), cache_dir).replace("\\", "/")
             files.append(rel)
@@ -1832,6 +1862,24 @@ _SAMPLE_BATCH_META_CONTENT = json.dumps(
     ensure_ascii=False,
     indent=2,
 )
+_SAMPLE_PLOT_ROUTE_CONTENT = json.dumps(
+    {
+        "结构类型": "树",
+        "用户大纲": "序章 → 三条女主角线（华恋/凛音/学生会）→ 各线汇合 TRUE END",
+        "mermaid": "flowchart TD\n  subgraph 序章[序章]\n    A[开场]\n  end\n  subgraph 华恋线[华恋线]\n    B[华恋线剧情]\n  end\n  A --> B",
+        "文件归属": {
+            "00_01_アバンタイトル.txt.json": "序章",
+            "01_01_華恋ルート.txt.json": "华恋线",
+        },
+        "节点剧情": {
+            "序章": "开局与导入",
+            "华恋线": "与华恋的互动与告白",
+        },
+        "备注": "剧情路线图：结构类型为 线性/树/有向无环图/有向有环图/混合；mermaid 为路线图源码（可用绘图页可视化编辑）；文件归属标记每个剧本文件所属路线；节点剧情为该路线剧情摘要（供注入）。",
+    },
+    ensure_ascii=False,
+    indent=2,
+)
 
 
 def _workspace_root() -> str:
@@ -1926,8 +1974,8 @@ def _write_stage_samples(
 ) -> None:
     """按用户勾选生成示例 JSON 模板（正式命名，填好后直接生效）。
 
-    支持阶段：enableGlobalPrompt / enableFileMeta / enableBatchMeta。
-    GlobalPrompt 为固定单文件（GlobalPrompt.json）；文件级/批次级元数据按输入
+    支持阶段：enableGlobalPrompt / enablePlotRoute / enableFileMeta / enableBatchMeta。
+    GlobalPrompt、PlotRouteMap 为固定单文件；文件级/批次级元数据按输入
     文件名逐文件生成（{filename}.meta.json / {filename}.batch.json），
     与 load_file_metadata_map / load_batch_metadata_map 的读取命名一致。
     sample_stages：需要生成示例的阶段键集合。
@@ -1938,6 +1986,11 @@ def _write_stage_samples(
         if force or not os.path.isfile(p):
             with open(p, "w", encoding="utf-8") as _f:
                 _f.write(_SAMPLE_GLOBAL_PROMPT_CONTENT)
+    if "enablePlotRoute" in sample_stages:
+        p = os.path.join(cache_dir, PASS0_CACHE_DIR, "PlotRouteMap.json")
+        if force or not os.path.isfile(p):
+            with open(p, "w", encoding="utf-8") as _f:
+                _f.write(_SAMPLE_PLOT_ROUTE_CONTENT)
     if "enableFileMeta" in sample_stages:
         for name in input_files or []:
             p = os.path.join(cache_dir, PASS1_CACHE_DIR, f"{name}.meta.json")
@@ -1998,7 +2051,11 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": f"config file not found: {config_name}"}, status=HTTPStatus.NOT_FOUND)
                     return
                 try:
-                    data = _read_yaml_file(config_path)
+                    # 深合并默认模板：补齐旧项目缺失的新配置段（只补不覆盖），
+                    # 使设置界面能显示并编辑升级后新增的配置项。
+                    data = _deep_merge_defaults(
+                        _read_yaml_file(config_path), _get_default_config()
+                    )
                     self._send_json({"config": data, "project_dir": project_dir, "config_file_name": config_name})
                 except Exception as exc:
                     self._send_json({"error": f"failed to read config: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -2612,6 +2669,46 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
                 return
 
+            # GET/POST /api/projects/:id/metadata/plotroute  （剧情路线图，与 GlobalPrompt 并列）
+            if sub_path == "/metadata/plotroute" or sub_path == "/metadata/plotroute/":
+                _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "PlotRouteMap.json")
+
+                if self.command == "GET":
+                    if not os.path.isfile(_meta_path):
+                        self._send_json({"exists": False, "type": "plotroute", "entry": None, "path": _meta_path})
+                        return
+                    try:
+                        with open(_meta_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception as e:
+                        self._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                        return
+                    entry = data if isinstance(data, dict) else {}
+                    self._send_json({"exists": True, "type": "plotroute", "entry": entry, "path": _meta_path})
+                    return
+
+                if self.command == "POST":
+                    try:
+                        payload = self._read_json_body()
+                        entry = payload.get("entry", payload)
+                        if not isinstance(entry, dict):
+                            self._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
+                            return
+                        os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
+                        tmp_path = _meta_path + ".tmp"
+                        with open(tmp_path, "w", encoding="utf-8") as f:
+                            json.dump(entry, f, ensure_ascii=False, indent=2)
+                        os.replace(tmp_path, _meta_path)
+                        self._send_json({"success": True, "type": "plotroute", "path": _meta_path})
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                    except Exception as exc:
+                        self._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+
+                self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                return
+
             # POST /api/projects/:id/cache/delete-entry
             if sub_path == "/cache/delete-entry":
                 if self.command != "POST":
@@ -2722,7 +2819,7 @@ def build_handler(registry: JobRegistry) -> type:
                             for name in sorted(names):
                                 if not name.endswith(".json"):
                                     continue
-                                if name == "GlobalPrompt.json" or name.startswith("_"):
+                                if name in ("GlobalPrompt.json", "PlotRouteMap.json") or name.startswith("_"):
                                     continue
                                 if name.endswith(".meta.json") or name.endswith(".batch.json"):
                                     continue

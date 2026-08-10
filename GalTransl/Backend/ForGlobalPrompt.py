@@ -75,12 +75,16 @@ def load_global_prompt(projectConfig: CProjectConfig) -> Optional[dict]:
     return data
 
 
-def _format_global_prompt_as_context(gp: dict) -> str:
+def _format_global_prompt_as_context(gp: dict, annotate_plot: bool = False) -> str:
     """
     将 GlobalPrompt 字典格式化为可供其他后端注入提示词的文本块。
 
     格式化后的文本用于替换提示词模板中的 [global_prompt] 占位符。
     如果 gp 为 None 或空，返回空字符串（占位符被清除）。
+
+    Args:
+        annotate_plot: 为 True 时在「剧情概述」标题处附加标注，说明该剧情
+            为游戏全局剧情、可能与当前文件不完全对应。
     """
     if not gp or not isinstance(gp, dict):
         return ""
@@ -90,7 +94,14 @@ def _format_global_prompt_as_context(gp: dict) -> str:
     # 剧情概述
     plot = gp.get("剧情概述", "")
     if plot and isinstance(plot, str) and plot.strip():
-        parts.append(f"# 全局剧情概述\n{plot.strip()}")
+        if annotate_plot:
+            heading = (
+                "# 全局剧情概述（游戏整体剧情，可能与当前文件不完全对应，"
+                "请优先参考上方路线剧情和文件元数据）"
+            )
+        else:
+            heading = "# 全局剧情概述"
+        parts.append(f"{heading}\n{plot.strip()}")
 
     # 角色列表
     characters = gp.get("角色列表", [])

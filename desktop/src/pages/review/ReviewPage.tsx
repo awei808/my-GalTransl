@@ -17,6 +17,7 @@ import type { CacheEntry, MetadataEntry, MetadataType, ProblemTypeInfo } from ".
 import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
 import { isDarkTheme, themeDark } from "../../lib/theme";
+import { PlotRoutePanel } from "./PlotRoutePanel";
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -542,8 +543,12 @@ export function ReviewPage() {
     if (!path) return { mode: "translate", metaType: "filemeta", sourceFile: "" };
     const norm = path.replace(/\\/g, "/");
     const base = norm.split("/").pop() ?? "";
-    if (norm.includes("pass0_cache/"))
+    if (norm.includes("pass0_cache/")) {
+      // PlotRouteMap.json 为剧情路线图（mermaid 专用编辑器）；GlobalPrompt.json 仍走 globalprompt
+      if (norm.endsWith("PlotRouteMap.json"))
+        return { mode: "metadata", metaType: "plotroute", sourceFile: "" };
       return { mode: "metadata", metaType: "globalprompt", sourceFile: "" };
+    }
     if (norm.includes("pass1_cache/")) {
       // 从 {filename}.meta.json 提取源文件名
       const src = base.replace(/\.meta\.json$/, "");
@@ -1233,8 +1238,8 @@ export function ReviewPage() {
     metaJsonInvalidShown = false; // 恢复合法 → 重置提示标志
     setMetaEntry((prev) => {
       if (!prev) return parsed;
-      // 单对象的 GlobalPrompt 不注入空 id（用户手写的 id 仍保留）；per-file 元数据保留只读 id
-      if (metaType() === "globalprompt") {
+      // 单对象的 GlobalPrompt/PlotRouteMap 不注入空 id（用户手写的 id 仍保留）；per-file 元数据保留只读 id
+      if (metaType() === "globalprompt" || metaType() === "plotroute") {
         return { ...parsed };
       }
       const id = prev.id ?? "";
@@ -1628,7 +1633,11 @@ export function ReviewPage() {
 
         <Show when={reviewMode() === "metadata"}>
           <span class="review-filename">
-            {metaType() === "globalprompt" ? "GlobalPrompt" : metaSourceFile()}
+            {metaType() === "globalprompt"
+              ? "GlobalPrompt"
+              : metaType() === "plotroute"
+                ? "PlotRouteMap"
+                : metaSourceFile()}
           </span>
           <Show when={metaEntry()}>
             <span class="review-count">1 条</span>
@@ -1650,12 +1659,23 @@ export function ReviewPage() {
                 </p>
               }
             >
-              <MetadataCard
-                entry={metaEntry()!}
-                index={0}
-                onContentChange={(t) => handleMetaContentChange(0, t)}
-                onBlur={saveMeta}
-              />
+              {metaType() === "plotroute" ? (
+                <PlotRoutePanel
+                  key={metaLoadedFullPath}
+                  projectId={appState.activeProjectId ?? ""}
+                  entry={metaEntry()!}
+                  index={0}
+                  onContentChange={(t) => handleMetaContentChange(0, t)}
+                  onBlur={saveMeta}
+                />
+              ) : (
+                <MetadataCard
+                  entry={metaEntry()!}
+                  index={0}
+                  onContentChange={(t) => handleMetaContentChange(0, t)}
+                  onBlur={saveMeta}
+                />
+              )}
             </Show>
           </Show>
         </Show>

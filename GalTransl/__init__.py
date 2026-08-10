@@ -92,6 +92,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "(openai接口)依据文件级剧情元数据将原文划分为翻译区间(批次)并标注视角/氛围/H/用词色彩，结果写入 gt_input/BatchMetadata.json，供多轮翻译注入。",
         "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes gt_input/BatchMetadata.json for multi-turn translation."
     },
+    "ForPlotRouteMap": {
+        "zh-cn": "(openai接口)基于各文件剧情摘要+用户剧情大纲生成剧情路线图（mermaid 源码+文件路线归属+节点剧情），结果写入 transl_cache/pass0_cache/PlotRouteMap.json，供翻译注入路线剧情。",
+        "en": "Generate plot route map (mermaid source + file-to-route mapping + node summaries) from per-file metadata & user outline; writes PlotRouteMap.json for translation injection."
+    },
     "GenDic": {
         "zh-cn": "(openai接口)自动化构建GPT字典，需要接大模型如Deepseek-V3",
         "en": "Automatically build GPT dictionary, requires a large model, recommended GPT4/Claude-3/Deepseek-V3"
@@ -111,9 +115,10 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForGal-json-multi-chat": "gpt-4.1",
     "ForFileMetaData": "deepseek-chat",
     "ForBatchMetaData": "deepseek-chat",
+    "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "GenDic", "ForFileMetaData", "ForBatchMetaData"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

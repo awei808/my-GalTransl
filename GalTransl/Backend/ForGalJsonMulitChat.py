@@ -895,8 +895,8 @@ class ForGalJsonMulitChat(BaseTranslate):
                 if metadata is not None
                 else ""
             )
-            # 全局提示词（GlobalPrompt）：仅在首轮注入
-            global_prompt_block = self._format_global_prompt_block()
+            # 全局提示词（GlobalPrompt）：仅在首轮注入（路线剧情 + 带标注的全量 GlobalPrompt）
+            global_prompt_block = self._format_global_prompt_block(filename)
             prompt_req = self._build_prompt_request(
                 input_src,
                 gptdict,
@@ -1392,6 +1392,9 @@ class ForGalJsonMulitChat(BaseTranslate):
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
+        # 惰性载入的剧情路线图（PlotRouteMap）
+        self._plot_route_map: Optional[dict] = None
+        self._plot_route_map_loaded: bool = False
 
     # ── GlobalPrompt 上下文注入 ──
 
@@ -1422,13 +1425,66 @@ class ForGalJsonMulitChat(BaseTranslate):
             )
             self._global_prompt = None
 
-    def _format_global_prompt_block(self) -> str:
-        """格式化 GlobalPrompt 为提示词附加段落（仅首轮注入）。"""
+    def _format_global_prompt_block(self, filename: str = "") -> str:
+        """格式化 GlobalPrompt 为提示词附加段落（仅首轮注入）。
+
+        有路线图归属时注入「路线剧情 + 带标注的全量 GlobalPrompt」；无归属或
+        没有路线图时仅注入全量 GlobalPrompt。标注说明全局剧情为游戏整体剧情、
+        可能与当前文件不完全对应，以路线剧情和文件元数据为准。
+        """
+        route_block = self._format_route_context_for_file(filename)
         self._ensure_global_prompt_loaded()
         if not self._global_prompt:
-            return ""
+            return route_block
         from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
-        return _format_global_prompt_as_context(self._global_prompt)
+        gp_block = _format_global_prompt_as_context(
+            self._global_prompt, annotate_plot=bool(route_block)
+        )
+        if route_block and gp_block:
+            LOGGER.debug(
+                f"[ForGalJsonMulitChat] {filename} 注入路线剧情 + 带标注的全局提示词"
+            )
+            return f"{route_block}\n{gp_block}"
+        return route_block or gp_block
+
+    def _ensure_plot_route_map_loaded(self) -> None:
+        """惰性载入 PlotRouteMap.json（仅执行一次）。"""
+        if self._plot_route_map_loaded:
+            return
+        self._plot_route_map_loaded = True
+        try:
+            from GalTransl.Backend.ForPlotRouteMap import load_plot_route_map
+
+            self._plot_route_map = load_plot_route_map(self.pj_config)
+            if self._plot_route_map:
+                LOGGER.debug(
+                    "[ForGalJsonMulitChat] 已从 pass0_cache 载入 PlotRouteMap 路线图"
+                )
+        except Exception as e:
+            LOGGER.debug(f"[ForGalJsonMulitChat] 载入 PlotRouteMap 失败：{e}")
+            self._plot_route_map = None
+
+    def _format_route_context_for_file(self, filename: str) -> str:
+        """按当前文件所属路线返回剧情上下文块；无归属/无路线图时返回空串。"""
+        from GalTransl.Backend.ForPlotRouteMap import _format_route_context
+
+        try:
+            self._ensure_plot_route_map_loaded()
+            plot_route_map = self._plot_route_map
+            if not plot_route_map:
+                return ""
+            base = strip_chunk_suffix(filename)
+            ctx = _format_route_context(plot_route_map, base)
+            if ctx:
+                LOGGER.debug(
+                    f"[ForGalJsonMulitChat] {filename} 注入路线剧情（{base}）"
+                )
+            return ctx
+        except Exception as e:
+            LOGGER.warning(
+                f"[ForGalJsonMulitChat] 按路线注入剧情失败：{e}"
+            )
+            return ""
 
     def set_file_metadata(self, file_metadata: FileMetaData, filename: str = "") -> None:
         """

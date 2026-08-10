@@ -38,6 +38,7 @@ const DEFAULT_STAGE_ENABLED: Record<string, boolean> = {
   enableGlobalPrompt: true,
   enableGenDic: true,
   enableFileMeta: true,
+  enablePlotRoute: true,
   enableBatchMeta: true,
   enableTranslate: true,
 };
@@ -110,6 +111,9 @@ export function NewProjectWizard() {
     ...DEFAULT_STAGE_ENABLED,
   });
   const [sampleStages, setSampleStages] = createSignal<Set<string>>(new Set());
+  // 剧情路线图：结构类型（默认树）与用户大纲（纯文本）
+  const [plotStructureType, setPlotStructureType] = createSignal("树");
+  const [plotOutline, setPlotOutline] = createSignal("");
 
   // Step 6
   const [nameJobStatus, setNameJobStatus] = createSignal<
@@ -328,6 +332,15 @@ export function NewProjectWizard() {
         config.internals = internals;
       }
 
+      // 剧情路线图配置：结构类型 + 用户大纲（纯文本），写入 internals.plotroute
+      config.internals = {
+        ...((config.internals as Record<string, unknown>) || {}),
+        plotroute: {
+          structureType: plotStructureType(),
+          userOutline: plotOutline(),
+        },
+      };
+
       await updateProjectConfig(pid, {
         config,
         config_file_name: "config.yaml",
@@ -528,6 +541,8 @@ export function NewProjectWizard() {
               gameInfo={gameInfo()}
               stageEnabled={stageEnabled()}
               sampleStages={sampleStages()}
+              plotStructureType={plotStructureType()}
+              plotOutline={plotOutline()}
               onGameInfoChange={setGameInfo}
               onStageToggle={(key, enabled) =>
                 setStageEnabled((prev) => ({ ...prev, [key]: enabled }))
@@ -545,6 +560,8 @@ export function NewProjectWizard() {
                   return next;
                 });
               }}
+              onPlotStructureTypeChange={setPlotStructureType}
+              onPlotOutlineChange={setPlotOutline}
             />
           )}
           {currentStep() === 5 && (

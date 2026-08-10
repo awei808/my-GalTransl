@@ -147,6 +147,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.gpt.afterTranslation",
           "internals.pipeline.forceRegenDic",
           "internals.pipeline.abortOnDicFailure",
+          "internals.pipeline.forceRegenPlotRoute",
         ],
       },
       {
@@ -157,8 +158,22 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.pipeline.enableGlobalPrompt",
           "internals.pipeline.enableGenDic",
           "internals.pipeline.enableFileMeta",
+          "internals.pipeline.enablePlotRoute",
           "internals.pipeline.enableBatchMeta",
           "internals.pipeline.enableTranslate",
+        ],
+      },
+    ],
+  },
+  {
+    title: "翻译后端-剧情路线图",
+    desc: "剧情路线图（阶段 4.5）的生成参数：剧情结构类型与用户提供的剧情大纲（纯文本）。",
+    subsections: [
+      {
+        title: "",
+        keys: [
+          "internals.plotroute.structureType",
+          "internals.plotroute.userOutline",
         ],
       },
     ],

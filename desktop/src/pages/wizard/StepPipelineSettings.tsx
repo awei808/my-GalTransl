@@ -35,6 +35,12 @@ const PIPELINE_STAGES: PipelineStageItem[] = [
     sampleable: true,
   },
   {
+    key: "enablePlotRoute",
+    label: "阶段 4.5：剧情路线图",
+    hint: "基于各文件的剧情摘要生成剧情路线图（PlotRouteMap.json），并标记每个文件所属路线。",
+    sampleable: true,
+  },
+  {
     key: "enableBatchMeta",
     label: "阶段 5：批次级元数据",
     hint: "按剧情分段划分翻译区间。",
@@ -47,14 +53,64 @@ const PIPELINE_STAGES: PipelineStageItem[] = [
   },
 ];
 
+// 剧情路线图的结构类型（含专业术语通俗说明）
+const PLOT_STRUCTURE_TYPES = [
+  {
+    value: "线性",
+    label: "线性（链）",
+    desc: "剧情一条线走到底，无分支、无汇合，如单结局线性文字小说。",
+  },
+  {
+    value: "树",
+    label: "树（树状分支）",
+    desc: "从共同起点不断分出多条路线，各路线有独立结局，分支只分不合。",
+  },
+  {
+    value: "有向无环图",
+    label: "有向无环图（DAG）",
+    desc: "多条剧情线可以汇合到共同节点，也可中途交叉，但剧情不会回到过去（无循环）。如多条路线最终汇合到同一结局。",
+  },
+  {
+    value: "有向有环图",
+    label: "有向有环图（含循环）",
+    desc: "允许剧情循环/回溯，如二周目、时间回溯、重复刷事件。适合有轮回/多周目设定的作品。",
+  },
+  {
+    value: "混合",
+    label: "混合结构",
+    desc: "以上多种结构混合出现，如主线线性推进 + 支线分支 + 结局汇合 + 二周目循环。不确定时选此项。",
+  },
+] as const;
+
 interface StepPipelineSettingsProps {
   gameInfo: string;
   stageEnabled: Record<string, boolean>;
   /** 勾选了「生成示例文件」的阶段键集合 */
   sampleStages: Set<string>;
+  /** 剧情路线图：结构类型与用户大纲（纯文本） */
+  plotStructureType: string;
+  plotOutline: string;
   onGameInfoChange: (v: string) => void;
   onStageToggle: (key: string, enabled: boolean) => void;
   onSampleToggle: (key: string, checked: boolean) => void;
+  onPlotStructureTypeChange: (v: string) => void;
+  onPlotOutlineChange: (v: string) => void;
+}
+
+/**
+ * 受控 textarea 的 Enter 换行处理：preventDefault 后手动在光标处插入换行，
+ * 避免受控 value 覆盖浏览器默认换行（方案与项目设置页一致）。
+ */
+function handleTextareaEnter(e: KeyboardEvent, onChange: (v: string) => void) {
+  if (e.key !== "Enter" || e.isComposing) return;
+  e.preventDefault();
+  const ta = e.currentTarget as HTMLTextAreaElement;
+  const pos = ta.selectionStart;
+  const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+  onChange(newVal);
+  requestAnimationFrame(() => {
+    ta.selectionStart = ta.selectionEnd = pos + 1;
+  });
 }
 
 export function StepPipelineSettings(props: StepPipelineSettingsProps) {
@@ -73,6 +129,7 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
               placeholder={"可选。提供给全局游戏分析（阶段 2）的外部剧情信息，如游戏简介、世界观说明等。\n留空则由 AI 根据游戏文本自行推断。"}
               value={props.gameInfo}
               onInput={(e) => props.onGameInfoChange(e.currentTarget.value)}
+              onKeyDown={(e) => handleTextareaEnter(e, props.onGameInfoChange)}
             />
           </div>
           <span class="field__hint">
@@ -110,9 +167,42 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
           </div>
           <span class="field__hint">
             阶段开关控制该阶段是否在流水线中执行。「生成示例文件」独立于开关：勾选后会在对应缓存目录生成
-            GlobalPrompt.json / {"文件名.meta.json"} / {"文件名.batch.json"}，
+            GlobalPrompt.json / PlotRouteMap.json / {"文件名.meta.json"} / {"文件名.batch.json"}，
             并自动禁用该阶段（空模板需跳过生成）。填写完示例内容后，请到「后端设置」中重新开启对应阶段。
           </span>
+        </div>
+        <div class="field wizard-settings-grid__full">
+          <span class="field__label">剧情路线图设置</span>
+          <div class="plotroute-config">
+            <div class="plotroute-config__row">
+              <span class="field__label plotroute-config__sub">剧情结构类型</span>
+              <select
+                class="plotroute-config__select"
+                value={props.plotStructureType}
+                onChange={(e) => props.onPlotStructureTypeChange(e.currentTarget.value)}
+              >
+                {PLOT_STRUCTURE_TYPES.map((t) => (
+                  <option value={t.value}>{t.label}</option>
+                ))}
+              </select>
+              <span class="field__hint">
+                当前选择：{PLOT_STRUCTURE_TYPES.find((t) => t.value === props.plotStructureType)?.desc}
+              </span>
+            </div>
+            <div class="plotroute-config__row">
+              <span class="field__label plotroute-config__sub">剧情大纲（纯文本，可选）</span>
+              <textarea
+                class="plotroute-config__textarea"
+                placeholder={"大致剧情结构描述，如：\n序章 → 三女主角线（华恋/凛音/学生会）→ 各线汇合 TRUE END\n可写路线名、关键转折、结局走向。留空则由 AI 根据各文件剧情摘要自行归纳。"}
+                value={props.plotOutline}
+                onInput={(e) => props.onPlotOutlineChange(e.currentTarget.value)}
+                onKeyDown={(e) => handleTextareaEnter(e, props.onPlotOutlineChange)}
+              />
+              <span class="field__hint">
+                作为「阶段 4.5 剧情路线图」生成的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

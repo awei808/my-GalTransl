@@ -638,6 +638,31 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="文件级元数据生成完毕")
         return True
 
+    if eng_type == "ForPlotRouteMap":
+        # 独立运行剧情路线图生成：基于 FileMetaData 剧情摘要 + 用户大纲/结构类型，
+        # 输出 PlotRouteMap.json（mermaid 源码 + 文件→路线归属 + 路线剧情摘要）
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+        gptapi = await init_gptapi(projectConfig)
+        LOGGER.info("[PlotRouteMap] 开始生成剧情路线图")
+        _update_runtime(projectConfig, stage="生成剧情路线图")
+        structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
+        user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
+        force_regen = projectConfig.getKey(
+            "internals.pipeline.forceRegenPlotRoute", False
+        )
+        ok = await gptapi.batch_translate(
+            structure_type=structure_type,
+            user_outline=user_outline,
+            force_regen=force_regen,
+        )
+        if not ok:
+            LOGGER.warning("[PlotRouteMap] 生成失败或未生成，跳过")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
+        _update_runtime(projectConfig, stage="剧情路线图生成完毕")
+        return True
+
     if eng_type == "ForBatchMetaData":
         # 第二次启动后端：依据文件级剧情元数据将全文划分为翻译区间
         # (批次)，标注视角/氛围/H/用词色彩，写入 transl_cache/pass2_cache/BatchMetadata.json
@@ -1611,6 +1636,53 @@ async def _run_full_pipeline(
         if hasattr(gptapi_filemeta, "shutdown"):
             await gptapi_filemeta.shutdown()
 
+    # ── 阶段 4.5：剧情路线图生成 ──
+    LOGGER.info("[流水线] 阶段 4.5/6：剧情路线图")
+    _update_runtime(projectConfig, stage="生成剧情路线图")
+    if not projectConfig.getKey("internals.pipeline.enablePlotRoute", True):
+        LOGGER.warning("[流水线] 阶段 4.5 已禁用（enablePlotRoute=false），跳过剧情路线图")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), "阶段 4.5/6：剧情路线图已禁用，跳过"
+        )
+    elif not projectConfig.getKey("internals.pipeline.enableFileMeta", True):
+        # 依赖文件级元数据：阶段 4 被禁用时自动跳过（无剧情摘要可输入）
+        LOGGER.warning("[流水线] 阶段 4.5 跳过：阶段 4（文件级元数据）已禁用，无剧情摘要可输入")
+        record_runtime_notice(
+            projectConfig.getProjectDir(),
+            "阶段 4.5/6：文件级元数据已禁用，剧情路线图自动跳过",
+        )
+    else:
+        from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap, load_plot_route_map
+
+        force_regen_pr = projectConfig.getKey(
+            "internals.pipeline.forceRegenPlotRoute", False
+        )
+        if load_plot_route_map(projectConfig) and not force_regen_pr:
+            LOGGER.info(
+                "[流水线] 阶段 4.5 跳过：PlotRouteMap.json 已存在"
+                "（如需重新生成请启用 forceRegenPlotRoute）"
+            )
+            record_runtime_notice(
+                projectConfig.getProjectDir(),
+                "阶段 4.5/6：剧情路线图已存在，跳过（如需重新生成请启用 forceRegenPlotRoute）",
+            )
+        else:
+            gptapi_plotroute = ForPlotRouteMap(
+                projectConfig, "ForPlotRouteMap",
+                projectConfig.proxyPool, projectConfig.tokenPool,
+            )
+            structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
+            user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
+            ok = await gptapi_plotroute.batch_translate(
+                structure_type=structure_type,
+                user_outline=user_outline,
+                force_regen=force_regen_pr,
+            )
+            if not ok:
+                LOGGER.warning("[流水线] 阶段 4.5 生成失败或未生成，继续流水线")
+            if hasattr(gptapi_plotroute, "shutdown"):
+                await gptapi_plotroute.shutdown()
+
     # ── 阶段 5：批次级元数据生成 ──
     LOGGER.info("[流水线] 阶段 5/6：翻译区间划分")
     _update_runtime(projectConfig, stage="划分翻译区间")
@@ -2361,6 +2433,9 @@ async def init_gptapi(
         case "ForBatchMetaData":
             from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
             return ForBatchMetaData(projectConfig, eng_type, proxyPool, tokenPool)
+        case "ForPlotRouteMap":
+            from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
+            return ForPlotRouteMap(projectConfig, eng_type, proxyPool, tokenPool)
         case _:
             raise ValueError(f"不支持的翻译引擎类型 {eng_type}")
 

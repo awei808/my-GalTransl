@@ -137,13 +137,49 @@ class ForBatchMetaData(BaseTranslate):
             LOGGER.debug(f"[BatchMetaData] 载入 GlobalPrompt 失败：{e}")
             self._global_prompt = None
 
-    def _build_global_prompt_block(self) -> str:
-        """格式化 GlobalPrompt 为提示词附加段落。"""
+    def _build_global_prompt_block(self, filename: str = "") -> str:
+        """格式化 GlobalPrompt 为提示词附加段落。
+
+        有路线图归属时注入「路线剧情 + 带标注的全量 GlobalPrompt」；无归属或
+        没有路线图时仅注入全量 GlobalPrompt。标注说明全局剧情为游戏整体剧情、
+        可能与当前文件不完全对应，以路线剧情和文件元数据为准。
+        """
+        route_block = self._format_route_context_for_file(filename)
         self._ensure_global_prompt_loaded()
         if not self._global_prompt:
-            return ""
+            return route_block
         from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
-        return _format_global_prompt_as_context(self._global_prompt)
+        gp_block = _format_global_prompt_as_context(
+            self._global_prompt, annotate_plot=bool(route_block)
+        )
+        if route_block and gp_block:
+            LOGGER.debug(
+                f"[BatchMetaData] {filename} 注入路线剧情 + 带标注的全局提示词"
+            )
+            return f"{route_block}\n{gp_block}"
+        return route_block or gp_block
+
+    def _format_route_context_for_file(self, filename: str) -> str:
+        """按当前文件所属路线返回剧情上下文块；无归属/无路线图时返回空串。"""
+        from GalTransl.Backend.ForPlotRouteMap import (
+            _format_route_context,
+            load_plot_route_map,
+        )
+
+        try:
+            plot_route_map = load_plot_route_map(self.pj_config)
+            if not plot_route_map:
+                return ""
+            base = strip_chunk_suffix(filename)
+            ctx = _format_route_context(plot_route_map, base)
+            if ctx:
+                LOGGER.debug(f"[BatchMetaData] {filename} 注入路线剧情（{base}）")
+            return ctx
+        except Exception as e:
+            LOGGER.warning(
+                f"[BatchMetaData] 按路线注入剧情失败：{e}"
+            )
+            return ""
 
     # 0. 文件级剧情元数据载入与格式化
     def _ensure_file_metadata_loaded(self) -> None:
@@ -197,7 +233,7 @@ class ForBatchMetaData(BaseTranslate):
 
     # 1. 组装提示词
     def _build_prompt_request(
-        self, input_src: str, gptdict: str, file_metadata: str = ""
+        self, input_src: str, gptdict: str, file_metadata: str = "", filename: str = ""
     ) -> str:
         """在基类占位符替换基础上，增加 translation_guideline 的可控注入和最大批次限制。"""
         prompt_req = self.trans_prompt
@@ -211,7 +247,7 @@ class ForBatchMetaData(BaseTranslate):
         else:
             block = ""
         prompt_req = prompt_req.replace("[translation_guideline]", block)
-        prompt_req = prompt_req.replace("[global_prompt]", self._build_global_prompt_block())
+        prompt_req = prompt_req.replace("[global_prompt]", self._build_global_prompt_block(filename))
         prompt_req = prompt_req.replace("[Input]", input_src)
         prompt_req = prompt_req.replace("[Glossary]", gptdict)
         prompt_req = prompt_req.replace("[plot_metadata]", file_metadata)
@@ -419,7 +455,7 @@ class ForBatchMetaData(BaseTranslate):
         glossary_text = self._build_glossary_text(json_list)
         file_meta_block = self._build_file_metadata_block(filename)
         prompt = self._build_prompt_request(
-            script_text, glossary_text, file_metadata=file_meta_block
+            script_text, glossary_text, file_metadata=file_meta_block, filename=filename
         )
 
         LOGGER.info(f"[BatchMetaData] 正在为 {filename} 划分翻译区间…")

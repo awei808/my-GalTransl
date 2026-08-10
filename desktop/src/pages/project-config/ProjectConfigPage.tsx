@@ -398,6 +398,12 @@ const KEYWORD_LABELS: Record<string, string> = {
   improve: "改进轮",
   brfix: "换行修复",
   "improve+brfix": "改进轮 + 换行修复（按顺序）",
+  // 剧情路线图结构类型（与向导 PLOT_STRUCTURE_TYPES 的 value 一致）
+  线性: "线性（链）",
+  树: "树（树状分支）",
+  "有向无环图": "有向无环图（DAG）",
+  "有向有环图": "有向有环图（含循环）",
+  混合: "混合",
 };
 
 export function ProjectConfigPage() {
@@ -835,12 +841,38 @@ export function ProjectConfigPage() {
               </Match>
               {/* 其余文本 */}
               <Match when={getControlType(key) === "text"}>
-                <input
-                  class="field__input pc-input"
-                  type="text"
-                  value={String(val ?? "")}
-                  onInput={(e) => setValue(key, e.currentTarget.value)}
-                />
+                <Show
+                  when={key === "internals.plotroute.userOutline"}
+                  fallback={
+                    <input
+                      class="field__input pc-input"
+                      type="text"
+                      value={String(val ?? "")}
+                      onInput={(e) => setValue(key, e.currentTarget.value)}
+                    />
+                  }
+                >
+                  {/* 剧情大纲：多行输入（Enter 换行，方案与游戏外部信息一致） */}
+                  <textarea
+                    class="field__input pc-input pc-textarea-multiline"
+                    rows={5}
+                    value={String(val ?? "")}
+                    onInput={(e) => setValue(key, e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" || e.isComposing) return;
+                      e.preventDefault();
+                      const ta = e.currentTarget as HTMLTextAreaElement;
+                      const pos = ta.selectionStart;
+                      const newVal =
+                        ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+                      setValue(key, newVal);
+                      requestAnimationFrame(() => {
+                        ta.selectionStart = ta.selectionEnd = pos + 1;
+                      });
+                    }}
+                    spellcheck={false}
+                  />
+                </Show>
               </Match>
             </Switch>
           </Show>
