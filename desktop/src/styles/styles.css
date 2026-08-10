@@ -3032,6 +3032,83 @@ a:hover {
   grid-column: 1 / -1;
 }
 
+/* ── 向导：流水线阶段开关列表 ── */
+.pipeline-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.pipeline-stage-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.pipeline-stage-item:hover {
+  border-color: var(--color-brand-primary);
+  background: var(--color-bg-hover);
+}
+
+.pipeline-stage-item__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  flex: 1;
+}
+
+.pipeline-stage-item__sample {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.pipeline-stage-item input[type="checkbox"] {
+  accent-color: var(--color-brand-primary);
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.pipeline-stage-item__sample input[type="checkbox"] {
+  margin-top: 0;
+}
+
+.pipeline-stage-item__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pipeline-stage-item__label {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.pipeline-stage-item__hint {
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
 /* ── 文本插件多选芯片 ── */
 .text-plugins-selector {
   display: flex;

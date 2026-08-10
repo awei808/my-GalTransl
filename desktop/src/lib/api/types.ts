@@ -100,6 +100,10 @@ export type ConfigSchemaResponse = {
 export type ProjectConfigUpdatePayload = {
   config: Record<string, unknown>;
   config_file_name: string;
+  /** 向导保存时携带的流水线阶段开关（值为 false 的阶段不执行） */
+  pipeline?: Record<string, boolean>;
+  /** 向导保存时携带的「生成示例文件」阶段键集合（独立于禁用阶段） */
+  sample_stages?: string[];
 };
 
 export type FileEntry = {

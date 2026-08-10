@@ -1776,6 +1776,63 @@ _SAMPLE_CACHE_JSON_CONTENT = json.dumps(
     indent=2,
 )
 
+# 新建项目向导中生成示例 JSON 模板（正式命名，填写后直接生效）
+_SAMPLE_GLOBAL_PROMPT_CONTENT = json.dumps(
+    {
+        "游戏名称": "",
+        "剧情概述": "",
+        "角色列表": [],
+        "世界观设定": "",
+        "行文风格": "",
+        "题材标签": [],
+        "备注": "可以在本文件中增加任意符合 JSON 格式的字段，它们会作为额外上下文注入后续阶段。",
+    },
+    ensure_ascii=False,
+    indent=2,
+)
+_SAMPLE_FILE_META_CONTENT = json.dumps(
+    {
+        "id": "",
+        "角色": [],
+        "服装": "",
+        "剧情": "",
+        "标签": [],
+    },
+    ensure_ascii=False,
+    indent=2,
+)
+_SAMPLE_BATCH_META_CONTENT = json.dumps(
+    {
+        "id": "",
+        "批次": [
+            {
+                "区间": [1, 10],
+                "视角": "",
+                "氛围": "",
+                "h": False,
+                "用词色彩": "",
+            },
+            {
+                "区间": [11, 20],
+                "视角": "",
+                "氛围": "",
+                "h": False,
+                "用词色彩": "",
+            },
+            {
+                "区间": [21, 30],
+                "视角": "",
+                "氛围": "",
+                "h": False,
+                "用词色彩": "",
+            },
+        ],
+        "备注": "批次为区间列表：每个对象含 区间(起止行号)/视角/氛围/h/用词色彩。可按此格式继续增加或删除批次，覆盖全文行号。",
+    },
+    ensure_ascii=False,
+    indent=2,
+)
+
 
 def _workspace_root() -> str:
     """init 端点的项目根：由服务端配置，不接受客户端原始路径。"""
@@ -1796,11 +1853,22 @@ def _resolve_new_project_dir(name: str) -> str:
     return safe_under_project(_workspace_root(), candidate)
 
 
-def _create_project_layout(project_dir: str, force: bool = False) -> list[str]:
+def _create_project_layout(
+    project_dir: str,
+    force: bool = False,
+    pipeline: dict | None = None,
+    game_info: str = "",
+    sample_stages: set[str] | None = None,
+) -> list[str]:
     """创建项目目录布局，返回所有已创建项的绝对路径。
 
     force=True 时覆盖 config.yaml 与示例缓存文件（用于向导「覆盖」已存在项目），
     目录本身始终以 exist_ok 创建，不删除既有译文/缓存。
+    pipeline：流水线阶段开关 dict（键如 enableGlobalPrompt），值为 bool，
+    写入 config.yaml 的 internals.pipeline 段。
+    game_info：外部信息（externals.gameInfo），写入 config.yaml。
+    sample_stages：用户勾选「生成示例文件」的阶段键集合，生成正式命名的示例
+    JSON 模板（与禁用作独立功能，填好后直接生效）。
     """
     created: list[str] = []
     os.makedirs(project_dir, exist_ok=True)
@@ -1820,8 +1888,11 @@ def _create_project_layout(project_dir: str, force: bool = False) -> list[str]:
 
     config_path = os.path.join(project_dir, "config.yaml")
     if force or not os.path.isfile(config_path):
-        with open(config_path, "w", encoding="utf-8") as _f:
-            _f.write(DEFAULT_PROJECT_CONFIG_YAML)
+        if pipeline or game_info:
+            _write_initial_config(config_path, pipeline, game_info)
+        else:
+            with open(config_path, "w", encoding="utf-8") as _f:
+                _f.write(DEFAULT_PROJECT_CONFIG_YAML)
     created.append(config_path)
 
     sample_path = os.path.join(cache_dir, PASS3_CACHE_DIR, _SAMPLE_CACHE_FILENAME)
@@ -1829,7 +1900,56 @@ def _create_project_layout(project_dir: str, force: bool = False) -> list[str]:
         with open(sample_path, "w", encoding="utf-8") as _f:
             _f.write(_SAMPLE_CACHE_JSON_CONTENT)
     created.append(sample_path)
+
+    # 生成示例 JSON 模板（独立于禁用阶段；创建时无输入文件，仅 GlobalPrompt 可生成）
+    if sample_stages:
+        _write_stage_samples(cache_dir, sample_stages, force=force)
     return created
+
+
+def _write_initial_config(config_path: str, pipeline: dict, game_info: str) -> None:
+    """合并向导传入的流水线开关与外部信息，写入初始 config.yaml。
+
+    仅当向导提供了非默认配置时调用；因此用 safe_load/dump 重写（丢弃注释，
+    默认配置无自定义时不走此路径，保持带注释的原始模板）。
+    """
+    data = safe_load(DEFAULT_PROJECT_CONFIG_YAML) or {}
+    if pipeline:
+        data.setdefault("internals", {}).setdefault("pipeline", {}).update(pipeline)
+    if game_info:
+        data.setdefault("externals", {})["gameInfo"] = game_info
+    _write_yaml_file(config_path, data)
+
+
+def _write_stage_samples(
+    cache_dir: str, sample_stages: set[str], force: bool, input_files: list[str] | None = None
+) -> None:
+    """按用户勾选生成示例 JSON 模板（正式命名，填好后直接生效）。
+
+    支持阶段：enableGlobalPrompt / enableFileMeta / enableBatchMeta。
+    GlobalPrompt 为固定单文件（GlobalPrompt.json）；文件级/批次级元数据按输入
+    文件名逐文件生成（{filename}.meta.json / {filename}.batch.json），
+    与 load_file_metadata_map / load_batch_metadata_map 的读取命名一致。
+    sample_stages：需要生成示例的阶段键集合。
+    input_files：gt_input 下的输入文件名列表（含扩展名，如 00_01_xxx.txt.json）。
+    """
+    if "enableGlobalPrompt" in sample_stages:
+        p = os.path.join(cache_dir, PASS0_CACHE_DIR, "GlobalPrompt.json")
+        if force or not os.path.isfile(p):
+            with open(p, "w", encoding="utf-8") as _f:
+                _f.write(_SAMPLE_GLOBAL_PROMPT_CONTENT)
+    if "enableFileMeta" in sample_stages:
+        for name in input_files or []:
+            p = os.path.join(cache_dir, PASS1_CACHE_DIR, f"{name}.meta.json")
+            if force or not os.path.isfile(p):
+                with open(p, "w", encoding="utf-8") as _f:
+                    _f.write(_SAMPLE_FILE_META_CONTENT)
+    if "enableBatchMeta" in sample_stages:
+        for name in input_files or []:
+            p = os.path.join(cache_dir, PASS2_CACHE_DIR, f"{name}.batch.json")
+            if force or not os.path.isfile(p):
+                with open(p, "w", encoding="utf-8") as _f:
+                    _f.write(_SAMPLE_BATCH_META_CONTENT)
 
 
 # 日志字段白名单与清洗：防止通过 level/source 注入伪造日志行
@@ -4005,6 +4125,24 @@ def build_handler(registry: JobRegistry) -> type:
                         self._send_json({"error": f"config file not found: {config_name}"}, status=HTTPStatus.NOT_FOUND)
                         return
                     _write_yaml_file(config_path, config_data)
+                    # 向导保存设置时可能携带「生成示例文件」的阶段键集合（独立于禁用阶段）
+                    sample_raw = payload.get("sample_stages")
+                    if isinstance(sample_raw, list):
+                        sample_stages = {k for k in sample_raw if isinstance(k, str)}
+                        cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                        input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+                        input_files = [
+                            n
+                            for n in os.listdir(input_dir)
+                            if os.path.isfile(os.path.join(input_dir, n))
+                            and not n.startswith("_")
+                        ] if os.path.isdir(input_dir) else []
+                        _write_stage_samples(
+                            cache_dir,
+                            sample_stages,
+                            force=False,
+                            input_files=input_files,
+                        )
                     self._send_json({"success": True, "project_dir": project_dir, "config_file_name": config_name})
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
@@ -4078,8 +4216,34 @@ def build_handler(registry: JobRegistry) -> type:
                     status=HTTPStatus.CONFLICT,
                 )
                 return
+            # 向导传入的流水线阶段开关（仅收集 enable* 布尔键）与外部信息
+            pipeline_raw = payload.get("pipeline")
+            pipeline = (
+                {
+                    k: bool(v)
+                    for k, v in pipeline_raw.items()
+                    if k.startswith("enable") and isinstance(v, bool)
+                }
+                if isinstance(pipeline_raw, dict)
+                else None
+            )
+            game_info_raw = payload.get("game_info")
+            game_info = game_info_raw if isinstance(game_info_raw, str) else ""
+            # 用户勾选「生成示例文件」的阶段键集合（独立于禁用阶段）
+            sample_raw = payload.get("sample_stages")
+            sample_stages = (
+                {k for k in sample_raw if isinstance(k, str)}
+                if isinstance(sample_raw, list)
+                else None
+            )
             try:
-                created = _create_project_layout(project_dir, force=overwrite)
+                created = _create_project_layout(
+                    project_dir,
+                    force=overwrite,
+                    pipeline=pipeline,
+                    game_info=game_info,
+                    sample_stages=sample_stages,
+                )
             except OSError as exc:
                 self._send_json({"error": f"创建项目失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return

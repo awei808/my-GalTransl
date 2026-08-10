@@ -47,7 +47,13 @@ export async function fetchProjectConfig(projectId: string, configFileName = "co
 }
 
 /** 在服务端 workspace 根下按名称创建项目；已存在且 overwrite=false 时回 409。 */
-export async function initProject(name: string, overwrite = false) {
+export interface InitProjectOptions {
+  /** 外部信息（externals.gameInfo），写入项目 config.yaml */
+  game_info?: string;
+  /** 流水线阶段开关（如 enableGlobalPrompt），值为 false 的阶段在 config.yaml 中禁用 */
+  pipeline?: Record<string, boolean>;
+}
+export async function initProject(name: string, overwrite = false, options?: InitProjectOptions) {
   return apiRequest<{
     project_id: string;
     project_dir: string;
@@ -56,7 +62,12 @@ export async function initProject(name: string, overwrite = false) {
   }>("/api/projects/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, overwrite }),
+    body: JSON.stringify({
+      name,
+      overwrite,
+      ...(options?.game_info !== undefined ? { game_info: options.game_info } : {}),
+      ...(options?.pipeline ? { pipeline: options.pipeline } : {}),
+    }),
   });
 }
 

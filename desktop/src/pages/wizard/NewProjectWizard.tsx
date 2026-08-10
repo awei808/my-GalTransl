@@ -27,8 +27,20 @@ import { StepImportFiles } from "./StepImportFiles";
 import { StepBackendSelect } from "./StepBackendSelect";
 import { StepSettings } from "./StepSettings";
 import { StepExtractNames } from "./StepExtractNames";
+import { StepPipelineSettings } from "./StepPipelineSettings";
 
-const STEPS = ["项目位置", "导入文件", "翻译后端", "常用设置", "提取人名"];
+const STEPS = ["项目位置", "导入文件", "翻译后端", "常用设置", "流水线与全局设置", "提取人名"];
+
+// 流水线阶段开关的默认值（全部开启）
+const DEFAULT_STAGE_ENABLED: Record<string, boolean> = {
+  enableValidate: true,
+  enableCompress: true,
+  enableGlobalPrompt: true,
+  enableGenDic: true,
+  enableFileMeta: true,
+  enableBatchMeta: true,
+  enableTranslate: true,
+};
 
 /* 等待任务结束（completed/failed/cancelled），带超时保护 */
 const JOB_POLL_INTERVAL = 2000;
@@ -92,7 +104,14 @@ export function NewProjectWizard() {
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
   const [translationGuideline, setTranslationGuideline] = createSignal("");
 
-  // Step 5
+  // Step 5：外部信息、流水线阶段开关与「生成示例文件」勾选
+  const [gameInfo, setGameInfo] = createSignal("");
+  const [stageEnabled, setStageEnabled] = createSignal<Record<string, boolean>>({
+    ...DEFAULT_STAGE_ENABLED,
+  });
+  const [sampleStages, setSampleStages] = createSignal<Set<string>>(new Set());
+
+  // Step 6
   const [nameJobStatus, setNameJobStatus] = createSignal<
     "idle" | "running" | "completed" | "failed"
   >("idle");
@@ -282,9 +301,39 @@ export function NewProjectWizard() {
       // AI 令牌不再写入项目 config.yaml：统一由程序全局「后端配置」管理，
       // 翻译时由后端在运行时应用选中的 profile（见 Service.run_job_async）。
 
+      // 外部信息（游戏信息）写入 config 的 externals.gameInfo 段
+      const gi = gameInfo();
+      if (gi.trim()) {
+        config.externals = {
+          ...((config.externals as Record<string, unknown>) || {}),
+          gameInfo: gi,
+        };
+      } else {
+        const ext = (config.externals as Record<string, unknown>) || {};
+        delete ext.gameInfo;
+        if (Object.keys(ext).length === 0) delete config.externals;
+        else config.externals = ext;
+      }
+
+      // 流水线阶段开关写入 config 的 internals.pipeline 段
+      const stages = stageEnabled();
+      const stagesDisabled = Object.entries(stages)
+        .filter(([, enabled]) => !enabled)
+        .map(([k]) => k);
+      if (stagesDisabled.length > 0) {
+        const internals = (config.internals as Record<string, unknown>) || {};
+        const pipeline = (internals.pipeline as Record<string, unknown>) || {};
+        for (const k of stagesDisabled) pipeline[k] = false;
+        internals.pipeline = pipeline;
+        config.internals = internals;
+      }
+
       await updateProjectConfig(pid, {
         config,
         config_file_name: "config.yaml",
+        // 后端据此生成用户勾选的示例 JSON 模板（独立于禁用阶段）
+        pipeline: stages,
+        sample_stages: [...sampleStages()],
       });
       setSelectedBackendProfile(dir, selectedBackend());
       setFeedback({ type: "success", message: "设置已保存" });
@@ -387,6 +436,10 @@ export function NewProjectWizard() {
     if (currentStep() === 3) {
       await handleSaveSettings();
     }
+    // 从第5步（流水线与全局设置）离开时保存外部信息与阶段开关
+    if (currentStep() === 4) {
+      await handleSaveSettings();
+    }
     setCurrentStep((s) => Math.min(STEPS.length - 1, s + 1));
   }
 
@@ -471,6 +524,30 @@ export function NewProjectWizard() {
             />
           )}
           {currentStep() === 4 && (
+            <StepPipelineSettings
+              gameInfo={gameInfo()}
+              stageEnabled={stageEnabled()}
+              sampleStages={sampleStages()}
+              onGameInfoChange={setGameInfo}
+              onStageToggle={(key, enabled) =>
+                setStageEnabled((prev) => ({ ...prev, [key]: enabled }))
+              }
+              onSampleToggle={(key, checked) => {
+                // 勾选「生成示例文件」时联动禁用该阶段：空模板需跳过生成，
+                // 待用户填好内容后在设置页重新开启该阶段
+                if (checked) {
+                  setStageEnabled((prev) => ({ ...prev, [key]: false }));
+                }
+                setSampleStages((prev) => {
+                  const next = new Set(prev);
+                  if (checked) next.add(key);
+                  else next.delete(key);
+                  return next;
+                });
+              }}
+            />
+          )}
+          {currentStep() === 5 && (
             <StepExtractNames nameJobStatus={nameJobStatus()} nameJobMessage={nameJobMessage()} />
           )}
         </div>
@@ -488,7 +565,7 @@ export function NewProjectWizard() {
         <button class="btn" onClick={handleBack} disabled={currentStep() === 0 || finishing()}>
           上一步
         </button>
-        {currentStep() < 4 ? (
+        {currentStep() < 5 ? (
           <button
             class="btn btn--primary"
             onClick={handleNext}
