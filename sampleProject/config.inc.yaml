@@ -80,8 +80,13 @@ internals:
     enableGlobalPrompt: true # 阶段2 全局游戏分析 [True/False]
     enableGenDic: true # 阶段3 术语表构建 [True/False]
     enableFileMeta: true # 阶段4 文件级元数据 [True/False]
+    enablePlotRoute: true # 阶段4.5 剧情路线图 [True/False]
+    forceRegenPlotRoute: false # 是否强制重新生成剧情路线图（即使已存在）[True/False]
     enableBatchMeta: true # 阶段5 批次级元数据 [True/False]
     enableTranslate: true # 阶段6 翻译执行 [True/False]
+  plotroute: # 剧情路线图（ForPlotRouteMap）设置
+    structureType: "树" # 剧情结构类型 [线性/树/有向无环图/有向有环图/混合]
+    userOutline: "" # 用户提供的剧情大纲（纯文本，可空；留空由 AI 根据各文件剧情自行归纳）
   forbatchmeta: # 批次级元数据（翻译区间划分）设置
     max_batches: 20 # 翻译区间（批次）最大数量，超过将自动合并相邻区间 [1-200]
     min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间尽量与相邻区间合并 [1-1000]

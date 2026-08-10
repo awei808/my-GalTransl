@@ -229,6 +229,14 @@ export async function savePerFileMetadata(
   );
 }
 
+export async function fetchPlotRoute(projectId: string) {
+  return fetchPerFileMetadata(projectId, "plotroute", "");
+}
+
+export async function savePlotRoute(projectId: string, entry: MetadataEntry) {
+  return savePerFileMetadata(projectId, "plotroute", "", entry);
+}
+
 export async function deleteCacheFiles(projectId: string, filenames: string[]) {
   return apiRequest<{ success: boolean; deleted_files: string[]; not_found_files: string[] }>(
     `/api/projects/${projectId}/cache/delete-file`,

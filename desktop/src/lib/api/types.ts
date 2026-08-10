@@ -144,9 +144,9 @@ export type CacheFileResponse = {
   entries: CacheEntry[];
 };
 
-/* 元数据 — per-file 模式（filemeta/batchmeta/globalprompt），每文件独立 JSON */
+/* 元数据 — per-file 模式（filemeta/batchmeta/globalprompt/plotroute），每文件独立 JSON */
 export type MetadataEntry = Record<string, unknown>;
-export type MetadataType = "filemeta" | "batchmeta" | "globalprompt";
+export type MetadataType = "filemeta" | "batchmeta" | "globalprompt" | "plotroute";
 export type PerFileMetadataResponse = {
   exists: boolean;
   type: MetadataType;

@@ -3109,6 +3109,348 @@ a:hover {
   color: var(--color-text-secondary);
 }
 
+/* ── 向导：剧情路线图设置 ── */
+.plotroute-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, transparent);
+}
+
+.plotroute-config__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plotroute-config__sub {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.plotroute-config__select {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  background: var(--color-bg-raised, #fff);
+  color: var(--color-text);
+  outline: none;
+  max-width: 320px;
+}
+
+.plotroute-config__select:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-config__textarea {
+  width: 100%;
+  min-height: 90px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  font-family: inherit;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  background: var(--color-bg-raised, #fff);
+  color: var(--color-text);
+}
+
+.plotroute-config__textarea:focus {
+  border-color: var(--color-brand-primary);
+}
+
+/* ── 剧情路线图编辑面板（PlotRoutePanel）── */
+.plotroute-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.plotroute-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.plotroute-tb-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plotroute-tb-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.plotroute-tb-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+
+.plotroute-tb-btn:hover {
+  border-color: var(--color-brand-primary);
+  color: var(--color-brand-primary);
+}
+
+.plotroute-tb-btn.active {
+  background: var(--color-brand-primary);
+  color: #fff;
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-zoom-level {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.plotroute-layout {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 单栏模式：隐藏另一面板 */
+.plotroute-view-source .plotroute-panel-preview {
+  display: none;
+}
+
+.plotroute-view-preview .plotroute-panel-src {
+  display: none;
+}
+
+.plotroute-panel-src,
+.plotroute-panel-preview {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  padding: 10px;
+  overflow: hidden;
+}
+
+.plotroute-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.plotroute-panel-title .plotroute-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+.plotroute-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.plotroute-source {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.plotroute-source:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.plotroute-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.plotroute-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.plotroute-panel-preview {
+  overflow: hidden;
+}
+
+.plotroute-viewer {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* SVG 保持原始渲染尺寸：超出容器由 .plotroute-viewer 产生滚动条 */
+.plotroute-graph {
+  width: 100%;
+  height: 100%;
+}
+
+.plotroute-graph svg {
+  min-width: 100%;
+  min-height: 100%;
+  max-width: none !important;
+  max-height: none !important;
+  display: block;
+}
+
+.plotroute-error {
+  color: var(--color-status-error);
+  padding: 16px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* hover tooltip */
+.plotroute-tooltip {
+  position: fixed;
+  max-width: 320px;
+  background: var(--color-bg-inverse, #2d3436);
+  color: var(--color-text-inverse, #fff);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  z-index: 300;
+}
+
+.plotroute-tooltip-file {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+  word-break: break-all;
+}
+
+.plotroute-tooltip-body {
+  word-break: break-word;
+}
+
+/* 编辑弹窗 */
+.plotroute-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+}
+
+.plotroute-modal {
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  width: 380px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--color-border-default);
+}
+
+.plotroute-modal h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.plotroute-modal label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 10px 0 4px;
+}
+
+.plotroute-modal input,
+.plotroute-modal select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  outline: none;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+}
+
+.plotroute-modal input:focus,
+.plotroute-modal select:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-modal-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.plotroute-btn {
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.plotroute-btn-primary {
+  background: var(--color-brand-primary);
+  color: #fff;
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-btn-danger {
+  color: var(--color-status-error);
+  border-color: var(--color-status-error);
+}
+
 /* ── 文本插件多选芯片 ── */
 .text-plugins-selector {
   display: flex;
@@ -4681,6 +5023,27 @@ a:hover {
 
 .pc-input--num {
   width: 96px;
+}
+
+/* 项目设置：通用列表内的多行文本输入（如剧情路线图用户大纲） */
+.pc-textarea-multiline {
+  width: 280px;
+  min-height: 96px;
+  resize: vertical;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-input, var(--color-bg-app));
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.pc-textarea-multiline:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
 }
 
 /* 后端配置页 API 调用设置：checkbox 着色与对齐 */
