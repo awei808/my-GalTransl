@@ -15,7 +15,6 @@
 from typing import List, Dict, Any, Optional, Union, Tuple
 from os import makedirs, cpu_count, sep as os_sep,listdir
 from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename, abspath
-from venv import logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import time
 import asyncio
@@ -2053,7 +2052,7 @@ async def doLLMTranslSingleChunk(
     split_chunk: SplitChunkMetadata,
     projectConfig: CProjectConfig,
     gptapi: Any,  # 添加 gptapi 参数
-) -> Tuple[bool, List, List, str, SplitChunkMetadata]:
+) -> None:
     """处理单个切片(chunk)的翻译流程。
 
     顺序：
@@ -2069,7 +2068,7 @@ async def doLLMTranslSingleChunk(
         # 记录当前并发占用（configured - 剩余槽位），DEBUG 级避免刷屏
         LOGGER.debug(
             f"[并发] 获取翻译槽位 当前并发占用 "
-            f"{getattr(projectConfig, 'runtime_workers_configured', 0) - semaphore._value}"
+            f"{getattr(projectConfig, 'runtime_workers_configured', 0) - getattr(semaphore, '_value', 0)}"
         )
         _check_stop_requested(projectConfig)
         st = time()

@@ -163,8 +163,6 @@ async def run_job_async(
         f"[job] 任务开始 job={spec.job_id} translator={spec.translator} "
         f"project={spec.project_dir}"
     )
-    reset_runtime_project(spec.project_dir)
-
     if not spec.project_dir or not isinstance(spec.project_dir, str):
         current_state.status = "failed"
         current_state.error = get_text("error_project_path_empty", GT_LANG)
@@ -183,6 +181,9 @@ async def run_job_async(
         current_state.finished_at = _utcnow_text()
         LOGGER.error(current_state.error)
         return current_state
+
+    # 参数校验通过后再重置运行时状态，避免非法任务误清项目状态
+    reset_runtime_project(spec.project_dir)
 
     try:
         cfg = CProjectConfig(spec.project_dir, spec.config_file_name)

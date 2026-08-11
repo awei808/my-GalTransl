@@ -1134,15 +1134,28 @@ export function ReviewPage() {
   });
 
   // 侧边栏问题列表跳转：文件加载完成后自动滚动到具体条目
+  // 依赖 entries() 与 activeFilePath：跨文件跳转时先 return 等待，文件加载完成
+  // （setEntries 触发）后 effect 重跑，此时 loadedFile 已匹配即可执行跳转。
   createEffect(() => {
     const idx = appState.reviewJumpToIndex;
     if (idx === null) return;
+    // 补充响应式依赖：文件加载完成（setEntries）或切换文件后重跑跳转尝试
+    void entries().length;
+    void appState.activeFilePath;
     // 文件尚未加载完成：等下一轮（loadedFile 在 loadFile 成功后先于 setEntries 更新）
     if (entries().length === 0 || loadedFile !== appState.activeFilePath) return;
-    // 分页：scrollToSerial 内部自动翻到目标条目所在页并高亮
     if (filteredIndexFromSerial(idx) >= 0) {
       scrollToSerial(idx);
       setAppState("reviewJumpToIndex", null);
+      if (import.meta.env?.DEV) {
+        console.debug(`[ReviewPage] 跳转到 #${idx}（文件 ${loadedFile}）`);
+      }
+    } else {
+      // 目标被过滤或不存在：清除标记，避免 effect 每次条目变化都做无效重试
+      setAppState("reviewJumpToIndex", null);
+      if (import.meta.env?.DEV) {
+        console.debug(`[ReviewPage] 跳转目标 #${idx} 不存在或已被过滤，清除标记`);
+      }
     }
   });
 

@@ -2185,6 +2185,25 @@ textarea {
   color: var(--color-text-secondary);
 }
 
+/* 设置页内部分区子标题（如「首页记忆保留」） */
+.settings-subheader {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.settings-subheader h4 {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 2px;
+}
+
+.settings-subheader p {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
 .settings-field {
   display: flex;
   align-items: center;
