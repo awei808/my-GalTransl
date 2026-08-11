@@ -110,7 +110,7 @@ class ForFileMetaData(BaseTranslate):
         其余占位符（[Input]/[Glossary]/[SourceLang]/[TargetLang]/[max_chars]）沿用基类行为。
 
         Args:
-            max_chars: 剧情概括字数上限，按公式 clamp(20 + 50·max(0, log₂(句数/15)), 20, 400) 自动计算
+            max_chars: 剧情概括字数上限，按公式 clamp(20 + 63·max(0, log₂(句数/15)), 20, 400) 自动计算
         """
         prompt_req = self.trans_prompt
         if self._inject_guideline:
@@ -323,9 +323,11 @@ class ForFileMetaData(BaseTranslate):
             return False
         glossary_text = self._build_glossary_text(json_list)
 
-        # 根据文件句数动态计算剧情概括字数上限：公式 clamp(20 + 63·max(0, log₂(句数/15)), 20, 400)
+        # 根据文件句数动态计算剧情概括字数上限：连续对数映射，公式 clamp(20 + 63·max(0, log₂(句数/15)), 20, 400)
         _num_lines = len(json_list)
-        max_chars = max(20, min(400, 20 + 63 * max(0, int(math.log2(_num_lines / 15)))))
+        max_chars = max(
+            20, min(400, round(20 + 63 * max(0, math.log2(_num_lines / 15))))
+        )
         prompt = self._build_prompt_request(script_text, glossary_text, max_chars=max_chars)
 
         LOGGER.info(f"[FileMetaData] 正在为 {filename} 生成文件级元数据…")
