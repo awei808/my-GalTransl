@@ -280,7 +280,7 @@ export function PlotRoutePanel(props: {
     }
     const nextSrc = source().split(target).join(replacement);
     const fr = { ...fileRoutes() };
-    for (const [f, r] of Object.entries(fr)) {
+    for (const f of Object.keys(fr)) {
       if (f === ed.label) delete fr[f];
     }
     if (newLabel && newRoute) fr[newLabel] = newRoute;
@@ -300,7 +300,7 @@ export function PlotRoutePanel(props: {
     if (!ed) return;
     const nextSrc = source().split("\n").filter((l) => !l.includes(`${ed.alias}[`)).join("\n");
     const fr = { ...fileRoutes() };
-    for (const [f, r] of Object.entries(fr)) {
+    for (const f of Object.keys(fr)) {
       if (f === ed.label) delete fr[f];
     }
     setSource(nextSrc);

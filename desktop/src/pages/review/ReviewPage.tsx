@@ -931,7 +931,7 @@ export function ReviewPage() {
       const all = res.entries ?? [];
       setTotalCount(all.length);
       setPage(0); // 切换文件回到第 1 页
-      setExpandedSerials(new Set()); // 切换文件后清空展开状态，避免旧文件的 index 残留
+      setExpandedSerials(new Set<number>()); // 切换文件后清空展开状态，避免旧文件的 index 残留
       // 先记录 entries() 所属文件再 setEntries：loadedFile 是非响应式变量，
       // setEntries 会同步触发依赖 entries() 的 effect（含跳转 effect）重跑，
       // 若在 setEntries 之后才赋值 loadedFile，重跑时读到旧值会卡在跳转守卫。
@@ -945,7 +945,7 @@ export function ReviewPage() {
         loadedFile = "";
         setTotalCount(0);
         setPage(0);
-        setExpandedSerials(new Set());
+        setExpandedSerials(new Set<number>());
       }
     } finally {
       if (myToken === loadToken) setLoading(false);
@@ -1661,7 +1661,6 @@ export function ReviewPage() {
             >
               {metaType() === "plotroute" ? (
                 <PlotRoutePanel
-                  key={metaLoadedFullPath}
                   projectId={appState.activeProjectId ?? ""}
                   entry={metaEntry()!}
                   index={0}
