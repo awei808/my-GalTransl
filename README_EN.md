@@ -26,7 +26,7 @@
 1. **Fully refactored frontend**: The desktop app is rewritten with Tauri 2 + SolidJS, with a drastically different UI style from the original and re-divided interface.
 2. **Focus on LLMs, drop local small models**: Fully adapted and optimized for cloud LLMs (GPT-4/Claude/Deepseek and other OpenAI-compatible interfaces); local small models retain only the configuration interface and **may not work properly**.
 3. **Galgame localization only**: Focused on the Galgame text translation scenario; the original project's general file features such as epub and subtitles **may not work properly**.
-4. **More pipelines and richer prompts**: More stages are added to the translation pipeline, and more information and rules (e.g. global analysis, file-level/batch-level metadata) are injected into the prompts to pursue better translation quality.
+4. **More pipelines and richer prompts**: More stages are added to the translation pipeline, and more information and rules (e.g. global analysis, file-level metadata, plot route map, batch-level metadata) are injected into the prompts to pursue better translation quality.
 5. **AI post-translation improvement**: After the translation pipeline completes, AI can be called to improve the translation (ForImproveTranslation).
 6. **New problem detection items**: On top of the original problem detection, two new items are added: **long sentence missing line break** and **abnormal line break position**.
 7. **Alternative translation feature**: Let AI evaluate and output improvable translations, or provide AI-fixed alternative translations for specific problem items; users can freely switch between the alternative and current translation on the proofreading page.
@@ -41,7 +41,7 @@
   3. **GPT Dictionary**, letting the model understand character settings and accurately translate names, pronouns, and new words
   4. Flexible automated dictionary system via pre-translation, post-translation, and conditional dictionaries, with support for **name replacement tables** (CSV/XLSX)
   5. Real-time cache saving, automatic breakpoint resume; visual display of prompts, translation concatenation, concurrent progress and speed during translation
-  6. Complete pipeline: input validation → text compression → global game analysis → automatic glossary building → file-level metadata → batch division → translation execution, with multi-stage prompt injection for better quality
+  6. Complete pipeline: input validation → text compression → global game analysis → automatic glossary building → file-level metadata → plot route map → batch division → translation execution, with multi-stage prompt injection for better quality
   7. Built-in **proofreading workbench**: sentence-by-sentence review/edit, problem detection, alternative translation swap, undo/redo, cross-file find-replace
   8. Focused on the Galgame text translation scenario; other general file formats (srt, epub, etc.) may not work properly
   9. Supports **plugin system**: custom file formats and text processing pipelines, highly extensible
