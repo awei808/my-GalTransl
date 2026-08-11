@@ -81,6 +81,10 @@ export function PlotRoutePanel(props: {
   let svgOrigW = 0;
   let svgOrigH = 0;
   let renderTimer: ReturnType<typeof setTimeout> | undefined;
+  /* mermaid 渲染 id 序号：每次渲染用唯一 id，避免并发渲染时 mermaid 按固定 id 互删 DOM */
+  let graphSeq = 0;
+  /* 渲染请求序号：仅采纳最新一次 render 的结果，丢弃被新渲染取代的旧结果 */
+  let renderSeq = 0;
 
   /* props.entry 变化时的同步策略：
      1. 编辑自身回写（handleMetaContentChange 把本组件修改写回 entry）→ entry 的 mermaid
@@ -122,6 +126,8 @@ export function PlotRoutePanel(props: {
 
   async function render() {
     if (!graphRef) return;
+    const seq = ++renderSeq;
+    const graphId = `plotRouteGraph-${++graphSeq}`;
     setRenderError("");
     try {
       const mermaid = (await getMermaid()).default;
@@ -132,15 +138,21 @@ export function PlotRoutePanel(props: {
         fontFamily: '"Microsoft YaHei", sans-serif',
         flowchart: { htmlLabels: true, curve: "basis", padding: 12 },
       });
-      const { svg, bindFunctions } = await mermaid.render("plotRouteGraph", source());
+      const { svg, bindFunctions } = await mermaid.render(graphId, source());
+      if (seq !== renderSeq) {
+        console.debug(`[PlotRoutePanel] 丢弃过期渲染结果（seq=${seq}）`);
+        return;
+      }
       graphRef.innerHTML = svg;
       bindFunctions?.(graphRef);
       setupSvg();
       bindInteractions();
     } catch (e) {
+      if (seq !== renderSeq) return;
       const msg = String(e instanceof Error ? e.message : e).replace(/[<>&]/g, (c) =>
         ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string),
       );
+      console.debug(`[PlotRoutePanel] 渲染失败（seq=${seq}）：${msg}`);
       setRenderError(msg);
     }
   }
@@ -322,7 +334,7 @@ export function PlotRoutePanel(props: {
   };
 
   onMount(() => {
-    void render();
+    // 首屏渲染由 createEffect 在挂载时触发，此处仅做首次适屏
     setTimeout(() => zoomFit(), 300);
   });
 
