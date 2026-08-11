@@ -3,6 +3,7 @@ from os.path import exists as isPathExists
 from os import makedirs as mkdir
 import logging, colorlog
 from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, new_version, GALTRANSL_VERSION,NEED_OpenAITokenPool
+from GalTransl.ApiLogger import cleanup_api_log
 from GalTransl.GTPlugin import GTextPlugin, GFilePlugin
 from GalTransl.COpenAI import COpenAITokenPool, init_sakura_endpoint_queue
 from GalTransl.yapsy.PluginManager import PluginManager
@@ -167,6 +168,14 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
         _job_handlers.append(file_handler)
 
     try:
+        # 每次启动翻译流程时清理 api_calls.log，避免长期累积占用磁盘
+        retained_hours, log_size = cleanup_api_log(
+            os.path.join(PROJECT_DIR, "api_calls.log")
+        )
+        LOGGER.info(
+            f"[ApiLogger] 清理 api_calls.log：保留 {retained_hours}h 内记录，"
+            f"当前 {log_size / (1024 * 1024):.1f}MB"
+        )
         start_time_text = cfg.getCommonConfigSection().get("start_time", "")
         if start_time_text:
             LOGGER.info(f"翻译开始时间: {start_time_text}")
