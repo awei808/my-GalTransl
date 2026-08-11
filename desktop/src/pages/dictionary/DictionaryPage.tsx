@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Index, Show, onCleanup } from "solid-js";
+import { createSignal, createEffect, createMemo, For, Index, Show, onCleanup } from "solid-js";
 import { sendLog } from "../../lib/api/log";
 import { appState, getActiveConfigFileName } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
@@ -132,6 +132,9 @@ export function DictionaryPage() {
 
   // 解析当前字典文本为结构化行（走后端，本地不再解析）
   async function refreshParsed(): Promise<void> {
+    // 人名替换行格式与 pre/gpt/post 不同，后端 parse 接口不支持 names category，
+    // 且 names 视图由 nameEntries 渲染、不走 parsedRows，直接跳过
+    if (activeTab() === "names") return;
     const seq = ++parseSeq;
     try {
       const rows = await parseDictContent(draftText(), activeTab() as DictTab);
@@ -500,6 +503,19 @@ export function DictionaryPage() {
     }
   }
 
+  // Tab 文件数：放在 memo 中让 data/commonData 变化时自动重算（For 的 keyed 语义不会因内部 signal 变化重跑 mapper）
+  const tabCounts = createMemo<Record<string, number>>(() => {
+    const counts: Record<string, number> = {};
+    for (const t of TABS) {
+      counts[t.key] =
+        t.key === "names"
+          ? nameEntries().length
+          : getFilesByTab(data(), t.key as DictTab).length
+              + getFilesByTab(commonData(), t.key as DictTab).length;
+    }
+    return counts;
+  });
+
   type FileEntry = { name: string; source: "project" | "common" };
   const activeFiles = (): FileEntry[] => {
     const tab = activeTab() as DictTab;
@@ -526,7 +542,8 @@ export function DictionaryPage() {
               class={`dict-tab ${activeTab() === t.key ? "active" : ""}`}
               onClick={async () => { await doAutoSave(); setActiveTab(t.key); }}
             >
-              {t.label}
+              <span class="dict-tab-label">{t.label}</span>
+              <span class="dict-tab-count">{tabCounts()[t.key] ?? 0}</span>
             </button>
           )}
         </For>
@@ -610,28 +627,36 @@ export function DictionaryPage() {
         >
           <div class="dict-file-list">
             <div class="dict-file-header">文件 ({activeFiles().length})</div>
-            <For each={activeFiles()}>
-              {(entry) => {
-                const key = `${activeTab()}_dict:${entry.name}`;
-                const displayName = stripProjectDirMarker(entry.name);
-                const badge = entry.source === "project" ? "项目" : "公共";
-                return (
-                  <div class="dict-file-item">
+            <div class="dict-file-body">
+              <For each={activeFiles()}>
+                {(entry) => {
+                  const key = `${activeTab()}_dict:${entry.name}`;
+                  const displayName = stripProjectDirMarker(entry.name);
+                  const badge = entry.source === "project" ? "项目" : "公共";
+                  const lookupKey = key.split(":")[1];
+                  const fileCount =
+                    data()?.dict_contents?.[lookupKey]?.count ??
+                    commonData()?.dict_contents?.[lookupKey]?.count ??
+                    0;
+                  return (
                     <div
-                      class={`dict-file-name ${selectedFile() === key ? "selected" : ""}`}
+                      class={`dict-file-item ${selectedFile() === key ? "selected" : ""}`}
                       onClick={async () => { await doAutoSave(); selectFile(key); }}
                     >
-                      <span class="dict-file-badge">{badge}</span>
-                      {displayName}
+                      <div class="dict-file-name">
+                        <span class="dict-file-badge">{badge}</span>
+                        <span class="dict-file-name-text">{displayName}</span>
+                      </div>
+                      <span class="dict-file-count">{fileCount} 条</span>
+                      <button class="dict-file-del" onClick={(e) => { e.stopPropagation(); handleDelete(key); }} title="删除此字典文件">
+                        删除
+                      </button>
                     </div>
-                    <button class="dict-file-del" onClick={() => handleDelete(key)} title="删除此字典文件">
-                      删除
-                    </button>
-                  </div>
-                );
-              }}
-            </For>
-            {activeFiles().length === 0 && <p class="dict-empty">暂无字典文件</p>}
+                  );
+                }}
+              </For>
+              {activeFiles().length === 0 && <p class="dict-empty">暂无字典文件</p>}
+            </div>
 
             {/* ── 新建文件 ── */}
             <div class="dict-create">
@@ -669,22 +694,29 @@ export function DictionaryPage() {
               fallback={<div class="dict-editor-empty">请选择一个字典文件</div>}
             >
               <div class="dict-editor-header">
-                <span class="dict-editor-filename">{displayFileName(selectedFile()!)}</span>
+                <div class="dict-editor-title">
+                  <span class="dict-editor-filename">{displayFileName(selectedFile()!)}</span>
+                  <span class="dict-editor-stats">
+                    {parsedRows().filter((r) => r.type !== "blank").length} 条有效条目
+                  </span>
+                </div>
                 <div class="dict-editor-actions">
-                  <button
-                    class={`btn btn--sm ${viewMode() === "text" ? "btn--primary" : ""}`}
-                    onClick={() => setViewMode("text")}
-                    title="纯文本模式"
-                  >
-                    文本
-                  </button>
-                  <button
-                    class={`btn btn--sm ${viewMode() === "card" ? "btn--primary" : ""}`}
-                    onClick={() => setViewMode("card")}
-                    title="卡片模式"
-                  >
-                    卡片
-                  </button>
+                  <div class="dict-view-seg">
+                    <button
+                      class={`dict-view-btn ${viewMode() === "text" ? "active" : ""}`}
+                      onClick={() => setViewMode("text")}
+                      title="纯文本模式"
+                    >
+                      文本
+                    </button>
+                    <button
+                      class={`dict-view-btn ${viewMode() === "card" ? "active" : ""}`}
+                      onClick={() => setViewMode("card")}
+                      title="卡片模式"
+                    >
+                      卡片
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -693,6 +725,14 @@ export function DictionaryPage() {
                 fallback={
                   /* ── 卡片模式 ── */
                   <div class="dict-card-list">
+                    <div class="dict-card-header">
+                      {cardFields().map((label, i) => (
+                        <>
+                          {i > 0 && <span class="dict-card-header-arrow">→</span>}
+                          <span class="dict-card-header-col">{label}</span>
+                        </>
+                      ))}
+                    </div>
                     <Show
                       when={parsedRows().filter((r) => r.type !== "blank").length > 0}
                       fallback={<div class="dict-editor-empty">暂无条目，点击下方按钮添加</div>}
