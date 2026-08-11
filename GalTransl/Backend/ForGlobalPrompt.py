@@ -1,7 +1,7 @@
 """
 ForGlobalPrompt — 全局提示词(GlobalPrompt)生成后端（全流程翻译管线 第一步）
 
-该后端不翻译文本、不使用多轮对话、不使用系统提示词。
+该后端不翻译文本、不使用多轮对话、使用专用系统提示词。
 它读取压缩后的游戏全文文本以及外部信息（游戏名称等），要求 LLM 生成：
   - 全局剧情概述：整体剧情框架、核心冲突、情感主线
   - 角色列表：每个角色的形象、语气、说话风格
@@ -30,7 +30,7 @@ from GalTransl import LOGGER, PASS0_CACHE_DIR
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT
+from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
 from GalTransl.DataValidator import validate_global_prompt, validate_llm_response
 
 
@@ -179,8 +179,7 @@ class ForGlobalPrompt(BaseTranslate):
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
 
-        # 不使用系统提示词：system 内容为空，且实际请求只发 user 消息
-        self.system_prompt = ""
+        self.system_prompt = FORGLOBAL_SYSTEM
         self.trans_prompt = FORGLOBAL_PROMPT
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
@@ -513,8 +512,10 @@ class ForGlobalPrompt(BaseTranslate):
 
         # ── 调用 LLM ──
         try:
-            # 不使用系统提示词：直接以 user 消息发送
-            messages = [{"role": "user", "content": prompt}]
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt},
+            ]
             rsp, token = await self.ask_chatbot(
                 messages=messages,
                 file_name="GlobalPrompt",

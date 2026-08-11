@@ -40,7 +40,9 @@ def make_translator():
     t.eng_type = "ForImproveTranslation"
     t.enhance_jailbreak = False
     t.system_prompt = "SYSTEM_PROMPT"
-    t.trans_prompt = "[translation_guideline]\n[Glossary]\n[plot_metadata]\n[Input]"
+    # 首轮 builder 使用 self.trans_prompt（模板可被用户 override），
+    # mock 模板含「质量改进评估」标记以覆盖 test_first_round_injects_prompt_glossary_and_metadata 的断言
+    t.trans_prompt = "质量改进评估\n[translation_guideline]\n[Glossary]\n[plot_metadata]\n[Input]"
     t.source_lang = "Japanese"
     t.target_lang = "Simplified Chinese"  # 中文目标语言，跳过英文单词检查
     t.conversations = {}

@@ -7,7 +7,10 @@ from typing import List, Optional, Union
 from GalTransl import LOGGER
 from GalTransl.CSentense import CTransList
 from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
-from GalTransl.Backend.Prompts import FORGAL_JSON_IMPROVE_PROMPT
+from GalTransl.Backend.Prompts import (
+    FORGAL_JSON_IMPROVE_PROMPT,
+    FORIMPROVE_SYSTEM,
+)
 from GalTransl.Service import JobCancelledError
 from GalTransl.Utils import extract_code_blocks, fix_quotes
 
@@ -38,7 +41,11 @@ class ForImproveTranslation(ForGalJsonMulitChat):
             token_pool: API Token 池。
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
+        # 覆盖基类（翻译轮）的系统提示词为改进轮专用角色声明
+        self.system_prompt = FORIMPROVE_SYSTEM
         self.trans_prompt = FORGAL_JSON_IMPROVE_PROMPT
+        # 覆盖默认值后重新应用用户模板 override（基类 __init__ 已应用过一次）
+        self._apply_internal_prompt_template_overrides()
 
     async def batch_translate(
         self,
@@ -232,7 +239,7 @@ class ForImproveTranslation(ForGalJsonMulitChat):
         self, input_src: str, gptdict: str, filename: str
     ) -> str:
         """改进轮首轮内容：以改进提示词为模板，注入术语表、剧情元数据与输入。"""
-        prompt_req = FORGAL_JSON_IMPROVE_PROMPT
+        prompt_req = self.trans_prompt
         prompt_req = prompt_req.replace(
             "[translation_guideline]", self.pj_config.translation_guideline
         )

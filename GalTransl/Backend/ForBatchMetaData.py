@@ -9,7 +9,7 @@ from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT
+from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
 from GalTransl.server_runtime import record_runtime_notice
 from GalTransl.Backend.ForGalJsonMulitChat import (
     load_file_metadata_map,
@@ -53,14 +53,13 @@ class ForBatchMetaData(BaseTranslate):
         """
         初始化 ForBatchMetaData 后端。
 
-        与 ForFileMetaData 类似：不使用系统提示词、不翻译、不多轮。
+        与 ForFileMetaData 类似：使用专用系统提示词、不翻译、不多轮。
         额外地，会在首次需要时惰性载入 gt_input（及上层目录）的
         FileMetaData.json，作为每个文件划分区间时的文件级背景。
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
 
-        # 不使用系统提示词：system 内容为空，且实际请求只发 user 消息
-        self.system_prompt = ""
+        self.system_prompt = FORBATCHMETA_SYSTEM
         self.trans_prompt = FORBATCHMETA_PROMPT
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
@@ -464,8 +463,10 @@ class ForBatchMetaData(BaseTranslate):
             f"脚本 {len(json_list)} 句，最大行号 {max_index}"
         )
         try:
-            # 不使用系统提示词：直接以 user 消息发送
-            messages = [{"role": "user", "content": prompt}]
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt},
+            ]
             rsp, token = await self.ask_chatbot(
                 messages=messages,
                 file_name=filename,

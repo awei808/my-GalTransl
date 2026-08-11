@@ -34,9 +34,18 @@ from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_SYSTEM_PROMPT,
     FORGAL_JSON_TRANS_PROMPT,
+    FORGAL_JSON_IMPROVE_PROMPT,
+    FORGAL_JSON_BRSTATION_PROMPT,
+    FORPLOTROUTE_PROMPT,
+    FORPLOTROUTE_SYSTEM,
     FORFILEMETA_PROMPT,
+    FORFILEMETA_SYSTEM,
     FORBATCHMETA_PROMPT,
+    FORBATCHMETA_SYSTEM,
     FORGLOBAL_PROMPT,
+    FORGLOBAL_SYSTEM,
+    FORIMPROVE_SYSTEM,
+    FORBR_SYSTEM,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
 )
@@ -1165,16 +1174,28 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
         "user_prompt": FORGAL_JSON_TRANS_PROMPT,
     },
     "ForFileMetaData": {
-        "system_prompt": "",
+        "system_prompt": FORFILEMETA_SYSTEM,
         "user_prompt": FORFILEMETA_PROMPT,
     },
     "ForBatchMetaData": {
-        "system_prompt": "",
+        "system_prompt": FORBATCHMETA_SYSTEM,
         "user_prompt": FORBATCHMETA_PROMPT,
     },
     "ForGlobalPrompt": {
-        "system_prompt": "",
+        "system_prompt": FORGLOBAL_SYSTEM,
         "user_prompt": FORGLOBAL_PROMPT,
+    },
+    "ForImproveTranslation": {
+        "system_prompt": FORIMPROVE_SYSTEM,
+        "user_prompt": FORGAL_JSON_IMPROVE_PROMPT,
+    },
+    "ForBRStation": {
+        "system_prompt": FORBR_SYSTEM,
+        "user_prompt": FORGAL_JSON_BRSTATION_PROMPT,
+    },
+    "ForPlotRouteMap": {
+        "system_prompt": FORPLOTROUTE_SYSTEM,
+        "user_prompt": FORPLOTROUTE_PROMPT,
     },
     "GenDic": {
         "system_prompt": GENDIC_SYSTEM,

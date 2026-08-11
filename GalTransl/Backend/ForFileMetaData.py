@@ -10,13 +10,13 @@ from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT
+from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT, FORFILEMETA_SYSTEM
 
 
 """
 ForFileMetaData - 文件级元数据(FileMetaData)生成后端
 
-该后端不翻译文本、不使用多轮对话、不使用系统提示词。
+该后端不翻译文本、不使用多轮对话、使用专用系统提示词。
 它读取一个 Galgame 剧本文件（gt_input 下的 *.txt.json），把全文作为 user 消息
 发给 LLM，要求模型概括剧情并输出一个 JSON 对象（角色/服装/剧情/标签），
 解析后按文件名 id 合并写入 gt_input/FileMetaData.json。
@@ -46,8 +46,7 @@ class ForFileMetaData(BaseTranslate):
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
 
-        # 不使用系统提示词：system 内容为空，且实际请求只发 user 消息
-        self.system_prompt = ""
+        self.system_prompt = FORFILEMETA_SYSTEM
         self.trans_prompt = FORFILEMETA_PROMPT
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
@@ -335,8 +334,10 @@ class ForFileMetaData(BaseTranslate):
             f"脚本 {_num_lines} 句，剧情上限 {max_chars} 字"
         )
         try:
-            # 不使用系统提示词：直接以 user 消息发送，不附带任何 system 角色
-            messages = [{"role": "user", "content": prompt}]
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt},
+            ]
             rsp, token = await self.ask_chatbot(
                 messages=messages,
                 file_name=filename,

@@ -69,35 +69,35 @@ TRANSLATOR_SUPPORTED = {
         "en": "Full translation pipeline: compression → global analysis → glossary → file metadata → batch division → multi-round translation, fully automated."
     },
     "ForGlobalPrompt": {
-        "zh-cn": "(openai接口)由压缩后全文+游戏信息生成全局剧情概要、角色档案、行文风格。结果写入 transl_cache/pass0_cache/GlobalPrompt.json。",
+        "zh-cn": "由压缩后全文+游戏信息生成全局剧情概要、角色档案、行文风格。结果写入 transl_cache/pass0_cache/GlobalPrompt.json。",
         "en": "Generate global plot summary, character profiles, writing style from compressed full text + game info. Writes GlobalPrompt.json."
     },
     "ForGal-json-multi-chat": {
-        "zh-cn": "(openai接口)翻译Gal时使用，json格式输入，多轮对话以保留上下文，可注入文件级元数据(FileMetaData)和批次级元数据(BatchMetadata)。",
+        "zh-cn": "翻译Gal时使用，json格式输入，多轮对话以保留上下文，可注入文件级元数据(FileMetaData)和批次级元数据(BatchMetadata)。",
         "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports FileMetaData and BatchMetadata injection."
     },
     "ForImproveTranslation": {
-        "zh-cn": "(openai接口)译文质量改进：整文件翻译完成后评估译文，对可改进的句子生成备选译文，可在校对审核页一键交换。",
+        "zh-cn": "整文件翻译完成后评估译文，对可改进的句子生成备选译文，可在校对审核页一键交换。",
         "en": "Translation quality improvement: evaluates the whole file after translation, generates alternative translations (alt_dst in cache), swappable in review page."
     },
     "ForBRStation": {
-        "zh-cn": "(openai接口)换行位置异常修复：仅对带有「换行位置异常」问题标注的译文，生成备选译文，可在校对审核页一键交换。",
+        "zh-cn": "仅对带有「换行位置异常」问题标注的译文，生成备选译文，可在校对审核页一键交换。",
         "en": "Line-break position fix: for sentences flagged with 'line-break position anomaly', generates alternative translations (alt_dst in cache), swappable in review page."
     },
     "ForFileMetaData": {
-        "zh-cn": "(openai接口)由剧本文件生成文件级元数据(FileMetaData)，不翻译、无多轮、无系统提示词，结果写入 gt_input/FileMetaData.json。",
-        "en": "Generate FileMetaData from script files. No translation, no multi-turn, no system prompt; writes gt_input/FileMetaData.json."
+        "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 gt_input/FileMetaData.json。",
+        "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes gt_input/FileMetaData.json."
     },
     "ForBatchMetaData": {
-        "zh-cn": "(openai接口)依据文件级剧情元数据将原文划分为翻译区间(批次)并标注视角/氛围/H/用词色彩，结果写入 gt_input/BatchMetadata.json，供多轮翻译注入。",
+        "zh-cn": "依据文件级元数据，将原文划分批次，并标注视角/氛围/H/用词色彩，结果写入 gt_input/BatchMetadata.json。",
         "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes gt_input/BatchMetadata.json for multi-turn translation."
     },
     "ForPlotRouteMap": {
-        "zh-cn": "(openai接口)基于各文件剧情摘要+用户剧情大纲生成剧情路线图（mermaid 源码+文件路线归属+节点剧情），结果写入 transl_cache/pass0_cache/PlotRouteMap.json，供翻译注入路线剧情。",
-        "en": "Generate plot route map (mermaid source + file-to-route mapping + node summaries) from per-file metadata & user outline; writes PlotRouteMap.json for translation injection."
+        "zh-cn": "基于各文件剧情+剧情大纲生成剧情路线图，结果写入 transl_cache/pass0_cache/PlotRouteMap.json。",
+        "en": "Generate plot route map from per-file metadata & user outline; writes PlotRouteMap.json for translation injection."
     },
     "GenDic": {
-        "zh-cn": "(openai接口)自动化构建GPT字典，需要接大模型如Deepseek-V3",
+        "zh-cn": "自动化构建GPT字典",
         "en": "Automatically build GPT dictionary, requires a large model, recommended GPT4/Claude-3/Deepseek-V3"
     },
     "dump-name": {
@@ -109,6 +109,8 @@ TRANSLATOR_SUPPORTED = {
         "en": "Show all plugin list"
     },
 }
+
+# 死代码
 TRANSLATOR_DEFAULT_ENGINE = {
     "ForGal-full-pipeline": "deepseek-chat",
     "ForGlobalPrompt": "deepseek-chat",

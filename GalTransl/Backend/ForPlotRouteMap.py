@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from GalTransl import LOGGER, PASS0_CACHE_DIR
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.Prompts import FORPLOTROUTE_PROMPT
+from GalTransl.Backend.Prompts import FORPLOTROUTE_PROMPT, FORPLOTROUTE_SYSTEM
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
 
@@ -89,7 +89,7 @@ class ForPlotRouteMap(BaseTranslate):
     ) -> None:
         super().__init__(config, eng_type, proxy_pool, token_pool)
         self.pj_config = config
-        self.system_prompt = ""
+        self.system_prompt = FORPLOTROUTE_SYSTEM
         self.trans_prompt = FORPLOTROUTE_PROMPT
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
@@ -274,7 +274,10 @@ class ForPlotRouteMap(BaseTranslate):
         )
         for attempt in (1, 2):
             try:
-                messages = [{"role": "user", "content": prompt}]
+                messages = [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": prompt},
+                ]
                 rsp, token = await self.ask_chatbot(
                     messages=messages,
                     file_name="PlotRouteMap",
