@@ -908,6 +908,29 @@ textarea {
   flex-shrink: 0;
 }
 
+.translate-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-bottom: var(--space-1);
+}
+
+.translate-title-label {
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.translate-title-name {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .translate-stats {
   flex: 2;
   display: flex;

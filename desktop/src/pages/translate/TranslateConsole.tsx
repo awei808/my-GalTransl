@@ -11,6 +11,7 @@ import {
 import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize } from "../../lib/api/general";
 import { decodeProjectDir } from "../../lib/api/client";
 import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload } from "../../lib/api/preferences";
+import { projectName } from "../home/homeUtils";
 import type {
   ModelCheckResult,
   ProjectRuntimeResponse,
@@ -491,6 +492,8 @@ export function TranslateConsole() {
   const summary = createMemo(() => runtime()?.summary);
   const hasProject = () => !!appState.activeProjectId;
   const isRunning = () => running();
+  // 当前项目真实路径（用于顶部标题展示，base64 pid 需解码）
+  const projectDir = () => decodeProjectDir(appState.activeProjectId ?? "");
 
   // 标签数据
   const errors = () => runtime()?.recent_errors ?? [];
@@ -528,6 +531,10 @@ export function TranslateConsole() {
         {/* ── 顶部统计区 4:1 ── */}
         <div class="translate-header">
           <div class="translate-stats">
+            <div class="translate-title" title={projectDir()}>
+              <span class="translate-title-label">项目</span>
+              <span class="translate-title-name">{projectName(projectDir())}</span>
+            </div>
             <div class="stats-grid">
               <StatRow label="总行数" value={summary()?.total ?? "—"} />
               <StatRow
