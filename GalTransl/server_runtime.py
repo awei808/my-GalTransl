@@ -148,6 +148,8 @@ class RuntimeState:
     updated_at: str = field(default_factory=_utcnow_text)
     file_totals: dict[str, int] = field(default_factory=dict)
     cache_file_display_map: dict[str, str] = field(default_factory=dict)
+    # 进度是否已封口：reset 后若沿用旧 file_totals 则为 False（重建中），收到新 file_totals 后置 True
+    progress_sealed: bool = True
     # Per-file deque of recent success events (newest-first, appendleft for O(1) merging)
     recent_successes_by_file: dict[str, deque[RuntimeSentenceEvent]] = field(default_factory=dict)
     recent_errors: deque[RuntimeErrorEvent] = field(default_factory=lambda: deque(maxlen=RUNTIME_RECENT_EVENT_LIMIT))
@@ -176,7 +178,20 @@ class RuntimeRegistry:
     def reset_project(self, project_dir: str) -> None:
         with self._lock:
             normalized = _normalize_project_dir(project_dir)
-            self._states[normalized] = RuntimeState(project_dir=project_dir)
+            previous = self._states.get(normalized)
+            if previous is not None:
+                # 沿用上一轮的 file_totals / display_map，避免轮询窗口内 total=0 致进度条消失
+                state = RuntimeState(
+                    project_dir=project_dir,
+                    file_totals=previous.file_totals,
+                    cache_file_display_map=previous.cache_file_display_map,
+                )
+                state.progress_sealed = False
+                # 仅测试用，测完删除
+                LOGGER.debug(f"[runtime] reset_project 沿用旧 file_totals 共 {len(previous.file_totals)} 个文件，progress_sealed=False")
+            else:
+                state = RuntimeState(project_dir=project_dir)
+            self._states[normalized] = state
 
     def update_status(
         self,
@@ -210,6 +225,7 @@ class RuntimeRegistry:
                 state.workers_configured = max(0, workers_configured)
             if file_totals is not None:
                 state.file_totals = dict(file_totals)
+                state.progress_sealed = True
             if cache_file_display_map is not None:
                 state.cache_file_display_map = dict(cache_file_display_map)
             state.updated_at = _utcnow_text()

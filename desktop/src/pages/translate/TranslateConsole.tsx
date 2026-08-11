@@ -181,6 +181,7 @@ export function TranslateConsole() {
     const pid = appState.activeProjectId;
     if (!pid) {
       setRuntime(null);
+      setLastValidPercent(0);
       setRunning(false);
       setAppState("prevJobStatus", "");
       clearInterval(pollTimer);
@@ -490,6 +491,13 @@ export function TranslateConsole() {
   onCleanup(() => document.removeEventListener("click", handleOutsideClick));
 
   const summary = createMemo(() => runtime()?.summary);
+  // 进度兜底：后端沿用旧 file_totals 时 percent 有效；极端 total=0 时保留上一帧值避免进度条闪烁
+  const [lastValidPercent, setLastValidPercent] = createSignal(0);
+  const displayPercent = createMemo(() => {
+    const pct = summary()?.percent ?? 0;
+    if (pct > 0) setLastValidPercent(pct);
+    return pct > 0 ? pct : lastValidPercent();
+  });
   const hasProject = () => !!appState.activeProjectId;
   const isRunning = () => running();
   // 当前项目真实路径（用于顶部标题展示，base64 pid 需解码）
@@ -558,7 +566,7 @@ export function TranslateConsole() {
               <div
                 class="progress-bar-fill"
                 style={{
-                  width: `${summary()?.percent ?? 0}%`,
+                  width: `${displayPercent()}%`,
                 }}
               />
             </div>
