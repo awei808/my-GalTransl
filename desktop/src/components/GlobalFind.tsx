@@ -25,7 +25,7 @@ interface HighlightRegistry {
 }
 interface WindowWithHighlight extends Window {
   Highlight: new (...ranges: Range[]) => object;
-  CSS: CSS & { highlights?: HighlightRegistry };
+  CSS: typeof CSS & { highlights?: HighlightRegistry };
 }
 type GlobalFindWindow = WindowWithHighlight;
 

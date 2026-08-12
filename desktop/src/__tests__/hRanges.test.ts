@@ -92,15 +92,17 @@ describe("computeHRangeBoundaries", () => {
   });
 
   it("字符串 index 条目统一转为 number key，Map 查询可命中", () => {
-    const entries = ["11", "12", "13"].map((index) => ({ index } as CacheEntry));
+    const entries = ["11", "12", "13"].map(
+      (index) => ({ index }) as unknown as CacheEntry,
+    );
     const { starts, ends } = computeHRangeBoundaries(entries, [
       { lo: 12, hi: 13 },
     ]);
     // Map key 是 number，与渲染处 Number(entrySignal().index) 一致
     expect(starts.get(12)).toEqual({ lo: 12, hi: 13 });
     expect(ends.get(13)).toEqual({ lo: 12, hi: 13 });
-    // 字符串 key 不应命中（口径统一后不会再出现）
-    expect(starts.has("12")).toBe(false);
+    // 字符串原值 key 不应命中（Map key 已统一为 number）
+    expect(Map.prototype.has.call(starts, "12")).toBe(false);
     expect(starts.size).toBe(1);
     expect(ends.size).toBe(1);
   });

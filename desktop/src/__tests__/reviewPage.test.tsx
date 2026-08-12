@@ -29,6 +29,7 @@ import {
   redo,
   undo,
 } from "../stores/undoStore";
+import type { UndoEntry } from "../stores/undoStore";
 import { decideCrossFileRestore, resolveKeyAction, shouldYieldToNative } from "../pages/review/ReviewPage";
 import type { PendingRestore } from "../pages/review/ReviewPage";
 import type { CacheEntry } from "../lib/api/types";

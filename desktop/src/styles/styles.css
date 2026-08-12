@@ -361,6 +361,60 @@ textarea {
   background: var(--color-bg-input);
   color: var(--color-text-primary);
 }
+/* 视图筛选多选下拉（问题句/备选/H剧情） */
+.review-filter-dropdown {
+  position: relative;
+  display: inline-block;
+}
+.review-filter-dropdown-trigger {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.review-filter-dropdown-trigger--active {
+  border-color: var(--color-brand-primary);
+  color: var(--color-brand-primary);
+}
+.review-filter-dropdown-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.review-filter-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg-panel, var(--color-bg-input));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.review-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.review-filter-option:hover {
+  background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+}
+.review-filter-option input {
+  margin: 0;
+  accent-color: var(--color-brand-primary);
+}
 .review-filter-count {
   font-size: 12px;
   color: var(--color-text-secondary);

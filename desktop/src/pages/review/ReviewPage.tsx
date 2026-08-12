@@ -623,6 +623,82 @@ const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
   { key: "post_dst_preview", label: "后处理译文预览" },
 ];
 
+/* ── 视图筛选多选下拉：只看问题句 / 只看备选 / 只看H剧情（可组合 AND）── */
+function ViewFilterDropdown(props: {
+  problems: () => boolean;
+  alts: () => boolean;
+  hOnly: () => boolean;
+  onProblems: (v: boolean) => void;
+  onAlts: (v: boolean) => void;
+  onHOnly: (v: boolean) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  let rootRef: HTMLDivElement | undefined;
+
+  // 点击下拉区域外部时收起
+  createEffect(() => {
+    if (!open()) return;
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef && !rootRef.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("click", onDoc);
+    onCleanup(() => document.removeEventListener("click", onDoc));
+  });
+
+  const summary = () => {
+    const parts: string[] = [];
+    if (props.problems()) parts.push("问题句");
+    if (props.alts()) parts.push("备选");
+    if (props.hOnly()) parts.push("H剧情");
+    return parts.length === 0 ? "全部" : parts.join("+");
+  };
+
+  const anyActive = () => props.problems() || props.alts() || props.hOnly();
+
+  return (
+    <div ref={rootRef} class="review-filter-dropdown">
+      <button
+        class={`review-filter-dropdown-trigger ${anyActive() ? "review-filter-dropdown-trigger--active" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(!open());
+        }}
+      >
+        视图: {summary()}
+        <span class="review-filter-dropdown-caret">▾</span>
+      </button>
+      <Show when={open()}>
+        <div class="review-filter-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+          <label class="review-filter-option">
+            <input
+              type="checkbox"
+              checked={props.problems()}
+              onChange={(e) => props.onProblems(e.currentTarget.checked)}
+            />
+            <span>只看问题句</span>
+          </label>
+          <label class="review-filter-option">
+            <input
+              type="checkbox"
+              checked={props.alts()}
+              onChange={(e) => props.onAlts(e.currentTarget.checked)}
+            />
+            <span>只看备选</span>
+          </label>
+          <label class="review-filter-option">
+            <input
+              type="checkbox"
+              checked={props.hOnly()}
+              onChange={(e) => props.onHOnly(e.currentTarget.checked)}
+            />
+            <span>只看H剧情</span>
+          </label>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 /* ── ReviewPage 主组件 ── */
 export function ReviewPage() {
   const [entries, setEntries] = createSignal<CacheEntry[]>([]);
@@ -694,13 +770,22 @@ export function ReviewPage() {
   const [filterProblemType, setFilterProblemType] = createSignal("all");
   const [filterSpeaker, setFilterSpeaker] = createSignal("all");
   const [filterAltOnly, setFilterAltOnly] = createSignal(false);
+  const [filterHOnly, setFilterHOnly] = createSignal(false);
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
 
   // 根据快捷筛选过滤条目（文件内查找已改为 Ctrl+F 全局查找浮层，不再在此过滤）
+  // 多选视图筛选为 AND 组合：只看问题句 / 只看备选 / 只看H剧情 可同时勾选
   const filteredEntries = createMemo(() => {
     let list = entries();
     if (filterProblemsOnly()) list = list.filter((e) => !!e.problem);
     if (filterAltOnly()) list = list.filter((e) => !!e.alt_dst);
+    if (filterHOnly()) {
+      const ranges = hRanges();
+      list = list.filter((e) => {
+        const idx = Number(e.index);
+        return ranges.some((r) => idx >= r.lo && idx <= r.hi);
+      });
+    }
     const ptype = filterProblemType();
     if (ptype !== "all") list = list.filter((e) => problemTypesOf(e.problem).includes(ptype));
     const spk = filterSpeaker();
@@ -717,11 +802,13 @@ export function ReviewPage() {
   const hasFilter = () =>
     filterProblemsOnly() ||
     filterAltOnly() ||
+    filterHOnly() ||
     filterProblemType() !== "all" ||
     filterSpeaker() !== "all";
   function clearFilters() {
     setFilterProblemsOnly(false);
     setFilterAltOnly(false);
+    setFilterHOnly(false);
     setFilterProblemType("all");
     setFilterSpeaker("all");
   }
@@ -979,12 +1066,13 @@ export function ReviewPage() {
     const maxPage = pageSize() > 0 ? Math.max(0, Math.ceil(total / pageSize()) - 1) : 0;
     if (page() > maxPage) setPage(maxPage);
   });
-  // 过滤条件（问题/说话人/备选）变化时回到第 1 页
+  // 过滤条件（问题/说话人/备选/H剧情）变化时回到第 1 页
   createEffect(() => {
     filterProblemsOnly();
     filterAltOnly();
     filterProblemType();
     filterSpeaker();
+    filterHOnly();
     setPage(0);
   });
   // 滚动到当前页顶部（翻页后定位到列表起始）
@@ -1761,20 +1849,16 @@ export function ReviewPage() {
         </Show>
 
 
-        {/* 快捷筛选：只看有问题 / 备选 / 类型 / 说话人 */}
+        {/* 快捷筛选：视图多选（问题句/备选/H剧情）+ 类型 / 说话人 */}
         <div class="review-filter-bar">
-          <button
-            class={`review-filter-chip ${filterProblemsOnly() ? "review-filter-chip--active" : ""}`}
-            onClick={() => setFilterProblemsOnly(!filterProblemsOnly())}
-          >
-            只看有问题
-          </button>
-          <button
-            class={`review-filter-chip ${filterAltOnly() ? "review-filter-chip--active" : ""}`}
-            onClick={() => setFilterAltOnly(!filterAltOnly())}
-          >
-            只看备选
-          </button>
+          <ViewFilterDropdown
+            problems={filterProblemsOnly}
+            alts={filterAltOnly}
+            hOnly={filterHOnly}
+            onProblems={setFilterProblemsOnly}
+            onAlts={setFilterAltOnly}
+            onHOnly={setFilterHOnly}
+          />
           <select
             class="review-filter-select"
             value={filterProblemType()}
