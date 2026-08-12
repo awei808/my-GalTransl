@@ -49,6 +49,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "pre", label: "预处理" },
   { key: "gpt", label: "GPT 字典" },
   { key: "post", label: "后处理" },
+  { key: "h", label: "H 词库" },
   { key: "names", label: "人名替换" },
 ];
 

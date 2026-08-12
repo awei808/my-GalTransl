@@ -115,6 +115,7 @@ class CProblemType(Enum):
     换行位置异常 = 14
     定语过长 = 15
     状语过长 = 16
+    h场景用词不当 = 17
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:

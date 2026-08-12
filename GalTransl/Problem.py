@@ -2,8 +2,10 @@
 分析问题
 """
 
+import os
 import re
 
+from GalTransl import LOGGER
 from GalTransl.CSentense import CTransList
 from GalTransl.ConfigHelper import CProjectConfig, CProblemType
 from GalTransl.Utils import (
@@ -45,10 +47,49 @@ def _clean_text_len(s: str) -> int:
     return len(norm) - norm.count("\n")
 
 
+def load_h_check_words(dict_paths: list) -> list:
+    """加载 H 场景用词不当检测词库（格式与 GPT 字典一致：词|备注）。
+
+    逐行解析，取每行第一列作为检测词；解析语义与 parse_dict_line 对齐：
+    Tab/四空格先归一化为 |，仅当行内不含 | 时才把 // # \\ 前缀视作注释
+    （含 | 的此类行编辑器会按规则加载，后端需保持一致）；另跳过纯符号分隔线。
+    文件缺失或解析为空时返回空列表（检测自动降级为不触发）。
+    """
+    words: list[str] = []
+    seen: set[str] = set()
+    for dict_path in dict_paths:
+        if not os.path.isfile(dict_path):
+            LOGGER.warning(f"H 场景用词检测词库不存在：{dict_path}")
+            continue
+        count = 0
+        with open(dict_path, encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if "|" not in stripped and stripped.startswith(("//", "#", "\\")):
+                    continue
+                if re.fullmatch(r"[=\-~_*]{3,}", stripped):
+                    continue
+                # 与 parse_dict_line 对齐：Tab/四空格转 | 后再分割（兼容 Tab 分隔字典）
+                norm = stripped.replace("    ", "\t").replace("\t", "|")
+                word = norm.split("|", 1)[0].strip()
+                if not word:
+                    continue
+                if word not in seen:
+                    seen.add(word)
+                    words.append(word)
+                    count += 1
+        LOGGER.info(f"载入 H 场景用词检测词库: {dict_path} {count}词条")
+    return words
+
+
 def find_problems(
     trans_list: CTransList,
     projectConfig: CProjectConfig,
     gpt_dict: CGptDict = None,
+    h_ranges: list = None,
+    h_check_words: list = None,
 ) -> None:
     """
     此函数接受一个翻译列表，查找其中的问题并将其记录在每个翻译对象的 `problem` 属性中。
@@ -155,6 +196,16 @@ def find_problems(
         if CProblemType.字典使用 in find_type:
             if val := gpt_dict.check_dic_use(pre_dst, tran):
                 problem_list.append(val)
+        if (
+            CProblemType.h场景用词不当 in find_type
+            and h_ranges
+            and h_check_words
+            and any(lo <= tran.index <= hi for lo, hi in h_ranges)
+        ):
+            hits = [w for w in h_check_words if w in pre_dst or w in post_dst]
+            if hits:
+                problem_list.append("h场景用词不当：" + "、".join(hits))
+                LOGGER.debug(f"H场景用词不当：index={tran.index}, 命中={hits}")
         if CProblemType.引入英文 in find_type:
             if not contains_english(post_src) and contains_english(pre_dst):
                 eng_chars = contains_english(post_dst)

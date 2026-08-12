@@ -75,6 +75,7 @@ export function getFilesByTab(
     pre_dict_files: string[];
     gpt_dict_files: string[];
     post_dict_files: string[];
+    h_dict_files?: string[];
   } | null,
   tab: DictTab,
 ): string[] {
@@ -84,7 +85,9 @@ export function getFilesByTab(
       ? data.pre_dict_files
       : tab === "gpt"
         ? data.gpt_dict_files
-        : data.post_dict_files;
+        : tab === "post"
+          ? data.post_dict_files
+          : data.h_dict_files ?? [];
   return [...files].sort((a, b) => {
     const aMtime = data.dict_contents[a]?.mtime ?? -1;
     const bMtime = data.dict_contents[b]?.mtime ?? -1;
@@ -171,9 +174,12 @@ export function rowToText(row: DictRow): string {
   return `${target}|${condText}|${search}|${replace}${noteSuffix}`;
 }
 
-export function getFieldLabels(type: DictRowType, _tab: DictTab): string[] {
+export function getFieldLabels(type: DictRowType, tab: DictTab): string[] {
   if (type === "gpt") return ["原文", "译文", "解释(可空)"];
-  if (type === "normal") return ["搜索", "替换", "备注"];
+  if (type === "normal") {
+    if (tab === "h") return ["词", "备注"];
+    return ["搜索", "替换", "备注"];
+  }
   if (type === "conditional") return ["目标", "条件", "搜索", "替换", "备注"];
   if (type === "situation") return ["场景", "搜索", "替换"];
   if (type === "comment") return ["内容"];

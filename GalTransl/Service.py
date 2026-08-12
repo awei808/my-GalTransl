@@ -317,7 +317,7 @@ async def run_job_async(
             try:
                 from GalTransl.server import _load_rebuild_deps, recheck_pass3_cache_files
 
-                proj_config, pre_dic, post_dic, gpt_dic, tPlugins = _load_rebuild_deps(
+                proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
                     spec.project_dir, spec.config_file_name
                 )
                 if proj_config is not None and merged_files:
@@ -328,6 +328,7 @@ async def run_job_async(
                         post_dic,
                         gpt_dic,
                         tPlugins,
+                        h_check_words,
                         target_files=merged_files,
                     )
                     if rechecked > 0:

@@ -106,21 +106,23 @@ def _open_in_file_manager(path: str, is_file: bool) -> None:
         subprocess.run(["xdg-open", parent], check=False, timeout=15)
 
 
-def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, Any, Any, list]:
-    """加载问题重建所需的项目配置与字典；任一失败时返回 (None, None, None, None, [])。
+def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, Any, Any, list, list]:
+    """加载问题重建所需的项目配置与字典；任一失败时返回 (None, None, None, None, [], [])。
 
     Args:
         project_dir: 项目绝对路径。
         config_name: 请求中的配置文件名，不存在时回退 config.inc.yaml / config.yaml。
 
     Returns:
-        (proj_config, pre_dic, post_dic, gpt_dic, tPlugins)
+        (proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words)
     """
     proj_config = pre_dic = post_dic = gpt_dic = None
     tPlugins = []
+    h_check_words = []
     try:
         from GalTransl.ConfigHelper import CProjectConfig, initDictList
         from GalTransl.Dictionary import CNormalDic, CGptDict
+        from GalTransl.Problem import load_h_check_words
         # Resolve the real config file: real projects use config.inc.yaml,
         # but the request may default to config.yaml.
         if not os.path.isfile(os.path.join(project_dir, config_name)):
@@ -133,10 +135,12 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
         pre_dic_list = dict_cfg.get("preDict", [])
         post_dic_list = dict_cfg.get("postDict", [])
         gpt_dic_list = dict_cfg.get("gpt.dict", [])
+        h_dict_list = dict_cfg.get("hCheckDict", [])
         default_dic_dir = dict_cfg.get("defaultDictFolder", "")
         pre_dic = CNormalDic(initDictList(pre_dic_list, default_dic_dir, project_dir))
         post_dic = CNormalDic(initDictList(post_dic_list, default_dic_dir, project_dir))
         gpt_dic = CGptDict(initDictList(gpt_dic_list, default_dic_dir, project_dir))
+        h_check_words = load_h_check_words(initDictList(h_dict_list, default_dic_dir, project_dir))
         if dict_cfg.get("sortDict", True):
             pre_dic.sort_dic()
             post_dic.sort_dic()
@@ -148,17 +152,27 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
     except Exception:
         proj_config = pre_dic = post_dic = gpt_dic = None
         tPlugins = []
-    return proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+        h_check_words = []
+    return proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words
 
 
 def _run_problem_detection(
-    entries: list, proj_config: Any, pre_dic: Any, post_dic: Any, gpt_dic: Any, tPlugins: list
+    entries: list,
+    proj_config: Any,
+    pre_dic: Any,
+    post_dic: Any,
+    gpt_dic: Any,
+    tPlugins: list,
+    h_ranges: list = None,
+    h_check_words: list = None,
 ) -> Tuple[list, bool]:
     """重建 CSentense 并全量运行问题检测（只算不落盘）。
 
     Args:
         entries: 缓存条目列表（dict）。
         proj_config / pre_dic / post_dic / gpt_dic / tPlugins: _load_rebuild_deps 的产物。
+        h_ranges: H 剧情区间列表 [(lo, hi), ...]（缓存条目 index 口径），默认 None 不检测。
+        h_check_words: H 场景用词不当检测词库（list[str]），默认 None 不检测。
 
     Returns:
         (results, ok)：results 与 entries 等长，每项为
@@ -208,7 +222,7 @@ def _run_problem_detection(
     ok = True
     if trans_list:
         try:
-            find_problems(trans_list, proj_config, gpt_dic)
+            find_problems(trans_list, proj_config, gpt_dic, h_ranges, h_check_words)
         except Exception:
             ok = False
             LOGGER.error("问题检测 find_problems 执行失败", exc_info=True)
@@ -243,6 +257,7 @@ def recheck_pass3_cache_files(
     post_dic: Any,
     gpt_dic: Any,
     tPlugins: list,
+    h_check_words: list = None,
     target_files: list[str] | None = None,
 ) -> int:
     """对 pass3_cache 下的缓存 json 重新运行问题检测并写回 problem。
@@ -282,8 +297,15 @@ def recheck_pass3_cache_files(
             if not isinstance(entries, list) or not entries:
                 continue
 
+            project_dir = os.path.dirname(cache_dir)
+            h_ranges = [
+                (r["lo"], r["hi"])
+                for r in _resolve_cache_h_ranges(
+                    project_dir, os.path.relpath(file_path, cache_dir)
+                ).get("h_ranges", [])
+            ]
             results, ok = _run_problem_detection(
-                entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+                entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words
             )
             if not ok:
                 # 检测失败时不得覆写已有 problem（与 /cache/check 语义一致），跳过该文件
@@ -860,8 +882,9 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
         return {"batch_exists": False, "has_h": False, "h_ranges": []}
 
     base = os.path.basename(cache_name)
-    # 候选输入名：先精确匹配（splitFile=no 时缓存名即输入名），再剥离 _N 分块后缀。
-    # 注意 group(1) 已含输入文件扩展名（如 story.txt.json），不能再补 ".json"。
+    # 候选输入名：缓存名即输入名（输入文件本身带扩展名，如 story.txt.json），
+    # 分片缓存为 {输入名}_{N}.json，再剥离 _N 后缀作为第二候选。
+    # 注意 group(1) 已含输入文件扩展名，不能再补 ".json"。
     input_candidates = [base]
     m = re.match(r"^(.*)_(\d+)\.json$", base)
     if m:
@@ -1144,6 +1167,8 @@ def _dict_category_config_key(category: str) -> str:
         return "gpt.dict"
     if category == "post":
         return "postDict"
+    if category == "h":
+        return "hCheckDict"
     raise ValueError(f"invalid dictionary category: {category}")
 
 
@@ -1193,13 +1218,15 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
     pre_all = [str(x) for x in dict_cfg.get("preDict", [])]
     gpt_all = [str(x) for x in dict_cfg.get("gpt.dict", [])]
     post_all = [str(x) for x in dict_cfg.get("postDict", [])]
+    h_all = [str(x) for x in dict_cfg.get("hCheckDict", [])]
 
     pre_files = [x for x in pre_all if x.startswith(DICT_PROJECT_MARKER)]
     gpt_files = [x for x in gpt_all if x.startswith(DICT_PROJECT_MARKER)]
     post_files = [x for x in post_all if x.startswith(DICT_PROJECT_MARKER)]
+    h_files = [x for x in h_all if x.startswith(DICT_PROJECT_MARKER)]
 
     dict_contents: dict[str, dict[str, Any]] = {}
-    for file_key in pre_files + gpt_files + post_files:
+    for file_key in pre_files + gpt_files + post_files + h_files:
         clean = file_key.replace(DICT_PROJECT_MARKER, "").strip()
         if not _is_safe_dict_filename(clean):
             dict_contents[file_key] = {
@@ -1228,6 +1255,7 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
         "pre_dict_files": pre_files,
         "gpt_dict_files": gpt_files,
         "post_dict_files": post_files,
+        "h_dict_files": h_files,
         "dict_contents": dict_contents,
     }
 
@@ -1284,7 +1312,7 @@ def _read_common_dict_category_map(dict_dir: str) -> dict[str, str]:
             return {}
         result: dict[str, str] = {}
         for key, value in data.items():
-            if _is_safe_dict_filename(str(key)) and str(value) in {"pre", "gpt", "post"}:
+            if _is_safe_dict_filename(str(key)) and str(value) in {"pre", "gpt", "post", "h"}:
                 result[str(key)] = str(value)
         return result
     except Exception:
@@ -1305,6 +1333,8 @@ def _categorize_common_dict_file(filename: str) -> str:
         return "gpt"
     if "post" in lower or "译后" in filename:
         return "post"
+    if "hcheck" in lower or "h场景" in lower or "场景用词" in filename:
+        return "h"
     return "pre"
 
 
@@ -1322,6 +1352,7 @@ def _collect_common_dict_payload() -> dict[str, Any]:
     pre_files: list[str] = []
     gpt_files: list[str] = []
     post_files: list[str] = []
+    h_files: list[str] = []
     dict_contents: dict[str, dict[str, Any]] = {}
 
     for name in files:
@@ -1330,6 +1361,8 @@ def _collect_common_dict_payload() -> dict[str, Any]:
             gpt_files.append(name)
         elif category == "post":
             post_files.append(name)
+        elif category == "h":
+            h_files.append(name)
         else:
             pre_files.append(name)
         dict_contents[name] = _read_dict_file_payload(os.path.join(dict_dir, name))
@@ -1339,6 +1372,7 @@ def _collect_common_dict_payload() -> dict[str, Any]:
         "pre_dict_files": pre_files,
         "gpt_dict_files": gpt_files,
         "post_dict_files": post_files,
+        "h_dict_files": h_files,
         "dict_contents": dict_contents,
     }
 
@@ -1439,6 +1473,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "长句丢失换行", "description": "译文平均分句长度超过阈值，可能丢失了应有的换行。"},
     {"name": "换行位置异常", "description": "换行符未紧跟中文标点（逗号/顿号/句号等）之后，断行位置可能不当。"},
     {"name": "定语过长", "description": "译文出现「是……的」结构且中间定语长度超过「定语最大长度」阈值。（测试中，可能误检）"},
+    {"name": "h场景用词不当", "description": "H 剧情区间译文出现不符合 H 场景的词语（按 H 词库匹配）。"},
     {"name": "状语过长", "description": "译文出现「在……中/里」或「……地」状语且中间长度超过「状语最大长度」阈值。（测试中，可能误检）"},
 ]
 
@@ -2573,15 +2608,19 @@ def build_handler(registry: JobRegistry) -> type:
                     if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
                         self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
                         return
-                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins = _load_rebuild_deps(
+                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
                         project_dir, config_name
                     )
                     if proj_config is None:
                         LOGGER.warning(f"cache/check skipped (config load failed): {norm}")
                         self._send_json({"success": False, "error": "config load failed", "results": []})
                         return
+                    h_ranges = [
+                        (r["lo"], r["hi"])
+                        for r in _resolve_cache_h_ranges(project_dir, norm).get("h_ranges", [])
+                    ]
                     results, ok = _run_problem_detection(
-                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words
                     )
                     if persist and ok:
                         # 写回缓存文件（单文件范围）：合并 problem / post_dst_preview / skip_check
@@ -2691,7 +2730,7 @@ def build_handler(registry: JobRegistry) -> type:
 
                     # Rebuild: re-derive problem and post_dst_preview fields
                     try:
-                        proj_config, pre_dic, post_dic, gpt_dic, tPlugins = _load_rebuild_deps(
+                        proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
                             project_dir, config_name
                         )
                         # If config could not be loaded, do NOT run the rebuild:
@@ -2701,8 +2740,12 @@ def build_handler(registry: JobRegistry) -> type:
                             LOGGER.warning(f"cache/save rebuild skipped (config load failed): {norm}")
                             self._send_json({"success": True, "filename": raw_filename})
                             return
+                        h_ranges = [
+                            (r["lo"], r["hi"])
+                            for r in _resolve_cache_h_ranges(project_dir, norm).get("h_ranges", [])
+                        ]
                         results, detection_ok = _run_problem_detection(
-                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins
+                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words
                         )
                         # Update entries with problem and post_dst_preview.
                         # detection_ok=False 时保留已有 problem，避免把检测结果误删。
@@ -3391,12 +3434,14 @@ def build_handler(registry: JobRegistry) -> type:
                         "pre_dict_files": dict_cfg.get("preDict", []),
                         "gpt_dict_files": dict_cfg.get("gpt.dict", []),
                         "post_dict_files": dict_cfg.get("postDict", []),
+                        "h_dict_files": dict_cfg.get("hCheckDict", []),
                         "dict_contents": {},
                     }
                     for _, file_list in [
                         ("preDict", dict_cfg.get("preDict", [])),
                         ("gpt.dict", dict_cfg.get("gpt.dict", [])),
                         ("postDict", dict_cfg.get("postDict", [])),
+                        ("hCheckDict", dict_cfg.get("hCheckDict", [])),
                     ]:
                         for fname in file_list:
                             clean = str(fname).replace(DICT_PROJECT_MARKER, "").strip()
@@ -3514,6 +3559,7 @@ def build_handler(registry: JobRegistry) -> type:
                     listed = set(str(x) for x in dict_cfg.get("preDict", []))
                     listed.update(str(x) for x in dict_cfg.get("gpt.dict", []))
                     listed.update(str(x) for x in dict_cfg.get("postDict", []))
+                    listed.update(str(x) for x in dict_cfg.get("hCheckDict", []))
                     if file_key not in listed:
                         self._send_json({"error": "dictionary file is not configured in project dictionary lists"}, status=HTTPStatus.BAD_REQUEST)
                         return
@@ -3559,7 +3605,7 @@ def build_handler(registry: JobRegistry) -> type:
 
                     data = _read_yaml_file(config_path)
                     dict_cfg = data.get("dictionary", {})
-                    for list_key in ("preDict", "gpt.dict", "postDict"):
+                    for list_key in ("preDict", "gpt.dict", "postDict", "hCheckDict"):
                         current = [str(x) for x in dict_cfg.get(list_key, [])]
                         dict_cfg[list_key] = [x for x in current if x != file_key]
                     data["dictionary"] = dict_cfg
@@ -4751,7 +4797,7 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 return
             category = str(payload.get("category", "pre")).strip()
-            if category not in ("pre", "gpt", "post"):
+            if category not in ("pre", "gpt", "post", "h"):
                 self._send_json({"error": f"invalid category: {category}"}, status=HTTPStatus.BAD_REQUEST)
                 return
             content = payload.get("content", "")

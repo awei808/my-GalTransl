@@ -2280,7 +2280,9 @@ async def postprocess_results(
             + (f"_{chunk.chunk_index}" if chunk.total_chunks > 1 else ""),
         )
 
-        # 刷新 problem 字段（仅翻译模式；GenDic/dump-name 等不刷新）
+        # 刷新 problem 字段（仅翻译模式；GenDic/dump-name 等不刷新）。
+        # 翻译阶段不传 h_ranges/h_check_words，H 区间检测在校对阶段（/cache/check、/cache/save rebuild、
+        # 翻译结束后的自动重检）才生效，problem 标注"先无后有"由重检补上。
         find_problems(trans_list, projectConfig, gpt_dic)
         # post_save=True → 写完整快照并删除对应 .append 日志（即合并 jsonl）
         await save_transCache_to_json(

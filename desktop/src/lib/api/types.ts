@@ -371,10 +371,11 @@ export type ProjectDictionaryResponse = {
   pre_dict_files: string[];
   gpt_dict_files: string[];
   post_dict_files: string[];
+  h_dict_files: string[];
   dict_contents: Record<string, DictFileContent>;
 };
 
-export type DictionaryCategory = "pre" | "gpt" | "post";
+export type DictionaryCategory = "pre" | "gpt" | "post" | "h";
 
 export type ProjectDictionaryManagerResponse = {
   project_dir: string;
@@ -382,6 +383,7 @@ export type ProjectDictionaryManagerResponse = {
   pre_dict_files: string[];
   gpt_dict_files: string[];
   post_dict_files: string[];
+  h_dict_files: string[];
   dict_contents: Record<string, DictFileContent>;
 };
 
@@ -390,6 +392,7 @@ export type CommonDictionaryManagerResponse = {
   pre_dict_files: string[];
   gpt_dict_files: string[];
   post_dict_files: string[];
+  h_dict_files: string[];
   dict_contents: Record<string, DictFileContent>;
 };
 
