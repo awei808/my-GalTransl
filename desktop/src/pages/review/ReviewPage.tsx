@@ -5,6 +5,7 @@ import { pushUndo, clearUndo, undo, redo, peekUndo, peekRedo } from "../../store
 import type { UndoEntry } from "../../stores/undoStore";
 import {
   fetchCacheFile,
+  fetchCacheHranges,
   saveCacheFile,
   fetchPerFileMetadata,
   savePerFileMetadata,
@@ -14,7 +15,13 @@ import {
 import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
-import type { CacheEntry, MetadataEntry, MetadataType, ProblemTypeInfo } from "../../lib/api/types";
+import type {
+  CacheEntry,
+  CacheHRange,
+  MetadataEntry,
+  MetadataType,
+  ProblemTypeInfo,
+} from "../../lib/api/types";
 import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
 import { isDarkTheme, themeDark } from "../../lib/theme";
@@ -112,6 +119,37 @@ export function resolveKeyAction(e: KeyEventLike): KeyAction | null {
   if (key === "y") return "redo";
   if (key === "s") return "save";
   return null;
+}
+
+/**
+ * 计算当前页需要画 H 分割线的条目。
+ *
+ * 对每个 H 区间，仅当页内确有落在 [lo,hi] 内的条目时才产生边界：
+ * - 页内第一条区间内条目 → starts 记录（其上方画开始线）
+ * - 页内最后一条区间内条目 → ends 记录（其下方画结束线）
+ * 区间整体在上一页/下一页（页内无交集）时不画任何线，避免「孤立分割线」误标。
+ */
+export function computeHRangeBoundaries(
+  pageEntries: CacheEntry[],
+  ranges: CacheHRange[],
+): { starts: Map<number, CacheHRange>; ends: Map<number, CacheHRange> } {
+  const starts = new Map<number, CacheHRange>();
+  const ends = new Map<number, CacheHRange>();
+  for (const r of ranges) {
+    const startEntry = pageEntries.find((e) => {
+      const idx = Number(e.index);
+      return idx >= r.lo && idx <= r.hi;
+    });
+    if (startEntry) starts.set(Number(startEntry.index), r);
+    for (let i = pageEntries.length - 1; i >= 0; i--) {
+      const idx = Number(pageEntries[i].index);
+      if (idx >= r.lo && idx <= r.hi) {
+        ends.set(idx, r);
+        break;
+      }
+    }
+  }
+  return { starts, ends };
 }
 
 /* ── 角色名颜色生成（黄金角度 + 感知补偿）── */
@@ -910,6 +948,10 @@ export function ReviewPage() {
   // 见 lib/api/preferences.ts 的 getCachePageSizePreference。
   const [totalCount, setTotalCount] = createSignal(0);
 
+  // ── H 剧情区间（来自 pass2 批次元数据，换算为缓存条目 index 口径）──
+  const [hRanges, setHRanges] = createSignal<CacheHRange[]>([]);
+  const [hBatchExists, setHBatchExists] = createSignal(false);
+
   // ── 分页状态 ──
   // 每页条数 = 每页条目显示数量（0 表示不分页，一次性显示全部）
   const pageSize = () => getCachePageSizePreference();
@@ -926,6 +968,11 @@ export function ReviewPage() {
     const start = Math.min(page() * ps, all.length);
     return all.slice(start, start + ps);
   });
+  // 当前页需要画 H 分割线的条目：页内落在区间 [lo,hi] 的第一条上方画开始线、最后一条下方画结束线。
+  // 仅当页内确有区间内条目才画线——区间整体在上一页/下一页时本页不画，避免误标。
+  const hRangeBoundaries = createMemo(() =>
+    computeHRangeBoundaries(currentPageEntries(), hRanges()),
+  );
   // 过滤条件变化时重置到第 1 页；页码越界时钳制
   createEffect(() => {
     const total = filteredEntries().length;
@@ -1011,10 +1058,16 @@ export function ReviewPage() {
     const myToken = ++loadToken;
     setLoading(true);
     try {
-      const res = await fetchCacheFile(pid, file);
+      // 并行拉取缓存条目与 H 区间（H 区间失败不阻塞文件加载）
+      const [res, hr] = await Promise.all([
+        fetchCacheFile(pid, file),
+        fetchCacheHranges(pid, file).catch(() => null),
+      ]);
       if (myToken !== loadToken) return;                        // token 过时
       if (appState.activeFilePath !== targetFile) return;       // 文件已切走
       const all = res.entries ?? [];
+      setHRanges(hr?.h_ranges ?? []);
+      setHBatchExists(hr?.batch_exists ?? false);
       setTotalCount(all.length);
       setPage(0); // 切换文件回到第 1 页
       setExpandedSerials(new Set<number>()); // 切换文件后清空展开状态，避免旧文件的 index 残留
@@ -1032,6 +1085,8 @@ export function ReviewPage() {
         setTotalCount(0);
         setPage(0);
         setExpandedSerials(new Set<number>());
+        setHRanges([]);
+        setHBatchExists(false);
         // 加载失败：取消指向该文件的在途跨文件撤销/重做（记录保留在栈中，用户可重试）
         if (pendingRestore && pendingRestore.entry.file === targetFile) pendingRestore = null;
       }
@@ -1770,6 +1825,14 @@ export function ReviewPage() {
         <Show when={entries().length > 0}>
           <span class="review-count">{entries().length} 条</span>
         </Show>
+        <Show when={hBatchExists() && hRanges().length > 0}>
+          <span
+            class="review-h-ranges"
+            title="该文件含 H 剧情区间（来自 pass2 批次元数据，数字为缓存条目序号范围）"
+          >
+            H 区间：{hRanges().map((r) => `#${r.lo}~#${r.hi}`).join(" · ")}
+          </span>
+        </Show>
         <Show when={appState.dirtyFiles.includes(appState.activeFilePath ?? "")}>
           <span style="color:var(--color-status-warning);margin-left:8px" title="有未保存的修改">
             ● 未保存
@@ -1858,20 +1921,39 @@ export function ReviewPage() {
             {/* 当前页条目全量渲染（分页模式，<Index> 简单可靠，高度自适应无重叠） */}
             <div class="review-list-full">
               <Index each={currentPageEntries()}>
-                {(entrySignal) => (
-                  <div data-index={entrySignal().index}>
-                    <EntryCard
-                      entry={entrySignal()}
-                      nameDict={nameDict()}
-                      expanded={expandedSerials().has(entrySignal().index)}
-                      onToggleExpanded={() => toggleExpanded(entrySignal().index)}
-                      onSkip={() => handleSkip(entrySignal().index)}
-                      onDelete={() => handleDelete(entrySignal().index)}
-                      onSwapAlt={() => handleSwapAlt(entrySignal().index)}
-                      onFieldChange={(field, value) => handleFieldChange(entrySignal().index, field, value)}
-                    />
-                  </div>
-                )}
+                {(entrySignal) => {
+                  // 统一 number key 口径：缓存条目 index 可能是字符串（Loader 保留原值），
+                  // computeHRangeBoundaries 的 Map key 一律用 Number，此处需同样转换
+                  const idx = Number(entrySignal().index);
+                  const hStart = hRangeBoundaries().starts.get(idx);
+                  const hEnd = hRangeBoundaries().ends.get(idx);
+                  return (
+                    <>
+                      {hStart && (
+                        <div class="h-range-divider h-range-divider--start" data-h-range-start={hStart.lo}>
+                          H 剧情区间开始（#{hStart.lo} ~ #{hStart.hi}）
+                        </div>
+                      )}
+                      <div data-index={idx}>
+                        <EntryCard
+                          entry={entrySignal()}
+                          nameDict={nameDict()}
+                          expanded={expandedSerials().has(idx)}
+                          onToggleExpanded={() => toggleExpanded(idx)}
+                          onSkip={() => handleSkip(idx)}
+                          onDelete={() => handleDelete(idx)}
+                          onSwapAlt={() => handleSwapAlt(idx)}
+                          onFieldChange={(field, value) => handleFieldChange(idx, field, value)}
+                        />
+                      </div>
+                      {hEnd && (
+                        <div class="h-range-divider h-range-divider--end" data-h-range-end={hEnd.hi}>
+                          H 剧情区间结束（#{hEnd.lo} ~ #{hEnd.hi}）
+                        </div>
+                      )}
+                    </>
+                  );
+                }}
               </Index>
             </div>
             {/* 分页控件：仅当需分页时才显示 */}

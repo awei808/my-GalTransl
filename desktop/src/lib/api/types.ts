@@ -144,6 +144,14 @@ export type CacheFileResponse = {
   entries: CacheEntry[];
 };
 
+/* H 剧情区间（来自 pass2 批次元数据，换算为缓存条目 index 口径） */
+export type CacheHRange = { lo: number; hi: number };
+export type CacheHrangesResponse = {
+  batch_exists: boolean;
+  has_h: boolean;
+  h_ranges: CacheHRange[];
+};
+
 /* 元数据 — per-file 模式（filemeta/batchmeta/globalprompt/plotroute），每文件独立 JSON */
 export type MetadataEntry = Record<string, unknown>;
 export type MetadataType = "filemeta" | "batchmeta" | "globalprompt" | "plotroute";

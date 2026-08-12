@@ -5,6 +5,7 @@ import base64
 import email
 from email import policy
 import json
+import re
 import threading
 import time
 from asyncio import run
@@ -31,6 +32,7 @@ from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig
+from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_SYSTEM_PROMPT,
     FORGAL_JSON_TRANS_PROMPT,
@@ -744,6 +746,182 @@ def _normalize_cache_filenames(filenames: list[str]) -> list[str]:
             continue
         out.append(norm)
     return out
+
+
+def _is_numeric_index(value: Any) -> bool:
+    """判断条目 index 是否为数字（int 或数字字符串，口径与 CSplitter 一致）。"""
+    if isinstance(value, int):
+        return True
+    return isinstance(value, str) and value.isdigit()
+
+
+def _resolve_cache_row_offset(
+    project_dir: str, base: str, input_base: str
+) -> int:
+    """计算缓存文件首条相对输入文件的全局行号偏移（0 表示条目 index 即全局行号）。
+
+    仅在「原文件无显式 index 且 splitFile 分片」时非 0：分片后每个缓存文件
+    的条目 index 从 1 重新计，需加上该分片在整文件中的起始偏移（含交叉句）。
+    其余场景（原文件带 index / 单文件不切分）偏移恒为 0，与批次区间直接对齐。
+
+    Args:
+        project_dir: 项目根目录。
+        base: 缓存文件名（含扩展名，如 xxx_0.json）。
+        input_base: 对应输入文件名（如 xxx.json）。
+
+    Returns:
+        行号偏移（>=0）。
+    """
+    m = re.match(r"^(.*)_(\d+)\.json$", base)
+    if not m:
+        # 无分块后缀：单文件，条目 index 即全局行号
+        LOGGER.debug(f"[h-ranges] {base}: 无分块后缀，offset=0")
+        return 0
+    chunk_index = int(m.group(2))
+    input_path = os.path.join(project_dir, INPUT_FOLDERNAME, input_base)
+    if not os.path.isfile(input_path):
+        LOGGER.debug(f"[h-ranges] {base}: 输入文件不存在 {input_path}，offset=0")
+        return 0
+    try:
+        with open(input_path, "rb") as f:
+            input_data = json.load(f)
+    except Exception:
+        LOGGER.debug(f"[h-ranges] {base}: 输入文件解析失败 {input_path}，offset=0")
+        return 0
+    if not isinstance(input_data, list) or not input_data:
+        LOGGER.debug(f"[h-ranges] {base}: 输入数据为空，offset=0")
+        return 0
+    # 原文件显式带 index（int 或数字字符串，与 CSplitter 口径一致）：
+    # 缓存条目 index 即原 index（全局行号），无需偏移
+    first = input_data[0] if isinstance(input_data[0], dict) else {}
+    if _is_numeric_index(first.get("index")):
+        LOGGER.debug(f"[h-ranges] {base}: 原文件带显式 index，offset=0")
+        return 0
+    # 按当前配置重建切分，取 chunk_index 对应分片的起始偏移（含交叉句）
+    try:
+        cfg = CProjectConfig(project_dir)
+        common = cfg.getCommonConfigSection()
+    except Exception:
+        LOGGER.debug(f"[h-ranges] {base}: 配置读取失败，offset=0")
+        return 0
+    val = common.get("splitFile", "no")
+    if val not in ("Num", "Equal"):
+        LOGGER.debug(f"[h-ranges] {base}: splitFile={val} 不分片，offset=0")
+        return 0
+    try:
+        split_file_num = int(common.get("splitFileNum", -1))
+        cross_num = int(common.get("splitFileCrossNum", 0))
+        if split_file_num <= 0:
+            split_file_num = int(common.get("workersPerProject", 1)) or 1
+    except (TypeError, ValueError):
+        LOGGER.debug(f"[h-ranges] {base}: 分片参数非法，offset=0")
+        return 0
+    try:
+        if val == "Num":
+            splitter = DictionaryCountSplitter(split_file_num, cross_num)
+        else:
+            splitter = EqualPartsSplitter(split_file_num, cross_num)
+        chunks = splitter.split(input_data, file_path=input_path)
+    except Exception:
+        LOGGER.debug(f"[h-ranges] {base}: 重建切分失败，offset=0")
+        return 0
+    if chunk_index >= len(chunks):
+        LOGGER.debug(f"[h-ranges] {base}: chunk 索引越界（{chunk_index} >= {len(chunks)}），offset=0")
+        return 0
+    chunk = chunks[chunk_index]
+    offset = max(0, chunk.start_index - chunk.cross_num)
+    LOGGER.debug(
+        f"[h-ranges] {base}: chunk={chunk_index}, splitFile={val}, "
+        f"splitFileNum={split_file_num}, crossNum={cross_num}, offset={offset}"
+    )
+    return offset
+
+
+def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]:
+    """计算给定翻译缓存文件中的 H 剧情区间（换算为缓存条目 index 口径）。
+
+    数据源：transl_cache/pass2_cache/{输入名}.batch.json 的「批次」数组中
+    h=true 的区间。相邻 h 批次（下一区间 lo <= 上一区间 hi + 1）合并为一条，
+    故多个分散 H 段各自成区间。区间的 lo/hi 已换算为该缓存文件条目 index
+    的口径（splitFile 分片时含偏移），前端可直接按条目 index 匹配画线。
+
+    Args:
+        project_dir: 项目根目录。
+        cache_name: 缓存文件相对路径或纯文件名（如 pass3_cache/xx.txt.json）。
+
+    Returns:
+        {"batch_exists": bool, "has_h": bool, "h_ranges": [{"lo": int, "hi": int}, ...]}
+    """
+    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+    norm = os.path.normpath(cache_name.replace("\\", "/"))
+    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+        return {"batch_exists": False, "has_h": False, "h_ranges": []}
+    if not os.path.isfile(os.path.join(cache_dir, norm)):
+        return {"batch_exists": False, "has_h": False, "h_ranges": []}
+
+    base = os.path.basename(cache_name)
+    # 候选输入名：先精确匹配（splitFile=no 时缓存名即输入名），再剥离 _N 分块后缀。
+    # 注意 group(1) 已含输入文件扩展名（如 story.txt.json），不能再补 ".json"。
+    input_candidates = [base]
+    m = re.match(r"^(.*)_(\d+)\.json$", base)
+    if m:
+        input_candidates.append(m.group(1))
+
+    batch_path = None
+    input_base = None
+    for cand in input_candidates:
+        p = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR, f"{cand}.batch.json")
+        if os.path.isfile(p):
+            batch_path = p
+            input_base = cand
+            break
+    if batch_path is None:
+        return {"batch_exists": False, "has_h": False, "h_ranges": []}
+
+    try:
+        with open(batch_path, "r", encoding="utf-8") as f:
+            batch_data = json.load(f)
+    except Exception:
+        # 批次文件存在但损坏：与「文件不存在」区分开，标记 batch_exists=true 并告警
+        LOGGER.warning(f"[h-ranges] 批次文件损坏，无法解析 H 区间: {batch_path}")
+        return {"batch_exists": True, "has_h": False, "h_ranges": []}
+
+    batches = batch_data.get("批次", []) if isinstance(batch_data, dict) else []
+    h_global: list[list[int]] = []
+    for b in batches:
+        if not isinstance(b, dict) or not b.get("h", False):
+            continue
+        seg = b.get("区间")
+        if not isinstance(seg, list) or len(seg) < 2:
+            continue
+        try:
+            lo, hi = int(seg[0]), int(seg[1])
+        except (TypeError, ValueError):
+            continue
+        if lo <= hi:
+            h_global.append([lo, hi])
+    if not h_global:
+        return {"batch_exists": True, "has_h": False, "h_ranges": []}
+    h_global.sort()
+
+    # 合并相邻 h 批次为多条连续区间
+    merged: list[list[int]] = [list(h_global[0])]
+    for lo, hi in h_global[1:]:
+        if lo <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+
+    offset = _resolve_cache_row_offset(project_dir, base, input_base)
+    h_ranges = []
+    for lo, hi in merged:
+        # 半段跨分片边界时 lo 可能落在 offset 之前，clamp 到 1 避免负 index；
+        # 整段都在 offset 之前（hi 也小于 1）则丢弃
+        lo_shifted = max(1, lo - offset)
+        hi_shifted = hi - offset
+        if hi_shifted >= 1:
+            h_ranges.append({"lo": lo_shifted, "hi": hi_shifted})
+    return {"batch_exists": True, "has_h": bool(h_ranges), "h_ranges": h_ranges}
 
 
 def _validate_build(project_dir: str, filenames: list[str] | None = None) -> dict[str, Any]:
@@ -2995,6 +3173,19 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:
                     self._send_json({"error": f"failed to replace in cache: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            # GET /api/projects/:id/cache/:filename/h-ranges（须在通用 /cache/ catch-all 之前）
+            if sub_path.startswith("/cache/") and sub_path.endswith("/h-ranges"):
+                h_filename = unquote(sub_path[len("/cache/"):-len("/h-ranges")])
+                if not h_filename:
+                    self._send_json({"error": "invalid cache filename"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                h_norm = os.path.normpath(h_filename.replace("\\", "/"))
+                if h_norm == ".." or h_norm.startswith(".." + os.sep) or os.path.isabs(h_norm):
+                    self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                self._send_json(_resolve_cache_h_ranges(project_dir, h_norm))
                 return
 
             # GET /api/projects/:id/cache/:filename (catch-all, must be after specific /cache/* routes)

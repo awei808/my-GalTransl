@@ -5,6 +5,7 @@ import { apiRequest, getBackendBaseUrl } from "./client";
 import type {
   CacheEntry,
   CacheFileResponse,
+  CacheHrangesResponse,
   CacheReplaceField,
   CacheReplaceResponse,
   CacheSearchField,
@@ -167,6 +168,12 @@ export async function fetchProjectCache(projectId: string) {
 export async function fetchCacheFile(projectId: string, filename: string) {
   return apiRequest<CacheFileResponse>(
     `/api/projects/${projectId}/cache/${encodeURIComponent(filename)}`,
+  );
+}
+
+export async function fetchCacheHranges(projectId: string, filename: string) {
+  return apiRequest<CacheHrangesResponse>(
+    `/api/projects/${projectId}/cache/${encodeURIComponent(filename)}/h-ranges`,
   );
 }
 

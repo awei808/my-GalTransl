@@ -1707,6 +1707,40 @@ textarea {
   gap: 1px;
 }
 
+/* H 剧情区间分割线（来自 pass2 批次元数据） */
+.h-range-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+  margin: 6px 0 2px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--color-status-warning);
+  border-top: 2px dashed var(--color-status-warning);
+  border-bottom: none;
+  opacity: 0.85;
+}
+.h-range-divider--start {
+  border-top-color: var(--color-status-warning);
+  border-bottom: 2px dashed var(--color-status-warning);
+  margin-bottom: 6px;
+}
+.h-range-divider--end {
+  border-top: 2px dashed var(--color-status-warning);
+  border-bottom: none;
+  margin-top: 6px;
+}
+
+.review-h-ranges {
+  margin-left: 8px;
+  font-size: var(--font-xs);
+  color: var(--color-status-warning);
+  font-weight: 600;
+  cursor: default;
+}
+
 /* 分页信息栏与分页控件 */
 .review-pagination {
   display: flex;
