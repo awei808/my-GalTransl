@@ -1,4 +1,4 @@
-import { createSignal, For, Show, Switch, Match, createEffect } from "solid-js";
+import { createSignal, For, Show, Switch, Match, createEffect, onCleanup } from "solid-js";
 import { appState, setAppState, getActiveConfigFileName, navigateTo } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
@@ -411,6 +411,11 @@ export function ProjectConfigPage() {
   const [schemaDesc, setSchemaDesc] = createSignal<Record<string, string>>({});
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
+  // 是否有未保存的配置改动（setValue 时置 true；手动保存成功后置 false）
+  const [dirty, setDirty] = createSignal(false);
+  // 编辑版本号：setValue 时递增；保存成功仅当期间无新编辑才清 dirty，
+  // 防止「保存请求飞行中新增的编辑」被误判为已保存而静默丢失
+  let editVersion = 0;
   // 翻译规范文件下拉选项（translation_guidelines 目录下的文件名）
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
   // 翻译规范列表是否已加载完成（加载中/失败均置 true；用于避免下拉在 options 未就绪前渲染，
@@ -506,6 +511,11 @@ export function ProjectConfigPage() {
   }
 
   const pid = () => appState.activeProjectId;
+  // 切页自动保存用：挂载时刻的项目 id 与配置名快照（卸载时全局状态可能已切换到别的项目/已关闭项目）
+  const pidSnapshot = pid();
+  const [configFileNameSnapshot, setConfigFileNameSnapshot] = createSignal(
+    getActiveConfigFileName(),
+  );
 
   // 等真实配置名探测完成后再加载，避免用回退名 config.yaml 提前请求导致 404
   createEffect(() => {
@@ -539,8 +549,11 @@ export function ProjectConfigPage() {
     }
     setLoading(true);
     try {
+      // 记录本次加载所用的配置名，供切页自动保存快照使用（卸载时 getActiveConfigFileName() 可能已指向别的项目）
+      const cfgName = getActiveConfigFileName();
+      setConfigFileNameSnapshot(cfgName);
       const [cfg, sch] = await Promise.all([
-        fetchProjectConfig(pid()!, getActiveConfigFileName()),
+        fetchProjectConfig(pid()!, cfgName),
         fetchConfigSchema(pid()!).catch(() => ({ parameters: {} })),
       ]);
       setConfig({
@@ -1265,6 +1278,8 @@ export function ProjectConfigPage() {
       cur[parts[parts.length - 1]] = value;
       return next;
     });
+    setDirty(true);
+    editVersion++;
   }
 
   function inferType(key: string): "string" | "number" | "boolean" {
@@ -1285,27 +1300,51 @@ export function ProjectConfigPage() {
     return String(v ?? "");
   }
 
-  async function handleSave() {
-    if (!pid()) return;
+  async function doSave(
+    showToast: boolean,
+    targetPid?: string,
+    targetConfigFileName?: string,
+  ): Promise<boolean> {
+    // 保存目标优先取显式传入（切页自动保存用挂载时快照）；手动保存缺省用当前全局状态
+    const savePid = targetPid ?? pid();
+    if (!savePid) return false;
+    const saveConfigFileName = targetConfigFileName ?? getActiveConfigFileName();
     setSaving(true);
+    const versionAtSave = editVersion;
     try {
       // 保存前归一化翻译规范键：统一写入 common 段扁平键 gpt.translation_guideline
       //（后端 BaseTranslate/getKey 只读该位置），并清理顶层 gpt 段与 common.gpt 嵌套残留。
+      // 注意：不回写前端 config——避免覆盖用户正在编辑的输入；后端下次加载会重新归一化。
       const cleaned = migrateBetterTranslationKey(
         migrateGuidelineKey({ ...config() } as Record<string, ConfigValue>),
       );
-      setConfig(cleaned);
-      await updateProjectConfig(pid()!, {
+      await updateProjectConfig(savePid, {
         config: cleaned,
-        config_file_name: getActiveConfigFileName(),
+        config_file_name: saveConfigFileName,
       });
-      toast.success("配置已保存");
+      // 仅当保存期间无新编辑时才清 dirty：否则保存飞行中新增的改动会被误判已保存而静默丢失
+      if (editVersion === versionAtSave) setDirty(false);
+      if (showToast) toast.success("配置已保存");
+      return true;
     } catch (e) {
-      toast.error(`保存失败: ${getErrorMessage(e)}`);
+      if (showToast) toast.error(`保存失败: ${getErrorMessage(e)}`);
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  async function handleSave() {
+    await doSave(true);
+  }
+
+  // 切页自动保存：离开页面时若有未保存改动，用挂载时的项目/配置名快照保存。
+  // 卸载瞬间全局 activeProjectId/activeConfigFileName 可能已切换到别的项目或置空，
+  // 故不读取全局，避免把旧项目配置写入新项目或静默丢弃改动。
+  onCleanup(() => {
+    if (!dirty() || !pidSnapshot || loading() || saving()) return;
+    void doSave(true, pidSnapshot, configFileNameSnapshot());
+  });
 
   return (
     <div class="page page-project-config">
