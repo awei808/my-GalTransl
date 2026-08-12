@@ -385,11 +385,16 @@ function FindReplacePanel() {
   };
 
   function jumpToResult(r: CacheSearchResult) {
-    setAppState({
+    const patch: Record<string, unknown> = {
       activeView: "review",
-      activeFilePath: r.filename,
-      sidebarTab: "explorer",
-    });
+      reviewJumpToIndex: r.index,
+    };
+    // 仅当切换文件时才设 activeFilePath，同文件跳转不用重载
+    if (r.filename !== appState.activeFilePath) {
+      patch.activeFilePath = r.filename;
+    }
+    // 不改 sidebarTab：保持「查找替换」面板打开，避免卸载导致查找栏清空
+    setAppState(patch as any);
   }
 
   return (
