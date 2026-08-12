@@ -814,7 +814,7 @@ await testGroup("模块 11: metadata 保存链路状态机", async () => {
     let isSameFileRefresh = false;
     if (metaLoadedFullPath && metaLoadedFullPath !== activeFilePath) {
       isSwitch = true; // 切换分支
-    } else if (true) {
+    } else {
       isSameFileRefresh = true; // 同文件刷新分支
     }
     assert(isSwitch, "完整路径不同 → 判定为切换（即使纯名相同）");

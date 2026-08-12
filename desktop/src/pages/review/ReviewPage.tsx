@@ -1590,7 +1590,7 @@ export function ReviewPage() {
         if (e.index !== serial) return e;
         if (e.skip_check) {
           // 取消跳过：删除标记，保留 problem 不变（下次 save 时 rebuild 会重新检测）
-          const { skip_check, ...rest } = e;
+          const { skip_check: _skip_check, ...rest } = e;
           return rest;
         }
         // 跳过：标记 + 清除 problem
