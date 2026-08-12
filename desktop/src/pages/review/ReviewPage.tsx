@@ -1,7 +1,8 @@
 import { createSignal, createEffect, Show, For, Index, onCleanup, onMount, createMemo } from "solid-js";
 import { appState, setAppState, markDirty, markClean, getActiveConfigFileName } from "../../stores/appStore";
 import { confirm } from "../../stores/confirmStore";
-import { pushUndo, clearUndo, undo, redo } from "../../stores/undoStore";
+import { pushUndo, clearUndo, undo, redo, peekUndo, peekRedo } from "../../stores/undoStore";
+import type { UndoEntry } from "../../stores/undoStore";
 import {
   fetchCacheFile,
   saveCacheFile,
@@ -18,6 +19,70 @@ import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
 import { isDarkTheme, themeDark } from "../../lib/theme";
 import { PlotRoutePanel } from "./PlotRoutePanel";
+
+/**
+ * 判断当前是否应让出原生撤销/重做（草稿态）。
+ * 主译文框或元数据框，焦点仍在 textarea 且内容未提交时，让出原生实现逐字符撤销；
+ * 已提交（失焦）或其它编辑器走自定义操作级撤销。
+ *
+ * Args:
+ *   activeEl: 当前聚焦元素。
+ *   entries: 当前文件的翻译条目（用于比对主译文框已提交值）。
+ *   metaDraftDirty: 元数据框是否有未提交草稿（与撤销基线不同），由调用方计算后传入。
+ */
+export function shouldYieldToNative(
+  activeEl: Element | null,
+  entries: CacheEntry[],
+  metaDraftDirty?: boolean,
+): boolean {
+  if (!(activeEl instanceof HTMLTextAreaElement)) return false;
+  // 元数据框：草稿未提交即让出原生逐字符撤销
+  if (activeEl.classList.contains("meta-content-textarea")) return Boolean(metaDraftDirty);
+  if (!activeEl.classList.contains("entry-dst-input")) return false;
+  const serial = Number(activeEl.dataset.index);
+  if (!Number.isFinite(serial)) return false;
+  const committed = entries.find((e) => e.index === serial)?.pre_dst ?? "";
+  return activeEl.value !== committed;
+}
+
+// 跨文件撤销/重做的在途恢复状态（在 ReviewPage 闭包内维护，导出类型供测试使用）
+export interface PendingRestore {
+  entry: UndoEntry;
+  dir: "undo" | "redo";
+}
+
+// 跨文件恢复的最终决策结果
+export type CrossFileDecision =
+  | { kind: "apply" }
+  | { kind: "wait" }
+  | { kind: "cancel"; reason: "switched" | "meta-load-failed" | "history-changed" };
+
+/**
+ * 跨文件恢复 effect 的决策纯函数：根据在途状态、当前文件路径、就绪情况、元数据加载结果、栈顶探测，
+ * 判定应"应用恢复 / 等待加载 / 取消（并给出原因）"。响应式读取（entries/metaEntry/metaLoading）
+ * 由调用方在 effect 内完成，本函数只做纯决策，便于单元测试。
+ *
+ * Args:
+ *   pending: 在途跨文件恢复状态，null 表示无。
+ *   currentFilePath: 当前实际激活的文件路径（appState.activeFilePath）。
+ *   ready: 目标文件内容是否已加载就绪（translate: loadedFile===target；metadata: metaEntry!==null）。
+ *   metaLoadFailed: 元数据文件加载是否失败（!metaLoading && metaEntry===null）。
+ *   probe: 跳转期间栈顶探测记录（peekUndo/peekRedo），用于校验历史是否被新操作取代。
+ */
+export function decideCrossFileRestore(args: {
+  pending: PendingRestore | null;
+  currentFilePath: string | null;
+  ready: boolean;
+  metaLoadFailed: boolean;
+  probe: UndoEntry | null;
+}): CrossFileDecision {
+  if (!args.pending) return { kind: "wait" };
+  if (args.currentFilePath !== args.pending.entry.file) return { kind: "cancel", reason: "switched" };
+  if (args.metaLoadFailed) return { kind: "cancel", reason: "meta-load-failed" };
+  if (!args.ready) return { kind: "wait" };
+  if (args.probe?.id !== args.pending.entry.id) return { kind: "cancel", reason: "history-changed" };
+  return { kind: "apply" };
+}
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
@@ -267,6 +332,7 @@ function EntryCard(props: {
           <textarea
             ref={dstRef}
             class="entry-dst-input"
+            data-index={e().index}
             rows="2"
             value={draftDst()}
             onInput={(ev) => {
@@ -627,6 +693,11 @@ export function ReviewPage() {
   function handleKeyDown(e: KeyboardEvent) {
     const action = resolveKeyAction(e);
     if (!action) return;
+    // 草稿态（主译文框或元数据框，焦点在框内且内容未提交）：让出原生撤销/重做，实现输入中逐字符撤销
+    const metaDraftDirty = metaUndoBase !== null && metaEntry() !== null && !metaEqual(metaEntry(), metaUndoBase);
+    if ((action === "undo" || action === "redo") && shouldYieldToNative(document.activeElement, entries(), metaDraftDirty)) {
+      return;
+    }
     e.preventDefault();
     if (action === "undo") handleUndo();
     else if (action === "redo") handleRedo();
@@ -714,109 +785,124 @@ export function ReviewPage() {
     }
   }
 
-  function handleUndo() {
-    blurDraftInput();
-    const currentFile = appState.activeFilePath;
-    // 元数据模式：撤销链路独立于翻译条目栈，按快照入栈、还原走 setMetaEntry
-    if (reviewMode() === "metadata") {
-      // 有未保存编辑时先入栈（pushUndo 会清空 redo 栈），使当前编辑成为可撤销的第一步
-      if (metaDirty && metaEntry() && metaUndoBase && !metaEqual(metaUndoBase, metaEntry())) {
-        pushUndo({
-          id: `${currentFile ?? ""}:meta`,
-          file: currentFile ?? "",
-          index: 0,
-          before: metaUndoBase,
-          after: metaEntry()!,
-          description: "修改 元数据",
-        });
-      }
-      const metaRecord = undo();
-      if (!metaRecord || metaRecord.file !== currentFile) return;
-      setMetaEntry(metaRecord.before as MetadataEntry);
-      metaUndoBase = metaRecord.before as MetadataEntry;
+  // 跨文件撤销/重做在途目标：跳转加载完成后自动恢复；跳转期间不消费 undo 栈，失败不丢记录
+  let pendingRestore: PendingRestore | null = null;
+
+  // 元数据未保存编辑先入栈（pushUndo 会清空 redo 栈），使当前编辑成为可撤销的第一步
+  function pushMetaDraftIfDirty(): void {
+    const currentFile = appState.activeFilePath ?? "";
+    if (reviewMode() === "metadata" && metaDirty && metaEntry() && metaUndoBase && !metaEqual(metaUndoBase, metaEntry())) {
+      pushUndo({
+        id: `${currentFile}:meta`,
+        file: currentFile,
+        index: 0,
+        before: metaUndoBase,
+        after: metaEntry()!,
+        description: "修改 元数据",
+      });
+    }
+  }
+
+  // 应用一条撤销/重做记录：按记录所属文件的模式分发（translate → entries，metadata → metaEntry）
+  function applyUndoEntry(entry: UndoEntry, dir: "undo" | "redo"): void {
+    // 合法性校验：撤销需 before、重做需 after，缺失则跳过（避免写入非法值）
+    if (dir === "undo" ? !entry.before : !entry.after) {
+      console.error(`[ReviewPage] ${dir}记录缺少快照，已跳过：${entry.id}`);
+      return;
+    }
+    if (modeInfoOf(entry.file).mode === "metadata") {
+      const target = dir === "undo" ? (entry.before as MetadataEntry) : (entry.after as MetadataEntry);
+      setMetaEntry(target);
+      metaUndoBase = target;
       metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
       return;
     }
-    const entry = undo();
-    if (!entry) return;
-    if (entry.file !== currentFile) return;
-
     const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
-
-    setEntries((prev) => {
-      const next = [...prev];
-      const idx = next.findIndex((e) => e.index === entry.index);
-
-      if (isAdd) {
-        // 新增的撤销 = 移除该条目
-        if (idx !== -1) next.splice(idx, 1);
-        return next;
-      }
-      if (idx === -1) {
-        // 被删除的条目：恢复（按序号插入到正确位置）
-        if (Object.keys(entry.before).length > 0 && (entry.before as Record<string, unknown>).index != null) {
-          insertBySerial(next, entry.before as unknown as CacheEntry);
+    if (dir === "undo") {
+      setEntries((prev) => {
+        const next = [...prev];
+        const idx = next.findIndex((e) => e.index === entry.index);
+        if (isAdd) {
+          // 新增的撤销 = 移除该条目
+          if (idx !== -1) next.splice(idx, 1);
+          return next;
         }
+        if (idx === -1) {
+          // 被删除的条目：恢复（按序号插入到正确位置）
+          if (Object.keys(entry.before).length > 0 && (entry.before as Record<string, unknown>).index != null) {
+            insertBySerial(next, entry.before as unknown as CacheEntry);
+          }
+          return next;
+        }
+        // 字段编辑
+        next[idx] = { ...next[idx], ...entry.before };
         return next;
-      }
-      // 字段编辑
-      next[idx] = { ...next[idx], ...entry.before };
-      return next;
-    });
+      });
+    } else {
+      setEntries((prev) => {
+        const next = [...prev];
+        const idx = next.findIndex((e) => e.index === entry.index);
+        if (isAdd) {
+          // 新增的重做 = 重新插入
+          if (idx === -1) next.splice(entry.index, 0, entry.after as unknown as CacheEntry);
+          return next;
+        }
+        if (Object.keys(entry.after).length === 0 && idx !== -1) {
+          // 重做删除
+          next.splice(idx, 1);
+          return next;
+        }
+        if (idx === -1) return prev;
+        next[idx] = { ...next[idx], ...entry.after };
+        return next;
+      });
+    }
     entriesRev++;
     refreshDirtyState();
   }
 
-  function handleRedo() {
+  // 跨文件撤销/重做：先切换文件（复用现有 runSwitch 的未保存确认与加载），加载完成后由 effect 执行恢复
+  async function startCrossFileRestore(entry: UndoEntry, dir: "undo" | "redo"): Promise<void> {
+    if (pendingRestore || !entry.file) return;
+    pendingRestore = { entry, dir };
+    if (import.meta.env?.DEV) {
+      console.info(`[ReviewPage] 跨文件${dir === "undo" ? "撤销" : "重做"}：跳转 ${appState.activeFilePath ?? ""} → ${entry.file}`);
+    }
+    setAppState("activeFilePath", entry.file);
+  }
+
+  function handleUndo() {
     blurDraftInput();
-    const currentFile = appState.activeFilePath;
-    // 元数据模式：对称的 redo 分支；redo 前若有未保存编辑先入栈（清空 redo 栈），避免 redo 覆盖未保存编辑
-    if (reviewMode() === "metadata") {
-      if (metaDirty && metaEntry() && metaUndoBase && !metaEqual(metaUndoBase, metaEntry())) {
-        pushUndo({
-          id: `${currentFile ?? ""}:meta`,
-          file: currentFile ?? "",
-          index: 0,
-          before: metaUndoBase,
-          after: metaEntry()!,
-          description: "修改 元数据",
-        });
-      }
-      const metaRecord = redo();
-      if (!metaRecord || metaRecord.file !== currentFile) return;
-      setMetaEntry(metaRecord.after as MetadataEntry);
-      metaUndoBase = metaRecord.after as MetadataEntry;
-      metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
+    pushMetaDraftIfDirty();
+    const currentFile = appState.activeFilePath ?? "";
+    const entry = peekUndo();
+    if (!entry) {
+      toast.info("没有更多可撤销的操作");
       return;
     }
-    const entry = redo();
-    if (!entry) return;
-    if (entry.file !== currentFile) return;
+    if (entry.file === currentFile) {
+      undo();
+      applyUndoEntry(entry, "undo");
+    } else {
+      void startCrossFileRestore(entry, "undo");
+    }
+  }
 
-    const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
-
-    setEntries((prev) => {
-      const next = [...prev];
-      const idx = next.findIndex((e) => e.index === entry.index);
-
-      if (isAdd) {
-        // 新增的重做 = 重新插入
-        if (idx === -1) {
-          next.splice(entry.index, 0, entry.after as unknown as CacheEntry);
-        }
-        return next;
-      }
-      if (Object.keys(entry.after).length === 0 && idx !== -1) {
-        // 重做删除
-        next.splice(idx, 1);
-        return next;
-      }
-      if (idx === -1) return prev;
-      next[idx] = { ...next[idx], ...entry.after };
-      return next;
-    });
-    entriesRev++;
-    refreshDirtyState();
+  function handleRedo() {
+    blurDraftInput();
+    // 不调用 pushMetaDraftIfDirty：压栈会丢弃 redo 分支，导致重做不可用（undo 后基线已同步，无需入栈草稿）
+    const currentFile = appState.activeFilePath ?? "";
+    const entry = peekRedo();
+    if (!entry) {
+      toast.info("没有更多可重做的操作");
+      return;
+    }
+    if (entry.file === currentFile) {
+      redo();
+      applyUndoEntry(entry, "redo");
+    } else {
+      void startCrossFileRestore(entry, "redo");
+    }
   }
 
   // 当 activeFilePath 变化时加载文件
@@ -946,11 +1032,65 @@ export function ReviewPage() {
         setTotalCount(0);
         setPage(0);
         setExpandedSerials(new Set<number>());
+        // 加载失败：取消指向该文件的在途跨文件撤销/重做（记录保留在栈中，用户可重试）
+        if (pendingRestore && pendingRestore.entry.file === targetFile) pendingRestore = null;
       }
     } finally {
       if (myToken === loadToken) setLoading(false);
     }
   }
+
+  // 跨文件撤销/重做：目标文件加载完成后自动执行最终恢复；取消/失败/历史被改动时放弃（记录保留在栈中）
+  createEffect(() => {
+    const pending = pendingRestore;
+    if (!pending) return;
+    const target = pending.entry.file;
+    const info = modeInfoOf(target);
+    // 响应式读取（必须留在 effect 内以触发重跑）：translate 依赖 entries 长度，metadata 依赖 metaEntry/metaLoading
+    let ready = false;
+    let metaLoadFailed = false;
+    if (info.mode === "metadata") {
+      void metaEntry();
+      void metaLoading();
+      if (metaLoadedFullPath === target && metaEntry() !== null) ready = true;
+      else if (!metaLoading() && metaEntry() === null) metaLoadFailed = true;
+    } else {
+      void entries().length;
+      ready = loadedFile === target;
+    }
+    const probe = pending.dir === "undo" ? peekUndo() : peekRedo();
+    const decision = decideCrossFileRestore({
+      pending,
+      currentFilePath: appState.activeFilePath,
+      ready,
+      metaLoadFailed,
+      probe,
+    });
+    if (decision.kind === "wait") return;
+    if (decision.kind === "cancel") {
+      pendingRestore = null;
+      if (decision.reason === "history-changed" && import.meta.env?.DEV) {
+        console.warn(`[ReviewPage] 跨文件${pending.dir}目标已被新操作改变，取消自动恢复`);
+      }
+      if (decision.reason !== "switched") toast.info("撤销/重做目标已变化，已取消自动恢复");
+      return;
+    }
+    pendingRestore = null;
+    // 先应用再移动指针：若 apply 抛异常则记录保留在栈中，避免"指针已移、UI 未变"的不一致
+    try {
+      applyUndoEntry(pending.entry, pending.dir);
+    } catch (err) {
+      console.error(`[ReviewPage] 跨文件${pending.dir}应用失败，保留记录：${String(err)}`);
+      toast.error("撤销/重做应用失败，已保留记录");
+      return;
+    }
+    if (pending.dir === "undo") undo();
+    else redo();
+    if (info.mode === "translate") setAppState("reviewJumpToIndex", pending.entry.index);
+    if (import.meta.env?.DEV) {
+      console.info(`[ReviewPage] 跨文件${pending.dir === "undo" ? "撤销" : "重做"}完成：${target}`);
+    }
+  });
 
   // 切换文件 / 进入翻译模式时加载；离开有未保存修改的文件前弹确认（保存/放弃/取消）
   let switching = false;

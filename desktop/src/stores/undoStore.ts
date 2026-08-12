@@ -52,7 +52,7 @@ export function pushUndo(entry: UndoEntry): void {
   });
 }
 
-/** 撤销：返回上一步的 entry，栈空返回 null */
+/** 撤销：沿时间反向取最近一条记录（无论属于哪个文件），移动 pointer 并返回；栈空返回 null */
 export function undo(): UndoEntry | null {
   const state = { ...undoState };
   if (state.pointer < 0) return null;
@@ -61,7 +61,7 @@ export function undo(): UndoEntry | null {
   return entry;
 }
 
-/** 重做：返回下一步的 entry，没有则返回 null */
+/** 重做：沿时间正向取 pointer 之后最近一条记录（无论属于哪个文件），移动 pointer 并返回；没有则返回 null */
 export function redo(): UndoEntry | null {
   const state = { ...undoState };
   if (state.pointer >= state.stack.length - 1) return null;
@@ -69,6 +69,20 @@ export function redo(): UndoEntry | null {
   const entry = state.stack[nextPointer];
   setUndoState("pointer", nextPointer);
   return entry;
+}
+
+/** 预览下一步撤销记录（不移动 pointer）。用于跨文件撤销：先看栈顶归属，再决定跳转目标 */
+export function peekUndo(): UndoEntry | null {
+  const state = { ...undoState };
+  if (state.pointer < 0) return null;
+  return state.stack[state.pointer];
+}
+
+/** 预览下一步重做记录（不移动 pointer）。用途同 peekUndo */
+export function peekRedo(): UndoEntry | null {
+  const state = { ...undoState };
+  if (state.pointer >= state.stack.length - 1) return null;
+  return state.stack[state.pointer + 1];
 }
 
 /** 清空历史（切换文件、关闭项目时调用） */

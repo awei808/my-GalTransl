@@ -23,11 +23,15 @@ import { confirm, getConfirmState } from "../stores/confirmStore";
 import {
   clearUndo,
   getUndoState,
+  peekRedo,
+  peekUndo,
   pushUndo,
   redo,
   undo,
 } from "../stores/undoStore";
-import { resolveKeyAction } from "../pages/review/ReviewPage";
+import { decideCrossFileRestore, resolveKeyAction, shouldYieldToNative } from "../pages/review/ReviewPage";
+import type { PendingRestore } from "../pages/review/ReviewPage";
+import type { CacheEntry } from "../lib/api/types";
 
 /* ─────────── 模拟 Repair: 保存前的 blur 提交草稿流程 ─────────── */
 
@@ -456,5 +460,180 @@ describe("场景 9：resolveKeyAction 快捷键分派", () => {
 
   it("Ctrl+A → null", () => {
     expect(resolveKeyAction({ key: "a", ctrlKey: true, metaKey: false, shiftKey: false })).toBeNull();
+  });
+});
+
+describe("场景 10：peekUndo/peekRedo 预览语义（跨文件撤销跳转的数据来源）", () => {
+  beforeEach(() => {
+    clearUndo();
+  });
+
+  it("peekUndo 返回栈顶记录但不动 pointer", () => {
+    pushUndo({ id: "f:1", file: "f", index: 1, before: { pre_dst: "a" }, after: { pre_dst: "b" } });
+    pushUndo({ id: "f:2", file: "f", index: 2, before: { pre_dst: "c" }, after: { pre_dst: "d" } });
+    const before = getUndoState().pointer;
+    const entry = peekUndo();
+    expect(entry?.index).toBe(2);
+    expect(getUndoState().pointer).toBe(before); // 预览不移动 pointer
+    expect(getUndoState().canUndo).toBe(true);
+  });
+
+  it("peekRedo 返回 pointer 之后第一条且不消费 redo 能力", () => {
+    pushUndo({ id: "f:1", file: "f", index: 1, before: { pre_dst: "a" }, after: { pre_dst: "b" } });
+    pushUndo({ id: "f:2", file: "f", index: 2, before: { pre_dst: "c" }, after: { pre_dst: "d" } });
+    undo();
+    const entry = peekRedo();
+    expect(entry?.index).toBe(2);
+    expect(getUndoState().canRedo).toBe(true); // 未消费，仍可重做
+  });
+
+  it("混合文件栈：peekUndo 取时间最近一条（含异文件，供跨文件跳转）", () => {
+    pushUndo({ id: "a:1", file: "a", index: 1, before: { pre_dst: "a1" }, after: { pre_dst: "a2" } });
+    pushUndo({ id: "b:1", file: "b", index: 1, before: { pre_dst: "b1" }, after: { pre_dst: "b2" } });
+    expect(peekUndo()?.file).toBe("b");
+  });
+
+  it("栈空时 peekUndo/peekRedo 返回 null", () => {
+    expect(peekUndo()).toBeNull();
+    expect(peekRedo()).toBeNull();
+  });
+
+  it("pushUndo 后 peek 透传调用方传入的 id（支撑跨文件恢复用 id 比较）", () => {
+    pushUndo({ id: "a:meta", file: "a", index: 0, before: { title: "x" }, after: { title: "y" } });
+    pushUndo({ id: "b:1", file: "b", index: 1, before: { pre_dst: "p" }, after: { pre_dst: "q" } });
+    expect(peekUndo()?.id).toBe("b:1"); // 栈顶 id 透传
+    undo();
+    expect(peekRedo()?.id).toBe("b:1"); // redo 目标 id 透传
+  });
+
+  it("混合文件栈：异文件记录 id 与当前文件记录 id 不同（跨文件取消比较依据）", () => {
+    pushUndo({ id: "a:1", file: "a", index: 1, before: { pre_dst: "a1" }, after: { pre_dst: "a2" } });
+    pushUndo({ id: "b:1", file: "b", index: 1, before: { pre_dst: "b1" }, after: { pre_dst: "b2" } });
+    expect(peekUndo()?.file).toBe("b");
+    expect(peekUndo()?.id).not.toBe("a:1");
+  });
+});
+
+describe("场景 11：shouldYieldToNative 草稿态让出原生撤销", () => {
+  const committedEntries = [{ index: 3, pre_dst: "已提交译文" }] as CacheEntry[];
+
+  function makeTextarea(index: string, value: string, className = "entry-dst-input"): HTMLTextAreaElement {
+    const ta = document.createElement("textarea");
+    ta.className = className;
+    if (index) ta.dataset.index = index;
+    ta.value = value;
+    return ta;
+  }
+
+  it("主译文框草稿与提交值一致（已提交）→ 不让出", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "已提交译文"), committedEntries)).toBe(false);
+  });
+
+  it("主译文框存在未提交草稿 → 让出原生", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "输入中未提交"), committedEntries)).toBe(true);
+  });
+
+  it("非主译文框 textarea（如元数据框）→ 不让出", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(false);
+  });
+
+  it("缺少 data-index → 无法定位条目，不让出", () => {
+    const ta = makeTextarea("", "未提交");
+    expect(shouldYieldToNative(ta, committedEntries)).toBe(false);
+  });
+
+  it("entries 为空（加载中）→ 按空提交值比较，草稿为空则不让出", () => {
+    expect(shouldYieldToNative(makeTextarea("3", ""), [])).toBe(false);
+  });
+
+  it("元数据框：传入 metaDraftDirty=true → 让出原生逐字符撤销（方向 B）", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries, true)).toBe(true);
+  });
+
+  it("元数据框：metaDraftDirty=false（已提交/无草稿）→ 不让出，走操作级撤销", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries, false)).toBe(false);
+  });
+
+  it("元数据框：未传 metaDraftDirty → 默认 false，不让出", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(false);
+  });
+});
+
+/* ─────────── 跨文件恢复状态机：decideCrossFileRestore 纯函数决策 ─────────── */
+
+describe("decideCrossFileRestore 跨文件恢复决策", () => {
+  const makePending = (file: string, id: string): PendingRestore => ({
+    entry: { id, file, index: 0, before: { pre_dst: "a" }, after: { pre_dst: "b" } } as UndoEntry,
+    dir: "undo",
+  });
+
+  it("pending 为 null → wait", () => {
+    expect(
+      decideCrossFileRestore({ pending: null, currentFilePath: "a", ready: true, metaLoadFailed: false, probe: null }),
+    ).toEqual({ kind: "wait" });
+  });
+
+  it("当前文件路径与 target 不符（用户取消切换）→ cancel switched", () => {
+    const pending = makePending("B", "b:1");
+    expect(
+      decideCrossFileRestore({ pending, currentFilePath: "A", ready: true, metaLoadFailed: false, probe: pending.entry }),
+    ).toEqual({ kind: "cancel", reason: "switched" });
+  });
+
+  it("元数据加载失败（!metaLoading && metaEntry===null）→ cancel meta-load-failed", () => {
+    const pending = makePending("M", "m:1");
+    expect(
+      decideCrossFileRestore({ pending, currentFilePath: "M", ready: false, metaLoadFailed: true, probe: pending.entry }),
+    ).toEqual({ kind: "cancel", reason: "meta-load-failed" });
+  });
+
+  it("尚未就绪（文件加载中）→ wait", () => {
+    const pending = makePending("A", "a:1");
+    expect(
+      decideCrossFileRestore({ pending, currentFilePath: "A", ready: false, metaLoadFailed: false, probe: pending.entry }),
+    ).toEqual({ kind: "wait" });
+  });
+
+  it("跳转期间历史被新操作改变（probe id 不符）→ cancel history-changed", () => {
+    const pending = makePending("A", "a:1");
+    const other = makePending("A", "a:2");
+    expect(
+      decideCrossFileRestore({ pending, currentFilePath: "A", ready: true, metaLoadFailed: false, probe: other.entry }),
+    ).toEqual({ kind: "cancel", reason: "history-changed" });
+  });
+
+  it("一切就绪且 probe 与 pending 一致 → apply", () => {
+    const pending = makePending("A", "a:1");
+    expect(
+      decideCrossFileRestore({ pending, currentFilePath: "A", ready: true, metaLoadFailed: false, probe: pending.entry }),
+    ).toEqual({ kind: "apply" });
+  });
+
+  it("probe 为 null 而 pending 非 null → cancel history-changed（栈已被清空）", () => {
+    const pending = makePending("A", "a:1");
+    expect(
+      decideCrossFileRestore({ pending, currentFilePath: "A", ready: true, metaLoadFailed: false, probe: null }),
+    ).toEqual({ kind: "cancel", reason: "history-changed" });
+  });
+});
+
+describe("场景 12：handleRedo 不压栈草稿（pushUndo 会丢弃 redo 分支）", () => {
+  beforeEach(() => {
+    clearUndo();
+  });
+
+  it("存在 redo 分支时不压栈 → peekRedo 可正常预览重做目标（修复后 handleRedo 行为）", () => {
+    pushUndo({ id: "a:1", file: "a", index: 1, before: { pre_dst: "a1" }, after: { pre_dst: "a2" } });
+    pushUndo({ id: "a:2", file: "a", index: 2, before: { pre_dst: "b1" }, after: { pre_dst: "b2" } });
+    undo();
+    expect(peekRedo()?.id).toBe("a:2");
+  });
+
+  it("存在 redo 分支时压栈（修复前 pushMetaDraftIfDirty）→ redo 分支被清空，peekRedo 返回 null", () => {
+    pushUndo({ id: "a:1", file: "a", index: 1, before: { pre_dst: "a1" }, after: { pre_dst: "a2" } });
+    pushUndo({ id: "a:2", file: "a", index: 2, before: { pre_dst: "b1" }, after: { pre_dst: "b2" } });
+    undo();
+    pushUndo({ id: "m:meta", file: "m", index: 0, before: { title: "x" }, after: { title: "y" } });
+    expect(peekRedo()).toBeNull();
   });
 });
