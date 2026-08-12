@@ -425,6 +425,8 @@ export function ProjectConfigPage() {
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   const [enabledProblemTypes, setEnabledProblemTypes] = createSignal<string[]>([]);
   const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
+  const [attrMaxLen, setAttrMaxLen] = createSignal<number>(10);
+  const [advMaxLen, setAdvMaxLen] = createSignal<number>(12);
   const [problemTypesLoading, setProblemTypesLoading] = createSignal(false);
 
   function toggleProblemType(name: string) {
@@ -439,6 +441,16 @@ export function ProjectConfigPage() {
   function setAvgThresholdValue(v: number) {
     setAvgThreshold(v);
     setValue("problemAnalyze.avgSentenceLengthThreshold", v);
+  }
+
+  function setAttrMaxLenValue(v: number) {
+    setAttrMaxLen(v);
+    setValue("problemAnalyze.attributiveMaxLength", v);
+  }
+
+  function setAdvMaxLenValue(v: number) {
+    setAdvMaxLen(v);
+    setValue("problemAnalyze.adverbialMaxLength", v);
   }
 
   // 当前项目/配置名切换后，从后端拉取候选列表并同步当前勾选与阈值
@@ -477,6 +489,14 @@ export function ProjectConfigPage() {
       const rawThreshold = section["avgSentenceLengthThreshold"];
       setAvgThreshold(
         typeof rawThreshold === "number" && Number.isFinite(rawThreshold) ? rawThreshold : 17
+      );
+      const rawAttr = section["attributiveMaxLength"];
+      setAttrMaxLen(
+        typeof rawAttr === "number" && Number.isFinite(rawAttr) ? rawAttr : 10
+      );
+      const rawAdv = section["adverbialMaxLength"];
+      setAdvMaxLen(
+        typeof rawAdv === "number" && Number.isFinite(rawAdv) ? rawAdv : 12
       );
     } catch {
       setProblemTypes([]);
@@ -1021,6 +1041,52 @@ export function ProjectConfigPage() {
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
                 setAvgThresholdValue(Number.isFinite(raw) ? raw : 17);
+              }}
+            />
+          </div>
+        </div>
+        <div class="pc-row">
+          <div class="pc-row-label">
+            <label class="pc-label" for="attributive-max-length">
+              定语最大长度（定语过长）
+            </label>
+            <p class="pc-desc">「是……的」中间定语超过该字数即报「定语过长」，默认 10。⚠️ 测试中，可能误检。</p>
+          </div>
+          <div class="pc-row-control">
+            <input
+              id="attributive-max-length"
+              class="field__input pc-input pc-input--num"
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              value={attrMaxLen()}
+              onChange={(e) => {
+                const raw = Number((e.target as HTMLInputElement).value);
+                setAttrMaxLenValue(Number.isFinite(raw) ? raw : 10);
+              }}
+            />
+          </div>
+        </div>
+        <div class="pc-row">
+          <div class="pc-row-label">
+            <label class="pc-label" for="adverbial-max-length">
+              状语最大长度（状语过长）
+            </label>
+            <p class="pc-desc">「在……中/里」或「……地」状语超过该字数即报「状语过长」，默认 12。⚠️ 测试中，可能误检。</p>
+          </div>
+          <div class="pc-row-control">
+            <input
+              id="adverbial-max-length"
+              class="field__input pc-input pc-input--num"
+              type="number"
+              min={1}
+              max={50}
+              step={1}
+              value={advMaxLen()}
+              onChange={(e) => {
+                const raw = Number((e.target as HTMLInputElement).value);
+                setAdvMaxLenValue(Number.isFinite(raw) ? raw : 12);
               }}
             />
           </div>

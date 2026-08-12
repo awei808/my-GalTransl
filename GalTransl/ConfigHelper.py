@@ -113,6 +113,8 @@ class CProblemType(Enum):
     独白男他 = 12
     长句丢失换行 = 13
     换行位置异常 = 14
+    定语过长 = 15
+    状语过长 = 16
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
@@ -284,6 +286,28 @@ class CProjectConfig:
             )
         except (ValueError, TypeError, AttributeError):
             return 17
+
+    def getAttributiveMaxLength(self) -> int:
+        """定语过长检测的定语最大长度，默认10，超过即报「定语过长」。"""
+        try:
+            return int(
+                self.projectConfig["problemAnalyze"].get(
+                    "attributiveMaxLength", 10
+                )
+            )
+        except (ValueError, TypeError, AttributeError):
+            return 10
+
+    def getAdverbialMaxLength(self) -> int:
+        """状语过长检测的状语最大长度，默认12，超过即报「状语过长」。"""
+        try:
+            return int(
+                self.projectConfig["problemAnalyze"].get(
+                    "adverbialMaxLength", 12
+                )
+            )
+        except (ValueError, TypeError, AttributeError):
+            return 12
 
     def refreshProxyEnabledFlag(self) -> None:
         self.keyValues["internals.enableProxy"] = has_usable_proxy_config(

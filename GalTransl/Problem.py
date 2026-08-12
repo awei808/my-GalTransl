@@ -2,6 +2,8 @@
 分析问题
 """
 
+import re
+
 from GalTransl.CSentense import CTransList
 from GalTransl.ConfigHelper import CProjectConfig, CProblemType
 from GalTransl.Utils import (
@@ -194,6 +196,42 @@ def find_problems(
 
         if "(Failed)" in post_dst:
             problem_list.append("翻译失败")
+
+        # 定语/状语过长：只检测最终成品 post_dst（无校对时即 pre_dst），与旧分支对齐避免重复
+        if CProblemType.定语过长 in find_type or CProblemType.状语过长 in find_type:
+            if post_dst:
+                attributive_max = projectConfig.getAttributiveMaxLength()
+                adverbial_max = projectConfig.getAdverbialMaxLength()
+                # 归一化真实/字面换行为真实 \n 后按行切分，避免跨字面转义行被贪婪吞并
+                _norm = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
+                _norm = _norm.replace("\r\n", "\n").replace("\r", "\n")
+                for line in _norm.split("\n"):
+                    if CProblemType.定语过长 in find_type:
+                        # 「是……的」强调/定语结构，取中间定语长度（每条只报一次）
+                        for m in re.finditer(r"是([^，。！？!?…\n]+?)的", line):
+                            if len(m.group(1)) > attributive_max:
+                                problem_list.append(
+                                    f"定语过长：是{m.group(1)}的（{len(m.group(1))}字，上限{attributive_max}）"
+                                )
+                                break
+                    if CProblemType.状语过长 in find_type:
+                        # 「在……中/里」地点状语，取中间长度
+                        hit = False
+                        for m in re.finditer(r"在([^，。！？!?…\n]+?)(中|里)", line):
+                            if len(m.group(1)) > adverbial_max:
+                                problem_list.append(
+                                    f"状语过长：在{m.group(1)}{m.group(2)}（{len(m.group(1))}字，上限{adverbial_max}）"
+                                )
+                                hit = True
+                                break
+                        if not hit:
+                            # 「……地」方式状语（地+逗号/句号边界）
+                            for m in re.finditer(r"([^，。！？!?…\n]+?)地[，。]", line):
+                                if len(m.group(1)) > adverbial_max:
+                                    problem_list.append(
+                                        f"状语过长：{m.group(1)}地（{len(m.group(1))}字，上限{adverbial_max}）"
+                                    )
+                                    break
 
         # 以本次检测结果覆盖 tran.problem（清空旧缓存遗留的问题，避免累积）。
         # 不要加 if problem_list 判断：无问题时需显式置空以清除旧 problem。

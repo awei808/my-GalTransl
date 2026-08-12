@@ -442,5 +442,151 @@ class NewlinePositionTests(_Base):
         self.assertNotIn("换行位置异常", problem)
 
 
+class ModifierLengthTests(_Base):
+    """定语过长（是……的）/ 状语过长（在……中/里、……地）检测。"""
+
+    def _set_problem_config(
+        self,
+        project_dir: str,
+        problems: list,
+        attr: int = 10,
+        adv: int = 12,
+    ) -> None:
+        cfg_path = os.path.join(project_dir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {
+            "problemList": problems,
+            "attributiveMaxLength": attr,
+            "adverbialMaxLength": adv,
+        }
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+
+    def _check(self, pid: str, pre_dst: str):
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文",
+                "post_src": "原文",
+                "pre_dst": pre_dst,
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/mod.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        return {r["index"]: r for r in body["results"]}[1]["problem"]
+
+    def _check_multi(self, pid: str, pre_dsts: list):
+        entries = [
+            {
+                "index": i + 1,
+                "name": "",
+                "pre_src": "原文",
+                "post_src": "原文",
+                "pre_dst": txt,
+            }
+            for i, txt in enumerate(pre_dsts)
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/mod.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        return {r["index"]: r["problem"] for r in body["results"]}
+
+    def test_per_entry_detection_in_list(self) -> None:
+        # 多条目列表：每条都应独立检测（回归：曾误放循环外只检最后一条）
+        _, init = self._init_project("mod_multi")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["定语过长", "状语过长"], 6, 12)
+        problems = self._check_multi(
+            pid,
+            [
+                "这是我做的。",  # 短，不报
+                "这是我在昨天放学后于图书馆遇到的人。",  # 定语过长
+                "慢慢地，他走了。",  # 短状语，不报
+                "在昨天放学后那个飘着细雨的黄昏小镇里，他站了很久。",  # 状语过长
+            ],
+        )
+        self.assertNotIn("定语过长", problems[1])
+        self.assertNotIn("状语过长", problems[1])
+        self.assertIn("定语过长", problems[2])
+        self.assertIn("状语过长", problems[4])
+
+    def test_attributive_triggers_when_exceeds(self) -> None:
+        # 「是……的」中间定语超 6 字 → 报"定语过长"
+        _, init = self._init_project("mod_attr")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["定语过长"], 6, 12)
+        problem = self._check(pid, "这是我在昨天放学后于图书馆遇到的人。")
+        self.assertIn("定语过长", problem)
+
+    def test_no_duplicate_when_post_dst_equals_pre_dst(self) -> None:
+        # 无校对时 post_dst == pre_dst，仅检测 post_dst 应避免重复写入
+        _, init = self._init_project("mod_dup")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["定语过长", "状语过长"], 6, 12)
+        problem = self._check(pid, "在昨天放学后那个飘着细雨的黄昏小镇里，他站了很久。")
+        self.assertEqual(problem.count("状语过长"), 1)
+        problem2 = self._check(pid, "这是我在昨天放学后于图书馆遇到的人。")
+        self.assertEqual(problem2.count("定语过长"), 1)
+
+    def test_literal_escape_newline_not_cross_line(self) -> None:
+        # 字面转义换行（"\\n"）应被归一化为行边界，避免跨行吞并
+        _, init = self._init_project("mod_esc")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["定语过长"], 6, 12)
+        # 字面转义换行分隔的两个短「是…的」，各自不超阈值，不应误报/跨行吞并
+        problem = self._check(pid, "这是书。\\n笔是我的。")
+        self.assertNotIn("定语过长", problem)
+
+    def test_attributive_not_triggers_when_short(self) -> None:
+        # 「是……的」中间定语 ≤ 6 字 → 不报
+        _, init = self._init_project("mod_attr_ok")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["定语过长"], 6, 12)
+        problem = self._check(pid, "这是我做的。")
+        self.assertNotIn("定语过长", problem)
+
+    def test_adverbial_in_triggers_when_exceeds(self) -> None:
+        # 「在……中/里」中间超 12 字 → 报"状语过长"
+        _, init = self._init_project("mod_adv_in")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["状语过长"], 6, 12)
+        problem = self._check(pid, "在昨天放学后那个飘着细雨的黄昏小镇里，他站了很久。")
+        self.assertIn("状语过长", problem)
+
+    def test_adverbial_de_triggers_when_exceeds(self) -> None:
+        # 「……地」方式状语超 12 字 → 报"状语过长"
+        _, init = self._init_project("mod_adv_de")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["状语过长"], 6, 12)
+        problem = self._check(pid, "怀着忐忑不安又充满期待的矛盾心情地，他推开了门。")
+        self.assertIn("状语过长", problem)
+
+    def test_adverbial_not_triggers_when_short(self) -> None:
+        # 短状语（"慢慢地，"仅 3 字）→ 不报
+        _, init = self._init_project("mod_adv_ok")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["状语过长"], 6, 12)
+        problem = self._check(pid, "慢慢地，他走了。")
+        self.assertNotIn("状语过长", problem)
+
+    def test_cross_line_not_false_positive(self) -> None:
+        # 跨换行不应被贪婪吞并成一条（"是A的\nB是C的"各自短 → 不报）
+        _, init = self._init_project("mod_xline")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["定语过长", "状语过长"], 6, 12)
+        problem = self._check(pid, "这是书。\n笔是我的。")
+        self.assertNotIn("定语过长", problem)
+        self.assertNotIn("状语过长", problem)
+
+
 if __name__ == "__main__":
     unittest.main()

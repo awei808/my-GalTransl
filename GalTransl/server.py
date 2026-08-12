@@ -1260,6 +1260,8 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "独白男他", "description": "独白（无name）译文出现'他'。"},
     {"name": "长句丢失换行", "description": "译文平均分句长度超过阈值，可能丢失了应有的换行。"},
     {"name": "换行位置异常", "description": "换行符未紧跟中文标点（逗号/顿号/句号等）之后，断行位置可能不当。"},
+    {"name": "定语过长", "description": "译文出现「是……的」结构且中间定语长度超过「定语最大长度」阈值。（测试中，可能误检）"},
+    {"name": "状语过长", "description": "译文出现「在……中/里」或「……地」状语且中间长度超过「状语最大长度」阈值。（测试中，可能误检）"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)
