@@ -16,6 +16,19 @@ import { appState, setAppState } from "../stores/appStore";
 const HL_ALL = "galtransl-find-all";
 const HL_CURRENT = "galtransl-find-current";
 
+// CSS Custom Highlight API 的类型定义（TS lib.dom 尚未收录，见
+// https://drafts.csswg.org/css-highlight-api-1/）。仅在运行时做存在性
+// 探测，环境不支持时跳过，不影响其余查找逻辑。
+interface HighlightRegistry {
+  set(name: string, highlight: object): void;
+  delete(name: string): void;
+}
+interface WindowWithHighlight extends Window {
+  Highlight: new (...ranges: Range[]) => object;
+  CSS: CSS & { highlights?: HighlightRegistry };
+}
+type GlobalFindWindow = WindowWithHighlight;
+
 // 不扫描的节点（仅浮层自身与脚本/样式类；表单输入改为单独纳入可见文本搜索）
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "OPTION"]);
 
@@ -38,9 +51,10 @@ function isVisible(el: Element): boolean {
 
 function clearHighlights() {
   try {
-    if (window.CSS && (CSS as any).highlights) {
-      CSS.highlights.delete(HL_ALL);
-      CSS.highlights.delete(HL_CURRENT);
+    const w = window as GlobalFindWindow;
+    if (w.CSS && w.CSS.highlights) {
+      w.CSS.highlights.delete(HL_ALL);
+      w.CSS.highlights.delete(HL_CURRENT);
     }
   } catch {
     /* 防御性：环境不支持时静默 */
@@ -133,21 +147,22 @@ function runSearch(query: string) {
 
 function applyHighlights() {
   try {
-    if (!(window.CSS && (CSS as any).highlights)) {
+    const w = window as GlobalFindWindow;
+    if (!(w.CSS && w.CSS.highlights)) {
       console.warn("[GlobalFind] 当前环境不支持 CSS Custom Highlight API，跳过高亮");
       return;
     }
     const textRanges = matches
       .filter((m): m is { kind: "text"; range: Range } => m.kind === "text")
       .map((m) => m.range);
-    const all = new (window as any).Highlight(...textRanges);
-    CSS.highlights.set(HL_ALL, all);
+    const all = new w.Highlight(...textRanges);
+    w.CSS.highlights.set(HL_ALL, all);
     const cur = matches[current];
     if (cur && cur.kind === "text") {
-      const c = new (window as any).Highlight(cur.range);
-      CSS.highlights.set(HL_CURRENT, c);
+      const c = new w.Highlight(cur.range);
+      w.CSS.highlights.set(HL_CURRENT, c);
     } else {
-      CSS.highlights.delete(HL_CURRENT);
+      w.CSS.highlights.delete(HL_CURRENT);
     }
   } catch (e) {
     console.warn("[GlobalFind] 注册高亮失败:", e);
@@ -216,7 +231,7 @@ export function GlobalFind() {
 
   // 界面切换（activeView 变化）时清除残留高亮，避免跨页残留
   createEffect(() => {
-    appState.activeView;
+    void appState.activeView; // 读取以建立响应式依赖（Solid 惯用法）
     if (!appState.globalFindOpen) clearHighlights();
   });
 

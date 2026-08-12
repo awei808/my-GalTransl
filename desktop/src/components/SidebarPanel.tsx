@@ -1,5 +1,6 @@
 import { Match, Switch, createSignal, createEffect, createMemo, onCleanup, Show, For } from "solid-js";
 import { appState, setAppState } from "../stores/appStore";
+import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
 import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager } from "../lib/api/project";
@@ -385,7 +386,7 @@ function FindReplacePanel() {
   };
 
   function jumpToResult(r: CacheSearchResult) {
-    const patch: Record<string, unknown> = {
+    const patch: Partial<AppState> = {
       activeView: "review",
       reviewJumpToIndex: r.index,
     };
@@ -394,7 +395,7 @@ function FindReplacePanel() {
       patch.activeFilePath = r.filename;
     }
     // 不改 sidebarTab：保持「查找替换」面板打开，避免卸载导致查找栏清空
-    setAppState(patch as any);
+    setAppState(patch);
   }
 
   return (
@@ -549,7 +550,7 @@ function ProblemList() {
   }
 
   function jumpToEntry(filename: string, index: number) {
-    const patch: Record<string, unknown> = {
+    const patch: Partial<AppState> = {
       activeView: "review",
       reviewJumpToIndex: index,
     };
@@ -557,7 +558,7 @@ function ProblemList() {
     if (filename !== appState.activeFilePath) {
       patch.activeFilePath = filename;
     }
-    setAppState(patch as any);
+    setAppState(patch);
   }
 
   return (
@@ -697,7 +698,7 @@ function AltList() {
   };
 
   function jumpToEntry(filename: string, index: number) {
-    const patch: Record<string, unknown> = {
+    const patch: Partial<AppState> = {
       activeView: "review",
       reviewJumpToIndex: index,
     };
@@ -705,7 +706,7 @@ function AltList() {
     if (filename !== appState.activeFilePath) {
       patch.activeFilePath = filename;
     }
-    setAppState(patch as any);
+    setAppState(patch);
   }
 
   return (
