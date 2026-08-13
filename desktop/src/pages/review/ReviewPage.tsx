@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For, Index, onCleanup, onMount, createMemo } from "solid-js";
+import { createSignal, createEffect, Show, For, onCleanup, onMount, createMemo } from "solid-js";
 import { appState, setAppState, markDirty, markClean, getActiveConfigFileName } from "../../stores/appStore";
 import { confirm } from "../../stores/confirmStore";
 import { pushUndo, clearUndo, undo, redo, peekUndo, peekRedo } from "../../stores/undoStore";
@@ -2002,13 +2002,15 @@ export function ReviewPage() {
                 ，每页 {pageSize() > 0 ? pageSize() : "全部"} 条，共 {totalPages()} 页
               </div>
             </Show>
-            {/* 当前页条目全量渲染（分页模式，<Index> 简单可靠，高度自适应无重叠） */}
+            {/* 当前页条目全量渲染（分页模式）。必须用 <For by=index> 而非 <Index>：
+             * <Index> 按位置复用组件实例，过滤（只看问题）后同位置挂载新条目时，
+             * draftDst 草稿信号会沿用旧实例的旧条目草稿，失焦提交错位 → 覆盖译文；
+             * <For by=index> 让实例跟随 entry.index 身份，重排时旧实例卸载、新实例重建，
+             * draftDst 以新条目 pre_dst 初始化，彻底消除草稿串位。 */}
             <div class="review-list-full">
-              <Index each={currentPageEntries()}>
-                {(entrySignal) => {
-                  // 统一 number key 口径：缓存条目 index 可能是字符串（Loader 保留原值），
-                  // computeHRangeBoundaries 的 Map key 一律用 Number，此处需同样转换
-                  const idx = Number(entrySignal().index);
+              <For each={currentPageEntries()} by={(e) => e.index}>
+                {(entry) => {
+                  const idx = Number(entry.index);
                   const hStart = hRangeBoundaries().starts.get(idx);
                   const hEnd = hRangeBoundaries().ends.get(idx);
                   return (
@@ -2020,7 +2022,7 @@ export function ReviewPage() {
                       )}
                       <div data-index={idx}>
                         <EntryCard
-                          entry={entrySignal()}
+                          entry={entry}
                           nameDict={nameDict()}
                           expanded={expandedSerials().has(idx)}
                           onToggleExpanded={() => toggleExpanded(idx)}
@@ -2038,7 +2040,7 @@ export function ReviewPage() {
                     </>
                   );
                 }}
-              </Index>
+              </For>
             </div>
             {/* 分页控件：仅当需分页时才显示 */}
             <Show when={totalPages() > 1}>

@@ -275,6 +275,20 @@ H_WORDS = 'M1AKQVblpbPlhKoKR+OCueODneODg+ODiApOVFIKU0VYClNNClNPRApU44OQ44OD44KvC
 
 H_WORDS_LIST=base64.b64decode(H_WORDS.encode()).decode().split("\n")
 
+# 批次级元数据：H 区间/非 H 区间的差异化翻译指导文案
+# H 区间：允许直译露骨描写，但需维持原文的节奏与分寸；并可注入项目 hCheckDict 禁用词表
+# 非 H 区间：保持克制，避免露骨/暧昧用词
+H_BATCH_GUIDE = (
+    "本批包含 H 剧情区间，可放开露骨的感官与身体描写，按原文强度直译，"
+    "避免过度委婉导致语义丢失；但保留原文省略号/控制符营造的节奏与留白，"
+    "不堆砌辞藻、不使用生僻修辞。"
+)
+H_BATCH_FORBIDDEN = "同时，以下词语在本项目 H 区间中属于用词不当，禁止使用：{words}。"
+NORMAL_BATCH_GUIDE = (
+    "本批不含 H 剧情区间，请保持含蓄克制的表达，避免露骨或暧昧的用词，"
+    "与原文语境和人物关系相符。"
+)
+
 GENDIC_SYSTEM="""你作为能协助NLP任务的AI。当用户发布NLP任务时，不回避不淡化不省略任何文本。"""
 
 GENDIC_PROMPT="""## 任务

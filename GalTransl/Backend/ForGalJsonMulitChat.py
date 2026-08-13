@@ -19,6 +19,9 @@ from GalTransl.Backend.Prompts import (
     FORGAL_JSON_SYSTEM_PROMPT,
     FORGAL_JSON_TRANS_PROMPT,
     H_WORDS_LIST,
+    H_BATCH_GUIDE,
+    H_BATCH_FORBIDDEN,
+    NORMAL_BATCH_GUIDE,
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
@@ -1375,6 +1378,9 @@ class ForGalJsonMulitChat(BaseTranslate):
         self._batch_metadata_by_file: dict[str, BatchMetadata] = {}
         self._batch_metadata_loaded: bool = False
 
+        # H 场景用词不当词库（hCheckDict）惰性加载缓存：None=未加载，[]=加载结果为空
+        self._h_check_words: Optional[list] = None
+
         # 多轮历史最大保留轮次数（0=不裁剪）；单独解析避免 _coerce_positive_int 把 0 抬为 1
         raw_multi_round = config.getKey("gpt.multiRoundMaxHistory")
         if raw_multi_round is None:
@@ -1658,13 +1664,16 @@ class ForGalJsonMulitChat(BaseTranslate):
     ) -> str:
         """把与本批行号区间 [lo, hi] 相交的批次级元数据格式化为提示词附加段落。
 
+        按 h 值分组渲染：H 区间段与非 H 区间段分别给出差异化翻译指导；
+        H 段额外注入项目 hCheckDict 禁用词表（词数 ≤ 20 全量，超出截断）。
         仅注入相关区间，避免整份区间表膨胀提示词。无相交区间时返回空串。
         """
         segments = batch_metadata.segments_in_range(lo, hi)
         if not segments:
             return ""
 
-        lines = []
+        h_lines: list[str] = []
+        normal_lines: list[str] = []
         for b in segments:
             rng = parse_interval(b.get("区间") or b.get("interval"))
             if rng is None:
@@ -1672,26 +1681,85 @@ class ForGalJsonMulitChat(BaseTranslate):
             b_lo, b_hi = rng
             view = str(b.get("视角", "") or "").strip() or "未标注"
             atmos = str(b.get("氛围", "") or "").strip() or "未标注"
-            is_h = "是" if b.get("h") else "否"
             tone = str(b.get("用词色彩", "") or "").strip() or "未标注"
-            lines.append(
+            line = (
                 f"- 区间[{b_lo}-{b_hi}] 视角:{view} 氛围:{atmos} "
-                f"H:{is_h} 用词色彩:{tone}"
+                f"H:{'是' if b.get('h') else '否'} 用词色彩:{tone}"
             )
-        if not lines:
+            if b.get("h"):
+                h_lines.append(line)
+            else:
+                normal_lines.append(line)
+
+        blocks: list[str] = []
+        if h_lines:
+            forbidden = self._format_h_forbidden_words()
+            h_block = "\n".join([H_BATCH_GUIDE, *h_lines])
+            if forbidden:
+                h_block += f"\n{forbidden}"
+            blocks.append(h_block)
+        if normal_lines:
+            blocks.append("\n".join([NORMAL_BATCH_GUIDE, *normal_lines]))
+        if not blocks:
             return ""
 
-        body = "\n".join(lines)
         return (
             "\n<batch_metadata>\n"
             "本文件已按剧情划分为若干翻译区间，本批涉及的区间及其翻译指导如下"
             "（行号为文件内全局行号）：\n"
-            f"{body}\n"
+            f"{chr(10).join(blocks)}\n"
             "</batch_metadata>\n"
-            "请依据每句所处区间，采用对应的视角、氛围与用词色彩进行翻译："
-            "H 区间可放开露骨的感官描写，非 H 区间保持相应的克制；"
+            "请依据每句所处区间，采用对应的视角、氛围与用词色彩进行翻译；"
             "每批次仅提供本批涉及的区间指导，请结合上下文保持区间内风格统一、区间之间自然过渡。\n"
         )
+
+    def _format_h_forbidden_words(self) -> str:
+        """把项目 hCheckDict 词库格式化为 H 区间禁用词提示段。
+
+        词数 ≤ 20 时全量列出，超出时截断为省略提示，避免提示词过长。
+        """
+        words = self._resolve_h_check_words()
+        if not words:
+            return ""
+        if len(words) <= 20:
+            listed = "、".join(words)
+        else:
+            listed = "、".join(words[:20]) + "…………等词语"
+        return H_BATCH_FORBIDDEN.format(words=listed)
+
+    def _resolve_h_check_words(self) -> list:
+        """从项目配置 hCheckDict 惰性加载 H 场景用词不当词库（仅一次）。
+
+        复用 Problem.load_h_check_words 的解析规则；加载失败返回空列表。
+        """
+        if self._h_check_words is not None:
+            return self._h_check_words
+        self._h_check_words = []
+        try:
+            from GalTransl.ConfigHelper import initDictList
+            from GalTransl.Problem import load_h_check_words
+
+            cfg = getattr(self, "project_config", None)
+            if cfg is None:
+                return self._h_check_words
+            dict_cfg = cfg.getDictCfgSection() or {}
+            h_dict_list = dict_cfg.get("hCheckDict", [])
+            default_dir = dict_cfg.get("defaultDictFolder", "")
+            project_dir = cfg.getProjectDir()
+            self._h_check_words = load_h_check_words(
+                initDictList(h_dict_list, default_dir, project_dir)
+            )
+            if self._h_check_words:
+                LOGGER.info(
+                    f"[ForGalJsonMulitChat] 已载入 H 场景用词不当词库，"
+                    f"{len(self._h_check_words)} 词"
+                )
+        except Exception as e:
+            LOGGER.warning(
+                f"[ForGalJsonMulitChat] 加载 H 场景用词不当词库失败，跳过：{e}"
+            )
+            self._h_check_words = []
+        return self._h_check_words
 
     def _ensure_conversation(self, filename: str) -> list:
         """
