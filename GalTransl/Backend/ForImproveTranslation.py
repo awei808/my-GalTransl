@@ -118,11 +118,15 @@ class ForImproveTranslation(ForGalJsonMulitChat):
             self._check_stop_requested()
             batch = valid[start : start + num_per_request]
             idx_tip = self._build_idx_tip(batch)
-            # 每批按本批句子重新生成术语表（与翻译轮一致，按需注入）
+            # 每批按本批句子重新生成术语表（与翻译轮一致，按需注入）；
+            # h/非h 场景分流：本批处于 h 区间注入 h 字典，否则只注入非 h 字典
             batch_gptdict = ""
             if gpt_dic is not None:
                 try:
-                    batch_gptdict = gpt_dic.gen_prompt(batch)
+                    batch_gptdict = gpt_dic.gen_prompt(
+                        batch,
+                        scene="h" if self._group_is_h_scene(batch, filename) else "nh",
+                    )
                 except Exception:
                     batch_gptdict = ""
             # 输入携带当前生效译文（proofread_zh 优先，否则 pre_dst），与校对轮一致；

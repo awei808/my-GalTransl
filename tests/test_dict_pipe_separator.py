@@ -3,11 +3,16 @@
 覆盖：CGptDict 加载(提示词注入阶段)、CNormalDic 加载(译前译后替换阶段)、
       旧格式兼容、非法文本过滤
 """
-import unittest, tempfile, os
+import unittest, tempfile, os, asyncio
+from unittest import mock
 
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict, CNormalDic, CBasicDicElement
 from GalTransl.Backend.ForGalJsonMulitChat import BatchMetadata, ForGalJsonMulitChat
+from GalTransl.Backend.ForFileMetaData import ForFileMetaData
+from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
+from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
+from GalTransl.Backend.ForBRStation import ForBRStation
 
 
 # ── 工具函数 ──────────────────────────────────────────────
@@ -411,6 +416,44 @@ class CGptDictSceneTests(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════
+# check_dic_use scene 过滤 — 字典使用问题检测按场景分流
+# ══════════════════════════════════════════════════════════
+class CheckDicUseSceneTests(unittest.TestCase):
+    """check_dic_use 的 scene 参数：h 只检 h 字典、nh 只检非 h、all 全检"""
+
+    def _make_tran(self, post_src: str, post_dst: str) -> CSentense:
+        tran = CSentense(pre_src=post_src)
+        tran.post_src = post_src
+        tran.post_dst = post_dst
+        return tran
+
+    def test_nh_skips_h_dict(self) -> None:
+        """scene='nh'：只报非 h 词条未使用，h 词条同源词不参与"""
+        gd = CGptDictSceneTests()._make_gd()
+        # post_src 含責め：非 h 与 h 字典都有该词条
+        tran = self._make_tran("責め", "責め是啥")
+        out = gd.check_dic_use(tran.post_dst, tran, scene="nh")
+        self.assertIn("GPT字典_非h未使用：責め---责难", out)
+        self.assertNotIn("GPT字典_h未使用", out)  # h 词条不参与 nh 判定
+
+    def test_h_only_h_dict(self) -> None:
+        """scene='h'：只报 h 词条未使用，非 h 词条同源词不参与"""
+        gd = CGptDictSceneTests()._make_gd()
+        tran = self._make_tran("責め", "責め是啥")
+        out = gd.check_dic_use(tran.post_dst, tran, scene="h")
+        self.assertIn("GPT字典_h未使用：責め---折磨/拷问/惩罚/调教", out)
+        self.assertNotIn("GPT字典_非h未使用", out)  # 非 h 词条不参与 h 判定
+
+    def test_all_checks_both(self) -> None:
+        """scene='all'（默认）：h 与非 h 同源词都参与，兼容旧行为"""
+        gd = CGptDictSceneTests()._make_gd()
+        tran = self._make_tran("責め", "責め是啥")
+        out = gd.check_dic_use(tran.post_dst, tran)
+        self.assertIn("GPT字典_非h未使用：責め---责难", out)
+        self.assertIn("GPT字典_h未使用：責め---折磨/拷问/惩罚/调教", out)
+
+
+# ══════════════════════════════════════════════════════════
 # _group_is_h_scene — 批次 h 场景判定
 # ══════════════════════════════════════════════════════════
 class GroupIsHSceneTests(unittest.TestCase):
@@ -469,6 +512,236 @@ class GroupIsHSceneTests(unittest.TestCase):
         )
         self.assertTrue(inst._group_is_h_scene(self._make_group([15]), "f.json"))
         self.assertFalse(inst._group_is_h_scene(self._make_group([3]), "f.json"))
+
+
+# ══════════════════════════════════════════════════════════
+# 消费端 scene 接线 — 元数据轮只注入非 h / 改进轮与换行修复轮按 h 分流
+# ══════════════════════════════════════════════════════════
+def _make_meta_inst(cls, dict_files: dict):
+    """构造元数据轮实例（绕过 __init__）：pj_config 返回伪字典配置。
+
+    Args:
+        cls: ForFileMetaData 或 ForBatchMetaData 类。
+        dict_files: {文件名: 文件内容} 的字典文件集合。
+    """
+    inst = cls.__new__(cls)
+    tmp_dir = tempfile.mkdtemp(prefix="dict_scene_")
+    for name, content in dict_files.items():
+        with open(os.path.join(tmp_dir, name), "w", encoding="utf-8") as f:
+            f.write(content)
+    dict_cfg = {
+        "gpt.dict": list(dict_files.keys()),
+        "defaultDictFolder": tmp_dir,
+    }
+    fake_cfg = mock.MagicMock()
+    fake_cfg.getDictCfgSection.return_value = dict_cfg
+    fake_cfg.getProjectDir.return_value = tmp_dir
+    inst.pj_config = fake_cfg
+    return inst, tmp_dir
+
+
+class MetaDataGlossarySceneTests(unittest.TestCase):
+    """P3：元数据轮 _build_glossary_text 只注入非 h 字典（scene='nh'）"""
+
+    def test_file_metadata_skips_h_dict(self) -> None:
+        inst, tmp_dir = _make_meta_inst(
+            ForFileMetaData,
+            {
+                "GPT字典_h.txt": "責め|折磨/拷问/惩罚/调教\n",
+                "GPT字典_非h.txt": "責め|责难\n",
+            },
+        )
+        try:
+            out = inst._build_glossary_text([{"message": "責め"}])
+            self.assertIn("责难", out)
+            self.assertNotIn("折磨/拷问/惩罚/调教", out)
+        finally:
+            for name in ("GPT字典_h.txt", "GPT字典_非h.txt"):
+                os.unlink(os.path.join(tmp_dir, name))
+            os.rmdir(tmp_dir)
+
+    def test_batch_metadata_skips_h_dict(self) -> None:
+        inst, tmp_dir = _make_meta_inst(
+            ForBatchMetaData,
+            {
+                "GPT字典_h.txt": "まんこ|小穴\n",
+                "GPT字典_非h.txt": "まんこ|小穴(通用)\n",
+            },
+        )
+        try:
+            out = inst._build_glossary_text([{"message": "まんこ"}])
+            self.assertIn("小穴(通用)", out)
+            self.assertNotIn("小穴|", out)
+            self.assertNotIn("| 小穴 |", out)
+        finally:
+            for name in ("GPT字典_h.txt", "GPT字典_非h.txt"):
+                os.unlink(os.path.join(tmp_dir, name))
+            os.rmdir(tmp_dir)
+
+
+def _make_improve_inst(cls, h_scene: bool):
+    """构造改进轮/换行修复轮实例，stub 掉 LLM 调用，捕获 gen_prompt 的 scene 参数。
+
+    Args:
+        cls: ForImproveTranslation 或 ForBRStation 类。
+        h_scene: _group_is_h_scene 的桩返回值。
+    """
+    inst = cls.__new__(cls)
+    inst.pj_config = mock.MagicMock()
+    inst.pj_config.getKey.return_value = None
+    inst.pj_config.active_workers = 0  # 跳过单 worker 打印
+    inst.eng_type = "test"
+    inst.conversations = {}
+    inst.last_file_name = ""
+    inst._force_first_round_files = set()
+    inst.system_prompt = "s"
+    # 桩方法：避免真实 LLM/对话构建
+    inst._check_stop_requested = lambda: None
+    inst.reset_conversation = lambda filename="": None
+    inst._ensure_conversation = lambda filename: [
+        {"role": "system", "content": inst.system_prompt}
+    ]
+    inst._trim_conversation = lambda messages: messages
+    inst._build_idx_tip = lambda batch: ""
+    inst._build_input_jsonlines = lambda *a, **k: ("", [], 0, "")
+    inst._build_improve_first_round_content = lambda *a, **k: ""
+    inst._build_br_first_round_content = lambda *a, **k: ""
+    inst._record_improve_runtime_error = lambda *a, **k: None
+    inst._record_br_runtime_error = lambda *a, **k: None
+    inst._has_newline_anomaly = lambda tran: True
+    inst._group_is_h_scene = lambda group, filename: h_scene
+
+    async def _fail_llm(*a, **k):
+        raise RuntimeError("stub llm fail")
+
+    inst._call_llm = _fail_llm
+    return inst
+
+
+class SceneWiringBatchTranslateTests(unittest.IsolatedAsyncioTestCase):
+    """P0：改进轮 / 换行修复轮按 h 场景传 scene 给 gen_prompt"""
+
+    def _make_trans(self, count=2) -> list:
+        # pre_dst 非空是改进轮/换行修复轮 valid 过滤的前提
+        trans = []
+        for i in range(1, count + 1):
+            t = CSentense(pre_src=f"line{i}", index=i)
+            t.post_src = f"line{i}"
+            t.pre_dst = f"译文{i}"
+            trans.append(t)
+        return trans
+
+    def test_improve_h_scene_passes_h(self) -> None:
+        gpt_dic = mock.MagicMock()
+        inst = _make_improve_inst(ForImproveTranslation, h_scene=True)
+        asyncio.run(
+            inst.batch_translate(
+                "f.json", "cache.json", self._make_trans(), 100, gpt_dic=gpt_dic
+            )
+        )
+        self.assertEqual(
+            [c.kwargs.get("scene") for c in gpt_dic.gen_prompt.call_args_list],
+            ["h"],
+        )
+
+    def test_improve_nh_scene_passes_nh(self) -> None:
+        gpt_dic = mock.MagicMock()
+        inst = _make_improve_inst(ForImproveTranslation, h_scene=False)
+        asyncio.run(
+            inst.batch_translate(
+                "f.json", "cache.json", self._make_trans(), 100, gpt_dic=gpt_dic
+            )
+        )
+        self.assertEqual(
+            [c.kwargs.get("scene") for c in gpt_dic.gen_prompt.call_args_list],
+            ["nh"],
+        )
+
+    def test_br_station_h_scene_passes_h(self) -> None:
+        gpt_dic = mock.MagicMock()
+        inst = _make_improve_inst(ForBRStation, h_scene=True)
+        asyncio.run(
+            inst.batch_translate(
+                "f.json", "cache.json", self._make_trans(), 100, gpt_dic=gpt_dic
+            )
+        )
+        self.assertEqual(
+            [c.kwargs.get("scene") for c in gpt_dic.gen_prompt.call_args_list],
+            ["h"],
+        )
+
+    def test_br_station_nh_scene_passes_nh(self) -> None:
+        gpt_dic = mock.MagicMock()
+        inst = _make_improve_inst(ForBRStation, h_scene=False)
+        asyncio.run(
+            inst.batch_translate(
+                "f.json", "cache.json", self._make_trans(), 100, gpt_dic=gpt_dic
+            )
+        )
+        self.assertEqual(
+            [c.kwargs.get("scene") for c in gpt_dic.gen_prompt.call_args_list],
+            ["nh"],
+        )
+
+
+# ══════════════════════════════════════════════════════════
+# P2 基类 batch_translate 兜底传 scene — 防御未来新引擎不覆写
+# ══════════════════════════════════════════════════════════
+class BaseTranslateBatchSceneTests(unittest.IsolatedAsyncioTestCase):
+    """基类 batch_translate 按 h_scene 传 gen_prompt scene（兜底路径）"""
+
+    def _make_trans(self, count=2) -> list:
+        trans = []
+        for i in range(1, count + 1):
+            t = CSentense(pre_src=f"line{i}", index=i)
+            t.post_src = f"line{i}"
+            t.pre_dst = f"译文{i}"
+            trans.append(t)
+        return trans
+
+    def _make_inst(self, h_scene: bool):
+        from GalTransl.Backend.BaseTranslate import BaseTranslate
+
+        inst = BaseTranslate.__new__(BaseTranslate)
+        inst.skipH = False
+        inst.last_file_name = ""
+        inst.pj_config = mock.MagicMock()
+        inst.save_steps = 100
+        inst.reset_conversation = lambda *a, **k: None
+
+        async def _translate(batch, dic_prompt, proofread=False):
+            return len(batch), []
+
+        inst.translate = _translate
+        return inst, h_scene
+
+    def test_base_batch_translate_h_passes_h(self) -> None:
+        gpt_dic = mock.MagicMock()
+        inst, _ = self._make_inst(True)
+        asyncio.run(
+            inst.batch_translate(
+                "f.json", "cache.json", self._make_trans(), 100, gpt_dic=gpt_dic,
+                h_scene=True,
+            )
+        )
+        self.assertEqual(
+            [c.kwargs.get("scene") for c in gpt_dic.gen_prompt.call_args_list],
+            ["h"],
+        )
+
+    def test_base_batch_translate_nh_passes_nh(self) -> None:
+        gpt_dic = mock.MagicMock()
+        inst, _ = self._make_inst(False)
+        asyncio.run(
+            inst.batch_translate(
+                "f.json", "cache.json", self._make_trans(), 100, gpt_dic=gpt_dic,
+                h_scene=False,
+            )
+        )
+        self.assertEqual(
+            [c.kwargs.get("scene") for c in gpt_dic.gen_prompt.call_args_list],
+            ["nh"],
+        )
 
 
 if __name__ == "__main__":

@@ -78,35 +78,40 @@ export function DictionaryPage() {
     setDraftText(value);
   }
 
-  async function doAutoSave() {
+  async function doAutoSave(targetPid?: string | null, targetConfigName?: string) {
+    // 入口快照 key/text/config：全程使用快照，避免 await 让出后读到切换文件/项目后的新状态
     const key = selectedFile();
     if (!key) return;
+    const text = draftText();
+    const configName = targetConfigName ?? getActiveConfigFileName();
     try {
       // 剥离 "{tab}_dict:" 前缀: "gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"
       // 公共字典: "gpt_dict:文件名.txt" → "文件名.txt"
       const fileKey = key.includes(":") ? key.split(":")[1] : key;
       const isProjectFile = fileKey.includes(PROJECT_DIR_MARKER);
-      if (pid() && isProjectFile) {
-        await saveProjectDictionaryFile(pid()!, {
-          config_file_name: getActiveConfigFileName(),
+      // 显式指定 targetPid 时用于项目切换场景保存旧项目；null/undefined 回退当前 pid()
+      const pidToUse = targetPid ?? pid();
+      if (pidToUse && isProjectFile) {
+        await saveProjectDictionaryFile(pidToUse, {
+          config_file_name: configName,
           file_key: fileKey,
-          content: draftText(),
+          content: text,
         });
       } else {
         await saveCommonDictionaryFile({
           filename: fileKey,
-          content: draftText(),
+          content: text,
         });
       }
-      // 保存成功后原地更新对应 data 中的 dict_contents，避免后续切文件读到旧快照
-      const snapshot = isProjectFile ? data() : commonData();
-      if (snapshot && snapshot.dict_contents) {
-        const lookupKey = key.includes(":") ? key.split(":")[1] : key;
-        const saved = draftText().split("\n");
-        const entry = snapshot.dict_contents[lookupKey];
-        if (entry) {
-          entry.lines = saved;
-          entry.count = saved.length;
+      // 常规路径（非项目切换保存）才原地更新快照，避免跨项目保存污染新数据
+      if (targetPid === undefined) {
+        const snapshot = isProjectFile ? data() : commonData();
+        if (snapshot && snapshot.dict_contents) {
+          const entry = snapshot.dict_contents[fileKey];
+          if (entry) {
+            entry.lines = text.split("\n");
+            entry.count = entry.lines.length;
+          }
         }
       }
     } catch (e) {
@@ -367,8 +372,22 @@ export function DictionaryPage() {
     doAutoSaveNames();
   }
 
+  let _prevPid: string | null = null;
+  let _prevConfigName: string = getActiveConfigFileName();
   createEffect(() => {
     const p = pid();
+    const oldPid = _prevPid;
+    const oldConfigName = _prevConfigName;
+    const pidChanged = p !== oldPid;
+    _prevPid = p;
+    _prevConfigName = getActiveConfigFileName();
+    if (pidChanged) {
+      // 项目切换：先用旧项目身份与旧配置名保存未落盘编辑（fire-and-forget，不阻塞切换），
+      // 再清空选中文件与草稿，避免残留旧项目状态污染新项目加载
+      doAutoSave(oldPid, oldConfigName);
+      setSelectedFile(null);
+      setDraftText("");
+    }
     // 无项目：直接加载公共字典
     if (!p) {
       loadData();
@@ -1064,7 +1083,7 @@ export function DictionaryPage() {
                       ta.selectionStart = ta.selectionEnd = pos + 1;
                     });
                   }}
-                  onBlur={doAutoSave}
+                  onBlur={() => doAutoSave()}
                   spellcheck={false}
                 />
               </Show>

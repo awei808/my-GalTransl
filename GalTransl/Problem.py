@@ -207,7 +207,10 @@ def find_problems(
 
                 )
         if CProblemType.字典使用 in find_type:
-            if val := gpt_dict.check_dic_use(pre_dst, tran):
+            # h 场景只检查 h 字典，非 h 场景只检查非 h 字典，消除跨场景误报
+            if val := gpt_dict.check_dic_use(
+                pre_dst, tran, scene="h" if is_h_scene else "nh"
+            ):
                 problem_list.append(val)
         if CProblemType.用词不当 in find_type:
             # h 场景沿用原 h 词库逻辑；非 h 场景按禁用词库检测（本次未搭建，传空则不触发）

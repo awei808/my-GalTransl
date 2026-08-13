@@ -350,7 +350,8 @@ class ForBatchMetaData(BaseTranslate):
             tran.post_src = tran.pre_src
             trans_list.append(tran)
 
-        glossary = gpt_dic.gen_prompt(trans_list) if trans_list else ""
+        # 元数据阶段不分流，仅注入非 h 字典，避免 h 词条污染整体剧情描述
+        glossary = gpt_dic.gen_prompt(trans_list, scene="nh") if trans_list else ""
         if glossary:
             LOGGER.debug(
                 f"[BatchMetaData] 按需注入 GPT 字典，命中 {glossary.count(chr(10)) - 3} 条"

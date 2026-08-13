@@ -535,6 +535,12 @@ class CGptDict:
                 return dic.replace_word
         return ""
 
+    def _is_h_dict(self, dic: CBasicDicElement) -> bool:
+        """按字典文件名后缀判断是否 h 场景字典（含 _h 且非 _非h）。"""
+        name = dic.dic_name or ""
+        lower = name.lower()
+        return "_h" in lower and "_非h" not in lower
+
     def sort_dic(self):
         self._dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
@@ -648,18 +654,12 @@ class CGptDict:
         input_text_copy=input_text
         used_dic=[]
 
-        def _is_h_dict(dic: CBasicDicElement) -> bool:
-            """按字典文件名后缀判断是否 h 场景字典（含 _h 且非 _非h）。"""
-            name = dic.dic_name or ""
-            lower = name.lower()
-            return "_h" in lower and "_非h" not in lower
-
         # scene 过滤与排序：nh 只取非 h；h 让 h 字典先遍历（h 优先），再补非 h
         if scene == "nh":
-            dic_iter = [d for d in self._dic_list if not _is_h_dict(d)]
+            dic_iter = [d for d in self._dic_list if not self._is_h_dict(d)]
         elif scene == "h":
-            dic_iter = [d for d in self._dic_list if _is_h_dict(d)] + [
-                d for d in self._dic_list if not _is_h_dict(d)
+            dic_iter = [d for d in self._dic_list if self._is_h_dict(d)] + [
+                d for d in self._dic_list if not self._is_h_dict(d)
             ]
         else:
             dic_iter = self._dic_list
@@ -667,7 +667,7 @@ class CGptDict:
         h_hit: set[str] = set()  # scene=h 时已加入的 h 词条（用于重合词 h 优先）
         for dic in dic_iter:
             # h 场景：非 h 词条若与已加入的 h 词条重合，只取 h 的译文/注释
-            if scene == "h" and not _is_h_dict(dic) and dic.search_word in h_hit:
+            if scene == "h" and not self._is_h_dict(dic) and dic.search_word in h_hit:
                 continue
             if _should_add_dic(dic, input_text, input_text_copy, used_dic):
                 if type=="gpt":
@@ -677,7 +677,7 @@ class CGptDict:
                 elif type=="tsv":
                     promt += _format_dic_entry_tsv(dic)
                 input_text = input_text.replace(dic.search_word, "")
-                if scene == "h" and _is_h_dict(dic):
+                if scene == "h" and self._is_h_dict(dic):
                     h_hit.add(dic.search_word)
             used_dic.append(dic.search_word)
         if promt:
@@ -691,9 +691,22 @@ class CGptDict:
 
         return promt
 
-    def check_dic_use(self, find_from_str: str, tran: CSentense) -> list[str]:
+    def check_dic_use(
+        self, find_from_str: str, tran: CSentense, scene: str = "all"
+    ) -> str:
+        """检查译文是否使用了源词在 GPT 字典中的替换词，返回未使用词条的提示文本。
+
+        Args:
+            find_from_str: 待检查文本（通常是译文）。
+            tran: 当前句子（取 post_src 判定源词是否出现）。
+            scene: 场景过滤，all 检查全部 / h 只检查 h 字典 / nh 只检查非 h 字典。
+        """
         problem_list = []
         for dic in self._dic_list:
+            if scene == "h" and not self._is_h_dict(dic):
+                continue
+            if scene == "nh" and self._is_h_dict(dic):
+                continue
             if dic.search_word not in tran.post_src:
                 continue
 

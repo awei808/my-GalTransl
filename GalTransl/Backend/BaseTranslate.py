@@ -1320,6 +1320,7 @@ class BaseTranslate:
         gpt_dic: CGptDict = None,
         proofread: bool = False,
         retran_key: str = "",
+        h_scene: bool = False,
     ) -> CTransList:
         translist_unhit = list(trans_list)
 
@@ -1351,7 +1352,13 @@ class BaseTranslate:
                 else translist_unhit[i:]
             )
 
-            dic_prompt = gpt_dic.gen_prompt(trans_list_split) if gpt_dic else ""
+            dic_prompt = (
+                gpt_dic.gen_prompt(
+                    trans_list_split, scene="h" if h_scene else "nh"
+                )
+                if gpt_dic
+                else ""
+            )
 
             num, trans_result = await self.translate(
                 trans_list_split, dic_prompt, proofread=proofread
