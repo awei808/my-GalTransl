@@ -63,7 +63,7 @@ class HSceneProblemTests(_Base):
         enable: bool = True,
         write_batch: bool = True,
     ):
-        """初始化项目：覆盖 problemAnalyze 为 用词不当、hCheckDict 指向项目内词库、写 batch.json。"""
+        """初始化项目：覆盖 problemAnalyze 为 用词不当、forbiddenDictH 指向项目内词库、写 batch.json。"""
         _, init = self._init_project(name)
         pid = init["project_id"]
         pdir = init["project_dir"]
@@ -73,7 +73,7 @@ class HSceneProblemTests(_Base):
         cfg["problemAnalyze"] = {"problemList": ["用词不当"] if enable else []}
         cfg["dictionary"] = {
             "defaultDictFolder": "Dict",
-            "hCheckDict": ["(project_dir)hwords.txt"],
+            "forbiddenDictH": ["(project_dir)hwords.txt"],
         }
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True)
@@ -197,7 +197,7 @@ class HSceneProblemTests(_Base):
         cfg["problemAnalyze"] = {"problemList": ["用词不当"]}
         cfg["dictionary"] = {
             "defaultDictFolder": "Dict",
-            "hCheckDict": ["(project_dir)hwords.txt"],
+            "forbiddenDictH": ["(project_dir)hwords.txt"],
         }
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True)
@@ -219,7 +219,7 @@ class HSceneProblemTests(_Base):
             json.dump({"批次": [{"区间": [1, 3], "h": True}]}, f, ensure_ascii=False)
 
         deps = _load_rebuild_deps(pdir, "config.yaml")
-        proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_words = deps
+        proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_words, forbidden_words = deps
         self.assertEqual(h_words, ["攀上顶峰", "攀上了顶峰"])
 
         # 仅重检目标文件，避开 init 可能创建的其他 pass3 文件
@@ -294,6 +294,31 @@ class ForbiddenWordProblemTests(unittest.TestCase):
         find_problems(trans_list, self._FakeProblemConfig(), None)
         self.assertEqual(trans_list[0].problem, "")
 
+    def test_non_h_forbidden_words_loads_from_config(self) -> None:
+        # 全链路：项目配置 forbiddenDictNonH 加载非 h 禁用词 → find_problems 非 h 场景命中标记
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as pdir:
+            with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    {
+                        "problemAnalyze": {"problemList": ["用词不当"]},
+                        "dictionary": {
+                            "defaultDictFolder": "Dict",
+                            "forbiddenDictNonH": ["(project_dir)nhwords.txt"],
+                        },
+                    },
+                    f,
+                    allow_unicode=True,
+                )
+            with open(os.path.join(pdir, "nhwords.txt"), "w", encoding="utf-8") as f:
+                f.write("快乐沉沦\n")
+            from GalTransl.server import _load_rebuild_deps
+
+            deps = _load_rebuild_deps(pdir, "config.yaml")
+            _, _, _, _, _, _, forbidden_words = deps
+            self.assertEqual(forbidden_words, ["快乐沉沦"])
+
 
 class LegacyProblemNameTests(unittest.TestCase):
     """旧配置名「h场景用词不当」兼容：枚举别名解析为 用词不当。"""
@@ -359,14 +384,18 @@ class HCategoryTests(_Base):
     def test_common_dict_categorize_h_file(self) -> None:
         from GalTransl.server import _categorize_common_dict_file, _dict_category_config_key
 
-        self.assertEqual(_categorize_common_dict_file("02H场景用词检测.txt"), "h")
-        self.assertEqual(_categorize_common_dict_file("项目H场景用词检测.txt"), "h")
+        self.assertEqual(_categorize_common_dict_file("禁用词_h.txt"), "forbiddenh")
+        self.assertEqual(_categorize_common_dict_file("项目禁用词_h.txt"), "forbiddenh")
+        self.assertEqual(_categorize_common_dict_file("禁用词_非h.txt"), "forbiddennh")
+        self.assertEqual(_categorize_common_dict_file("项目禁用词_非h.txt"), "forbiddennh")
         # 不含 h 特征词仍归 pre，避免误伤普通字典
         self.assertEqual(_categorize_common_dict_file("01H字典_矫正_译前.txt"), "pre")
-        self.assertEqual(_dict_category_config_key("h"), "hCheckDict")
+        self.assertEqual(_dict_category_config_key("h"), "forbiddenDictH")
+        self.assertEqual(_dict_category_config_key("forbiddenh"), "forbiddenDictH")
+        self.assertEqual(_dict_category_config_key("forbiddennh"), "forbiddenDictNonH")
 
     def test_project_dictionary_response_has_h_files(self) -> None:
-        # 项目配置 hCheckDict → GET /dictionary 返回 h_dict_files 与内容
+        # 项目配置 forbiddenDictH → GET /dictionary 返回 h_dict_files 与内容
         _, init = self._req("POST", "/api/projects/init", body={"name": "h_cat2"})
         pdir = init["project_dir"]
         cfg_path = os.path.join(pdir, "config.yaml")
@@ -374,7 +403,7 @@ class HCategoryTests(_Base):
             cfg = yaml.safe_load(f)
         cfg["dictionary"] = {
             "defaultDictFolder": "Dict",
-            "hCheckDict": ["(project_dir)hwords.txt"],
+            "forbiddenDictH": ["(project_dir)hwords.txt"],
         }
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True)
@@ -383,7 +412,110 @@ class HCategoryTests(_Base):
         status, body = self._req("GET", f"/api/projects/{init['project_id']}/dictionary")
         self.assertEqual(status, 200)
         self.assertEqual(body["h_dict_files"], ["(project_dir)hwords.txt"])
+        self.assertEqual(body["forbidden_dict_files_h"], ["(project_dir)hwords.txt"])
         self.assertIn("(project_dir)hwords.txt", body["dict_contents"])
+
+    def test_auto_migrate_h_check_dict_to_forbidden(self) -> None:
+        # 旧配置 hCheckDict: [02H场景用词检测.txt] → 首次加载自动迁移为 forbiddenDictH + 新文件名
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as pdir:
+            cfg_path = os.path.join(pdir, "config.yaml")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    {
+                        "dictionary": {
+                            "defaultDictFolder": "Dict",
+                            "hCheckDict": [
+                                "02H场景用词检测.txt",
+                                "(project_dir)项目H场景用词检测.txt",
+                            ],
+                        }
+                    },
+                    f,
+                    allow_unicode=True,
+                )
+            from GalTransl.server import _load_rebuild_deps
+
+            _load_rebuild_deps(pdir, "config.yaml")
+            with open(cfg_path, encoding="utf-8") as f:
+                migrated = yaml.safe_load(f)
+            dict_cfg = migrated["dictionary"]
+            self.assertNotIn("hCheckDict", dict_cfg)
+            self.assertEqual(
+                dict_cfg["forbiddenDictH"],
+                ["禁用词_h.txt", "(project_dir)项目禁用词_h.txt"],
+            )
+            self.assertIn("forbiddenDictNonH", dict_cfg)
+
+    def test_auto_migrate_is_idempotent(self) -> None:
+        # 已迁移（forbiddenDictH 存在）后再次加载不重复改写
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as pdir:
+            cfg_path = os.path.join(pdir, "config.yaml")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    {
+                        "dictionary": {
+                            "forbiddenDictH": ["禁用词_h.txt"],
+                            "forbiddenDictNonH": ["禁用词_非h.txt"],
+                        }
+                    },
+                    f,
+                    allow_unicode=True,
+                )
+            from GalTransl.server import _load_rebuild_deps
+
+            _load_rebuild_deps(pdir, "config.yaml")
+            with open(cfg_path, encoding="utf-8") as f:
+                still = yaml.safe_load(f)
+            self.assertEqual(
+                still["dictionary"]["forbiddenDictH"], ["禁用词_h.txt"]
+            )
+
+    def test_migrate_symmetry_backfills_h_project_file(self) -> None:
+        # 用户场景：非 h 已有项目文件而 h 只有公共文件 → 自动对称补 h 项目文件引用并创建空文件
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as pdir:
+            cfg_path = os.path.join(pdir, "config.yaml")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    {
+                        "dictionary": {
+                            "forbiddenDictH": ["禁用词_h.txt"],
+                            "forbiddenDictNonH": [
+                                "禁用词_非h.txt",
+                                "(project_dir)项目禁用词_非h.txt",
+                            ],
+                        }
+                    },
+                    f,
+                    allow_unicode=True,
+                )
+            # 模拟非 h 项目文件已存在
+            with open(os.path.join(pdir, "项目禁用词_非h.txt"), "w", encoding="utf-8") as f:
+                f.write("快乐沉沦\n")
+            from GalTransl.server import _load_rebuild_deps
+
+            _load_rebuild_deps(pdir, "config.yaml")
+            with open(cfg_path, encoding="utf-8") as f:
+                migrated = yaml.safe_load(f)
+            self.assertEqual(
+                migrated["dictionary"]["forbiddenDictH"],
+                ["禁用词_h.txt", "(project_dir)项目禁用词_h.txt"],
+            )
+            # h 项目空文件被创建，h 与非 h 对称
+            self.assertTrue(os.path.isfile(os.path.join(pdir, "项目禁用词_h.txt")))
+            # 再次加载幂等，不重复追加
+            _load_rebuild_deps(pdir, "config.yaml")
+            with open(cfg_path, encoding="utf-8") as f:
+                again = yaml.safe_load(f)
+            self.assertEqual(
+                again["dictionary"]["forbiddenDictH"],
+                ["禁用词_h.txt", "(project_dir)项目禁用词_h.txt"],
+            )
 
 
 if __name__ == "__main__":

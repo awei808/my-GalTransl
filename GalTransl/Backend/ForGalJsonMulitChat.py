@@ -1743,7 +1743,8 @@ class ForGalJsonMulitChat(BaseTranslate):
             if cfg is None:
                 return self._h_check_words
             dict_cfg = cfg.getDictCfgSection() or {}
-            h_dict_list = dict_cfg.get("hCheckDict", [])
+            # h 禁用词：forbiddenDictH 优先，未配置时回退旧 hCheckDict
+            h_dict_list = dict_cfg.get("forbiddenDictH", dict_cfg.get("hCheckDict", []))
             default_dir = dict_cfg.get("defaultDictFolder", "")
             project_dir = cfg.getProjectDir()
             self._h_check_words = load_h_check_words(

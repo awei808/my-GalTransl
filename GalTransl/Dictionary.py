@@ -171,13 +171,15 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     # 与引擎 load_dic 一致：Tab / 四空格转 | 后再分割（兼容旧版 Tab 分隔字典文件）
     line = line.replace("    ", "\t").replace("\t", "|")
     parts = [_safe_escape(p) for p in line.split("|")]
-    if category == "gpt":
+    if category in ("gpt", "forbiddenh", "forbiddennh"):
+        # 禁用词字典与 gpt 字典同构：词|备注（禁用词不支持替换，仅词条+备注）
         src = parts[0] if len(parts) > 0 else ""
         dst = parts[1] if len(parts) > 1 else ""
         rest = "|".join(parts[2:]) if len(parts) > 2 else ""
         note = _split_note(rest)
+        row_type = "gpt" if category == "gpt" else "forbidden"
         return DictRow(
-            "gpt", [src, dst, rest], raw_line,
+            row_type, [src, dst, rest], raw_line,
             target=None, cond_items=[], spl_word="", note=note,
         )
     if len(parts) >= 4 and parts[0] in _CONDITIONAL_KEYS:

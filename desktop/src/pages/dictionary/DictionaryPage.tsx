@@ -49,7 +49,7 @@ const TABS: { key: string; label: string }[] = [
   { key: "pre", label: "预处理" },
   { key: "gpt", label: "GPT 字典" },
   { key: "post", label: "后处理" },
-  { key: "h", label: "H 词库" },
+  { key: "forbidden", label: "禁用词" },
   { key: "names", label: "人名替换" },
 ];
 
@@ -434,6 +434,12 @@ export function DictionaryPage() {
 
   const [createSource, setCreateSource] = createSignal<"project" | "common">("project");
 
+  /** 由「禁用词」合成 tab + 文件名后缀推导实际后端 category（_H → forbiddenh，否则 forbiddennh） */
+  function resolveCreateCategory(tab: string, filename: string): DictionaryCategory {
+    if (tab !== "forbidden") return tab as DictionaryCategory;
+    return /_h\.txt$/i.test(filename) ? "forbiddenh" : "forbiddennh";
+  }
+
   async function handleCreate() {
     await doAutoSave();
     const name = newFilename().trim();
@@ -443,7 +449,7 @@ export function DictionaryPage() {
       if (pid() && createSource() === "project") {
         const res = await createProjectDictionaryFile(pid()!, {
           config_file_name: getActiveConfigFileName(),
-          category: activeTab() as DictionaryCategory,
+          category: resolveCreateCategory(activeTab(), name),
           filename: name,
         });
         setNewFilename("");
@@ -452,7 +458,7 @@ export function DictionaryPage() {
         selectFile(res.file_key);
       } else {
         const res = await createCommonDictionaryFile({
-          category: activeTab() as DictionaryCategory,
+          category: resolveCreateCategory(activeTab(), name),
           filename: name,
         });
         setNewFilename("");

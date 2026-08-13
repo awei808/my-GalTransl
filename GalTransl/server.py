@@ -106,19 +106,104 @@ def _open_in_file_manager(path: str, is_file: bool) -> None:
         subprocess.run(["xdg-open", parent], check=False, timeout=15)
 
 
-def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, Any, Any, list, list]:
-    """加载问题重建所需的项目配置与字典；任一失败时返回 (None, None, None, None, [], [])。
+def _ensure_empty_project_dict_file(project_dir: str, filename: str) -> None:
+    """项目字典文件不存在时创建空文件（幂等）。"""
+    file_path = os.path.join(project_dir, filename)
+    if os.path.isfile(file_path):
+        return
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("")
+    except OSError as exc:
+        LOGGER.warning(f"[dict] 创建项目字典文件失败：{filename}：{exc}")
+
+
+def _migrate_h_check_dict_config(project_dir: str, config_name: str) -> None:
+    """把旧「hCheckDict」配置迁移到「禁用词字典」新键，并保证 h/非 h 项目文件对称（幂等）。
+
+    旧配置形如 `dictionary.hCheckDict: [02H场景用词检测.txt, ...]`，现统一为：
+    - `dictionary.forbiddenDictH`（H 场景禁用词），文件名 02H场景用词检测.txt → 禁用词_h.txt。
+    - `dictionary.forbiddenDictNonH`（非 H 场景禁用词），缺失时补默认公共文件。
+
+    自动迁移后仍保证「项目禁用词_h.txt / 项目禁用词_非h.txt」对称存在：
+    若非 h 已含项目文件而 h 缺失，则补齐 h 项目文件引用，避免前端禁用词 tab 只见非 h。
+    """
+    if not _is_safe_config_filename(config_name):
+        return
+    config_path = os.path.join(project_dir, config_name)
+    if not os.path.isfile(config_path):
+        return
+    try:
+        data = _read_yaml_file(config_path)
+        dict_cfg_raw = data.get("dictionary", {})
+        if not isinstance(dict_cfg_raw, dict):
+            return
+        changed = False
+        # 1) 旧 hCheckDict → forbiddenDictH（仅当尚未迁移）
+        if "forbiddenDictH" not in dict_cfg_raw and "hCheckDict" in dict_cfg_raw:
+            old_list = dict_cfg_raw.get("hCheckDict", [])
+            if not isinstance(old_list, list):
+                old_list = [old_list] if old_list else []
+            # 旧 H 词库文件名统一迁移到「禁用词_h.txt」风格（公共与项目字典都覆盖）
+            new_list = [
+                str(x)
+                .replace("02H场景用词检测.txt", "禁用词_h.txt")
+                .replace("项目H场景用词检测.txt", "项目禁用词_h.txt")
+                for x in old_list
+            ]
+            dict_cfg_raw["forbiddenDictH"] = new_list
+            del dict_cfg_raw["hCheckDict"]
+            changed = True
+            LOGGER.info(f"[dict] 已自动迁移 hCheckDict → forbiddenDictH：{project_dir}/{config_name}")
+        # 2) 非 h 键缺失 → 补默认（公共 + 项目文件），并创建空项目文件避免加载告警
+        if "forbiddenDictNonH" not in dict_cfg_raw:
+            dict_cfg_raw["forbiddenDictNonH"] = [
+                "禁用词_非h.txt",
+                f"{DICT_PROJECT_MARKER}项目禁用词_非h.txt",
+            ]
+            _ensure_empty_project_dict_file(project_dir, "项目禁用词_非h.txt")
+            changed = True
+        # 3) h 缺失项目文件而非 h 已有 → 对称补 h 项目文件（兼容已迁移但不对称的旧项目）
+        nh_list = dict_cfg_raw.get("forbiddenDictNonH", [])
+        if not isinstance(nh_list, list):
+            nh_list = [nh_list] if nh_list else []
+        h_list = dict_cfg_raw.get("forbiddenDictH", [])
+        if not isinstance(h_list, list):
+            h_list = [h_list] if h_list else []
+        if not any(str(x).startswith(DICT_PROJECT_MARKER) for x in h_list) and any(
+            str(x).startswith(DICT_PROJECT_MARKER) for x in nh_list
+        ):
+            h_list.append(f"{DICT_PROJECT_MARKER}项目禁用词_h.txt")
+            dict_cfg_raw["forbiddenDictH"] = h_list
+            changed = True
+            # 对称创建空项目 h 禁用词文件（与非 h 文件一致，避免加载时缺文件告警）
+            _ensure_empty_project_dict_file(project_dir, "项目禁用词_h.txt")
+            LOGGER.info(f"[dict] 已补齐项目 H 禁用词字典引用：{project_dir}/{config_name}")
+        if changed:
+            data["dictionary"] = dict_cfg_raw
+            _write_yaml_file(config_path, data)
+    except Exception as exc:
+        LOGGER.warning(f"[dict] hCheckDict 自动迁移失败：{exc}")
+
+
+def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, Any, Any, list, list, list]:
+    """加载问题重建所需的项目配置与字典；任一失败时返回 (None, None, None, None, [], [], [])。
+
+    Returns 7 元组：proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words。
+    - h_check_words：h 场景禁用词（forbiddenDictH，回退 hCheckDict）。
+    - forbidden_words：非 h 场景禁用词（forbiddenDictNonH）。
 
     Args:
         project_dir: 项目绝对路径。
         config_name: 请求中的配置文件名，不存在时回退 config.inc.yaml / config.yaml。
 
     Returns:
-        (proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words)
+        (proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words)
     """
     proj_config = pre_dic = post_dic = gpt_dic = None
     tPlugins = []
     h_check_words = []
+    forbidden_words = []
     try:
         from GalTransl.ConfigHelper import CProjectConfig, initDictList
         from GalTransl.Dictionary import CNormalDic, CGptDict
@@ -130,17 +215,22 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
                 if os.path.isfile(os.path.join(project_dir, _cand)):
                     config_name = _cand
                     break
+        _migrate_h_check_dict_config(project_dir, config_name)
         proj_config = CProjectConfig(project_dir, config_name)
         dict_cfg = proj_config.getDictCfgSection()
         pre_dic_list = dict_cfg.get("preDict", [])
         post_dic_list = dict_cfg.get("postDict", [])
         gpt_dic_list = dict_cfg.get("gpt.dict", [])
-        h_dict_list = dict_cfg.get("hCheckDict", [])
+        # 禁用词字典：h 部分优先 forbiddenDictH，未配置时回退旧 hCheckDict
+        h_dict_list = dict_cfg.get("forbiddenDictH", dict_cfg.get("hCheckDict", []))
+        # 禁用词字典：非 h 部分
+        nh_dict_list = dict_cfg.get("forbiddenDictNonH", [])
         default_dic_dir = dict_cfg.get("defaultDictFolder", "")
         pre_dic = CNormalDic(initDictList(pre_dic_list, default_dic_dir, project_dir))
         post_dic = CNormalDic(initDictList(post_dic_list, default_dic_dir, project_dir))
         gpt_dic = CGptDict(initDictList(gpt_dic_list, default_dic_dir, project_dir))
         h_check_words = load_h_check_words(initDictList(h_dict_list, default_dic_dir, project_dir))
+        forbidden_words = load_h_check_words(initDictList(nh_dict_list, default_dic_dir, project_dir))
         if dict_cfg.get("sortDict", True):
             pre_dic.sort_dic()
             post_dic.sort_dic()
@@ -153,7 +243,8 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
         proj_config = pre_dic = post_dic = gpt_dic = None
         tPlugins = []
         h_check_words = []
-    return proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words
+        forbidden_words = []
+    return proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words
 
 
 def _run_problem_detection(
@@ -1170,8 +1261,10 @@ def _dict_category_config_key(category: str) -> str:
         return "gpt.dict"
     if category == "post":
         return "postDict"
-    if category == "h":
-        return "hCheckDict"
+    if category in ("h", "forbiddenh"):
+        return "forbiddenDictH"
+    if category == "forbiddennh":
+        return "forbiddenDictNonH"
     raise ValueError(f"invalid dictionary category: {category}")
 
 
@@ -1221,15 +1314,18 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
     pre_all = [str(x) for x in dict_cfg.get("preDict", [])]
     gpt_all = [str(x) for x in dict_cfg.get("gpt.dict", [])]
     post_all = [str(x) for x in dict_cfg.get("postDict", [])]
-    h_all = [str(x) for x in dict_cfg.get("hCheckDict", [])]
+    # h 禁用词：forbiddenDictH 优先，未配置时回退旧 hCheckDict
+    h_all = [str(x) for x in dict_cfg.get("forbiddenDictH", dict_cfg.get("hCheckDict", []))]
+    fnh_all = [str(x) for x in dict_cfg.get("forbiddenDictNonH", [])]
 
     pre_files = [x for x in pre_all if x.startswith(DICT_PROJECT_MARKER)]
     gpt_files = [x for x in gpt_all if x.startswith(DICT_PROJECT_MARKER)]
     post_files = [x for x in post_all if x.startswith(DICT_PROJECT_MARKER)]
     h_files = [x for x in h_all if x.startswith(DICT_PROJECT_MARKER)]
+    fnh_files = [x for x in fnh_all if x.startswith(DICT_PROJECT_MARKER)]
 
     dict_contents: dict[str, dict[str, Any]] = {}
-    for file_key in pre_files + gpt_files + post_files + h_files:
+    for file_key in pre_files + gpt_files + post_files + h_files + fnh_files:
         clean = file_key.replace(DICT_PROJECT_MARKER, "").strip()
         if not _is_safe_dict_filename(clean):
             dict_contents[file_key] = {
@@ -1259,6 +1355,8 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
         "gpt_dict_files": gpt_files,
         "post_dict_files": post_files,
         "h_dict_files": h_files,
+        "forbidden_dict_files_h": h_files,
+        "forbidden_dict_files_nh": fnh_files,
         "dict_contents": dict_contents,
     }
 
@@ -1315,7 +1413,9 @@ def _read_common_dict_category_map(dict_dir: str) -> dict[str, str]:
             return {}
         result: dict[str, str] = {}
         for key, value in data.items():
-            if _is_safe_dict_filename(str(key)) and str(value) in {"pre", "gpt", "post", "h"}:
+            if _is_safe_dict_filename(str(key)) and str(value) in {
+                "pre", "gpt", "post", "h", "forbiddenh", "forbiddennh",
+            }:
                 result[str(key)] = str(value)
         return result
     except Exception:
@@ -1338,6 +1438,11 @@ def _categorize_common_dict_file(filename: str) -> str:
         return "post"
     if "hcheck" in lower or "h场景" in lower or "场景用词" in filename:
         return "h"
+    # 禁用词字典：文件名含禁用词/forbidden；按 _H / _非h 后缀区分 h 与非 h
+    if "禁用词" in filename or "forbidden" in lower:
+        if "_h" in lower or "非h" not in filename:
+            return "forbiddenh"
+        return "forbiddennh"
     return "pre"
 
 
@@ -1356,6 +1461,8 @@ def _collect_common_dict_payload() -> dict[str, Any]:
     gpt_files: list[str] = []
     post_files: list[str] = []
     h_files: list[str] = []
+    fh_files: list[str] = []
+    fnh_files: list[str] = []
     dict_contents: dict[str, dict[str, Any]] = {}
 
     for name in files:
@@ -1366,6 +1473,10 @@ def _collect_common_dict_payload() -> dict[str, Any]:
             post_files.append(name)
         elif category == "h":
             h_files.append(name)
+        elif category == "forbiddenh":
+            fh_files.append(name)
+        elif category == "forbiddennh":
+            fnh_files.append(name)
         else:
             pre_files.append(name)
         dict_contents[name] = _read_dict_file_payload(os.path.join(dict_dir, name))
@@ -1376,6 +1487,8 @@ def _collect_common_dict_payload() -> dict[str, Any]:
         "gpt_dict_files": gpt_files,
         "post_dict_files": post_files,
         "h_dict_files": h_files,
+        "forbidden_dict_files_h": fh_files,
+        "forbidden_dict_files_nh": fnh_files,
         "dict_contents": dict_contents,
     }
 
@@ -2611,7 +2724,7 @@ def build_handler(registry: JobRegistry) -> type:
                     if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
                         self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
                         return
-                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
+                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words = _load_rebuild_deps(
                         project_dir, config_name
                     )
                     if proj_config is None:
@@ -2623,7 +2736,7 @@ def build_handler(registry: JobRegistry) -> type:
                         for r in _resolve_cache_h_ranges(project_dir, norm).get("h_ranges", [])
                     ]
                     results, ok = _run_problem_detection(
-                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, None
+                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, forbidden_words
                     )
                     if persist and ok:
                         # 写回缓存文件（单文件范围）：合并 problem / post_dst_preview / skip_check
@@ -2669,7 +2782,7 @@ def build_handler(registry: JobRegistry) -> type:
                             status=HTTPStatus.CONFLICT,
                         )
                         return
-                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
+                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words = _load_rebuild_deps(
                         project_dir, config_name
                     )
                     if proj_config is None:
@@ -2679,7 +2792,7 @@ def build_handler(registry: JobRegistry) -> type:
                     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
                     LOGGER.info(f"[cache] 全缓存重检开始：{project_dir}")
                     rechecked = recheck_pass3_cache_files(
-                        cache_dir, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, None
+                        cache_dir, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words
                     )
                     LOGGER.info(f"[cache] 全缓存重检完成：{rechecked} 个文件已写回")
                     self._send_json({"success": True, "rechecked": rechecked})
@@ -2771,7 +2884,7 @@ def build_handler(registry: JobRegistry) -> type:
 
                     # Rebuild: re-derive problem and post_dst_preview fields
                     try:
-                        proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
+                        proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words = _load_rebuild_deps(
                             project_dir, config_name
                         )
                         # If config could not be loaded, do NOT run the rebuild:
@@ -2786,7 +2899,7 @@ def build_handler(registry: JobRegistry) -> type:
                             for r in _resolve_cache_h_ranges(project_dir, norm).get("h_ranges", [])
                         ]
                         results, detection_ok = _run_problem_detection(
-                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, None
+                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, forbidden_words
                         )
                         # Update entries with problem and post_dst_preview.
                         # detection_ok=False 时保留已有 problem，避免把检测结果误删。
@@ -3469,20 +3582,25 @@ def build_handler(registry: JobRegistry) -> type:
                         dict_base = default_folder
                     else:
                         dict_base = os.path.abspath(default_folder)
+                    fh_all = dict_cfg.get("forbiddenDictH", dict_cfg.get("hCheckDict", []))
+                    fnh_all = dict_cfg.get("forbiddenDictNonH", [])
                     result = {
                         "project_dir": project_dir,
                         "default_dict_folder": default_folder,
                         "pre_dict_files": dict_cfg.get("preDict", []),
                         "gpt_dict_files": dict_cfg.get("gpt.dict", []),
                         "post_dict_files": dict_cfg.get("postDict", []),
-                        "h_dict_files": dict_cfg.get("hCheckDict", []),
+                        "h_dict_files": fh_all,
+                        "forbidden_dict_files_h": fh_all,
+                        "forbidden_dict_files_nh": fnh_all,
                         "dict_contents": {},
                     }
                     for _, file_list in [
                         ("preDict", dict_cfg.get("preDict", [])),
                         ("gpt.dict", dict_cfg.get("gpt.dict", [])),
                         ("postDict", dict_cfg.get("postDict", [])),
-                        ("hCheckDict", dict_cfg.get("hCheckDict", [])),
+                        ("forbiddenDictH", fh_all),
+                        ("forbiddenDictNonH", fnh_all),
                     ]:
                         for fname in file_list:
                             clean = str(fname).replace(DICT_PROJECT_MARKER, "").strip()
@@ -3600,7 +3718,8 @@ def build_handler(registry: JobRegistry) -> type:
                     listed = set(str(x) for x in dict_cfg.get("preDict", []))
                     listed.update(str(x) for x in dict_cfg.get("gpt.dict", []))
                     listed.update(str(x) for x in dict_cfg.get("postDict", []))
-                    listed.update(str(x) for x in dict_cfg.get("hCheckDict", []))
+                    listed.update(str(x) for x in dict_cfg.get("forbiddenDictH", dict_cfg.get("hCheckDict", [])))
+                    listed.update(str(x) for x in dict_cfg.get("forbiddenDictNonH", []))
                     if file_key not in listed:
                         self._send_json({"error": "dictionary file is not configured in project dictionary lists"}, status=HTTPStatus.BAD_REQUEST)
                         return
@@ -3646,7 +3765,7 @@ def build_handler(registry: JobRegistry) -> type:
 
                     data = _read_yaml_file(config_path)
                     dict_cfg = data.get("dictionary", {})
-                    for list_key in ("preDict", "gpt.dict", "postDict", "hCheckDict"):
+                    for list_key in ("preDict", "gpt.dict", "postDict", "forbiddenDictH", "forbiddenDictNonH", "hCheckDict"):
                         current = [str(x) for x in dict_cfg.get(list_key, [])]
                         dict_cfg[list_key] = [x for x in current if x != file_key]
                     data["dictionary"] = dict_cfg
@@ -4838,7 +4957,7 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 return
             category = str(payload.get("category", "pre")).strip()
-            if category not in ("pre", "gpt", "post", "h"):
+            if category not in ("pre", "gpt", "post", "h", "forbiddenh", "forbiddennh"):
                 self._send_json({"error": f"invalid category: {category}"}, status=HTTPStatus.BAD_REQUEST)
                 return
             content = payload.get("content", "")

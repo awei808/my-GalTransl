@@ -59,7 +59,7 @@ def load_h_check_words(dict_paths: list) -> list:
     seen: set[str] = set()
     for dict_path in dict_paths:
         if not os.path.isfile(dict_path):
-            LOGGER.warning(f"H 场景用词检测词库不存在：{dict_path}")
+            LOGGER.warning(f"禁用词字典文件不存在：{dict_path}")
             continue
         count = 0
         with open(dict_path, encoding="utf-8") as f:

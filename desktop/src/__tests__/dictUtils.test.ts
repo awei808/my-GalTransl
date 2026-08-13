@@ -15,6 +15,9 @@ import {
   rowToText,
   rowsToText,
   normalizeDictRow,
+  getFilesByTab,
+  getFieldLabels,
+  getTypeLabel,
 } from "../components/dict/dictUtils";
 import type { DictRow, ConditionItem } from "../components/dict/dictUtils";
 
@@ -233,5 +236,61 @@ describe("rowsToText（统一保存路径序列化）", () => {
       { type: "gpt", values: ["src", "dst", "note"], raw: "src|dst|note" },
     ];
     expect(rowsToText(rows)).toBe("diag|台詞|独白\nsrc|dst|note");
+  });
+});
+
+describe("getFilesByTab（禁用词合成 tab）", () => {
+  it("forbidden tab 合并 h 与非 h 禁用词文件", () => {
+    const data = {
+      dict_contents: {},
+      pre_dict_files: [],
+      gpt_dict_files: [],
+      post_dict_files: [],
+      h_dict_files: [],
+      forbidden_dict_files_h: ["禁用词_h.txt"],
+      forbidden_dict_files_nh: ["禁用词_非h.txt", "项目禁用词_非h.txt"],
+    } as never;
+    const files = getFilesByTab(data, "forbidden" as never);
+    // 合成 tab 合并 h 与非 h 文件（内部仍按 mtime/名称排序）
+    expect(files).toHaveLength(3);
+    for (const f of ["禁用词_h.txt", "禁用词_非h.txt", "项目禁用词_非h.txt"]) {
+      expect(files).toContain(f);
+    }
+  });
+
+  it("非 forbidden tab 仍返回各自列表", () => {
+    const data = {
+      dict_contents: {},
+      pre_dict_files: ["a.txt"],
+      gpt_dict_files: ["b.txt"],
+      post_dict_files: ["c.txt"],
+      h_dict_files: ["h.txt"],
+      forbidden_dict_files_h: ["禁用词_h.txt"],
+      forbidden_dict_files_nh: [],
+    } as never;
+    expect(getFilesByTab(data, "h" as never)).toEqual(["h.txt"]);
+    expect(getFilesByTab(data, "gpt" as never)).toEqual(["b.txt"]);
+  });
+});
+
+describe("getFieldLabels（禁用词列标签）", () => {
+  it("forbidden tab 的 normal 行为「词|备注」", () => {
+    expect(getFieldLabels("normal", "forbidden" as never)).toEqual(["词", "备注"]);
+    expect(getFieldLabels("normal", "h" as never)).toEqual(["词", "备注"]);
+    expect(getFieldLabels("normal", "gpt" as never)).toEqual(["搜索", "替换", "备注"]);
+  });
+
+  it("forbidden 类型行返回「词|备注」", () => {
+    expect(getFieldLabels("forbidden" as never, "forbidden" as never)).toEqual(["词", "备注"]);
+    expect(getTypeLabel("forbidden" as never, "forbidden" as never)).toBe("禁用词");
+  });
+});
+
+describe("rowsToText（禁用词类型行序列化）", () => {
+  it("forbidden 行按 values.join 保留词|备注，不被当作 conditional 重建", () => {
+    const rows: DictRow[] = [
+      { type: "forbidden", values: ["快乐沉沦", "非 H 场景禁用词示例"], raw: "快乐沉沦|非 H 场景禁用词示例" },
+    ];
+    expect(rowsToText(rows)).toBe("快乐沉沦|非 H 场景禁用词示例");
   });
 });

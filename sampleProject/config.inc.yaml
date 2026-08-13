@@ -133,10 +133,14 @@ dictionary:
     - GPT字典.txt
     - (project_dir)项目GPT字典.txt
     - (project_dir)项目GPT字典-生成.txt
-  # H 场景用词不当检测词库（仅对 H 剧情区间译文检测）
-  hCheckDict:
-    - 02H场景用词检测.txt
-    - (project_dir)项目H场景用词检测.txt
+  # 禁用词字典（h 场景部分）：仅对 h 剧情区间译文检测「用词不当」
+  forbiddenDictH:
+    - 禁用词_h.txt
+    - (project_dir)项目禁用词_h.txt
+  # 禁用词字典（非 H 场景部分）：对非 H 剧情区间译文检测「用词不当」
+  forbiddenDictNonH:
+    - 禁用词_非h.txt
+    - (project_dir)项目禁用词_非h.txt
   # 译后字典
   postDict:
     - 00通用字典_符号_译后.txt # 符号矫正

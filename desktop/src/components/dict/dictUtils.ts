@@ -4,7 +4,7 @@
 import type { DictFileContent, DictionaryCategory } from "../../lib/api";
 import { apiRequest } from "../../lib/api/client";
 
-export type DictRowType = "normal" | "conditional" | "situation" | "gpt" | "comment" | "blank";
+export type DictRowType = "normal" | "conditional" | "situation" | "gpt" | "forbidden" | "comment" | "blank";
 
 export type ConditionItem = {
   word: string;
@@ -76,18 +76,20 @@ export function getFilesByTab(
     gpt_dict_files: string[];
     post_dict_files: string[];
     h_dict_files?: string[];
+    forbidden_dict_files_h?: string[];
+    forbidden_dict_files_nh?: string[];
   } | null,
   tab: DictTab,
 ): string[] {
   if (!data) return [];
-  const files =
-    tab === "pre"
-      ? data.pre_dict_files
-      : tab === "gpt"
-        ? data.gpt_dict_files
-        : tab === "post"
-          ? data.post_dict_files
-          : data.h_dict_files ?? [];
+  let files: string[];
+  if (tab === "pre") files = data.pre_dict_files;
+  else if (tab === "gpt") files = data.gpt_dict_files;
+  else if (tab === "post") files = data.post_dict_files;
+  else if (tab === "forbidden")
+    // 合成「禁用词」tab：h 与非 h 字典文件统一展示，通过文件名区分
+    files = [...(data.forbidden_dict_files_h ?? []), ...(data.forbidden_dict_files_nh ?? [])];
+  else files = data.h_dict_files ?? [];
   return [...files].sort((a, b) => {
     const aMtime = data.dict_contents[a]?.mtime ?? -1;
     const bMtime = data.dict_contents[b]?.mtime ?? -1;
@@ -105,10 +107,12 @@ export async function parseDictContent(
   content: string,
   category: DictTab,
 ): Promise<DictRow[]> {
+  // 合成「禁用词」tab 无后端对应 category；h/非h 解析逻辑一致，统一映射 forbiddenh
+  const wireCategory = category === "forbidden" ? "forbiddenh" : category;
   const data = await apiRequest<{ rows: Record<string, unknown>[] }>("/api/dictionaries/parse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, category }),
+    body: JSON.stringify({ content, category: wireCategory }),
   });
   return (data.rows ?? []).map(normalizeDictRow);
 }
@@ -129,6 +133,7 @@ export function getTypeLabel(type: DictRowType, _tab: DictTab): string {
   if (type === "normal") return "普通";
   if (type === "conditional") return "条件";
   if (type === "situation") return "场景";
+  if (type === "forbidden") return "禁用词";
   return type;
 }
 
@@ -152,7 +157,12 @@ export function serializeCondItem(item: ConditionItem): string {
 export function rowToText(row: DictRow): string {
   if (row.type === "blank") return "";
   if (row.type === "comment") return row.values[0] ?? row.raw;
-  if (row.type === "gpt" || row.type === "normal" || row.type === "situation") {
+  if (
+    row.type === "gpt" ||
+    row.type === "forbidden" ||
+    row.type === "normal" ||
+    row.type === "situation"
+  ) {
     return row.values.join("|");
   }
   // conditional: 用结构化字段重建
@@ -176,8 +186,10 @@ export function rowToText(row: DictRow): string {
 
 export function getFieldLabels(type: DictRowType, tab: DictTab): string[] {
   if (type === "gpt") return ["原文", "译文", "解释(可空)"];
+  if (type === "forbidden") return ["词", "备注"];
   if (type === "normal") {
-    if (tab === "h") return ["词", "备注"];
+    // h 词库与禁用词字典均为「词|备注」格式
+    if (tab === "h" || tab === "forbidden") return ["词", "备注"];
     return ["搜索", "替换", "备注"];
   }
   if (type === "conditional") return ["目标", "条件", "搜索", "替换", "备注"];

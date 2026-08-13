@@ -102,11 +102,11 @@ class BatchMetadataHGuideTests(unittest.TestCase):
 
 
 class ResolveHCheckWordsTests(unittest.TestCase):
-    """_resolve_h_check_words 从项目配置 hCheckDict 惰性加载。"""
+    """_resolve_h_check_words 从项目配置 forbiddenDictH 惰性加载。"""
 
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
-        # 构造一个最小 CProjectConfig 打桩：getDictCfgSection 返回含 hCheckDict 的 dict
+        # 构造一个最小 CProjectConfig 打桩：getDictCfgSection 返回含 forbiddenDictH 的 dict
         self.pdir = os.path.join(self.tmp, "proj")
         os.makedirs(self.pdir, exist_ok=True)
         with open(os.path.join(self.pdir, "config.yaml"), "w", encoding="utf-8") as f:
@@ -114,7 +114,7 @@ class ResolveHCheckWordsTests(unittest.TestCase):
                 {
                     "dictionary": {
                         "defaultDictFolder": "Dict",
-                        "hCheckDict": ["(project_dir)hwords.txt"],
+                        "forbiddenDictH": ["(project_dir)hwords.txt"],
                     }
                 },
                 f,
@@ -142,7 +142,7 @@ class ResolveHCheckWordsTests(unittest.TestCase):
                 {
                     "dictionary": {
                         "defaultDictFolder": "Dict",
-                        "hCheckDict": ["(project_dir)missing.txt"],
+                        "forbiddenDictH": ["(project_dir)missing.txt"],
                     }
                 },
                 f,
