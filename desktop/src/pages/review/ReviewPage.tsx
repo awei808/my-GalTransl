@@ -636,7 +636,7 @@ const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
   { key: "post_dst_preview", label: "后处理译文预览" },
 ];
 
-/* ── 视图筛选多选下拉：只看问题句 / 只看备选 / 只看H剧情（可组合 AND）── */
+/* ── 视图筛选多选下拉：只看问题句 / 只看备选 / 只看H场景（可组合 AND）── */
 function ViewFilterDropdown(props: {
   problems: () => boolean;
   alts: () => boolean;
@@ -662,7 +662,7 @@ function ViewFilterDropdown(props: {
     const parts: string[] = [];
     if (props.problems()) parts.push("问题句");
     if (props.alts()) parts.push("备选");
-    if (props.hOnly()) parts.push("H剧情");
+    if (props.hOnly()) parts.push("H场景");
     return parts.length === 0 ? "全部" : parts.join("+");
   };
 
@@ -704,7 +704,7 @@ function ViewFilterDropdown(props: {
               checked={props.hOnly()}
               onChange={(e) => props.onHOnly(e.currentTarget.checked)}
             />
-            <span>只看H剧情</span>
+            <span>只看H场景</span>
           </label>
         </div>
       </Show>
@@ -787,7 +787,7 @@ export function ReviewPage() {
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
 
   // 根据快捷筛选过滤条目（文件内查找已改为 Ctrl+F 全局查找浮层，不再在此过滤）
-  // 多选视图筛选为 AND 组合：只看问题句 / 只看备选 / 只看H剧情 可同时勾选
+  // 多选视图筛选为 AND 组合：只看问题句 / 只看备选 / 只看H场景 可同时勾选
   const filteredEntries = createMemo(() => {
     let list = entries();
     if (filterProblemsOnly()) list = list.filter((e) => !!e.problem);
@@ -1078,7 +1078,7 @@ export function ReviewPage() {
     const maxPage = pageSize() > 0 ? Math.max(0, Math.ceil(total / pageSize()) - 1) : 0;
     if (page() > maxPage) setPage(maxPage);
   });
-  // 过滤条件（问题/说话人/备选/H剧情）变化时回到第 1 页
+  // 过滤条件（问题/说话人/备选/H场景）变化时回到第 1 页
   createEffect(() => {
     filterProblemsOnly();
     filterAltOnly();
@@ -1861,7 +1861,7 @@ export function ReviewPage() {
         </Show>
 
 
-        {/* 快捷筛选：视图多选（问题句/备选/H剧情）+ 类型 / 说话人 */}
+        {/* 快捷筛选：视图多选（问题句/备选/H场景）+ 类型 / 说话人 */}
         <div class="review-filter-bar">
           <ViewFilterDropdown
             problems={filterProblemsOnly}

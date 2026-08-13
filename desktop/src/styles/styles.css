@@ -411,7 +411,7 @@ textarea {
   background: var(--color-bg-input);
   color: var(--color-text-primary);
 }
-/* 视图筛选多选下拉（问题句/备选/H剧情） */
+/* 视图筛选多选下拉（问题句/备选/H场景） */
 .review-filter-dropdown {
   position: relative;
   display: inline-block;
