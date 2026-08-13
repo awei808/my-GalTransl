@@ -5,7 +5,9 @@
 """
 import unittest, tempfile, os
 
+from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict, CNormalDic, CBasicDicElement
+from GalTransl.Backend.ForGalJsonMulitChat import BatchMetadata, ForGalJsonMulitChat
 
 
 # ── 工具函数 ──────────────────────────────────────────────
@@ -357,6 +359,116 @@ class IntegrationTests(unittest.TestCase):
     # check_dic_use 需要正确的 CSentense 构造方式（涉及 __slots__），
     # 当前 CSentense({"post_src": "..."}) 构造后 post_src 返回的是 dict 而非字符串。
     # 这是 check_dic_use 与 CSentense 的已有接口不匹配问题，非 Pipe 分隔符引入。
+
+
+# ══════════════════════════════════════════════════════════
+# gen_prompt scene 参数 — h/非h 场景分流
+# ══════════════════════════════════════════════════════════
+class CGptDictSceneTests(unittest.TestCase):
+    """CGptDict.gen_prompt 的 scene 参数：nh / h / all 三种模式"""
+
+    def _make_gd(self) -> CGptDict:
+        gd = CGptDict([])
+        gd._dic_list = [
+            CBasicDicElement("責め", "责难", dic_name="GPT字典_非h"),
+            CBasicDicElement("まんこ", "小穴", dic_name="GPT字典_非h"),
+            CBasicDicElement("責め", "折磨/拷问/惩罚/调教", dic_name="GPT字典_h"),
+            CBasicDicElement("キンタマ", "蛋蛋", dic_name="GPT字典_h"),
+        ]
+        return gd
+
+    def _make_trans_list(self) -> list:
+        return [
+            CSentense(pre_src="責め"),
+            CSentense(pre_src="まんこ"),
+            CSentense(pre_src="キンタマ"),
+        ]
+
+    def test_scene_nh_only_non_h(self) -> None:
+        """scene='nh' 只注入非 h 字典词条"""
+        out = self._make_gd().gen_prompt(self._make_trans_list(), scene="nh")
+        self.assertIn("責め | 责难 |", out)
+        self.assertIn("まんこ | 小穴 |", out)
+        self.assertNotIn("折磨/拷问/惩罚/调教", out)
+        self.assertNotIn("蛋蛋", out)
+
+    def test_scene_h_h_overrides_overlap(self) -> None:
+        """scene='h'：h 字典优先，重合词条只取 h 译文，非 h 不重合词条补全"""
+        out = self._make_gd().gen_prompt(self._make_trans_list(), scene="h")
+        self.assertIn("責め | 折磨/拷问/惩罚/调教 |", out)
+        self.assertIn("キンタマ | 蛋蛋 |", out)
+        self.assertNotIn("責め | 责难 |", out)
+        self.assertIn("まんこ | 小穴 |", out)
+
+    def test_scene_all_default_keeps_all(self) -> None:
+        """scene='all'（默认）全量注入，不按场景过滤，行为与未传 scene 一致"""
+        gd = self._make_gd()
+        out_all = gd.gen_prompt(self._make_trans_list())
+        out_explicit = gd.gen_prompt(self._make_trans_list(), scene="all")
+        self.assertEqual(out_all, out_explicit)
+        self.assertIn("責め | 责难 |", out_all)
+        self.assertIn("責め | 折磨/拷问/惩罚/调教 |", out_all)
+
+
+# ══════════════════════════════════════════════════════════
+# _group_is_h_scene — 批次 h 场景判定
+# ══════════════════════════════════════════════════════════
+class GroupIsHSceneTests(unittest.TestCase):
+    """ForGalJsonMulitChat._group_is_h_scene 按批次元数据 h 标记判定场景"""
+
+    @staticmethod
+    def _make_inst(bm):
+        inst = ForGalJsonMulitChat.__new__(ForGalJsonMulitChat)
+        inst._resolve_batch_metadata = lambda filename: bm
+        return inst
+
+    @staticmethod
+    def _make_group(indexes) -> list:
+        group = []
+        for i in indexes:
+            t = CSentense(pre_src="x")
+            t.runtime_index = i
+            group.append(t)
+        return group
+
+    def test_no_metadata_returns_false(self) -> None:
+        inst = self._make_inst(None)
+        self.assertFalse(inst._group_is_h_scene(self._make_group([1]), "f.json"))
+
+    def test_empty_batches_returns_false(self) -> None:
+        inst = self._make_inst(BatchMetadata(id="f", batches=[]))
+        self.assertFalse(inst._group_is_h_scene(self._make_group([1]), "f.json"))
+
+    def test_empty_group_returns_false(self) -> None:
+        inst = self._make_inst(
+            BatchMetadata(id="f", batches=[{"区间": [1, 10], "h": True}])
+        )
+        self.assertFalse(inst._group_is_h_scene([], "f.json"))
+
+    def test_range_without_h_returns_false(self) -> None:
+        inst = self._make_inst(
+            BatchMetadata(id="f", batches=[{"区间": [1, 10], "h": False}])
+        )
+        self.assertFalse(inst._group_is_h_scene(self._make_group([5]), "f.json"))
+
+    def test_range_with_h_returns_true(self) -> None:
+        inst = self._make_inst(
+            BatchMetadata(id="f", batches=[{"区间": [1, 10], "h": True}])
+        )
+        self.assertTrue(inst._group_is_h_scene(self._make_group([5]), "f.json"))
+
+    def test_partial_h_segment_returns_true(self) -> None:
+        inst = self._make_inst(
+            BatchMetadata(
+                id="f",
+                batches=[
+                    {"区间": [1, 10], "h": False},
+                    {"区间": [11, 20], "h": True},
+                ],
+            )
+        )
+        self.assertTrue(inst._group_is_h_scene(self._make_group([15]), "f.json"))
+        self.assertFalse(inst._group_is_h_scene(self._make_group([3]), "f.json"))
 
 
 if __name__ == "__main__":

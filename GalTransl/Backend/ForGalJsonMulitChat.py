@@ -1713,6 +1713,20 @@ class ForGalJsonMulitChat(BaseTranslate):
             "每批次仅提供本批涉及的区间指导，请结合上下文保持区间内风格统一、区间之间自然过渡。\n"
         )
 
+    def _group_is_h_scene(self, group: CTransList, filename: str) -> bool:
+        """判断本批待译句子组是否处于 h 场景（供字典按场景分流注入）。
+
+        与 _format_batch_metadata_block 的 H 判定口径同源：按全局行号区间与
+        batch.json 批次相交后取任一批次 h 标记。无元数据/空组时回退非 h。
+        """
+        bm = self._resolve_batch_metadata(filename)
+        if bm is None or not getattr(bm, "batches", None):
+            return False
+        lo, hi = self._trans_global_range(group)
+        if hi < lo:
+            return False
+        return any(bool(b.get("h")) for b in bm.segments_in_range(lo, hi))
+
     def _format_h_forbidden_words(self) -> str:
         """把项目 hCheckDict 词库格式化为 H 区间禁用词提示段。
 
@@ -2096,6 +2110,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 h_words_list=H_WORDS_LIST,
                 ensure_last_translations=True,
                 force_static=True,  # 有元数据：禁用动态模式，段内不沿 numPerRequestTranslate 切
+                h_scene=self._group_is_h_scene(group, filename),
             )
             merged.extend(res)
         return merged
