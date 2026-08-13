@@ -139,6 +139,7 @@ problemAnalyze:
     #- 长句丢失换行 # 译文平均分句长度超过 avgSentenceLengthThreshold，疑似丢失应有换行
     #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）之后
   avgSentenceLengthThreshold: 17 # 长句丢失换行的分句长度阈值，默认17，建议范围15~25
+  avgSentenceLengthThresholdH: 24 # 长句丢失换行的H场景专用分句长度阈值，默认24，建议范围20~30
 
 # 字典设置
 dictionary:

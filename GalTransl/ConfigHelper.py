@@ -115,7 +115,8 @@ class CProblemType(Enum):
     换行位置异常 = 14
     定语过长 = 15
     状语过长 = 16
-    h场景用词不当 = 17
+    用词不当 = 17
+    h场景用词不当 = 17  # 旧配置兼容别名：老项目 problemList 仍写 h场景用词不当
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
@@ -287,6 +288,17 @@ class CProjectConfig:
             )
         except (ValueError, TypeError, AttributeError):
             return 17
+
+    def getHSentenceLengthThreshold(self) -> int:
+        """长句丢失换行的 H 场景专用平均分句长度阈值，默认24，建议20~30。"""
+        try:
+            return int(
+                self.projectConfig["problemAnalyze"].get(
+                    "avgSentenceLengthThresholdH", 24
+                )
+            )
+        except (ValueError, TypeError, AttributeError):
+            return 24
 
     def getAttributiveMaxLength(self) -> int:
         """定语过长检测的定语最大长度，默认10，超过即报「定语过长」。"""

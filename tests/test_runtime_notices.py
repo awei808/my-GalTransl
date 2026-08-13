@@ -173,11 +173,17 @@ class FullPipelineNoticesTests(_Base):
         bm_mock = mock.MagicMock()
         bm_mock.return_value.batch_translate = mock.AsyncMock()
         bm_mock.return_value.shutdown = mock.AsyncMock()
+        # 阶段 4.5 剧情路线图：测试环境无 token 池，须 mock 后端类避免真实初始化崩溃
+        pr_mock = mock.MagicMock()
+        pr_mock.return_value.batch_translate = mock.AsyncMock(return_value=True)
+        pr_mock.return_value.shutdown = mock.AsyncMock()
 
         with mock.patch("GalTransl.Backend.ForFileMetaData.ForFileMetaData", fm_mock), mock.patch(
             "GalTransl.Backend.ForBatchMetaData.ForBatchMetaData", bm_mock
         ), mock.patch(
             "GalTransl.Frontend.LLMTranslate._run_translation_phase", mock.AsyncMock()
+        ), mock.patch(
+            "GalTransl.Backend.ForPlotRouteMap.ForPlotRouteMap", pr_mock
         ):
             asyncio.run(_run_full_pipeline(cfg, file_json_lists, ["test.txt.json"]))
 

@@ -1,4 +1,4 @@
-"""H 剧情区间「h场景用词不当」检测：仅对 H 区间内译文命中禁词才标记。"""
+"""「用词不当」检测：h 场景内按 H 词库命中标记；非 h 场景按禁用词库命中标记（本次未搭建）。"""
 import importlib
 import json
 import os
@@ -63,14 +63,14 @@ class HSceneProblemTests(_Base):
         enable: bool = True,
         write_batch: bool = True,
     ):
-        """初始化项目：覆盖 problemAnalyze 为 h场景用词不当、hCheckDict 指向项目内词库、写 batch.json。"""
+        """初始化项目：覆盖 problemAnalyze 为 用词不当、hCheckDict 指向项目内词库、写 batch.json。"""
         _, init = self._init_project(name)
         pid = init["project_id"]
         pdir = init["project_dir"]
         cfg_path = os.path.join(pdir, "config.yaml")
         with open(cfg_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
-        cfg["problemAnalyze"] = {"problemList": ["h场景用词不当"] if enable else []}
+        cfg["problemAnalyze"] = {"problemList": ["用词不当"] if enable else []}
         cfg["dictionary"] = {
             "defaultDictFolder": "Dict",
             "hCheckDict": ["(project_dir)hwords.txt"],
@@ -105,14 +105,14 @@ class HSceneProblemTests(_Base):
         return {r["index"]: r["problem"] for r in body["results"]}
 
     def test_hit_inside_h_range(self) -> None:
-        # H 区间内译文含禁词 → 标记 h场景用词不当
+        # H 区间内译文含 H 词库词 → 标记 用词不当
         pid = self._setup_h_project("h_hit", ["攀上顶峰", "攀上了顶峰"], [(1, 3)])
         problems = self._check(pid, [
             {"index": 1, "name": "", "pre_src": "x", "post_src": "x", "pre_dst": "我们攀上了顶峰。"},
             {"index": 2, "name": "", "pre_src": "x", "post_src": "x", "pre_dst": "普通台词。"},
         ])
-        self.assertIn("h场景用词不当", problems[1])
-        self.assertNotIn("h场景用词不当", problems[2])
+        self.assertIn("用词不当", problems[1])
+        self.assertNotIn("用词不当", problems[2])
 
     def test_no_hit_outside_h_range(self) -> None:
         # 禁词出现在区间外 → 不标记
@@ -129,7 +129,7 @@ class HSceneProblemTests(_Base):
             {"index": 1, "name": "", "pre_src": "x", "post_src": "x",
              "pre_dst": "我们走完了全程。", "proofread_dst": "我们攀上了顶峰。"},
         ])
-        self.assertIn("h场景用词不当", problems[1])
+        self.assertIn("用词不当", problems[1])
 
     def test_hit_via_pre_dst_only(self) -> None:
         # 主译文含禁词、校对译文不含 → 仍标记
@@ -138,7 +138,7 @@ class HSceneProblemTests(_Base):
             {"index": 1, "name": "", "pre_src": "x", "post_src": "x",
              "pre_dst": "我们攀上了顶峰。", "proofread_dst": "我们走完了全程。"},
         ])
-        self.assertIn("h场景用词不当", problems[1])
+        self.assertIn("用词不当", problems[1])
 
     def test_multiple_words_merged_one_problem(self) -> None:
         # 同时命中多个词 → 合并为一条 problem，词以、连接
@@ -146,7 +146,7 @@ class HSceneProblemTests(_Base):
         problems = self._check(pid, [
             {"index": 1, "name": "", "pre_src": "x", "post_src": "x", "pre_dst": "攀上顶峰，攀上了顶峰。"},
         ])
-        self.assertEqual(problems[1].count("h场景用词不当"), 1)
+        self.assertEqual(problems[1].count("用词不当"), 1)
         self.assertIn("攀上顶峰", problems[1])
         self.assertIn("攀上了顶峰", problems[1])
 
@@ -159,7 +159,7 @@ class HSceneProblemTests(_Base):
         self.assertEqual(problems[1], "")
 
     def test_disabled_problem_type_skips_detection(self) -> None:
-        # problemList 未配置 h场景用词不当 → 不检测
+        # problemList 未配置 用词不当 → 不检测
         pid = self._setup_h_project("h_disabled", ["攀上顶峰"], [(1, 3)], enable=False)
         problems = self._check(pid, [
             {"index": 1, "name": "", "pre_src": "x", "post_src": "x", "pre_dst": "攀上了顶峰。"},
@@ -194,7 +194,7 @@ class HSceneProblemTests(_Base):
         cfg_path = os.path.join(pdir, "config.yaml")
         with open(cfg_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
-        cfg["problemAnalyze"] = {"problemList": ["h场景用词不当"]}
+        cfg["problemAnalyze"] = {"problemList": ["用词不当"]}
         cfg["dictionary"] = {
             "defaultDictFolder": "Dict",
             "hCheckDict": ["(project_dir)hwords.txt"],
@@ -231,7 +231,101 @@ class HSceneProblemTests(_Base):
         self.assertEqual(n, 1)
         with open(cache_path, encoding="utf-8") as f:
             saved = json.load(f)
-        self.assertIn("h场景用词不当", saved[0].get("problem", ""))
+        self.assertIn("用词不当", saved[0].get("problem", ""))
+
+
+class ForbiddenWordProblemTests(unittest.TestCase):
+    """非 h 场景「用词不当」：按禁用词库检测（forbidden_words），与 h 场景逻辑并存。"""
+
+    class _FakeProblemConfig:
+        """最小化 projectConfig，仅启用 用词不当 检测。"""
+
+        target_lang = "zh-cn"
+
+        def getProblemAnalyzeArinashiDict(self):
+            return {}
+
+        def getProblemAnalyzeConfig(self, key):
+            from GalTransl.ConfigHelper import CProblemType
+
+            if key == "problemList":
+                return [CProblemType.用词不当]
+            return []
+
+        def getlbSymbol(self):
+            return "auto"
+
+    def _tran(self, index, pre_dst, post_dst=None):
+        from GalTransl.CSentense import CSentense
+
+        tran = CSentense("x", speaker="", index=index)
+        tran.post_src = "x"
+        tran.pre_dst = pre_dst
+        tran.post_dst = post_dst if post_dst is not None else pre_dst
+        return tran
+
+    def test_forbidden_word_hit_outside_h_range(self) -> None:
+        # 非 h 场景（无 h_ranges / index 不在区间内）命中禁用词 → 标记「用词不当」
+        from GalTransl.Problem import find_problems
+
+        trans_list = [self._tran(1, "这台设备不错。")]
+        find_problems(
+            trans_list, self._FakeProblemConfig(), None, h_ranges=[], h_check_words=[],
+            forbidden_words=["设备"],
+        )
+        self.assertIn("用词不当", trans_list[0].problem)
+
+    def test_forbidden_word_skipped_inside_h_range(self) -> None:
+        # h 场景内禁用词不触发（h 场景走 h_check_words 词库）
+        from GalTransl.Problem import find_problems
+
+        trans_list = [self._tran(1, "这台设备不错。")]
+        find_problems(
+            trans_list, self._FakeProblemConfig(), None, h_ranges=[(1, 5)], h_check_words=[],
+            forbidden_words=["设备"],
+        )
+        self.assertEqual(trans_list[0].problem, "")
+
+    def test_no_forbidden_words_skips_detection(self) -> None:
+        # 禁用词库未搭建（None/空）→ 非 h 场景不标记
+        from GalTransl.Problem import find_problems
+
+        trans_list = [self._tran(1, "这台设备不错。")]
+        find_problems(trans_list, self._FakeProblemConfig(), None)
+        self.assertEqual(trans_list[0].problem, "")
+
+
+class LegacyProblemNameTests(unittest.TestCase):
+    """旧配置名「h场景用词不当」兼容：枚举别名解析为 用词不当。"""
+
+    def test_enum_alias_maps_to_new_name(self) -> None:
+        from GalTransl.ConfigHelper import CProblemType
+
+        # 旧配置按名字索引返回的成员应与新枚举值相等（is-in 判断成立）
+        self.assertEqual(CProblemType["h场景用词不当"], CProblemType.用词不当)
+        self.assertIn(CProblemType.用词不当, [CProblemType["h场景用词不当"]])
+
+    def test_old_name_in_problem_list_is_recognized(self) -> None:
+        from GalTransl.ConfigHelper import CProblemType
+        from GalTransl.Problem import find_problems
+        from GalTransl.CSentense import CSentense
+
+        class OldConfig(ForbiddenWordProblemTests._FakeProblemConfig):
+            def getProblemAnalyzeConfig(self, key):
+                if key == "problemList":
+                    return [CProblemType["h场景用词不当"]]
+                return []
+
+        tran = CSentense("x", speaker="", index=1)
+        tran.post_src = "x"
+        tran.pre_dst = "我们攀上了顶峰。"
+        tran.post_dst = "我们攀上了顶峰。"
+        # 模拟 h 场景 + 旧配置名：命中 h 词库 → 标记「用词不当」（而非旧的「h场景用词不当」）
+        find_problems(
+            [tran], OldConfig(), None, h_ranges=[(1, 5)], h_check_words=["攀上了顶峰"],
+        )
+        self.assertIn("用词不当", tran.problem)
+        self.assertNotIn("h场景用词不当", tran.problem)
 
 
 class LoadHCheckWordsTests(unittest.TestCase):

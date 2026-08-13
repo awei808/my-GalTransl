@@ -165,6 +165,7 @@ def _run_problem_detection(
     tPlugins: list,
     h_ranges: list = None,
     h_check_words: list = None,
+    forbidden_words: list = None,
 ) -> Tuple[list, bool]:
     """重建 CSentense 并全量运行问题检测（只算不落盘）。
 
@@ -173,6 +174,7 @@ def _run_problem_detection(
         proj_config / pre_dic / post_dic / gpt_dic / tPlugins: _load_rebuild_deps 的产物。
         h_ranges: H 剧情区间列表 [(lo, hi), ...]（缓存条目 index 口径），默认 None 不检测。
         h_check_words: H 场景用词不当检测词库（list[str]），默认 None 不检测。
+        forbidden_words: 非 h 场景禁用词库（list[str]），默认 None 不检测（本次未搭建）。
 
     Returns:
         (results, ok)：results 与 entries 等长，每项为
@@ -222,7 +224,7 @@ def _run_problem_detection(
     ok = True
     if trans_list:
         try:
-            find_problems(trans_list, proj_config, gpt_dic, h_ranges, h_check_words)
+            find_problems(trans_list, proj_config, gpt_dic, h_ranges, h_check_words, forbidden_words)
         except Exception:
             ok = False
             LOGGER.error("问题检测 find_problems 执行失败", exc_info=True)
@@ -258,6 +260,7 @@ def recheck_pass3_cache_files(
     gpt_dic: Any,
     tPlugins: list,
     h_check_words: list = None,
+    forbidden_words: list = None,
     target_files: list[str] | None = None,
 ) -> int:
     """对 pass3_cache 下的缓存 json 重新运行问题检测并写回 problem。
@@ -305,7 +308,7 @@ def recheck_pass3_cache_files(
                 ).get("h_ranges", [])
             ]
             results, ok = _run_problem_detection(
-                entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words
+                entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, forbidden_words
             )
             if not ok:
                 # 检测失败时不得覆写已有 problem（与 /cache/check 语义一致），跳过该文件
@@ -1473,7 +1476,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "长句丢失换行", "description": "译文平均分句长度超过阈值，可能丢失了应有的换行。"},
     {"name": "换行位置异常", "description": "换行符未紧跟中文标点（逗号/顿号/句号等）之后，断行位置可能不当。"},
     {"name": "定语过长", "description": "译文出现「是……的」结构且中间定语长度超过「定语最大长度」阈值。（测试中，可能误检）"},
-    {"name": "h场景用词不当", "description": "H 剧情区间译文出现不符合 H 场景的词语（按 H 词库匹配）。"},
+    {"name": "用词不当", "description": "非 H 场景译文含禁用词（按禁用词库匹配），或 H 剧情区间译文出现不符合 H 场景的词语（按 H 词库匹配）。"},
     {"name": "状语过长", "description": "译文出现「在……中/里」或「……地」状语且中间长度超过「状语最大长度」阈值。（测试中，可能误检）"},
 ]
 
@@ -2620,7 +2623,7 @@ def build_handler(registry: JobRegistry) -> type:
                         for r in _resolve_cache_h_ranges(project_dir, norm).get("h_ranges", [])
                     ]
                     results, ok = _run_problem_detection(
-                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words
+                        entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, None
                     )
                     if persist and ok:
                         # 写回缓存文件（单文件范围）：合并 problem / post_dst_preview / skip_check
@@ -2676,7 +2679,7 @@ def build_handler(registry: JobRegistry) -> type:
                     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
                     LOGGER.info(f"[cache] 全缓存重检开始：{project_dir}")
                     rechecked = recheck_pass3_cache_files(
-                        cache_dir, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words
+                        cache_dir, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, None
                     )
                     LOGGER.info(f"[cache] 全缓存重检完成：{rechecked} 个文件已写回")
                     self._send_json({"success": True, "rechecked": rechecked})
@@ -2783,7 +2786,7 @@ def build_handler(registry: JobRegistry) -> type:
                             for r in _resolve_cache_h_ranges(project_dir, norm).get("h_ranges", [])
                         ]
                         results, detection_ok = _run_problem_detection(
-                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words
+                            entries, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_ranges, h_check_words, None
                         )
                         # Update entries with problem and post_dst_preview.
                         # detection_ok=False 时保留已有 problem，避免把检测结果误删。

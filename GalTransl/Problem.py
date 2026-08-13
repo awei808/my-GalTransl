@@ -90,6 +90,7 @@ def find_problems(
     gpt_dict: CGptDict = None,
     h_ranges: list = None,
     h_check_words: list = None,
+    forbidden_words: list = None,
 ) -> None:
     """
     此函数接受一个翻译列表，查找其中的问题并将其记录在每个翻译对象的 `problem` 属性中。
@@ -98,6 +99,9 @@ def find_problems(
     - trans_list: 翻译对象列表。
     - find_type: 要查找的问题类型列表。
     - arinashi_dict: 一个自定义字典，其中的键值对将会被用于查找问题。
+    - h_ranges: H 剧情区间列表 [(lo, hi), ...]，用于区分 h 场景（问题类型判定的一级维度）。
+    - h_check_words: H 场景用词不当检测词库（h 场景内命中即标记「用词不当」）。
+    - forbidden_words: 非 h 场景禁用词库（非 h 场景内命中即标记「用词不当」）；本次未搭建，传空则不触发。
 
     返回值:
     - 无返回值，但会修改每个翻译对象的 `problem` 属性。
@@ -117,6 +121,10 @@ def find_problems(
         post_dst = tran.post_dst
         if pre_dst == "":
             continue
+        # h 场景判定提升为一级维度：所有问题检测均可按是否 h 场景差异化处理
+        is_h_scene = bool(h_ranges) and any(
+            lo <= tran.index <= hi for lo, hi in h_ranges
+        )
         problem_list = []
         if CProblemType.词频过高 in find_type:
             most_word, word_count = get_most_common_char(pre_dst)
@@ -164,11 +172,16 @@ def find_problems(
             if _newline_count(pre_src) < _newline_count(post_dst):
                 problem_list.append("多加换行")
         if CProblemType.长句丢失换行 in find_type:
-            # 原文有换行才检测；真实/字面换行均归一化处理
+            # 原文有换行才检测；真实/字面换行均归一化处理；h 场景用专用阈值
             if _newline_count(pre_src) > 0:
                 n_number = _newline_count(post_dst)
                 clean_len = _clean_text_len(post_dst)
-                if clean_len / (n_number + 1) > projectConfig.getAvgSentenceLengthThreshold():
+                threshold = (
+                    projectConfig.getHSentenceLengthThreshold()
+                    if is_h_scene
+                    else projectConfig.getAvgSentenceLengthThreshold()
+                )
+                if clean_len / (n_number + 1) > threshold:
                     problem_list.append("长句丢失换行")
         if CProblemType.换行位置异常 in find_type:
             bad_lines = []
@@ -196,16 +209,20 @@ def find_problems(
         if CProblemType.字典使用 in find_type:
             if val := gpt_dict.check_dic_use(pre_dst, tran):
                 problem_list.append(val)
-        if (
-            CProblemType.h场景用词不当 in find_type
-            and h_ranges
-            and h_check_words
-            and any(lo <= tran.index <= hi for lo, hi in h_ranges)
-        ):
-            hits = [w for w in h_check_words if w in pre_dst or w in post_dst]
-            if hits:
-                problem_list.append("h场景用词不当：" + "、".join(hits))
-                LOGGER.debug(f"H场景用词不当：index={tran.index}, 命中={hits}")
+        if CProblemType.用词不当 in find_type:
+            # h 场景沿用原 h 词库逻辑；非 h 场景按禁用词库检测（本次未搭建，传空则不触发）
+            if is_h_scene:
+                if h_check_words:
+                    hits = [w for w in h_check_words if w in pre_dst or w in post_dst]
+                    if hits:
+                        problem_list.append("用词不当：" + "、".join(hits))
+                        LOGGER.debug(f"用词不当(h场景)：index={tran.index}, 命中={hits}")
+            else:
+                if forbidden_words:
+                    hits = [w for w in forbidden_words if w in pre_dst or w in post_dst]
+                    if hits:
+                        problem_list.append("用词不当：" + "、".join(hits))
+                        LOGGER.debug(f"用词不当(非h场景)：index={tran.index}, 命中={hits}")
         if CProblemType.引入英文 in find_type:
             if not contains_english(post_src) and contains_english(pre_dst):
                 eng_chars = contains_english(post_dst)

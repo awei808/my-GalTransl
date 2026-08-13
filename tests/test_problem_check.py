@@ -258,18 +258,36 @@ class NewlineDetectionTests(_Base):
 
 
 class LongSentenceNewlineTests(_Base):
-    """长句丢失换行：平均分句长度超过 avgSentenceLengthThreshold 才报。"""
+    """长句丢失换行：平均分句长度超过 avgSentenceLengthThreshold 才报；h 场景用 avgSentenceLengthThresholdH。"""
 
-    def _set_problem_config(self, project_dir: str, problems: list, threshold: int = 17) -> None:
+    def _set_problem_config(
+        self,
+        project_dir: str,
+        problems: list,
+        threshold: int = 17,
+        h_threshold: int = 24,
+    ) -> None:
         cfg_path = os.path.join(project_dir, "config.yaml")
         with open(cfg_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         cfg["problemAnalyze"] = {
             "problemList": problems,
             "avgSentenceLengthThreshold": threshold,
+            "avgSentenceLengthThresholdH": h_threshold,
         }
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True)
+
+    def _write_h_batch(self, project_dir: str, h_ranges: list) -> None:
+        """写入 pass3 占位缓存与 pass2_cache 的 H 区间批次文件（cache/check 按此解析 h_ranges）。"""
+        cache_dir = os.path.join(project_dir, "transl_cache", "pass3_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(os.path.join(cache_dir, "ls.txt.json"), "w", encoding="utf-8") as f:
+            json.dump([], f)
+        batch_dir = os.path.join(project_dir, "transl_cache", "pass2_cache")
+        os.makedirs(batch_dir, exist_ok=True)
+        with open(os.path.join(batch_dir, "ls.txt.json.batch.json"), "w", encoding="utf-8") as f:
+            json.dump({"批次": [{"区间": [lo, hi], "h": True} for lo, hi in h_ranges]}, f, ensure_ascii=False)
 
     def test_long_sentence_triggers_when_avg_exceeds_threshold(self) -> None:
         # 译文无换行且整句超长（avg=整句长度 > 17）→ 报"长句丢失换行"
@@ -352,6 +370,56 @@ class LongSentenceNewlineTests(_Base):
                 "pre_src": "コスタリアは無人島を\r\n丸ごと開発して作られた\r\n日本最大の離島コスプレリゾートだ。",
                 "post_src": "コスタリアは無人島を\r\n丸ごと開発して作られた\r\n日本最大の離島コスプレリゾートだ。",
                 "pre_dst": "既然号称Cosplay度假区，整座岛都被打造得能够作为摄影棚发挥作用，备有各种情境与类型的舞台。",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/ls.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertIn("长句丢失换行", results[1]["problem"])
+
+    def test_h_scene_uses_dedicated_threshold_not_regular(self) -> None:
+        # h 场景内 avg 超过普通阈值 17 但未超过 h 专用阈值 24 → 不报（证明 h 阈值生效）
+        _, init = self._init_project("ls_h_thr")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17, 24)
+        self._write_h_batch(init["project_dir"], [(1, 3)])
+        # 译文无换行，整句长度 18（>17 且 <24）
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文第一行\\n原文第二行",
+                "post_src": "原文第一行\\n原文第二行",
+                "pre_dst": "这段译文长度恰好十八字介于两种阈值之间",
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/ls.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        results = {r["index"]: r for r in body["results"]}
+        self.assertNotIn("长句丢失换行", results[1]["problem"])
+
+    def test_h_scene_triggers_when_exceeds_h_threshold(self) -> None:
+        # h 场景内 avg 超过 h 专用阈值 24 → 报"长句丢失换行"
+        _, init = self._init_project("ls_h_over")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17, 24)
+        self._write_h_batch(init["project_dir"], [(1, 3)])
+        # 译文无换行，整句长度远超 24
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文第一行\\n原文第二行",
+                "post_src": "原文第一行\\n原文第二行",
+                "pre_dst": "这是一句非常非常长的中文句子它把所有内容都压缩在一起没有任何换行完全看不出原来的段落结构",
             }
         ]
         status, body = self._req(

@@ -59,6 +59,7 @@ const LIST_OMITTED_KEYS = new Set<string>([
   "problemAnalyze.problemList",
   // 阈值由「问题检测」固定卡片内专属输入框渲染，避免与通用列表重复显示
   "problemAnalyze.avgSentenceLengthThreshold",
+  "problemAnalyze.avgSentenceLengthThresholdH",
 ]);
 // 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口
 const REMOVED_CONFIG_KEYS = new Set<string>([
@@ -430,6 +431,7 @@ export function ProjectConfigPage() {
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   const [enabledProblemTypes, setEnabledProblemTypes] = createSignal<string[]>([]);
   const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
+  const [hAvgThreshold, setHAvgThreshold] = createSignal<number>(24);
   const [attrMaxLen, setAttrMaxLen] = createSignal<number>(10);
   const [advMaxLen, setAdvMaxLen] = createSignal<number>(12);
   const [problemTypesLoading, setProblemTypesLoading] = createSignal(false);
@@ -446,6 +448,11 @@ export function ProjectConfigPage() {
   function setAvgThresholdValue(v: number) {
     setAvgThreshold(v);
     setValue("problemAnalyze.avgSentenceLengthThreshold", v);
+  }
+
+  function setHAvgThresholdValue(v: number) {
+    setHAvgThreshold(v);
+    setValue("problemAnalyze.avgSentenceLengthThresholdH", v);
   }
 
   function setAttrMaxLenValue(v: number) {
@@ -490,10 +497,16 @@ export function ProjectConfigPage() {
           list = rawGpt35.map((x) => String(x)).filter((x) => x);
         }
       }
+      // 旧项目 config 可能仍写「h场景用词不当」，映射到新类型名「用词不当」
+      list = list.map((x) => (x === "h场景用词不当" ? "用词不当" : x));
       setEnabledProblemTypes(list);
       const rawThreshold = section["avgSentenceLengthThreshold"];
       setAvgThreshold(
         typeof rawThreshold === "number" && Number.isFinite(rawThreshold) ? rawThreshold : 17
+      );
+      const rawHThreshold = section["avgSentenceLengthThresholdH"];
+      setHAvgThreshold(
+        typeof rawHThreshold === "number" && Number.isFinite(rawHThreshold) ? rawHThreshold : 24
       );
       const rawAttr = section["attributiveMaxLength"];
       setAttrMaxLen(
@@ -1054,6 +1067,29 @@ export function ProjectConfigPage() {
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
                 setAvgThresholdValue(Number.isFinite(raw) ? raw : 17);
+              }}
+            />
+          </div>
+        </div>
+        <div class="pc-row">
+          <div class="pc-row-label">
+            <label class="pc-label" for="avg-sentence-length-threshold-h">
+              H 场景平均分句长度阈值（长句丢失换行）
+            </label>
+            <p class="pc-desc">H 剧情区间内译文平均分句长度超过该值才报「长句丢失换行」，默认 24，建议 20~30。</p>
+          </div>
+          <div class="pc-row-control">
+            <input
+              id="avg-sentence-length-threshold-h"
+              class="field__input pc-input pc-input--num"
+              type="number"
+              min={10}
+              max={50}
+              step={1}
+              value={hAvgThreshold()}
+              onChange={(e) => {
+                const raw = Number((e.target as HTMLInputElement).value);
+                setHAvgThresholdValue(Number.isFinite(raw) ? raw : 24);
               }}
             />
           </div>

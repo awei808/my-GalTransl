@@ -252,7 +252,8 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 translator="gpt4",
             )
 
-            fake_rebuild = (fake_cfg, None, None, None, [])
+            # _load_rebuild_deps 返回 6 元组：(proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words)
+            fake_rebuild = (fake_cfg, None, None, None, [], None)
             with patch("GalTransl.server.reset_runtime_project"), patch(
                 "GalTransl.server.update_runtime_status"
             ), patch("GalTransl.Service.CProjectConfig", return_value=fake_cfg), patch(
@@ -347,7 +348,7 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=JobCancelledError()),
             ), patch(
                 "GalTransl.server._load_rebuild_deps",
-                return_value=(None, None, None, None, []),
+                return_value=(None, None, None, None, [], None),
             ), patch(
                 "GalTransl.server.recheck_pass3_cache_files", return_value=1
             ) as m_recheck:
