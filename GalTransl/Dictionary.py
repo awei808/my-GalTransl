@@ -171,13 +171,14 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     # 与引擎 load_dic 一致：Tab / 四空格转 | 后再分割（兼容旧版 Tab 分隔字典文件）
     line = line.replace("    ", "\t").replace("\t", "|")
     parts = [_safe_escape(p) for p in line.split("|")]
-    if category in ("gpt", "forbiddenh", "forbiddennh"):
-        # 禁用词字典与 gpt 字典同构：词|备注（禁用词不支持替换，仅词条+备注）
+    if category in ("gpt", "gpth", "gptnh", "forbiddenh", "forbiddennh"):
+        # 禁用词字典 / h-非h GPT 字典与 gpt 字典同构：词|备注 或 原文|译文|解释
+        # 禁用词不支持替换（仅词条+备注），故返回 forbidden；h/非h GPT 仍是 gpt 行类型
         src = parts[0] if len(parts) > 0 else ""
         dst = parts[1] if len(parts) > 1 else ""
         rest = "|".join(parts[2:]) if len(parts) > 2 else ""
         note = _split_note(rest)
-        row_type = "gpt" if category == "gpt" else "forbidden"
+        row_type = "gpt" if category in ("gpt", "gpth", "gptnh") else "forbidden"
         return DictRow(
             row_type, [src, dst, rest], raw_line,
             target=None, cond_items=[], spl_word="", note=note,
@@ -592,7 +593,19 @@ class CGptDict:
             f"载入 GPT字典: {path.basename(dic_path)} {normalDic_count}普通词条"
         )
 
-    def gen_prompt(self, trans_list: CTransList, type: str = "gpt") -> str:
+    def gen_prompt(
+        self, trans_list: CTransList, type: str = "gpt", scene: str = "all"
+    ) -> str:
+        """生成 glossary 提示词段落。
+
+        Args:
+            trans_list: 待翻译句子列表。
+            type: 输出格式（gpt / sakura / tsv）。
+            scene: 字典场景过滤：
+                - "all" 全量字典（默认，兼容未指定场景的调用方）；
+                - "nh" 仅非 h 场景字典（跳过文件名含 _h 的字典）；
+                - "h"  h 场景：h 字典优先注入，非 h 字典补全；与 h 字典重合的词条只取 h 的译文。
+        """
         def _should_add_dic(dic: CBasicDicElement, input_text: str, input_text_copy: str, used_dic: list[str]) -> bool:
             """判断是否应该添加字典条目到提示中"""
             if dic.search_word in input_text:
@@ -635,8 +648,27 @@ class CGptDict:
         input_text_copy=input_text
         used_dic=[]
 
+        def _is_h_dict(dic: CBasicDicElement) -> bool:
+            """按字典文件名后缀判断是否 h 场景字典（含 _h 且非 _非h）。"""
+            name = dic.dic_name or ""
+            lower = name.lower()
+            return "_h" in lower and "_非h" not in lower
 
-        for dic in self._dic_list:
+        # scene 过滤与排序：nh 只取非 h；h 让 h 字典先遍历（h 优先），再补非 h
+        if scene == "nh":
+            dic_iter = [d for d in self._dic_list if not _is_h_dict(d)]
+        elif scene == "h":
+            dic_iter = [d for d in self._dic_list if _is_h_dict(d)] + [
+                d for d in self._dic_list if not _is_h_dict(d)
+            ]
+        else:
+            dic_iter = self._dic_list
+
+        h_hit: set[str] = set()  # scene=h 时已加入的 h 词条（用于重合词 h 优先）
+        for dic in dic_iter:
+            # h 场景：非 h 词条若与已加入的 h 词条重合，只取 h 的译文/注释
+            if scene == "h" and not _is_h_dict(dic) and dic.search_word in h_hit:
+                continue
             if _should_add_dic(dic, input_text, input_text_copy, used_dic):
                 if type=="gpt":
                     promt += _format_dic_entry_gpt(dic)
@@ -645,6 +677,8 @@ class CGptDict:
                 elif type=="tsv":
                     promt += _format_dic_entry_tsv(dic)
                 input_text = input_text.replace(dic.search_word, "")
+                if scene == "h" and _is_h_dict(dic):
+                    h_hit.add(dic.search_word)
             used_dic.append(dic.search_word)
         if promt:
             if type=="gpt":

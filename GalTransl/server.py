@@ -1257,7 +1257,7 @@ def _normalize_dict_text(content: str) -> str:
 def _dict_category_config_key(category: str) -> str:
     if category == "pre":
         return "preDict"
-    if category == "gpt":
+    if category in ("gpt", "gpth", "gptnh"):
         return "gpt.dict"
     if category == "post":
         return "postDict"
@@ -1324,6 +1324,14 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
     h_files = [x for x in h_all if x.startswith(DICT_PROJECT_MARKER)]
     fnh_files = [x for x in fnh_all if x.startswith(DICT_PROJECT_MARKER)]
 
+    # GPT 字典按文件名后缀拆 h/非h（_h / _非h），供前端分组展示；运行时仍用 gpt_files 全量
+    def _gpt_scene(fname: str) -> str:
+        lower = fname.lower()
+        return "h" if ("_h" in lower and "非h" not in lower) else "nh"
+
+    gpt_files_h = [x for x in gpt_files if _gpt_scene(x) == "h"]
+    gpt_files_nh = [x for x in gpt_files if _gpt_scene(x) == "nh"]
+
     dict_contents: dict[str, dict[str, Any]] = {}
     for file_key in pre_files + gpt_files + post_files + h_files + fnh_files:
         clean = file_key.replace(DICT_PROJECT_MARKER, "").strip()
@@ -1353,6 +1361,8 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
         "config_file_name": config_name,
         "pre_dict_files": pre_files,
         "gpt_dict_files": gpt_files,
+        "gpt_dict_files_h": gpt_files_h,
+        "gpt_dict_files_nh": gpt_files_nh,
         "post_dict_files": post_files,
         "h_dict_files": h_files,
         "forbidden_dict_files_h": h_files,
@@ -1414,7 +1424,7 @@ def _read_common_dict_category_map(dict_dir: str) -> dict[str, str]:
         result: dict[str, str] = {}
         for key, value in data.items():
             if _is_safe_dict_filename(str(key)) and str(value) in {
-                "pre", "gpt", "post", "h", "forbiddenh", "forbiddennh",
+                "pre", "gpt", "gpth", "gptnh", "post", "h", "forbiddenh", "forbiddennh",
             }:
                 result[str(key)] = str(value)
         return result
@@ -1432,15 +1442,18 @@ def _write_common_dict_category_map(dict_dir: str, category_map: dict[str, str])
 
 def _categorize_common_dict_file(filename: str) -> str:
     lower = filename.lower()
+    # GPT 字典：h 判定优先于普通 gpt；显式 _h 后缀归 h，其余（含无后缀 / _非h）归非 h
     if "gpt" in lower:
-        return "gpt"
+        if "_h" in lower and "非h" not in lower:
+            return "gpth"
+        return "gptnh"
     if "post" in lower or "译后" in filename:
         return "post"
     if "hcheck" in lower or "h场景" in lower or "场景用词" in filename:
         return "h"
-    # 禁用词字典：文件名含禁用词/forbidden；按 _H / _非h 后缀区分 h 与非 h
+    # 禁用词字典：文件名含禁用词/forbidden；按 _h / _非h 后缀区分 h 与非 h
     if "禁用词" in filename or "forbidden" in lower:
-        if "_h" in lower or "非h" not in filename:
+        if "_h" in lower or "非h" not in lower:
             return "forbiddenh"
         return "forbiddennh"
     return "pre"
@@ -1459,6 +1472,8 @@ def _collect_common_dict_payload() -> dict[str, Any]:
 
     pre_files: list[str] = []
     gpt_files: list[str] = []
+    gpt_files_h: list[str] = []
+    gpt_files_nh: list[str] = []
     post_files: list[str] = []
     h_files: list[str] = []
     fh_files: list[str] = []
@@ -1467,8 +1482,13 @@ def _collect_common_dict_payload() -> dict[str, Any]:
 
     for name in files:
         category = category_map.get(name) or _categorize_common_dict_file(name)
-        if category == "gpt":
+        # GPT 字典（含 h/非h 子分类）统一进 gpt_files，供运行时/现有逻辑使用
+        if category in ("gpt", "gpth", "gptnh"):
             gpt_files.append(name)
+            if category == "gpth":
+                gpt_files_h.append(name)
+            elif category == "gptnh":
+                gpt_files_nh.append(name)
         elif category == "post":
             post_files.append(name)
         elif category == "h":
@@ -1485,6 +1505,8 @@ def _collect_common_dict_payload() -> dict[str, Any]:
         "dict_dir": dict_dir,
         "pre_dict_files": pre_files,
         "gpt_dict_files": gpt_files,
+        "gpt_dict_files_h": gpt_files_h,
+        "gpt_dict_files_nh": gpt_files_nh,
         "post_dict_files": post_files,
         "h_dict_files": h_files,
         "forbidden_dict_files_h": fh_files,
@@ -3584,11 +3606,21 @@ def build_handler(registry: JobRegistry) -> type:
                         dict_base = os.path.abspath(default_folder)
                     fh_all = dict_cfg.get("forbiddenDictH", dict_cfg.get("hCheckDict", []))
                     fnh_all = dict_cfg.get("forbiddenDictNonH", [])
+                    gpt_all = [str(x) for x in dict_cfg.get("gpt.dict", [])]
+                    # GPT 字典按文件名后缀拆 h/非h，供前端分组展示；运行时仍用 gpt.dict 全量
+                    def _gpt_scene(fname: str) -> str:
+                        lower = fname.lower()
+                        return "h" if ("_h" in lower and "非h" not in lower) else "nh"
+
+                    gpt_files_h = [x for x in gpt_all if _gpt_scene(x) == "h"]
+                    gpt_files_nh = [x for x in gpt_all if _gpt_scene(x) == "nh"]
                     result = {
                         "project_dir": project_dir,
                         "default_dict_folder": default_folder,
                         "pre_dict_files": dict_cfg.get("preDict", []),
-                        "gpt_dict_files": dict_cfg.get("gpt.dict", []),
+                        "gpt_dict_files": gpt_all,
+                        "gpt_dict_files_h": gpt_files_h,
+                        "gpt_dict_files_nh": gpt_files_nh,
                         "post_dict_files": dict_cfg.get("postDict", []),
                         "h_dict_files": fh_all,
                         "forbidden_dict_files_h": fh_all,
@@ -4957,7 +4989,7 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 return
             category = str(payload.get("category", "pre")).strip()
-            if category not in ("pre", "gpt", "post", "h", "forbiddenh", "forbiddennh"):
+            if category not in ("pre", "gpt", "gpth", "gptnh", "post", "h", "forbiddenh", "forbiddennh"):
                 self._send_json({"error": f"invalid category: {category}"}, status=HTTPStatus.BAD_REQUEST)
                 return
             content = payload.get("content", "")

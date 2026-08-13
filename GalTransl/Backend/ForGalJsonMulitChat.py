@@ -2075,6 +2075,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 failed_markers=("(Failed)", "(翻译失败)"),
                 h_words_list=H_WORDS_LIST,
                 ensure_last_translations=True,
+                h_scene=self._group_is_h_scene(translist_unhit, filename),
             )
 
         # 有批次元数据：每段作为单一翻译单元，组间共用同一文件对话（Option A，不重置）

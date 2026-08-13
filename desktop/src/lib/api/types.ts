@@ -370,18 +370,22 @@ export type ProjectDictionaryResponse = {
   default_dict_folder: string;
   pre_dict_files: string[];
   gpt_dict_files: string[];
+  gpt_dict_files_h: string[];
+  gpt_dict_files_nh: string[];
   post_dict_files: string[];
   h_dict_files: string[];
   dict_contents: Record<string, DictFileContent>;
 };
 
-export type DictionaryCategory = "pre" | "gpt" | "post" | "h" | "forbidden";
+export type DictionaryCategory = "pre" | "gpt" | "gpth" | "gptnh" | "post" | "h" | "forbiddenh" | "forbiddennh" | "forbidden";
 
 export type ProjectDictionaryManagerResponse = {
   project_dir: string;
   config_file_name: string;
   pre_dict_files: string[];
   gpt_dict_files: string[];
+  gpt_dict_files_h: string[];
+  gpt_dict_files_nh: string[];
   post_dict_files: string[];
   h_dict_files: string[];
   forbidden_dict_files_h: string[];
@@ -393,6 +397,8 @@ export type CommonDictionaryManagerResponse = {
   dict_dir: string;
   pre_dict_files: string[];
   gpt_dict_files: string[];
+  gpt_dict_files_h: string[];
+  gpt_dict_files_nh: string[];
   post_dict_files: string[];
   h_dict_files: string[];
   forbidden_dict_files_h: string[];

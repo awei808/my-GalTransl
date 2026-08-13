@@ -37,6 +37,7 @@ import {
   COND_SEMANTIC_OPTIONS,
   SEARCH_MODE_OPTIONS,
   PROJECT_DIR_MARKER,
+  dictFileScene,
 } from "../../components/dict/dictUtils";
 import type {
   DictRow,
@@ -434,10 +435,17 @@ export function DictionaryPage() {
 
   const [createSource, setCreateSource] = createSignal<"project" | "common">("project");
 
-  /** 由「禁用词」合成 tab + 文件名后缀推导实际后端 category（_H → forbiddenh，否则 forbiddennh） */
+  /**
+   * 由 tab + 文件名后缀推导实际后端 category。
+   * - forbidden 合成 tab：_h → forbiddenh，否则 forbiddennh；
+   * - gpt tab：显式 _h 后缀 → gpth（h 场景 GPT），否则 gptnh（非 h / 无后缀）；
+   * - 其余 tab 原样透传。
+   */
   function resolveCreateCategory(tab: string, filename: string): DictionaryCategory {
-    if (tab !== "forbidden") return tab as DictionaryCategory;
-    return /_h\.txt$/i.test(filename) ? "forbiddenh" : "forbiddennh";
+    // h/非h 判定统一走 dictFileScene（includes("_h") && !includes("_非h")），与展示分组口径一致
+    if (tab === "forbidden") return dictFileScene(filename) === "h" ? "forbiddenh" : "forbiddennh";
+    if (tab === "gpt") return dictFileScene(filename) === "h" ? "gpth" : "gptnh";
+    return tab as DictionaryCategory;
   }
 
   async function handleCreate() {
@@ -534,12 +542,36 @@ export function DictionaryPage() {
     ];
   };
 
+  /** GPT 字典按 h/非h 场景分组（供文件列表分组展示）；仅 gpt tab 使用 */
+  const gptSceneGroups = (): { label: string; files: FileEntry[] }[] => {
+    const all = activeFiles();
+    const hFiles = all.filter((e) => dictFileScene(e.name) === "h");
+    const nhFiles = all.filter((e) => dictFileScene(e.name) === "nh");
+    return [
+      { label: "h 场景", files: hFiles },
+      { label: "非 h 场景", files: nhFiles },
+    ];
+  };
+
+  /** 按 fileKey（`{tab}_dict:{name}`）取文件条目数 */
+  const fileCountOf = (key: string): number => {
+    const lookupKey = key.split(":")[1] ?? key;
+    return (
+      data()?.dict_contents?.[lookupKey]?.count ??
+      commonData()?.dict_contents?.[lookupKey]?.count ??
+      0
+    );
+  };
+
 
 
   return (
     <div class="page page-dict">
       <h2 class="page-title">字典管理</h2>
       <p class="page-description">{isProject() ? "项目字典" : "公共字典"} — 管理翻译用词对照表</p>
+      <p class="dict-scene-hint">
+        GPT 字典文件名以 <code>_h</code> 结尾（如 <code>GPT字典_h.txt</code>）表示 h 场景词典，以 <code>_非h</code> 结尾（如 <code>GPT字典_非h.txt</code>）表示非 h 场景词典；未带后缀的视为非 h 场景。
+      </p>
 
       {/* ── Tab 栏 ── */}
       <div class="dict-tabs">
@@ -635,34 +667,54 @@ export function DictionaryPage() {
           <div class="dict-file-list">
             <div class="dict-file-header">文件 ({activeFiles().length})</div>
             <div class="dict-file-body">
-              <For each={activeFiles()}>
-                {(entry) => {
-                  const key = `${activeTab()}_dict:${entry.name}`;
-                  const displayName = stripProjectDirMarker(entry.name);
-                  const badge = entry.source === "project" ? "项目" : "公共";
-                  const lookupKey = key.split(":")[1];
-                  const fileCount =
-                    data()?.dict_contents?.[lookupKey]?.count ??
-                    commonData()?.dict_contents?.[lookupKey]?.count ??
-                    0;
-                  return (
-                    <div
-                      class={`dict-file-item ${selectedFile() === key ? "selected" : ""}`}
-                      onClick={async () => { await doAutoSave(); selectFile(key); }}
-                    >
-                      <div class="dict-file-name">
-                        <span class="dict-file-badge">{badge}</span>
-                        <span class="dict-file-name-text">{displayName}</span>
+              <Show when={activeTab() === "gpt" && activeFiles().length > 0} fallback={
+                <>
+                  <For each={activeFiles()}>
+                    {(entry) => (
+                      <div
+                        class={`dict-file-item ${selectedFile() === `${activeTab()}_dict:${entry.name}` ? "selected" : ""}`}
+                        onClick={async () => { await doAutoSave(); selectFile(`${activeTab()}_dict:${entry.name}`); }}
+                      >
+                        <div class="dict-file-name">
+                          <span class="dict-file-badge">{entry.source === "project" ? "项目" : "公共"}</span>
+                          <span class="dict-file-name-text">{stripProjectDirMarker(entry.name)}</span>
+                        </div>
+                        <span class="dict-file-count">{fileCountOf(`${activeTab()}_dict:${entry.name}`)} 条</span>
+                        <button class="dict-file-del" onClick={(e) => { e.stopPropagation(); handleDelete(`${activeTab()}_dict:${entry.name}`); }} title="删除此字典文件">
+                          删除
+                        </button>
                       </div>
-                      <span class="dict-file-count">{fileCount} 条</span>
-                      <button class="dict-file-del" onClick={(e) => { e.stopPropagation(); handleDelete(key); }} title="删除此字典文件">
-                        删除
-                      </button>
-                    </div>
-                  );
-                }}
-              </For>
-              {activeFiles().length === 0 && <p class="dict-empty">暂无字典文件</p>}
+                    )}
+                  </For>
+                  {activeFiles().length === 0 && <p class="dict-empty">暂无字典文件</p>}
+                </>
+              }>
+                {/* GPT 字典按 h/非h 场景分组展示 */}
+                <For each={gptSceneGroups()}>
+                  {(group) => (
+                    <>
+                      <div class="dict-file-group-label">{group.label}（{group.files.length}）</div>
+                      <For each={group.files}>
+                        {(entry) => (
+                          <div
+                            class={`dict-file-item ${selectedFile() === `gpt_dict:${entry.name}` ? "selected" : ""}`}
+                            onClick={async () => { await doAutoSave(); selectFile(`gpt_dict:${entry.name}`); }}
+                          >
+                            <div class="dict-file-name">
+                              <span class="dict-file-badge">{entry.source === "project" ? "项目" : "公共"}</span>
+                              <span class="dict-file-name-text">{stripProjectDirMarker(entry.name)}</span>
+                            </div>
+                            <span class="dict-file-count">{fileCountOf(`gpt_dict:${entry.name}`)} 条</span>
+                            <button class="dict-file-del" onClick={(e) => { e.stopPropagation(); handleDelete(`gpt_dict:${entry.name}`); }} title="删除此字典文件">
+                              删除
+                            </button>
+                          </div>
+                        )}
+                      </For>
+                    </>
+                  )}
+                </For>
+              </Show>
             </div>
 
             {/* ── 新建文件 ── */}

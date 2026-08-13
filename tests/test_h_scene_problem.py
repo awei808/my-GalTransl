@@ -388,11 +388,25 @@ class HCategoryTests(_Base):
         self.assertEqual(_categorize_common_dict_file("项目禁用词_h.txt"), "forbiddenh")
         self.assertEqual(_categorize_common_dict_file("禁用词_非h.txt"), "forbiddennh")
         self.assertEqual(_categorize_common_dict_file("项目禁用词_非h.txt"), "forbiddennh")
+        # 大写 H 统一视为小写（_非H 等价 _非h）
+        self.assertEqual(_categorize_common_dict_file("禁用词_非H.txt"), "forbiddennh")
+        self.assertEqual(_categorize_common_dict_file("GPT字典_非H.txt"), "gptnh")
         # 不含 h 特征词仍归 pre，避免误伤普通字典
         self.assertEqual(_categorize_common_dict_file("01H字典_矫正_译前.txt"), "pre")
         self.assertEqual(_dict_category_config_key("h"), "forbiddenDictH")
         self.assertEqual(_dict_category_config_key("forbiddenh"), "forbiddenDictH")
         self.assertEqual(_dict_category_config_key("forbiddennh"), "forbiddenDictNonH")
+        # GPT 字典按 h/非h 后缀拆分子类；无后缀归普通 gpt
+        self.assertEqual(_categorize_common_dict_file("GPT字典_h.txt"), "gpth")
+        self.assertEqual(_categorize_common_dict_file("项目GPT字典_h.txt"), "gpth")
+        self.assertEqual(_categorize_common_dict_file("GPT字典_非h.txt"), "gptnh")
+        self.assertEqual(_categorize_common_dict_file("项目GPT字典_非h.txt"), "gptnh")
+        # 无后缀 GPT 字典视为非 h 场景
+        self.assertEqual(_categorize_common_dict_file("GPT字典.txt"), "gptnh")
+        self.assertEqual(_categorize_common_dict_file("项目GPT字典.txt"), "gptnh")
+        # gpth/gptnh 配置键复用单 gpt.dict 列表
+        self.assertEqual(_dict_category_config_key("gpth"), "gpt.dict")
+        self.assertEqual(_dict_category_config_key("gptnh"), "gpt.dict")
 
     def test_project_dictionary_response_has_h_files(self) -> None:
         # 项目配置 forbiddenDictH → GET /dictionary 返回 h_dict_files 与内容

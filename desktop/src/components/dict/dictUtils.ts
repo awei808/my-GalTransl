@@ -99,6 +99,15 @@ export function getFilesByTab(
 }
 
 /**
+ * 判断字典文件归属 h / 非 h 场景（按文件名后缀约定）。
+ * 文件名含 `_h`（无 `_非h`）归 h；否则归非 h（未带后缀默认非 h）。
+ */
+export function dictFileScene(name: string): "h" | "nh" {
+  const lower = name.toLowerCase();
+  return lower.includes("_h") && !lower.includes("_非h") ? "h" : "nh";
+}
+
+/**
  * 解析字典文本为结构化行。本地解析逻辑已彻底删除，统一调用后端
  * POST /api/dictionaries/parse（实现见 GalTransl.Dictionary.parse_dict_line），
  * 保证前后端解析行为一致。

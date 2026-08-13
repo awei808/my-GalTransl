@@ -658,6 +658,7 @@ class BaseTranslate:
         h_words_list: Optional[List[str]] = None,
         ensure_last_translations: bool = False,
         force_static: bool = False,
+        h_scene: bool = False,
     ) -> CTransList:
         if len(translist_unhit) == 0:
             return []
@@ -693,10 +694,11 @@ class BaseTranslate:
             )
 
             if gpt_dic:
+                dic_scene = "h" if h_scene else "nh"
                 if glossary_style:
-                    dic_prompt = gpt_dic.gen_prompt(trans_list_split, glossary_style)
+                    dic_prompt = gpt_dic.gen_prompt(trans_list_split, glossary_style, dic_scene)
                 else:
-                    dic_prompt = gpt_dic.gen_prompt(trans_list_split)
+                    dic_prompt = gpt_dic.gen_prompt(trans_list_split, scene=dic_scene)
             else:
                 dic_prompt = ""
 

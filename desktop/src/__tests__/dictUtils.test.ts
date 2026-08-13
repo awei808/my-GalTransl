@@ -18,8 +18,25 @@ import {
   getFilesByTab,
   getFieldLabels,
   getTypeLabel,
+  dictFileScene,
 } from "../components/dict/dictUtils";
 import type { DictRow, ConditionItem } from "../components/dict/dictUtils";
+
+describe("dictFileScene", () => {
+  it("文件名含 _h 归 h，_非h 或未带后缀归非 h", () => {
+    expect(dictFileScene("GPT字典_h.txt")).toBe("h");
+    expect(dictFileScene("项目GPT字典_h.txt")).toBe("h");
+    expect(dictFileScene("GPT字典_非h.txt")).toBe("nh");
+    expect(dictFileScene("项目GPT字典_非h.txt")).toBe("nh");
+    expect(dictFileScene("GPT字典.txt")).toBe("nh");
+    // 大小写不敏感（_H 等同 _h）
+    expect(dictFileScene("GPT字典_H.txt")).toBe("h");
+    expect(dictFileScene("GPT字典_非H.txt")).toBe("nh");
+    // _h 出现在任意位置（非仅结尾）也归 h，与创建分类 resolveCreateCategory 口径一致
+    expect(dictFileScene("禁用词_h_备注.txt")).toBe("h");
+    expect(dictFileScene("禁用词_非h_备注.txt")).toBe("nh");
+  });
+});
 
 describe("parseSearchPrefix", () => {
   it("识别 1^ 前缀为 first", () => {
