@@ -28,6 +28,18 @@ import { isDarkTheme, themeDark } from "../../lib/theme";
 import { PlotRoutePanel } from "./PlotRoutePanel";
 
 /**
+ * 按勾选的问题类型列表过滤条目（多选 AND 语义：需同时包含所有勾选类型）。
+ * types 为空数组时不做过滤（等价「全部类型」）。
+ */
+export function applyProblemTypeFilter(
+  list: CacheEntry[],
+  types: string[],
+): CacheEntry[] {
+  if (types.length === 0) return list;
+  return list.filter((e) => types.every((t) => problemTypesOf(e.problem).includes(t)));
+}
+
+/**
  * 判断当前是否应让出原生撤销/重做（草稿态）。
  * 主译文框或元数据框，焦点仍在 textarea 且内容未提交时，让出原生实现逐字符撤销；
  * 已提交（失焦）或其它编辑器走自定义操作级撤销。
@@ -699,6 +711,77 @@ function ViewFilterDropdown(props: {
   );
 }
 
+/* ── 问题类型多选下拉：可同时勾选多个类型（AND 过滤，须同时命中所有勾选类型）── */
+function ProblemTypeFilterDropdown(props: {
+  value: () => string[];
+  types: () => ProblemTypeInfo[];
+  onChange: (v: string[]) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  let rootRef: HTMLDivElement | undefined;
+
+  // 点击下拉区域外部时收起
+  createEffect(() => {
+    if (!open()) return;
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef && !rootRef.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("click", onDoc);
+    onCleanup(() => document.removeEventListener("click", onDoc));
+  });
+
+  const summary = () => {
+    const selected = props.value();
+    if (selected.length === 0) return "全部类型";
+    const names = selected
+      .map((n) => props.types().find((t) => t.name === n)?.name ?? n)
+      .join("+");
+    return names.length > 18 ? names.slice(0, 18) + "…" : names;
+  };
+
+  const anyActive = () => props.value().length > 0;
+
+  function toggleType(name: string, checked: boolean) {
+    const cur = props.value();
+    if (checked) {
+      if (!cur.includes(name)) props.onChange([...cur, name]);
+    } else {
+      props.onChange(cur.filter((n) => n !== name));
+    }
+  }
+
+  return (
+    <div ref={rootRef} class="review-filter-dropdown">
+      <button
+        class={`review-filter-dropdown-trigger ${anyActive() ? "review-filter-dropdown-trigger--active" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(!open());
+        }}
+      >
+        类型: {summary()}
+        <span class="review-filter-dropdown-caret">▾</span>
+      </button>
+      <Show when={open()}>
+        <div class="review-filter-dropdown-panel" onClick={(e) => e.stopPropagation()}>
+          <For each={props.types()}>
+            {(t) => (
+              <label class="review-filter-option">
+                <input
+                  type="checkbox"
+                  checked={props.value().includes(t.name)}
+                  onChange={(e) => toggleType(t.name, e.currentTarget.checked)}
+                />
+                <span title={t.description}>{t.name}</span>
+              </label>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 /* ── ReviewPage 主组件 ── */
 export function ReviewPage() {
   const [entries, setEntries] = createSignal<CacheEntry[]>([]);
@@ -767,7 +850,7 @@ export function ReviewPage() {
 
   // ── 快捷筛选 ──
   const [filterProblemsOnly, setFilterProblemsOnly] = createSignal(false);
-  const [filterProblemType, setFilterProblemType] = createSignal("all");
+  const [filterProblemTypes, setFilterProblemTypes] = createSignal<string[]>([]);
   const [filterSpeaker, setFilterSpeaker] = createSignal("all");
   const [filterAltOnly, setFilterAltOnly] = createSignal(false);
   const [filterHOnly, setFilterHOnly] = createSignal(false);
@@ -786,8 +869,7 @@ export function ReviewPage() {
         return ranges.some((r) => idx >= r.lo && idx <= r.hi);
       });
     }
-    const ptype = filterProblemType();
-    if (ptype !== "all") list = list.filter((e) => problemTypesOf(e.problem).includes(ptype));
+    list = applyProblemTypeFilter(list, filterProblemTypes());
     const spk = filterSpeaker();
     if (spk === "__no_speaker__") list = list.filter((e) => !String(e.name ?? "").trim());
     else if (spk !== "all") list = list.filter((e) => (e.name ?? "") === spk);
@@ -803,13 +885,13 @@ export function ReviewPage() {
     filterProblemsOnly() ||
     filterAltOnly() ||
     filterHOnly() ||
-    filterProblemType() !== "all" ||
+    filterProblemTypes().length > 0 ||
     filterSpeaker() !== "all";
   function clearFilters() {
     setFilterProblemsOnly(false);
     setFilterAltOnly(false);
     setFilterHOnly(false);
-    setFilterProblemType("all");
+    setFilterProblemTypes([]);
     setFilterSpeaker("all");
   }
 
@@ -1070,7 +1152,7 @@ export function ReviewPage() {
   createEffect(() => {
     filterProblemsOnly();
     filterAltOnly();
-    filterProblemType();
+    filterProblemTypes();
     filterSpeaker();
     filterHOnly();
     setPage(0);
@@ -1859,16 +1941,11 @@ export function ReviewPage() {
             onAlts={setFilterAltOnly}
             onHOnly={setFilterHOnly}
           />
-          <select
-            class="review-filter-select"
-            value={filterProblemType()}
-            onChange={(e) => setFilterProblemType(e.currentTarget.value)}
-          >
-            <option value="all">全部类型</option>
-            <For each={problemTypes()}>
-              {(t) => <option value={t.name}>{t.name}</option>}
-            </For>
-          </select>
+          <ProblemTypeFilterDropdown
+            value={filterProblemTypes}
+            types={problemTypes}
+            onChange={setFilterProblemTypes}
+          />
           <select
             class="review-filter-select"
             value={filterSpeaker()}
