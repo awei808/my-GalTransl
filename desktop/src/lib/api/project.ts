@@ -426,6 +426,17 @@ export async function checkCacheProblems(
   });
 }
 
+/** 对 pass3_cache 下全部缓存文件重新运行问题检测并写回（后端接口同名单文件语义一致） */
+export async function recheckAllCacheProblems(projectId: string, configFileName?: string) {
+  return apiRequest<CacheRecheckAllResponse>(`/api/projects/${projectId}/cache/recheck-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      config_file_name: configFileName || "config.yaml",
+    }),
+  });
+}
+
 // ---- Name table ----
 
 export async function fetchNameTable(projectId: string) {

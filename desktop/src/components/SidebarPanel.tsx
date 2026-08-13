@@ -1,19 +1,22 @@
 import { Match, Switch, createSignal, createEffect, createMemo, onCleanup, Show, For } from "solid-js";
-import { appState, setAppState } from "../stores/appStore";
+import { appState, setAppState, getActiveConfigFileName } from "../stores/appStore";
 import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
-import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager } from "../lib/api/project";
+import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
 import { getErrorMessage } from "../lib/errors";
 import { problemTypesOf } from "../lib/problems";
+import { fetchProblemTypes } from "../lib/api/general";
+import { ProblemTypeFilterDropdown } from "./ProblemTypeFilterDropdown";
 import type {
   FileNode,
   ProblemEntry,
   AltTransEntry,
   CacheSearchResult,
   CacheSearchField,
+  ProblemTypeInfo,
 } from "../lib/api/types";
 
 /** 是否运行在 Windows 平台（Tauri WebView 的 UA 含 Windows 标识）。非 Windows 不调用后端打开，仅 Toast 提示。 */
@@ -484,7 +487,11 @@ function FindReplacePanel() {
 /* ── 问题检测 ── */
 function ProblemList() {
   const [problems, setProblems] = createSignal<ProblemEntry[]>([]);
-  const [filterType, setFilterType] = createSignal("all");
+  // 多选问题类型筛选：空数组表示全部类型，多个类型为 AND 语义（与校对审核页一致）
+  const [filterTypes, setFilterTypes] = createSignal<string[]>([]);
+  const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
+  // 全缓存重检进行中标志：重检期间禁用按钮防重入
+  const [rechecking, setRechecking] = createSignal(false);
   // 已展开的文件集合（默认折叠，点击文件行右侧图标展开；内联读取以启用细粒度追踪）
   const [expandedFiles, setExpandedFiles] = createSignal<Set<string>>(new Set());
   function toggleFile(filename: string) {
@@ -504,6 +511,9 @@ function ProblemList() {
       setProblems([]);
       return;
     }
+    void fetchProblemTypes().then((r) => {
+      if (r) setProblemTypes(r);
+    });
     // 查整个项目的问题，不按当前文件过滤（问题列表按文件名分组，已足够区分）
     fetchProjectProblems(pid)
       .then((res) => {
@@ -523,11 +533,11 @@ function ProblemList() {
     return map;
   });
 
-  // 按类型筛选后的问题列表（精确匹配类型名，避免"比日文长"误匹配"比日文长严格"）
+  // 按类型筛选后的问题列表（多选 AND 语义：须同时命中所有勾选类型，与校对审核页一致）
   const filteredProblems = createMemo(() => {
-    const ft = filterType();
-    if (ft === "all") return problems();
-    return problems().filter((p) => problemTypesOf(p.problem).includes(ft));
+    const ts = filterTypes();
+    if (ts.length === 0) return problems();
+    return problems().filter((p) => ts.every((t) => problemTypesOf(p.problem).includes(t)));
   });
 
   // 按文件名分组（基于筛选结果）
@@ -561,9 +571,62 @@ function ProblemList() {
     setAppState(patch);
   }
 
+  /** 全缓存重检：确认弹窗提示勿编辑/保存，完成后刷新问题列表 */
+  async function handleRecheckAll() {
+    const pid = appState.activeProjectId;
+    if (!pid || rechecking()) return;
+    const result = await confirm.show({
+      title: "全文件重检问题",
+      message:
+        "将对全部缓存译文文件重新运行问题检测并写回结果。\n重检期间请勿编辑或保存任何文件，以免产生冲突。",
+      confirmText: "开始重检",
+    });
+    if (!result.confirmed) return;
+    setRechecking(true);
+    try {
+      const res = await recheckAllCacheProblems(pid, getActiveConfigFileName());
+      if (!res.success) {
+        toast.warning(res.error ?? "全缓存重检失败，未修改任何文件");
+        return;
+      }
+      toast.success(`已重检 ${res.rechecked ?? 0} 个文件`);
+      // 复用 problemVersion 版本号，驱动问题列表/备选列表自动重新拉取
+      setAppState("problemVersion", (v: number) => v + 1);
+    } catch (e) {
+      toast.error(`全缓存重检失败：${getErrorMessage(e)}`);
+    } finally {
+      setRechecking(false);
+    }
+  }
+
   return (
     <div class="sidebar-panel">
-      <div class="sidebar-header">问题检测</div>
+      <div class="sidebar-header sidebar-header--with-actions">
+        问题检测
+        <button
+          class="problem-recheck-btn"
+          title="全文件重检问题"
+          aria-label="全文件重检问题"
+          disabled={rechecking()}
+          onClick={() => void handleRecheckAll()}
+        >
+          <svg
+            class={rechecking() ? "problem-recheck-icon problem-recheck-icon--spin" : "problem-recheck-icon"}
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <path d="M21 3v6h-6" />
+          </svg>
+        </button>
+      </div>
       <div class="sidebar-content">
         <Show when={problems().length > 0}>
           {/* 统计条：总数 + 各类型计数 */}
@@ -574,24 +637,24 @@ function ProblemList() {
                 <span
                   class="problem-stat-chip"
                   style={{ color: typeColor(t) }}
-                  onClick={() => setFilterType(filterType() === t ? "all" : t)}
+                  onClick={() => {
+                    // 统计条点击为多选 toggle：与下拉框选中状态联动
+                    const cur = filterTypes();
+                    if (cur.includes(t)) setFilterTypes(cur.filter((x) => x !== t));
+                    else setFilterTypes([...cur, t]);
+                  }}
                 >
                   {t} {n}
                 </span>
               )}
             </For>
           </div>
-          {/* 类型筛选下拉 */}
-          <select
-            class="problem-filter-select"
-            value={filterType()}
-            onChange={(e) => setFilterType(e.currentTarget.value)}
-          >
-            <option value="all">全部类型</option>
-            <For each={[...typeCounts().keys()]}>
-              {(t) => <option value={t}>{t}</option>}
-            </For>
-          </select>
+          {/* 类型多选下拉（复用校对审核页组件与样式） */}
+          <ProblemTypeFilterDropdown
+            value={filterTypes}
+            types={problemTypes}
+            onChange={setFilterTypes}
+          />
         </Show>
         <Show when={grouped().length > 0} fallback={<p class="sidebar-placeholder">暂无问题</p>}>
           <For each={grouped()}>

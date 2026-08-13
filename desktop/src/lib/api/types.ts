@@ -447,6 +447,13 @@ export type CacheCheckResponse = {
   results: CacheCheckResult[];
 };
 
+/** POST /api/projects/:id/cache/recheck-all 响应（全缓存重检并写回） */
+export type CacheRecheckAllResponse = {
+  success: boolean;
+  rechecked?: number;
+  error?: string;
+};
+
 // ---- Name Table API types ----
 
 export type NameEntry = {

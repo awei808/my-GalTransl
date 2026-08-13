@@ -26,6 +26,7 @@ import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
 import { isDarkTheme, themeDark } from "../../lib/theme";
 import { PlotRoutePanel } from "./PlotRoutePanel";
+import { ProblemTypeFilterDropdown } from "../../components/ProblemTypeFilterDropdown";
 
 /**
  * 按勾选的问题类型列表过滤条目（多选 AND 语义：需同时包含所有勾选类型）。
@@ -705,77 +706,6 @@ function ViewFilterDropdown(props: {
             />
             <span>只看H剧情</span>
           </label>
-        </div>
-      </Show>
-    </div>
-  );
-}
-
-/* ── 问题类型多选下拉：可同时勾选多个类型（AND 过滤，须同时命中所有勾选类型）── */
-function ProblemTypeFilterDropdown(props: {
-  value: () => string[];
-  types: () => ProblemTypeInfo[];
-  onChange: (v: string[]) => void;
-}) {
-  const [open, setOpen] = createSignal(false);
-  let rootRef: HTMLDivElement | undefined;
-
-  // 点击下拉区域外部时收起
-  createEffect(() => {
-    if (!open()) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef && !rootRef.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("click", onDoc);
-    onCleanup(() => document.removeEventListener("click", onDoc));
-  });
-
-  const summary = () => {
-    const selected = props.value();
-    if (selected.length === 0) return "全部类型";
-    const names = selected
-      .map((n) => props.types().find((t) => t.name === n)?.name ?? n)
-      .join("+");
-    return names.length > 18 ? names.slice(0, 18) + "…" : names;
-  };
-
-  const anyActive = () => props.value().length > 0;
-
-  function toggleType(name: string, checked: boolean) {
-    const cur = props.value();
-    if (checked) {
-      if (!cur.includes(name)) props.onChange([...cur, name]);
-    } else {
-      props.onChange(cur.filter((n) => n !== name));
-    }
-  }
-
-  return (
-    <div ref={rootRef} class="review-filter-dropdown">
-      <button
-        class={`review-filter-dropdown-trigger ${anyActive() ? "review-filter-dropdown-trigger--active" : ""}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(!open());
-        }}
-      >
-        类型: {summary()}
-        <span class="review-filter-dropdown-caret">▾</span>
-      </button>
-      <Show when={open()}>
-        <div class="review-filter-dropdown-panel" onClick={(e) => e.stopPropagation()}>
-          <For each={props.types()}>
-            {(t) => (
-              <label class="review-filter-option">
-                <input
-                  type="checkbox"
-                  checked={props.value().includes(t.name)}
-                  onChange={(e) => toggleType(t.name, e.currentTarget.checked)}
-                />
-                <span title={t.description}>{t.name}</span>
-              </label>
-            )}
-          </For>
         </div>
       </Show>
     </div>

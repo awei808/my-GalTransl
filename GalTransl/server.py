@@ -2649,6 +2649,44 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": f"failed to check cache file: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
+            # POST /api/projects/:id/cache/recheck-all — 全缓存重检（pass3_cache 下所有 *.json）
+            if sub_path == "/cache/recheck-all":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    config_name = str(payload.get("config_file_name", "config.yaml")).strip() or "config.yaml"
+                    # 翻译任务运行中重写缓存会与增量写入/快照互相覆盖，拒绝执行
+                    job = registry.get_project_job(project_dir)
+                    if job is not None and job.status in {"pending", "running"}:
+                        LOGGER.warning(f"[cache] 全缓存重检被拒绝（翻译任务运行中）：{project_dir}")
+                        self._send_json(
+                            {"success": False, "error": "翻译进行中，请停止翻译后再重检"},
+                            status=HTTPStatus.CONFLICT,
+                        )
+                        return
+                    proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words = _load_rebuild_deps(
+                        project_dir, config_name
+                    )
+                    if proj_config is None:
+                        LOGGER.warning(f"[cache] 全缓存重检跳过（配置加载失败）：{project_dir}")
+                        self._send_json({"success": False, "error": "config load failed"})
+                        return
+                    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                    LOGGER.info(f"[cache] 全缓存重检开始：{project_dir}")
+                    rechecked = recheck_pass3_cache_files(
+                        cache_dir, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words
+                    )
+                    LOGGER.info(f"[cache] 全缓存重检完成：{rechecked} 个文件已写回")
+                    self._send_json({"success": True, "rechecked": rechecked})
+                except json.JSONDecodeError:
+                    self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:
+                    LOGGER.error(f"[cache] 全缓存重检失败：{exc}")
+                    self._send_json({"error": f"failed to recheck all cache files: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
             # POST /api/projects/:id/cache/save
             if sub_path == "/cache/save":
                 if self.command != "POST":
