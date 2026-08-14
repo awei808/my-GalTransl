@@ -30,6 +30,7 @@ import type {
   ProjectProblemsResponse,
   ProjectAltTransResponse,
   CacheCheckResponse,
+  CacheRecheckAllResponse,
   ProjectProgressResponse,
   ProjectRuntimeResponse,
   MetadataEntry,

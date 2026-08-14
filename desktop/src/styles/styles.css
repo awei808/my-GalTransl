@@ -1704,6 +1704,21 @@ textarea {
   min-width: 0;
 }
 
+.review-filename--jump {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-brand-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.review-filename--jump:hover {
+  color: var(--color-text-primary);
+  text-decoration: none;
+}
+
 .review-jump-group {
   display: flex;
   align-items: center;

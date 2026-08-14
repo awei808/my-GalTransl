@@ -36,12 +36,12 @@ async function collectMounts(useFor: boolean): Promise<number[]> {
 
   const Probe = (props: { entry: Row }) => {
     onMount(() => mounts.push(props.entry.index));
-    return () => <textarea data-index={props.entry.index} />;
+    return <textarea data-index={props.entry.index} />;
   };
 
   const Displayer = () =>
     useFor ? (
-      <For each={rows.list()} by={(e) => e.index}>
+      <For each={rows.list()}>
         {(entry) => <Probe entry={entry} />}
       </For>
     ) : (

@@ -1850,6 +1850,51 @@ export function ReviewPage() {
   }
 
   const file = () => appState.activeFilePath;
+  // 只显示文件名（去掉目录路径与 passN_cache 前缀），兼容 / 与 \ 分隔
+  const displayFileName = () => {
+    const f = file();
+    if (!f) return "";
+    return f.split(/[/\\]/).pop() || f;
+  };
+  // pass1(文件级元数据) 与 pass3(翻译缓存) 互相跳转：
+  // 从当前文件路径推得对应文件路径；跳转前用 cacheTree 做存在性预检，
+  // 目标不存在时 toast 提示并停留当前文件（避免跳到空白页）。
+  // 文件命名：pass3 为 {源}.txt.json，pass1 为 {源}.txt.json.meta.json，
+  // 即 pass1 文件 = pass3 文件名 + ".meta.json"（见 modeInfoOf 的提取规则）。
+  const jumpTarget = createMemo<{ path: string; label: string } | null>(() => {
+    const f = file();
+    if (!f) return null;
+    const norm = f.replace(/\\/g, "/");
+    const info = modeInfoOf(f);
+    // translate 模式（pass3 翻译缓存）：跳转到 pass1 文件级元数据
+    if (info.mode === "translate" && norm.includes("pass3_cache/")) {
+      return {
+        path: `pass1_cache/${displayFileName()}.meta.json`,
+        label: "查看对应文件元数据",
+      };
+    }
+    // filemeta 模式（pass1 元数据）：跳转到 pass3 翻译缓存
+    if (info.mode === "metadata" && info.metaType === "filemeta") {
+      // modeInfoOf 已把 {源}.txt.json.meta.json 提取为 sourceFile = {源}.txt.json
+      return { path: `pass3_cache/${info.sourceFile}`, label: "查看对应翻译缓存" };
+    }
+    return null;
+  });
+  // 跳转到对应文件（路径与侧栏一致，交由现有 activeFilePath 监听 effect 加载）
+  const handleJumpToCounterpart = () => {
+    const target = jumpTarget();
+    if (!target) return;
+    // cacheTree 尚未初始化（为空）时跳过预检，直接跳转交由加载 effect 兜底，
+    // 避免首轮轮询前误报「文件不存在」
+    const exists = appState.cacheTree.length
+      ? appState.cacheTree.some((n) => n.path === target.path)
+      : true;
+    if (!exists) {
+      toast.warning("对应文件尚未生成，无法跳转");
+      return;
+    }
+    setAppState("activeFilePath", target.path);
+  };
 
   return (
     <div class="page page-review">
@@ -1857,7 +1902,15 @@ export function ReviewPage() {
       <div class="review-toolbar">
         <Show when={reviewMode() === "translate"}>
         <Show when={file()}>
-          <span class="review-filename">{file()}</span>
+          <Show when={jumpTarget()} fallback={<span class="review-filename">{displayFileName()}</span>}>
+            <button
+              class="review-filename review-filename--jump"
+              title={`${jumpTarget()!.label}（点击跳转）`}
+              onClick={handleJumpToCounterpart}
+            >
+              {displayFileName()} ⇄
+            </button>
+          </Show>
         </Show>
 
 
@@ -1939,13 +1992,27 @@ export function ReviewPage() {
         </Show>{/* /translate mode */}
 
         <Show when={reviewMode() === "metadata"}>
-          <span class="review-filename">
-            {metaType() === "globalprompt"
-              ? "GlobalPrompt"
-              : metaType() === "plotroute"
-                ? "PlotRouteMap"
-                : metaSourceFile()}
-          </span>
+          <Show when={jumpTarget()} fallback={
+            <span class="review-filename">
+              {metaType() === "globalprompt"
+                ? "GlobalPrompt"
+                : metaType() === "plotroute"
+                  ? "PlotRouteMap"
+                  : metaSourceFile()}
+            </span>
+          }>
+            <button
+              class="review-filename review-filename--jump"
+              title={`${jumpTarget()!.label}（点击跳转）`}
+              onClick={handleJumpToCounterpart}
+            >
+              {metaType() === "globalprompt"
+                ? "GlobalPrompt"
+                : metaType() === "plotroute"
+                  ? "PlotRouteMap"
+                  : metaSourceFile()}{" "}⇄
+            </button>
+          </Show>
           <Show when={metaEntry()}>
             <span class="review-count">1 条</span>
           </Show>
@@ -2009,13 +2076,12 @@ export function ReviewPage() {
                 ，每页 {pageSize() > 0 ? pageSize() : "全部"} 条，共 {totalPages()} 页
               </div>
             </Show>
-            {/* 当前页条目全量渲染（分页模式）。必须用 <For by=index> 而非 <Index>：
-             * <Index> 按位置复用组件实例，过滤（只看问题）后同位置挂载新条目时，
-             * draftDst 草稿信号会沿用旧实例的旧条目草稿，失焦提交错位 → 覆盖译文；
-             * <For by=index> 让实例跟随 entry.index 身份，重排时旧实例卸载、新实例重建，
-             * draftDst 以新条目 pre_dst 初始化，彻底消除草稿串位。 */}
+            {/* 当前页条目全量渲染（分页模式）。<For> 按对象引用 keyed（SolidJS 原生语义）：
+             * 过滤只筛选不改对象引用，草稿隔离由 EntryCard 内部 createEffect 监听
+             * e().pre_dst 变化回填保证——重排/过滤后条目内容变化即自动重置草稿，
+             * 不会把旧条目草稿提交到新条目。 */}
             <div class="review-list-full">
-              <For each={currentPageEntries()} by={(e) => e.index}>
+              <For each={currentPageEntries()}>
                 {(entry) => {
                   const idx = Number(entry.index);
                   const hStart = hRangeBoundaries().starts.get(idx);
