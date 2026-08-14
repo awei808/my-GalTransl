@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 from urllib.parse import urlparse, parse_qs, unquote
 from uuid import uuid4
 
@@ -216,6 +216,8 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
                     config_name = _cand
                     break
         _migrate_h_check_dict_config(project_dir, config_name)
+        # 兜底：项目字典配置缺少公共字典时自动补全（幂等，失败不影响主流程）
+        _ensure_common_dicts_in_config(project_dir, config_name)
         proj_config = CProjectConfig(project_dir, config_name)
         dict_cfg = proj_config.getDictCfgSection()
         pre_dic_list = dict_cfg.get("preDict", [])
@@ -1373,6 +1375,86 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
 
 def _common_dict_directory() -> str:
     return os.path.abspath("Dict")
+
+
+def _ensure_common_dicts_in_config(
+    project_dir: str, config_name: str, dict_dir: Optional[str] = None
+) -> bool:
+    """项目字典配置缺少公共字典时自动补全（幂等）。
+
+    扫描公共字典目录（默认服务进程 cwd/Dict）下的全部字典文件，按文件名
+    分类映射到对应配置键（preDict/gpt.dict/postDict/forbiddenDictH/
+    forbiddenDictNonH），项目配置中缺失的无前缀引用会被追加补上。
+
+    补全条目为无前缀公共文件名，运行时依赖项目 defaultDictFolder 指向
+    该公共字典目录（约定为 "Dict"）；若项目改动了 defaultDictFolder，
+    补全条目可能解析不到文件，仅产生加载告警而不影响其他流程。
+
+    用户主动从配置移除的公共字典也会被重新补回；如需排除某公共字典，
+    只能从公共字典目录中删除对应文件。
+
+    Args:
+        project_dir: 项目绝对路径。
+        config_name: 配置文件名。
+        dict_dir: 公共字典目录；None 时取默认（服务进程 cwd/Dict）。
+
+    Returns:
+        是否发生配置变更（供幂等判断）。
+    """
+    if not _is_safe_config_filename(config_name):
+        return False
+    config_path = os.path.join(project_dir, config_name)
+    if not os.path.isfile(config_path):
+        return False
+    if dict_dir is None:
+        dict_dir = _common_dict_directory()
+    if not os.path.isdir(dict_dir):
+        return False
+    try:
+        data = _read_yaml_file(config_path)
+        dict_cfg_raw = data.get("dictionary", {})
+        if not isinstance(dict_cfg_raw, dict):
+            return False
+        category_map = _read_common_dict_category_map(dict_dir)
+        # 公共字典文件名 → 配置键 → 待补列表
+        to_add: dict[str, list[str]] = {}
+        for name in sorted(os.listdir(dict_dir)):
+            if (
+                not os.path.isfile(os.path.join(dict_dir, name))
+                or name == COMMON_DICT_CATEGORY_MAP
+            ):
+                continue
+            category = category_map.get(name) or _categorize_common_dict_file(name)
+            try:
+                list_key = _dict_category_config_key(category)
+            except ValueError:
+                continue
+            to_add.setdefault(list_key, []).append(name)
+        changed = False
+        for list_key, names in to_add.items():
+            current_items = dict_cfg_raw.get(list_key, [])
+            if isinstance(current_items, list):
+                current_list = [str(x) for x in current_items]
+            elif current_items in (None, ""):
+                current_list = []
+            else:
+                current_list = [str(current_items)]
+            added = [name for name in names if name not in current_list]
+            if not added:
+                continue
+            dict_cfg_raw[list_key] = current_list + added
+            changed = True
+            LOGGER.info(
+                f"[dict] 已补全缺失公共字典：{project_dir}/{config_name} "
+                f"→ {list_key}: {', '.join(added)}"
+            )
+        if changed:
+            data["dictionary"] = dict_cfg_raw
+            _write_yaml_file(config_path, data)
+        return changed
+    except Exception as exc:
+        LOGGER.warning(f"[dict] 公共字典兜底补全失败：{exc}")
+        return False
 
 
 def _ensure_project_dict_file_configured(project_dir: str, config_name: str, category: str, filename: str) -> None:

@@ -53,6 +53,8 @@ def load_h_check_words(dict_paths: list) -> list:
     逐行解析，取每行第一列作为检测词；解析语义与 parse_dict_line 对齐：
     Tab/四空格先归一化为 |，仅当行内不含 | 时才把 // # \\ 前缀视作注释
     （含 | 的此类行编辑器会按规则加载，后端需保持一致）；另跳过纯符号分隔线。
+    取词后再防御一次：首列以 // # \\ 开头的行一律视为注释丢弃，避免模板注释
+    （如「// 格式：词|备注」含 | 被当作词条）注入提示词。
     文件缺失或解析为空时返回空列表（检测自动降级为不触发）。
     """
     words: list[str] = []
@@ -74,6 +76,10 @@ def load_h_check_words(dict_paths: list) -> list:
                 # 与 parse_dict_line 对齐：Tab/四空格转 | 后再分割（兼容 Tab 分隔字典）
                 norm = stripped.replace("    ", "\t").replace("\t", "|")
                 word = norm.split("|", 1)[0].strip()
+                # 首列带注释前缀（即使整行含 |，如模板说明）一律丢弃，防注入提示词
+                if word.lstrip().startswith(("//", "#", "\\")):
+                    LOGGER.debug(f"禁用词字典跳过注释行：{stripped}")
+                    continue
                 if not word:
                     continue
                 if word not in seen:

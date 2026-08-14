@@ -7,6 +7,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 
 import yaml
 
@@ -32,6 +33,10 @@ class _Base(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp()
         cls.server, cls.port = _start_server(cls.tmp)
         cls.root = cls.tmp
+        # 隔离公共字典兜底：模拟公共字典目录不存在，避免测试项目 config 被自动补全
+        _server_mod._common_dict_directory = lambda: os.path.join(
+            cls.tmp, "_no_common_dict"
+        )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -329,7 +334,12 @@ class ForbiddenWordProblemTests(unittest.TestCase):
                 f.write("快乐沉沦\n")
             from GalTransl.server import _load_rebuild_deps
 
-            deps = _load_rebuild_deps(pdir, "config.yaml")
+            # 隔离公共字典兜底，仅验证项目自身配置的禁用词加载
+            with mock.patch(
+                "GalTransl.server._common_dict_directory",
+                return_value=os.path.join(pdir, "_no_common_dict"),
+            ):
+                deps = _load_rebuild_deps(pdir, "config.yaml")
             _, _, _, _, _, _, forbidden_words = deps
             self.assertEqual(forbidden_words, ["快乐沉沦"])
 
@@ -390,6 +400,23 @@ class LoadHCheckWordsTests(unittest.TestCase):
             f.write("攀上顶峰\n攀上顶峰\n攀上了顶峰\n")
         words = load_h_check_words([fp, os.path.join(self.tmp, "missing.txt")])
         self.assertEqual(words, ["攀上顶峰", "攀上了顶峰"])
+
+    def test_comment_line_with_pipe_is_skipped(self) -> None:
+        """含 | 的模板注释行（如「// 格式：词|备注」）不注入词条，避免污染提示词"""
+        from GalTransl.Problem import load_h_check_words
+
+        fp = os.path.join(self.tmp, "words.txt")
+        with open(fp, "w", encoding="utf-8") as f:
+            f.write(
+                "// 禁用词字典（h 场景部分）\n"
+                "// 格式：词|备注（备注可选）\n"
+                "攀上顶峰|H场景中不应使用\n"
+                "// 格式：词、备注（备注可选）\n"
+                "潮水\n"
+            )
+        words = load_h_check_words([fp])
+        self.assertEqual(words, ["攀上顶峰", "潮水"])
+        self.assertNotIn("// 格式：词", words)
 
 
 class HCategoryTests(_Base):
