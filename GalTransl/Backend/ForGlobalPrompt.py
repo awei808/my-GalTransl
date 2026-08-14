@@ -300,13 +300,19 @@ class ForGlobalPrompt(BaseTranslate):
             "| Src | Dst(/Dst2/..) | Note |",
             "| --- | --- | --- |",
         ]
+        skipped = 0
         for dic in getattr(gpt_dic, "_dic_list", []):
+            # 过滤 h 场景词条，避免污染全局剧情分析（与元数据轮口径一致）
+            if gpt_dic._is_h_dict(dic):
+                skipped += 1
+                continue
             note = getattr(dic, "note", "") or ""
             lines.append(
                 f"| {dic.search_word} | {dic.replace_word} | {note} |"
             )
         LOGGER.debug(
             f"[GlobalPrompt] 已载入项目 GPT 字典，共 {len(lines) - 3} 条"
+            f"（跳过 {skipped} 条 h 词条）"
         )
         return "\n".join(lines)
 
