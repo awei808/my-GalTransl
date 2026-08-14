@@ -12,7 +12,6 @@ ForBatchMetaData 后端测试
   8. 全流程整合                 —— 桩 LLM 逐文件跑 batch_translate
 
 运行方式（务必从项目根目录）：
-    cd D:/解包或汉化用/my-galtransl/my-GalTransl
     python -m pytest tests/test_forbatchmeta.py -v
 或：
     python tests/test_forbatchmeta.py

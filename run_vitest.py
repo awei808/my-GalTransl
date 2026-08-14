@@ -1,6 +1,6 @@
 """桌面端 vitest 测试运行器（绕过中文路径限制）。
 
-背景：desktop 位于中文路径（如 D:\\解包或汉化用\\...），直接经
+背景：desktop 可能位于中文路径（如 D:\\项目\\...），直接经
 cmd（8.3 短路径 ~1 导致 vite 模块解析失败）或 PowerShell（真实中文
 路径参数被转码乱码）无法正常执行 vitest。Python subprocess 以 Unicode
 传递 cwd 与参数，Windows 的 CreateProcess 原生支持，可完整绕过该限制。

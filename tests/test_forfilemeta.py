@@ -12,10 +12,9 @@ ForFileMetaData 后端测试
   6. 日志输出           —— 验证关键节点有 LOGGER 输出
 
 运行方式（务必从项目根目录，使 load_guideline_file 能找到 translation_guidelines/）：
-    cd D:/解包或汉化用/my-galtransl/my-GalTransl
-    venv/Scripts/python.exe -m pytest tests/test_forplotmeta.py -v
+    python -m pytest tests/test_forfilemeta.py -v
 或使用自带的 __main__ 入口：
-    venv/Scripts/python.exe tests/test_forplotmeta.py
+    python tests/test_forfilemeta.py
 """
 
 import os
@@ -42,8 +41,57 @@ from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.ForFileMetaData import ForFileMetaData
 from GalTransl import LOGGER
 
-# 真实 test 翻译项目（仅用于拷贝，不会改动其 gt_input/FileMetaData.json）
-TEST_PROJECT = r"D:/解包或汉化用/xp3专用汉化文件夹/gal翻译/test"
+# 最小可跑项目配置：供 ForFileMetaData 全流程整合测试动态构造临时项目
+MINI_CONFIG = """# ForFileMetaData 端到端测试用最小项目配置
+backendSpecific:
+  OpenAI-Compatible:
+    tokens:
+      - token: sk-test
+        endpoint: http://127.0.0.1:9999
+        modelName: deepseek-chat
+
+plugin:
+  filePlugin: file_galtransl_json
+  textPlugins:
+    - text_common_normalfix
+
+common:
+  gpt.numPerRequestTranslate: 10
+  workersPerProject: 1
+  language: "ja2zh-cn"
+  splitFile: "no"
+  gpt.translation_guideline: "Basic.md"
+
+internals:
+  pipeline:
+    enableFileMeta: true
+
+dictionary:
+  defaultDictFolder: Dict
+  preDict: []
+  gpt.dict: []
+  postDict: []
+
+proxy:
+  enableProxy: false
+"""
+
+
+def _build_mini_project(root: str) -> str:
+    """在 root 下构造一个含 config.yaml 与单个日文待译文件的临时翻译项目。"""
+    proj = os.path.join(root, "mini_proj")
+    os.makedirs(os.path.join(proj, "gt_input"), exist_ok=True)
+    with open(os.path.join(proj, "config.yaml"), "w", encoding="utf-8") as f:
+        f.write(MINI_CONFIG)
+    lines = [
+        {"name": "夢", "message": "夢のような出会いだった。"},
+        {"name": "凛音", "message": "それは運命の出会いだ。"},
+    ]
+    with open(
+        os.path.join(proj, "gt_input", "scene_01.txt.json"), "w", encoding="utf-8"
+    ) as f:
+        json.dump(lines, f, ensure_ascii=False)
+    return proj
 
 
 class _FakeLLM:
@@ -81,12 +129,8 @@ class TestForFileMetaData(unittest.TestCase):
         # load_guideline_file 以 CWD 相对路径查找 translation_guidelines/
         os.chdir(ROOT)
 
-        # 把真实 test 项目完整拷贝到临时目录，避免污染真实 FileMetaData.json
-        cls.tmp = tempfile.mkdtemp(prefix="pm_test_")
-        shutil.copytree(TEST_PROJECT, cls.tmp, dirs_exist_ok=True)
-        pm = os.path.join(cls.tmp, "gt_input", "FileMetaData.json")
-        if os.path.exists(pm):
-            os.remove(pm)  # 从零开始，验证"全量生成"
+        # 动态构造最小临时项目，避免依赖任何机器上的真实翻译项目路径
+        cls.tmp = _build_mini_project(tempfile.mkdtemp(prefix="pm_test_"))
 
         cls.cfg = CProjectConfig(cls.tmp)
 

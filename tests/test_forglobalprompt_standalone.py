@@ -14,12 +14,13 @@
 import asyncio
 import json
 import os
+import shutil
 import sys
+import tempfile
 
-REPO_ROOT = r"D:\解包或汉化用\my-galtransl\my-GalTransl"
-TEST2 = r"D:\解包或汉化用\xp3专用汉化文件夹\gal翻译\test2"
-
-sys.path.insert(0, REPO_ROOT)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 from unittest.mock import patch  # noqa: E402
 
@@ -39,6 +40,58 @@ VALID_GLOBAL_PROMPT = json.dumps(
     ensure_ascii=False,
 )
 
+# 最小可跑项目配置：仅保留 run_galtransl 全流程所需的最小段，字典留空以免依赖机器路径
+MINI_CONFIG = """# 端到端测试用最小项目配置
+backendSpecific:
+  OpenAI-Compatible:
+    tokens:
+      - token: sk-test
+        endpoint: http://127.0.0.1:9999
+        modelName: deepseek-chat
+
+plugin:
+  filePlugin: file_galtransl_json
+  textPlugins:
+    - text_common_normalfix
+
+common:
+  gpt.numPerRequestTranslate: 10
+  workersPerProject: 1
+  language: "ja2zh-cn"
+  splitFile: "no"
+  gpt.translation_guideline: "Basic.md"
+
+internals:
+  pipeline:
+    enableGlobalPrompt: true
+
+dictionary:
+  defaultDictFolder: Dict
+  preDict: []
+  gpt.dict: []
+  postDict: []
+
+proxy:
+  enableProxy: false
+"""
+
+
+def _build_mini_project(root: str) -> str:
+    """在 root 下构造一个含 config.inc.yaml 与单个待译文件的临时翻译项目。"""
+    proj = os.path.join(root, "mini_proj")
+    os.makedirs(os.path.join(proj, "gt_input"), exist_ok=True)
+    with open(os.path.join(proj, "config.inc.yaml"), "w", encoding="utf-8") as f:
+        f.write(MINI_CONFIG)
+    lines = [
+        {"name": "爱丽丝", "message": "今日はいい天気だね。"},
+        {"name": "ボブ", "message": "そうだね、散歩に行こう。"},
+    ]
+    with open(
+        os.path.join(proj, "gt_input", "scene_01.txt.json"), "w", encoding="utf-8"
+    ) as f:
+        json.dump(lines, f, ensure_ascii=False)
+    return proj
+
 
 async def fake_ask_chatbot(self, *args, **kwargs):
     # 与真实 ask_chatbot 一致的返回形态：(response_text, token_usage)
@@ -50,37 +103,39 @@ async def noop_ensure_model_available(*args, **kwargs):
 
 
 async def main() -> None:
-    gp_path = os.path.join(TEST2, "transl_cache", "pass0_cache", "GlobalPrompt.json")
-    # 先清掉旧产物，确保断言反映的是本次运行真实生成
-    if os.path.exists(gp_path):
-        os.remove(gp_path)
+    tmp = tempfile.mkdtemp(prefix="gpt_standalone_")
+    try:
+        proj = _build_mini_project(tmp)
+        gp_path = os.path.join(proj, "transl_cache", "pass0_cache", "GlobalPrompt.json")
 
-    cfg = CProjectConfig(TEST2, "config.yaml")
-    cfg.non_interactive = True  # 走 server 风格轻量日志
-    cfg.select_translator = "ForGlobalPrompt"
+        cfg = CProjectConfig(proj, "config.inc.yaml")
+        cfg.non_interactive = True  # 走 server 风格轻量日志
+        cfg.select_translator = "ForGlobalPrompt"
 
-    with patch(
-        "GalTransl.Frontend.LLMTranslate.ensure_model_available_if_needed",
-        new=noop_ensure_model_available,
-    ), patch(
-        "GalTransl.Backend.ForGlobalPrompt.ForGlobalPrompt.ask_chatbot",
-        new=fake_ask_chatbot,
-    ):
-        # run_galtransl 内部会调用 doLLMTranslate(cfg)，命中新增的 ForGlobalPrompt 分支
-        await run_galtransl(cfg, "ForGlobalPrompt", None)
+        with patch(
+            "GalTransl.Frontend.LLMTranslate.ensure_model_available_if_needed",
+            new=noop_ensure_model_available,
+        ), patch(
+            "GalTransl.Backend.ForGlobalPrompt.ForGlobalPrompt.ask_chatbot",
+            new=fake_ask_chatbot,
+        ):
+            # run_galtransl 内部会调用 doLLMTranslate(cfg)，命中新增的 ForGlobalPrompt 分支
+            await run_galtransl(cfg, "ForGlobalPrompt", None)
 
-    assert os.path.exists(gp_path), f"[FAIL] 未生成 GlobalPrompt.json: {gp_path}"
-    with open(gp_path, encoding="utf-8") as f:
-        data = json.load(f)
+        assert os.path.exists(gp_path), f"[FAIL] 未生成 GlobalPrompt.json: {gp_path}"
+        with open(gp_path, encoding="utf-8") as f:
+            data = json.load(f)
 
-    val = validate_global_prompt(data)
-    assert val["valid"], f"[FAIL] GlobalPrompt 内容校验未通过: {val['errors']}"
-    assert data.get("游戏名称") == "测试游戏"
-    assert len(data.get("角色列表", [])) >= 1
+        val = validate_global_prompt(data)
+        assert val["valid"], f"[FAIL] GlobalPrompt 内容校验未通过: {val['errors']}"
+        assert data.get("游戏名称") == "测试游戏"
+        assert len(data.get("角色列表", [])) >= 1
 
-    print("[PASS] ForGlobalPrompt 独立模式：doLLMTranslate 正确分派，")
-    print(f"       生成并通过校验的 GlobalPrompt.json -> {gp_path}")
-    print(f"       角色数: {len(data.get('角色列表', []))}")
+        print("[PASS] ForGlobalPrompt 独立模式：doLLMTranslate 正确分派，")
+        print(f"       生成并通过校验的 GlobalPrompt.json -> {gp_path}")
+        print(f"       角色数: {len(data.get('角色列表', []))}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
