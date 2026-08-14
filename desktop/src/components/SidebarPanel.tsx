@@ -219,6 +219,31 @@ function FileExplorer() {
   const tree = () => appState.cacheTree;
   const selected = () => appState.activeFilePath;
 
+  // 选中文件变化时，自动展开其所在的目录链（如 pass1_cache/sub/xx.json → 展开 pass1_cache、pass1_cache/sub）。
+  // 兼容侧栏手点：目录本身点击走 toggle 展开/收起，不受此 effect 影响；仅外部跳转（activeFilePath 变化）触发。
+  createEffect(() => {
+    const sel = selected();
+    if (!sel) return;
+    const parts = sel.split("/");
+    if (parts.length < 2) return;
+    // 目标可能是文件或目录：目录自身不展开（保持用户展开/收起控制），只展开其祖先
+    const dirs: string[] = [];
+    for (let i = 1; i < parts.length; i++) {
+      dirs.push(parts.slice(0, i).join("/"));
+    }
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const d of dirs) {
+        if (!next.has(d)) {
+          next.add(d);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  });
+
   return (
     <div class="sidebar-panel">
       <div class="sidebar-header">文件浏览器</div>

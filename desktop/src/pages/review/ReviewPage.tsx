@@ -1857,8 +1857,8 @@ export function ReviewPage() {
     return f.split(/[/\\]/).pop() || f;
   };
   // pass1(文件级元数据) 与 pass3(翻译缓存) 互相跳转：
-  // 从当前文件路径推得对应文件路径；跳转前用 cacheTree 做存在性预检，
-  // 目标不存在时 toast 提示并停留当前文件（避免跳到空白页）。
+  // 从当前文件路径推得对应文件路径。不做存在性预检：
+  // 目标文件若不存在，后端加载接口返回 404，交由加载 effect 兜底清空显示。
   // 文件命名：pass3 为 {源}.txt.json，pass1 为 {源}.txt.json.meta.json，
   // 即 pass1 文件 = pass3 文件名 + ".meta.json"（见 modeInfoOf 的提取规则）。
   const jumpTarget = createMemo<{ path: string; label: string } | null>(() => {
@@ -1884,15 +1884,6 @@ export function ReviewPage() {
   const handleJumpToCounterpart = () => {
     const target = jumpTarget();
     if (!target) return;
-    // cacheTree 尚未初始化（为空）时跳过预检，直接跳转交由加载 effect 兜底，
-    // 避免首轮轮询前误报「文件不存在」
-    const exists = appState.cacheTree.length
-      ? appState.cacheTree.some((n) => n.path === target.path)
-      : true;
-    if (!exists) {
-      toast.warning("对应文件尚未生成，无法跳转");
-      return;
-    }
     setAppState("activeFilePath", target.path);
   };
 
