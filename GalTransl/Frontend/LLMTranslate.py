@@ -2192,6 +2192,36 @@ async def doLLMTranslSingleChunk(
         _update_runtime(projectConfig, current_file=file_name)
 
 
+def _resolve_file_h_ranges(
+    proj_dir: str,
+    cache_file_path: str,
+    projectConfig: CProjectConfig,
+) -> list:
+    """解析当前缓存文件对应的 H 剧情区间，用于翻译阶段正确区分 H 场景。
+
+    读取 pass2_cache/{输入名}.batch.json 的批次 H 标记并换算为缓存条目 index 口径。
+    复用 server.py 的 _resolve_cache_h_ranges；延迟导入避免与 server 的顶层循环依赖。
+    无 pass2_cache（独立运行翻译、未跑批注阶段）时返回空列表，调用方据此降级。
+    """
+    import os
+
+    try:
+        from GalTransl.server import _resolve_cache_h_ranges
+    except Exception:
+        LOGGER.debug("无法导入 _resolve_cache_h_ranges，跳过 H 区间解析")
+        return []
+    try:
+        cache_rel = os.path.relpath(cache_file_path, projectConfig.getCachePath())
+        info = _resolve_cache_h_ranges(proj_dir, cache_rel)
+        h_ranges = [tuple(r) for r in info.get("h_ranges", [])]
+        if h_ranges:
+            LOGGER.debug(f"解析到 H 区间 {h_ranges}（cache={cache_rel}）")
+        return h_ranges
+    except Exception as e:
+        LOGGER.debug(f"解析 H 区间失败，跳过：{e}")
+        return []
+
+
 async def postprocess_results(
     resultChunks: List[SplitChunkMetadata],
     projectConfig: CProjectConfig,
@@ -2281,9 +2311,11 @@ async def postprocess_results(
         )
 
         # 刷新 problem 字段（仅翻译模式；GenDic/dump-name 等不刷新）。
-        # 翻译阶段不传 h_ranges/h_check_words，H 区间检测在校对阶段（/cache/check、/cache/save rebuild、
-        # 翻译结束后的自动重检）才生效，problem 标注"先无后有"由重检补上。
-        find_problems(trans_list, projectConfig, gpt_dic)
+        # 解析该文件 H 区间后传入 find_problems，使 H 场景长句阈值走 getHSentenceLengthThreshold，
+        # 而非平均分句阈值；无 pass2_cache 时 h_ranges 为空列表，行为与旧版一致。
+        # 注意：翻译阶段不传 h_check_words，H 场景用词不当检测仍由校对阶段重检补上。
+        h_ranges = _resolve_file_h_ranges(proj_dir, cache_file_path, projectConfig)
+        find_problems(trans_list, projectConfig, gpt_dic, h_ranges=h_ranges)
         # post_save=True → 写完整快照并删除对应 .append 日志（即合并 jsonl）
         await save_transCache_to_json(
             trans_list,
