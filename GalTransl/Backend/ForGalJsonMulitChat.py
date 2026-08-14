@@ -2017,11 +2017,11 @@ class ForGalJsonMulitChat(BaseTranslate):
                 prefill_used=prefill_used,
             )
 
-            # 实时推送译文拼接预览（前端翻译控制台右栏"译文拼接"）
+            # 实时推送译文预览（前端翻译控制台右栏"译文预览"）
             if result_trans_list:
                 _assembled = "\n".join(str(t) for t in result_trans_list)
                 try:
-                    set_live_snippets(_project_dir, assembled_preview=_assembled)
+                    set_live_snippets(_project_dir, translation_preview=_assembled)
                 except Exception:
                     pass
 

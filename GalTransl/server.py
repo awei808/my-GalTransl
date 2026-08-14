@@ -3625,7 +3625,7 @@ def build_handler(registry: JobRegistry) -> type:
                     "stage_total": runtime["stage_total"],
                     "current_file": runtime["current_file"],
                     "latest_prompt_preview": runtime.get("latest_prompt_preview", ""),
-                    "latest_assembled_preview": runtime.get("latest_assembled_preview", ""),
+                    "translation_previews": runtime.get("translation_previews", {}),
                     "prompt_previews": runtime.get("prompt_previews", {}),
                     "recent_errors": runtime["recent_errors"],
                     "recent_successes": runtime["recent_successes"],

@@ -142,7 +142,8 @@ class RuntimeState:
     current_batch: int = 0
     batch_total: int = 0
     latest_prompt_preview: str = ""
-    latest_assembled_preview: str = ""
+    # 按 worker_id 隔离的最新译文预览快照（多 worker 并发时各占一个 key，覆盖式）
+    translation_previews: dict[str, str] = field(default_factory=dict)
     # 按 worker_id 隔离的提示词快照（多 worker 并发时各占一个 key）
     prompt_previews: dict[str, WorkerPromptSnapshot] = field(default_factory=dict)
     updated_at: str = field(default_factory=_utcnow_text)
@@ -380,7 +381,7 @@ class RuntimeRegistry:
                     "current_batch": 0,
                     "batch_total": 0,
                     "latest_prompt_preview": "",
-                    "latest_assembled_preview": "",
+                    "translation_previews": {},
                     "prompt_previews": {},
                     "workers_active": 0,
                     "workers_configured": 0,
@@ -410,7 +411,7 @@ class RuntimeRegistry:
                 "current_batch": state.current_batch,
                 "batch_total": state.batch_total,
                 "latest_prompt_preview": state.latest_prompt_preview,
-                "latest_assembled_preview": state.latest_assembled_preview,
+                "translation_previews": dict(state.translation_previews),
                 # 直接透传已写入的提示词快照：数据存在性不依赖 workers_active，
                 # 否则 worker 空闲瞬间（队列间隙/任务首尾）会被清空，前端 tab 消失
                 "prompt_previews": {
@@ -453,21 +454,22 @@ RUNTIME_REGISTRY = RuntimeRegistry()
 def set_live_snippets(
     project_dir: str,
     prompt_preview: str = "",
-    assembled_preview: str = "",
+    translation_preview: str = "",
     worker_id: str = "",
     filename: str = "",
 ) -> None:
-    """在翻译循环中设置当前提示词和译文拼接的实时预览。
+    """在翻译循环中设置当前提示词和译文预览的实时快照。
 
     由 ForGalJsonMulitChat.translate() 与 BaseTranslate.ask_chatbot() 调用。
     worker_id 为空时回退到 contextvars 中的 worker 标识（-1 表示非 worker 上下文），
     此时仅更新 latest_prompt_preview 兼容元数据生成阶段。
 
     提示词预览（prompt_preview）：覆盖式更新，限 8000 字符。
-    译文拼接（assembled_preview）：累积式追加，无截断，
-    保留所有历史增量数据保证连续性与完整性。
+    译文预览（translation_preview）：按 worker 覆盖式更新，仅写入非 worker 上下文外
+    的 worker 快照，单条封顶 10000 字符保留最新尾部，避免内存与接口传输无限增长。
     """
     max_len = 8000  # 仅提示词预览限制长度
+    max_translation_len = 10000  # 单 worker 译文预览封顶长度，保留最新尾部
     worker_id = worker_id or WORKER_ID_CTX.get()
     with RUNTIME_REGISTRY._lock:
         state = RUNTIME_REGISTRY._states.get(_normalize_project_dir(project_dir))
@@ -497,9 +499,15 @@ def set_live_snippets(
                     f"[prompt-preview] set_live_snippets 未写入 prompt_previews: "
                     f"worker_id={worker_id!r}（-1/空表示非 worker 上下文）, 仅更新 latest_prompt_preview"
                 )
-        if assembled_preview:
-            # 累积追加而非替换：保留并叠加所有历史批次/文件的译文片段
-            state.latest_assembled_preview += assembled_preview
+        if translation_preview:
+            # 仅 worker 上下文写入（与提示词快照口径一致），非 worker 阶段不维护译文快照
+            if worker_id and worker_id != "-1":
+                # 覆盖式替换该 worker 最新译文预览，而非跨批次累积
+                preview_text = translation_preview
+                if len(preview_text) > max_translation_len:
+                    preview_text = preview_text[-max_translation_len:]
+                    LOGGER.debug(f"[prompt-preview] worker {worker_id} translation_preview 已封顶至最近 {max_translation_len} 字符")
+                state.translation_previews[worker_id] = preview_text
         state.updated_at = _utcnow_text()
 
 

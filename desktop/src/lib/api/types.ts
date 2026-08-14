@@ -315,7 +315,8 @@ export type ProjectRuntimeResponse = {
   /** 当前文件的总批次数 */
   batch_total: number;
   latest_prompt_preview: string;
-  latest_assembled_preview: string;
+  /** 多 worker 并发时按 worker_id 隔离的最新译文预览快照（key 为 worker 标识，覆盖式） */
+  translation_previews: Record<string, string>;
   /** 多 worker 并发时按 worker_id 隔离的提示词快照（key 为 worker 标识） */
   prompt_previews: Record<string, WorkerPromptPreview>;
   recent_errors: ProjectRuntimeErrorEntry[];

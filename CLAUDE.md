@@ -197,7 +197,7 @@ GalTransl 是一个 Galgame（视觉小说）自动翻译工具，利用大语�
 
 ### RuntimeState（GalTransl/server_runtime.py）
 
-服务端模式下每项目一个，供前端 `/runtime` 轮询：`stage`/`stage_index`/`stage_total`（8 阶段）、`current_file`/`current_batch`/`batch_total`、`workers_active`/`workers_configured`、`translation_speed_lpm`（1 分钟窗口速度）、`latest_prompt_preview`/`latest_assembled_preview`（实时提示词/译文预览）、`recent_errors`/`recent_successes`（环形队列）、`notices`（一次性用户提示，前端 toast 后清除）。
+服务端模式下每项目一个，供前端 `/runtime` 轮询：`stage`/`stage_index`/`stage_total`（8 阶段）、`current_file`/`current_batch`/`batch_total`、`workers_active`/`workers_configured`、`translation_speed_lpm`（1 分钟窗口速度）、`latest_prompt_preview`/`translation_previews`（实时提示词/译文预览）、`recent_errors`/`recent_successes`（环形队列）、`notices`（一次性用户提示，前端 toast 后清除）。
 
 ### 缓存条目（CacheEntry）
 

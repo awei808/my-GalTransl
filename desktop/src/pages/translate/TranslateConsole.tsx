@@ -142,6 +142,9 @@ export function TranslateConsole() {
     Object.keys(promptPreviews()).sort((a, b) => Number(a) - Number(b));
   const activePromptWorkerId = () => promptWorkerTab() ?? promptWorkerIds()[0];
   const activePromptSnapshot = () => promptPreviews()[activePromptWorkerId()];
+  // 多 worker 并发时按 worker_id 隔离的最新译文预览快照（key 为 worker 标识）
+  const translationPreviews = () => runtime()?.translation_previews ?? {};
+  const activeTranslationPreview = () => translationPreviews()[activePromptWorkerId()];
   // 多 worker 并发时，从各 worker 提示词快照聚合正在处理的文件（去重保序）
   const activeFiles = createMemo(() => {
     const seen = new Set<string>();
@@ -756,7 +759,7 @@ export function TranslateConsole() {
               <button
                 class={`panel-tab ${panelTab() === "assembled" ? "panel-tab--active" : ""}`}
                 onClick={() => setPanelTab("assembled")}
-              >译文拼接</button>
+              >译文预览</button>
               <button
                 class={`panel-tab ${panelTab() === "errors" ? "panel-tab--active" : ""}`}
                 onClick={() => setPanelTab("errors")}
@@ -779,10 +782,22 @@ export function TranslateConsole() {
 
             {/* ── 标签内容 ── */}
             <Switch fallback={<div class="panel-content">未知面板</div>}>
-              {/* 译文拼接（原内容） */}
+              {/* 译文预览：按 worker 分板块（与提示词栏共享 worker tab 选中态） */}
               <Match when={panelTab() === "assembled"}>
+                <div class="panel-tabs panel-tabs--prompt">
+                  <For each={promptWorkerIds()}>
+                    {(wid) => (
+                      <button
+                        class={`panel-tab panel-tab--sm ${activePromptWorkerId() === wid ? "panel-tab--active" : ""}`}
+                        onClick={() => setPromptWorkerTab(wid)}
+                      >
+                        Worker {Number(wid) + 1}
+                      </button>
+                    )}
+                  </For>
+                </div>
                 <div class="panel-content panel-content--pre">
-                  {runtime()?.latest_assembled_preview || "等待翻译开始…"}
+                  {activeTranslationPreview() || "等待该 Worker 提交译文…"}
                 </div>
               </Match>
 
