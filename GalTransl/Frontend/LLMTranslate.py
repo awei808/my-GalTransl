@@ -2213,7 +2213,9 @@ def _resolve_file_h_ranges(
     try:
         cache_rel = os.path.relpath(cache_file_path, projectConfig.getCachePath())
         info = _resolve_cache_h_ranges(proj_dir, cache_rel)
-        h_ranges = [tuple(r) for r in info.get("h_ranges", [])]
+        h_ranges = [
+            (r["lo"], r["hi"]) for r in info.get("h_ranges", [])
+        ]
         if h_ranges:
             LOGGER.debug(f"解析到 H 区间 {h_ranges}（cache={cache_rel}）")
         return h_ranges
