@@ -101,7 +101,7 @@ def find_problems(
     - arinashi_dict: 一个自定义字典，其中的键值对将会被用于查找问题。
     - h_ranges: H 剧情区间列表 [(lo, hi), ...]，用于区分 h 场景（问题类型判定的一级维度）。
     - h_check_words: H 场景用词不当检测词库（h 场景内命中即标记「用词不当」）。
-    - forbidden_words: 非 h 场景禁用词库（非 h 场景内命中即标记「用词不当」）；本次未搭建，传空则不触发。
+    - forbidden_words: 非 h 场景禁用词库（非 h 场景内命中即标记「用词不当」；h 场景内与 h 词库合并检测）。
 
     返回值:
     - 无返回值，但会修改每个翻译对象的 `problem` 属性。
@@ -207,16 +207,19 @@ def find_problems(
 
                 )
         if CProblemType.字典使用 in find_type:
-            # h 场景只检查 h 字典，非 h 场景只检查非 h 字典，消除跨场景误报
+            # h 场景检查 h 与 非 h（重合词条只按 h 检查）；非 h 场景只检查非 h 字典
             if val := gpt_dict.check_dic_use(
                 pre_dst, tran, scene="h" if is_h_scene else "nh"
             ):
                 problem_list.append(val)
         if CProblemType.用词不当 in find_type:
-            # h 场景沿用原 h 词库逻辑；非 h 场景按禁用词库检测（本次未搭建，传空则不触发）
+            # h 场景合并 h 词库与禁用词库（h 词是对非 h 词的补充）；非 h 场景只按禁用词库检测
             if is_h_scene:
-                if h_check_words:
-                    hits = [w for w in h_check_words if w in pre_dst or w in post_dst]
+                merged_words = list(
+                    dict.fromkeys([*(h_check_words or []), *(forbidden_words or [])])
+                )
+                if merged_words:
+                    hits = [w for w in merged_words if w in pre_dst or w in post_dst]
                     if hits:
                         problem_list.append("用词不当：" + "、".join(hits))
                         LOGGER.debug(f"用词不当(h场景)：index={tran.index}, 命中={hits}")

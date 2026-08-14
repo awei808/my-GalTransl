@@ -1,4 +1,4 @@
-"""「用词不当」检测：h 场景内按 H 词库命中标记；非 h 场景按禁用词库命中标记（本次未搭建）。"""
+"""「用词不当」检测：h 场景内合并 h 词库与禁用词库命中标记；非 h 场景按禁用词库命中标记。"""
 import importlib
 import json
 import os
@@ -275,8 +275,8 @@ class ForbiddenWordProblemTests(unittest.TestCase):
         )
         self.assertIn("用词不当", trans_list[0].problem)
 
-    def test_forbidden_word_skipped_inside_h_range(self) -> None:
-        # h 场景内禁用词不触发（h 场景走 h_check_words 词库）
+    def test_forbidden_word_hit_inside_h_range(self) -> None:
+        # h 场景内非 h 禁用词也触发（h 场景合并 h 词库与禁用词库）
         from GalTransl.Problem import find_problems
 
         trans_list = [self._tran(1, "这台设备不错。")]
@@ -284,7 +284,21 @@ class ForbiddenWordProblemTests(unittest.TestCase):
             trans_list, self._FakeProblemConfig(), None, h_ranges=[(1, 5)], h_check_words=[],
             forbidden_words=["设备"],
         )
-        self.assertEqual(trans_list[0].problem, "")
+        self.assertIn("用词不当", trans_list[0].problem)
+
+    def test_h_range_merges_both_word_lists(self) -> None:
+        # h 场景内 h 词库与非 h 禁用词库命中都标记，且不重复
+        from GalTransl.Problem import find_problems
+
+        trans_list = [self._tran(1, "这台设备很好。")]
+        find_problems(
+            trans_list, self._FakeProblemConfig(), None, h_ranges=[(1, 5)],
+            h_check_words=["设备", "很好"],
+            forbidden_words=["设备"],
+        )
+        self.assertIn("用词不当", trans_list[0].problem)
+        # 去重：设备 只出现一次
+        self.assertEqual(trans_list[0].problem.count("设备"), 1)
 
     def test_no_forbidden_words_skips_detection(self) -> None:
         # 禁用词库未搭建（None/空）→ 非 h 场景不标记

@@ -419,7 +419,7 @@ class CGptDictSceneTests(unittest.TestCase):
 # check_dic_use scene 过滤 — 字典使用问题检测按场景分流
 # ══════════════════════════════════════════════════════════
 class CheckDicUseSceneTests(unittest.TestCase):
-    """check_dic_use 的 scene 参数：h 只检 h 字典、nh 只检非 h、all 全检"""
+    """check_dic_use 的 scene 参数：h 全查（重合词条只按 h 检查，对齐注入侧）、nh 只检非 h、all 全检"""
 
     def _make_tran(self, post_src: str, post_dst: str) -> CSentense:
         tran = CSentense(pre_src=post_src)
@@ -436,16 +436,31 @@ class CheckDicUseSceneTests(unittest.TestCase):
         self.assertIn("GPT字典_非h未使用：責め---责难", out)
         self.assertNotIn("GPT字典_h未使用", out)  # h 词条不参与 nh 判定
 
-    def test_h_only_h_dict(self) -> None:
-        """scene='h'：只报 h 词条未使用，非 h 词条同源词不参与"""
+    def test_h_overlap_checks_h_only(self) -> None:
+        """scene='h'：重合词条（h 与非 h 同名）只按 h 词条检查，与注入侧 h 优先对齐"""
         gd = CGptDictSceneTests()._make_gd()
         tran = self._make_tran("責め", "責め是啥")
         out = gd.check_dic_use(tran.post_dst, tran, scene="h")
         self.assertIn("GPT字典_h未使用：責め---折磨/拷问/惩罚/调教", out)
-        self.assertNotIn("GPT字典_非h未使用", out)  # 非 h 词条不参与 h 判定
+        self.assertNotIn("GPT字典_非h未使用", out)  # 重合词条只按 h 检查，非 h 同源词条不参与
+
+    def test_h_overlap_h_dst_used_no_false_positive(self) -> None:
+        """scene='h'：重合词用了 h 译文，不报非 h 同源词条未使用（避免确定性误报）"""
+        gd = CGptDictSceneTests()._make_gd()
+        tran = self._make_tran("責め", "他在折磨她")
+        out = gd.check_dic_use(tran.post_dst, tran, scene="h")
+        self.assertEqual(out, "")
+
+    def test_h_non_overlap_non_h_still_checked(self) -> None:
+        """scene='h'：非 h 独有词条（无同名 h 词条）仍参与检查"""
+        gd = CGptDictSceneTests()._make_gd()
+        tran = self._make_tran("まんこ", "まんこ是啥")
+        out = gd.check_dic_use(tran.post_dst, tran, scene="h")
+        self.assertIn("GPT字典_非h未使用：まんこ---小穴", out)
+        self.assertNotIn("GPT字典_h未使用", out)
 
     def test_all_checks_both(self) -> None:
-        """scene='all'（默认）：h 与非 h 同源词都参与，兼容旧行为"""
+        """scene='all'（默认）：h 与非 h 同源词都参与（不区分场景）"""
         gd = CGptDictSceneTests()._make_gd()
         tran = self._make_tran("責め", "責め是啥")
         out = gd.check_dic_use(tran.post_dst, tran)

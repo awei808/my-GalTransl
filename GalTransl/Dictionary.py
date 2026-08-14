@@ -699,13 +699,20 @@ class CGptDict:
         Args:
             find_from_str: 待检查文本（通常是译文）。
             tran: 当前句子（取 post_src 判定源词是否出现）。
-            scene: 场景过滤，all 检查全部 / h 只检查 h 字典 / nh 只检查非 h 字典。
+            scene: 场景过滤，all 检查全部；h 检查 h 与 非 h（重合词条只按
+                   h 检查，与 gen_prompt 注入侧一致）；nh 只检查非 h 字典。
         """
         problem_list = []
+        # 与注入侧 gen_prompt(scene="h") 对齐：源词被 h 词条覆盖时，非 h 同源词条不参与
+        h_hit = set()
+        if scene == "h":
+            for dic in self._dic_list:
+                if self._is_h_dict(dic) and dic.search_word in tran.post_src:
+                    h_hit.add(dic.search_word)
         for dic in self._dic_list:
-            if scene == "h" and not self._is_h_dict(dic):
-                continue
             if scene == "nh" and self._is_h_dict(dic):
+                continue
+            if scene == "h" and not self._is_h_dict(dic) and dic.search_word in h_hit:
                 continue
             if dic.search_word not in tran.post_src:
                 continue
