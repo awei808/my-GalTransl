@@ -355,7 +355,19 @@ class ForJPResidue(ForGalJsonMulitChat):
                     f"[残留日文] 句子 {line_id} 的 better 与当前译文相同，跳过"
                 )
                 continue
-            tran.alt_dst = normalized
+            # 交换属性开关：开启时修复结果直接覆盖当前译文（校对优先，否则初译），
+            # 原当前译文存入 alt_dst 供校对页回退；关闭时仅写 alt_dst 作备选译文。
+            if self.pj_config.getKey("gpt.swapFixToCurrent", False):
+                tran.alt_dst = current_dst
+                if tran.proofread_zh != "":
+                    tran.proofread_zh = normalized
+                else:
+                    tran.pre_dst = normalized
+                LOGGER.debug(
+                    f"[残留日文] 句子 {line_id} 已交换属性：修复结果覆盖当前译文"
+                )
+            else:
+                tran.alt_dst = normalized
             success_count += 1
         return success_count, found_count
 

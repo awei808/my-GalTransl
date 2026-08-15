@@ -71,7 +71,11 @@ const REMOVED_CONFIG_KEYS = new Set<string>([
 const FIELD_UI: Record<string, FieldUI> = {
   "common.gpt.afterTranslation": {
     label: "翻译后处理后端",
-    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；两者都做（improve+brfix，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation 手动触发。",
+    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；残留日文修复（jpfix）对照原文清除残留日文生成备选译文；可 + 组合（improve+brfix、improve+brfix+jpfix 等，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation / ForJPResidue 手动触发。",
+  },
+  "common.gpt.swapFixToCurrent": {
+    label: "修复轮结果自动交换当前译文",
+    hint: "开启后，修复轮（brfix/jpfix）生成的备选译文会与当前译文交换属性：修复结果直接覆盖当前译文（校对结果优先，否则初译），原译文存入备选译文可在校对页回退。关闭时修复结果仅作为备选译文，需手动交换。",
   },
   "internals.pipeline.enableValidate": {
     label: "开启阶段 0：输入数据校验",
@@ -398,7 +402,11 @@ const KEYWORD_LABELS: Record<string, string> = {
   none: "无（不追加）",
   improve: "改进轮",
   brfix: "换行修复",
+  jpfix: "残留日文修复",
   "improve+brfix": "改进轮 + 换行修复（按顺序）",
+  "improve+jpfix": "改进轮 + 残留日文修复（按顺序）",
+  "brfix+jpfix": "换行修复 + 残留日文修复（按顺序）",
+  "improve+brfix+jpfix": "改进轮 + 换行修复 + 残留日文修复（按顺序）",
   // 剧情路线图结构类型（与向导 PLOT_STRUCTURE_TYPES 的 value 一致）
   线性: "线性（链）",
   树: "树（树状分支）",
