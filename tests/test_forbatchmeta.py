@@ -87,9 +87,9 @@ class TestForBatchMetaData(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.chdir(ROOT)
-        # 绕过 OpenCC 初始化（版本兼容问题）
+        # 绕过 OpenCC 初始化（版本兼容问题，OpenCC 现位于 BaseEngine 模块命名空间）
         cls._opencc_patcher = patch(
-            "GalTransl.Backend.BaseTranslate.OpenCC",
+            "GalTransl.Backend.BaseEngine.OpenCC",
             return_value=MagicMock(convert=lambda s: s)
         )
         cls._opencc_patcher.start()

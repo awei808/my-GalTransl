@@ -31,11 +31,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-# 必须在导入 ForFileMetaData 之前 patch OpenCC，避免 BaseTranslate 初始化失败
+# 必须在导入 ForFileMetaData 之前 patch OpenCC，避免 BaseEngine 初始化失败
+# （OpenCC 现位于 BaseEngine 模块命名空间，由 BaseEngine.__init__ 使用）
+# 用 tearDownModule 恢复，避免模块级 patch 泄漏到 discover 中的后续测试文件
 from unittest.mock import patch, MagicMock
-_patcher = patch("GalTransl.Backend.BaseTranslate.OpenCC",
+_patcher = patch("GalTransl.Backend.BaseEngine.OpenCC",
                  return_value=MagicMock(convert=lambda s: s))
 _patcher.start()
+
+
+def tearDownModule() -> None:
+    _patcher.stop()
+
 
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.ForFileMetaData import ForFileMetaData
