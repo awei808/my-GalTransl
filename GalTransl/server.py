@@ -34,7 +34,6 @@ from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
 from GalTransl.Backend.Prompts import (
-    FORGAL_JSON_SYSTEM_PROMPT,
     FORGAL_JSON_TRANS_PROMPT,
     FORGAL_JSON_IMPROVE_PROMPT,
     FORGAL_JSON_BRSTATION_PROMPT,
@@ -51,6 +50,7 @@ from GalTransl.Backend.Prompts import (
     FORBR_SYSTEM,
     FORJP_SYSTEM,
     FORBAN_SYSTEM,
+    FORTRANS_SYSTEM,
     FORGAL_JSON_BANFIX_PROMPT,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
@@ -1606,7 +1606,7 @@ def _collect_common_dict_payload() -> dict[str, Any]:
 
 _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForGal-json-multi-chat": {
-        "system_prompt": FORGAL_JSON_SYSTEM_PROMPT,
+        "system_prompt": FORTRANS_SYSTEM,
         "user_prompt": FORGAL_JSON_TRANS_PROMPT,
     },
     "ForFileMetaData": {

@@ -15,7 +15,7 @@ from GalTransl.Cache import save_transCache_to_json
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks, fix_quotes
 from GalTransl.Backend.Prompts import (
-    FORGAL_JSON_SYSTEM_PROMPT,
+    FORTRANS_SYSTEM,
     FORGAL_JSON_TRANS_PROMPT,
     H_WORDS_LIST,
     H_BATCH_GUIDE,
@@ -793,7 +793,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
         self.trans_prompt = FORGAL_JSON_TRANS_PROMPT
-        self.system_prompt = FORGAL_JSON_SYSTEM_PROMPT
+        self.system_prompt = FORTRANS_SYSTEM
         self._apply_internal_prompt_template_overrides()
         # 读取增强 jailbreak 配置：当模型拒绝翻译时，通过在 assistant 角色
         # 预输出 ```jsonline 来引导模型输出正确格式（仅在第一轮使用）
