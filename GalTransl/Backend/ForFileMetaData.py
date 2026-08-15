@@ -48,8 +48,7 @@ class ForFileMetaData(BaseEngine):
 
         self.system_prompt = FORFILEMETA_SYSTEM
         self.trans_prompt = FORFILEMETA_PROMPT
-        self._apply_internal_prompt_template_overrides()
-        self.init_chatbot(eng_type, config)
+        self._setup_prompts(eng_type, config)
 
         # 是否把项目翻译规范注入提示词（默认开启，可在 internals.forfilemeta.inject_guideline 关闭）
         raw = self.pj_config.getKey("internals.forfilemeta.inject_guideline", True)

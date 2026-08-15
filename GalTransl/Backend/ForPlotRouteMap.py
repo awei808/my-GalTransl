@@ -91,8 +91,7 @@ class ForPlotRouteMap(BaseEngine):
         self.pj_config = config
         self.system_prompt = FORPLOTROUTE_SYSTEM
         self.trans_prompt = FORPLOTROUTE_PROMPT
-        self._apply_internal_prompt_template_overrides()
-        self.init_chatbot(eng_type, config)
+        self._setup_prompts(eng_type, config)
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
 

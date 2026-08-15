@@ -228,6 +228,19 @@ class BaseEngine:
         if isinstance(user_prompt_override, str):
             self.trans_prompt = user_prompt_override
 
+    def _setup_prompts(self, eng_type: str, config: CProjectConfig) -> None:
+        """在 system_prompt / trans_prompt 赋值之后统一应用 override 并初始化 LLM 客户端。
+
+        子类 __init__ 依次执行 super().__init__()、赋值 system_prompt/trans_prompt 后，
+        调用本方法完成「应用用户模板 override → 初始化聊天客户端」两步。调用顺序即
+        标准顺序：override 先于 init_chatbot，因此 init_chatbot 内部的 change_prompt
+        逻辑会覆盖 override 结果（向后兼容）。
+
+        注意：GenDic 刻意保持「先 init_chatbot 后 override」的原始顺序，不使用本方法。
+        """
+        self._apply_internal_prompt_template_overrides()
+        self.init_chatbot(eng_type, config)
+
     def init_chatbot(self, eng_type: str, config: CProjectConfig) -> None:
         section_name = "OpenAI-Compatible"
 

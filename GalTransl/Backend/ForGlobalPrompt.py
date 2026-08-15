@@ -181,8 +181,7 @@ class ForGlobalPrompt(BaseEngine):
 
         self.system_prompt = FORGLOBAL_SYSTEM
         self.trans_prompt = FORGLOBAL_PROMPT
-        self._apply_internal_prompt_template_overrides()
-        self.init_chatbot(eng_type, config)
+        self._setup_prompts(eng_type, config)
 
         # 是否把项目翻译规范注入提示词（默认开启）
         raw = self.pj_config.getKey(

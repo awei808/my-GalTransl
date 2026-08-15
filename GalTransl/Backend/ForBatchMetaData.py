@@ -61,8 +61,7 @@ class ForBatchMetaData(BaseEngine):
 
         self.system_prompt = FORBATCHMETA_SYSTEM
         self.trans_prompt = FORBATCHMETA_PROMPT
-        self._apply_internal_prompt_template_overrides()
-        self.init_chatbot(eng_type, config)
+        self._setup_prompts(eng_type, config)
 
         # 是否把项目翻译规范注入提示词（默认开启，可在 internals.forbatchmeta.inject_guideline 关闭）
         raw = self.pj_config.getKey("internals.forbatchmeta.inject_guideline", True)
