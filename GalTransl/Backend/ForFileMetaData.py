@@ -9,7 +9,7 @@ from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
-from GalTransl.Backend.BaseTranslate import BaseTranslate
+from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT, FORFILEMETA_SYSTEM
 
 
@@ -30,7 +30,7 @@ ForFileMetaData - 文件级元数据(FileMetaData)生成后端
 """
 
 
-class ForFileMetaData(BaseTranslate):
+class ForFileMetaData(BaseEngine):
     def __init__(
         self,
         config: CProjectConfig,

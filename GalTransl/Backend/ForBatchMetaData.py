@@ -8,7 +8,7 @@ from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
-from GalTransl.Backend.BaseTranslate import BaseTranslate
+from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
 from GalTransl.server_runtime import record_runtime_notice
 from GalTransl.Backend.ForGalJsonMulitChat import (
@@ -42,7 +42,7 @@ ForBatchMetaData - 批次级元数据(BatchMetadata)生成后端（高质量翻�
 """
 
 
-class ForBatchMetaData(BaseTranslate):
+class ForBatchMetaData(BaseEngine):
     def __init__(
         self,
         config: CProjectConfig,

@@ -11,7 +11,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from GalTransl import LOGGER, PASS0_CACHE_DIR
-from GalTransl.Backend.BaseTranslate import BaseTranslate
+from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.Backend.Prompts import FORPLOTROUTE_PROMPT, FORPLOTROUTE_SYSTEM
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
@@ -77,7 +77,7 @@ def _format_route_context(plot_route_map: Optional[dict], filename: str) -> str:
     return f"# 当前文件所属路线「{route}」的剧情\n{summary}\n"
 
 
-class ForPlotRouteMap(BaseTranslate):
+class ForPlotRouteMap(BaseEngine):
     """剧情路线图后端：基于各文件剧情摘要与用户大纲，生成 mermaid 路线图。"""
 
     def __init__(
