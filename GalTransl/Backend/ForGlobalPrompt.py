@@ -29,7 +29,7 @@ from GalTransl.ConfigHelper import CProxyPool, CProjectConfig, initDictList
 from GalTransl import LOGGER, PASS0_CACHE_DIR
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
-from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
 from GalTransl.DataValidator import validate_global_prompt, validate_llm_response
 
@@ -156,6 +156,7 @@ def _format_global_prompt_as_context(gp: dict, annotate_plot: bool = False) -> s
 
 # ── ForGlobalPrompt 后端 ──
 
+@register_engine("ForGlobalPrompt")
 class ForGlobalPrompt(BaseEngine):
     """
     ForGlobalPrompt — 全局提示词生成后端。

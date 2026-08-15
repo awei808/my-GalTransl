@@ -12,7 +12,7 @@ from sys import exit
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import contains_katakana, is_all_chinese, decompress_file_lzma
-from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import GENDIC_PROMPT, GENDIC_SYSTEM, H_WORDS_LIST
 import collections
 from threading import Lock
@@ -45,6 +45,7 @@ def _extract_regex_terms(text: str) -> Set[str]:
     return words
 
 
+@register_engine("GenDic")
 class GenDic(BaseEngine):
     def __init__(
         self,

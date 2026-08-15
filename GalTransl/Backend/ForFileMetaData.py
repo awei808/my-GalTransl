@@ -9,7 +9,7 @@ from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
-from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT, FORFILEMETA_SYSTEM
 
 
@@ -30,6 +30,7 @@ ForFileMetaData - 文件级元数据(FileMetaData)生成后端
 """
 
 
+@register_engine("ForFileMetaData")
 class ForFileMetaData(BaseEngine):
     def __init__(
         self,
@@ -63,39 +64,14 @@ class ForFileMetaData(BaseEngine):
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
 
-    # 0.1 全局提示词上下文
+    # 0.1 全局提示词上下文（实现见 GalTransl.Backend.context）
     def _ensure_global_prompt_loaded(self) -> None:
-        """惰性载入 GlobalPrompt.json（仅执行一次）。"""
-        if self._global_prompt_loaded:
-            return
-        self._global_prompt_loaded = True
-        # 优先从 projectConfig 读取已注入的全局提示词
-        explicit = getattr(self.pj_config, "global_prompt", None)
-        if isinstance(explicit, dict):
-            self._global_prompt = explicit
-            LOGGER.debug(
-                "[FileMetaData] 使用已注入的 GlobalPrompt（来自流水线）"
-            )
-            return
-        # 否则尝试从缓存文件加载
-        try:
-            from GalTransl.Backend.ForGlobalPrompt import load_global_prompt
-            self._global_prompt = load_global_prompt(self.pj_config)
-            if self._global_prompt:
-                LOGGER.debug(
-                    "[FileMetaData] 已从 pass0_cache 载入 GlobalPrompt 上下文"
-                )
-        except Exception as e:
-            LOGGER.debug(f"[FileMetaData] 载入 GlobalPrompt 失败：{e}")
-            self._global_prompt = None
+        from GalTransl.Backend.context import ensure_global_prompt_loaded
+        ensure_global_prompt_loaded(self, "FileMetaData")
 
     def _build_global_prompt_block(self) -> str:
-        """格式化 GlobalPrompt 为提示词附加段落。"""
-        self._ensure_global_prompt_loaded()
-        if not self._global_prompt:
-            return ""
-        from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
-        return _format_global_prompt_as_context(self._global_prompt)
+        from GalTransl.Backend.context import format_global_prompt_only
+        return format_global_prompt_only(self, "FileMetaData")
 
     # 0. 可控注入翻译规范
     def _build_prompt_request(self, input_src: str, gptdict: str, max_chars: int = 200) -> str:

@@ -14,6 +14,7 @@ from typing import List, Optional, Union
 
 from GalTransl import LOGGER
 from GalTransl.CSentense import CTransList
+from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_BRSTATION_PROMPT,
@@ -24,6 +25,7 @@ from GalTransl.Service import JobCancelledError
 from GalTransl.Utils import extract_code_blocks, fix_quotes
 
 
+@register_engine("ForBRStation")
 class ForBRStation(ForGalJsonMulitChat):
     """
     换行位置异常修复后端：向 AI 发送「文件级元数据 + 翻译规范 + 字典 + 换行异常

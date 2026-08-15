@@ -11,7 +11,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from GalTransl import LOGGER, PASS0_CACHE_DIR
-from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORPLOTROUTE_PROMPT, FORPLOTROUTE_SYSTEM
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
@@ -77,6 +77,7 @@ def _format_route_context(plot_route_map: Optional[dict], filename: str) -> str:
     return f"# 当前文件所属路线「{route}」的剧情\n{summary}\n"
 
 
+@register_engine("ForPlotRouteMap")
 class ForPlotRouteMap(BaseEngine):
     """剧情路线图后端：基于各文件剧情摘要与用户大纲，生成 mermaid 路线图。"""
 
@@ -95,28 +96,14 @@ class ForPlotRouteMap(BaseEngine):
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
 
-    # 全局提示词上下文（供占位符替换）
+    # 全局提示词上下文（实现见 GalTransl.Backend.context）
     def _ensure_global_prompt_loaded(self) -> None:
-        """惰性载入 GlobalPrompt.json（仅执行一次）。"""
-        if self._global_prompt_loaded:
-            return
-        self._global_prompt_loaded = True
-        try:
-            from GalTransl.Backend.ForGlobalPrompt import load_global_prompt
-
-            self._global_prompt = load_global_prompt(self.pj_config)
-        except Exception as e:
-            LOGGER.debug(f"[PlotRouteMap] 载入 GlobalPrompt 失败：{e}")
-            self._global_prompt = None
+        from GalTransl.Backend.context import ensure_global_prompt_loaded
+        ensure_global_prompt_loaded(self, "PlotRouteMap")
 
     def _build_global_prompt_block(self) -> str:
-        """格式化 GlobalPrompt 为提示词附加段落。"""
-        self._ensure_global_prompt_loaded()
-        if not self._global_prompt:
-            return ""
-        from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
-
-        return _format_global_prompt_as_context(self._global_prompt)
+        from GalTransl.Backend.context import format_global_prompt_only
+        return format_global_prompt_only(self, "PlotRouteMap")
 
     # 构建输入：各文件剧情摘要
     def _build_file_summaries(self) -> str:

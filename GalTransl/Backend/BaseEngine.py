@@ -98,6 +98,59 @@ class RequestHealthMetrics:
             }
 
 
+# 引擎名 -> 后端模块路径。init_gptapi 依赖它惰性加载（importlib）目标模块：
+# 模块加载时 @register_engine 装饰器运行，把「name -> 构造工厂」写入 ENGINE_REGISTRY。
+ENGINE_MODULE_PATHS: dict[str, str] = {
+    "ForGlobalPrompt": "GalTransl.Backend.ForGlobalPrompt",
+    "ForGal-json-multi-chat": "GalTransl.Backend.ForGalJsonMulitChat",
+    "ForImproveTranslation": "GalTransl.Backend.ForImproveTranslation",
+    "ForBRStation": "GalTransl.Backend.ForBRStation",
+    "GenDic": "GalTransl.Backend.GenDic",
+    "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
+    "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",
+    "ForPlotRouteMap": "GalTransl.Backend.ForPlotRouteMap",
+}
+
+# 引擎注册表：eng_type 名称 -> 惰性构造工厂。
+# 各后端子类用 @register_engine("名称") 装饰器登记；init_gptapi 从本表取工厂调用。
+ENGINE_REGISTRY: dict[str, callable] = {}
+
+
+def register_engine(name: str):
+    """类装饰器：把后端类登记到引擎注册表（ENGINE_REGISTRY）。
+
+    登记的值为惰性构造工厂：构造时才 import 所在模块并实例化类。
+    name 必须已声明于 ENGINE_MODULE_PATHS，且类所在模块与之匹配，否则报错提示。
+
+    Args:
+        name: 引擎类型标识（eng_type），如 "ForGal-json-multi-chat"。
+    """
+    def _deco(cls):
+        _module = cls.__module__
+        _cls_name = cls.__name__
+        declared_module = ENGINE_MODULE_PATHS.get(name)
+        if declared_module is None:
+            raise ValueError(
+                f"@register_engine({name!r}) 未在 ENGINE_MODULE_PATHS 中声明，"
+                f"init_gptapi 将无法惰性加载该引擎，请在 BaseEngine.py 中补全映射"
+            )
+        if declared_module != _module:
+            raise ValueError(
+                f"@register_engine({name!r}) 模块不匹配：声明 {declared_module}，"
+                f"实际 {_module}"
+            )
+
+        def _factory(config, eng_type, proxy_pool, token_pool):
+            import importlib
+            module = importlib.import_module(_module)
+            impl = getattr(module, _cls_name)
+            return impl(config, eng_type, proxy_pool, token_pool)
+
+        ENGINE_REGISTRY[name] = _factory
+        return cls
+    return _deco
+
+
 class BaseEngine:
     """LLM API 客户端基类：所有翻译/元数据/字典后端共用的底层能力。
 

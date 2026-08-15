@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import asyncio
 import re
 from random import choice
@@ -24,6 +23,7 @@ from GalTransl.Backend.Prompts import (
     NORMAL_BATCH_GUIDE,
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
+from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.metadata import (
     FileMetaData,
     BatchMetadata,
@@ -62,6 +62,7 @@ from openai._types import NOT_GIVEN
 """
 
 
+@register_engine("ForGal-json-multi-chat")
 class ForGalJsonMulitChat(BaseTranslate):
     """
     ForGalJsonMulitChat - 基于 JSON-line 格式、采用多轮对话的视觉小说脚本翻译后端
@@ -846,95 +847,23 @@ class ForGalJsonMulitChat(BaseTranslate):
         self._plot_route_map: Optional[dict] = None
         self._plot_route_map_loaded: bool = False
 
-    # ── GlobalPrompt 上下文注入 ──
+    # ── GlobalPrompt 上下文注入（实现见 GalTransl.Backend.context） ──
 
     def _ensure_global_prompt_loaded(self) -> None:
-        """惰性载入 GlobalPrompt.json（仅执行一次）。"""
-        if self._global_prompt_loaded:
-            return
-        self._global_prompt_loaded = True
-        # 优先从 projectConfig 读取已注入的全局提示词
-        explicit = getattr(self.pj_config, "global_prompt", None)
-        if isinstance(explicit, dict):
-            self._global_prompt = explicit
-            LOGGER.debug(
-                "[ForGalJsonMulitChat] 使用已注入的 GlobalPrompt（来自流水线）"
-            )
-            return
-        # 否则尝试从缓存文件加载
-        try:
-            from GalTransl.Backend.ForGlobalPrompt import load_global_prompt
-            self._global_prompt = load_global_prompt(self.pj_config)
-            if self._global_prompt:
-                LOGGER.debug(
-                    "[ForGalJsonMulitChat] 已从 pass0_cache 载入 GlobalPrompt 上下文"
-                )
-        except Exception as e:
-            LOGGER.debug(
-                f"[ForGalJsonMulitChat] 载入 GlobalPrompt 失败：{e}"
-            )
-            self._global_prompt = None
+        from GalTransl.Backend.context import ensure_global_prompt_loaded
+        ensure_global_prompt_loaded(self, "ForGalJsonMulitChat")
 
     def _format_global_prompt_block(self, filename: str = "") -> str:
-        """格式化 GlobalPrompt 为提示词附加段落（仅首轮注入）。
-
-        有路线图归属时注入「路线剧情 + 带标注的全量 GlobalPrompt」；无归属或
-        没有路线图时仅注入全量 GlobalPrompt。标注说明全局剧情为游戏整体剧情、
-        可能与当前文件不完全对应，以路线剧情和文件元数据为准。
-        """
-        route_block = self._format_route_context_for_file(filename)
-        self._ensure_global_prompt_loaded()
-        if not self._global_prompt:
-            return route_block
-        from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
-        gp_block = _format_global_prompt_as_context(
-            self._global_prompt, annotate_plot=bool(route_block)
-        )
-        if route_block and gp_block:
-            LOGGER.debug(
-                f"[ForGalJsonMulitChat] {filename} 注入路线剧情 + 带标注的全局提示词"
-            )
-            return f"{route_block}\n{gp_block}"
-        return route_block or gp_block
+        from GalTransl.Backend.context import format_global_prompt_with_route_lazy
+        return format_global_prompt_with_route_lazy(self, "ForGalJsonMulitChat", filename)
 
     def _ensure_plot_route_map_loaded(self) -> None:
-        """惰性载入 PlotRouteMap.json（仅执行一次）。"""
-        if self._plot_route_map_loaded:
-            return
-        self._plot_route_map_loaded = True
-        try:
-            from GalTransl.Backend.ForPlotRouteMap import load_plot_route_map
-
-            self._plot_route_map = load_plot_route_map(self.pj_config)
-            if self._plot_route_map:
-                LOGGER.debug(
-                    "[ForGalJsonMulitChat] 已从 pass0_cache 载入 PlotRouteMap 路线图"
-                )
-        except Exception as e:
-            LOGGER.debug(f"[ForGalJsonMulitChat] 载入 PlotRouteMap 失败：{e}")
-            self._plot_route_map = None
+        from GalTransl.Backend.context import ensure_plot_route_map_loaded
+        ensure_plot_route_map_loaded(self, "ForGalJsonMulitChat")
 
     def _format_route_context_for_file(self, filename: str) -> str:
-        """按当前文件所属路线返回剧情上下文块；无归属/无路线图时返回空串。"""
-        from GalTransl.Backend.ForPlotRouteMap import _format_route_context
-
-        try:
-            self._ensure_plot_route_map_loaded()
-            plot_route_map = self._plot_route_map
-            if not plot_route_map:
-                return ""
-            base = strip_chunk_suffix(filename)
-            ctx = _format_route_context(plot_route_map, base)
-            if ctx:
-                LOGGER.debug(
-                    f"[ForGalJsonMulitChat] {filename} 注入路线剧情（{base}）"
-                )
-            return ctx
-        except Exception as e:
-            LOGGER.warning(
-                f"[ForGalJsonMulitChat] 按路线注入剧情失败：{e}"
-            )
-            return ""
+        from GalTransl.Backend.context import format_route_context_for_file_lazy
+        return format_route_context_for_file_lazy(self, "ForGalJsonMulitChat", filename)
 
     def set_file_metadata(self, file_metadata: FileMetaData, filename: str = "") -> None:
         """
@@ -1558,33 +1487,6 @@ class ForGalJsonMulitChat(BaseTranslate):
             )
             merged.extend(res)
         return merged
-
-"""
-接入说明（如需启用本后端）：
-在 GalTransl/Frontend/LLMTranslate.py 的 init_gptapi() 中增加对引擎标识的映射，例如：
-
-    match eng_type:
-        ...
-        case "ForGal-json-multi-chat":
-            from GalTransl.Backend.ForGalJsonMulitChat import (
-                ForGalJsonMulitChat,
-            )
-            translator = ForGalJsonMulitChat(
-                cfg, param, cfg.proxyPool, cfg.tokenPool
-            )
-            return translator
-
-剧情元数据（FileMetaData）的注入有两路来源，均由「第一轮对话」写入提示词：
-
-1. 显式注入：上层在调用 batch_translate 前，通过
-   ``translator.set_file_metadata(metadata, filename)`` 为该文件设置元数据；
-2. 自动载入：后端在首次需要时为该文件惰性读取 gt_input（及其上层目录）中的
-   ``FileMetaData.json``（JSON 数组，每项 ``id`` 对应一个待翻译文件名），
-   按文件名（含分批后缀 ``_N`` 的剥离）匹配对应条目。
-
-显式注入优先级高于自动载入；两路皆无对应条目时该文件首轮不附带剧情元数据。
-（元数据仅在第一轮对话中出现，后续轮次不再重复发送。）
-"""
 
 
 if __name__ == "__main__":

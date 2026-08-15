@@ -2428,7 +2428,7 @@ async def _run_after_trans_single_file(
 
 async def init_gptapi(
     projectConfig: CProjectConfig,
-) -> None:
+) -> "BaseEngine":
     """
     根据引擎类型获取相应的API实例（延迟导入后端模块以避免不必要依赖）。
 
@@ -2446,33 +2446,20 @@ async def init_gptapi(
     tokenPool = projectConfig.tokenPool
     eng_type = projectConfig.select_translator
 
-    match eng_type:
-        case "ForGlobalPrompt":
-            from GalTransl.Backend.ForGlobalPrompt import ForGlobalPrompt
-            return ForGlobalPrompt(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForGal-json-multi-chat":
-            from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
-            return ForGalJsonMulitChat(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForImproveTranslation":
-            from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
-            return ForImproveTranslation(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForBRStation":
-            from GalTransl.Backend.ForBRStation import ForBRStation
-            return ForBRStation(projectConfig, eng_type, proxyPool, tokenPool)
-        case "GenDic":
-            from GalTransl.Backend.GenDic import GenDic
-            return GenDic(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForFileMetaData":
-            from GalTransl.Backend.ForFileMetaData import ForFileMetaData
-            return ForFileMetaData(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForBatchMetaData":
-            from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
-            return ForBatchMetaData(projectConfig, eng_type, proxyPool, tokenPool)
-        case "ForPlotRouteMap":
-            from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
-            return ForPlotRouteMap(projectConfig, eng_type, proxyPool, tokenPool)
-        case _:
-            raise ValueError(f"不支持的翻译引擎类型 {eng_type}")
+    import importlib
+
+    from GalTransl.Backend.BaseEngine import ENGINE_MODULE_PATHS, ENGINE_REGISTRY
+
+    module_path = ENGINE_MODULE_PATHS.get(eng_type)
+    if module_path is None:
+        raise ValueError(f"不支持的翻译引擎类型 {eng_type}")
+    # 惰性加载目标模块：装饰器在 import 期把「name -> 构造工厂」填入 ENGINE_REGISTRY
+    importlib.import_module(module_path)
+
+    factory = ENGINE_REGISTRY.get(eng_type)
+    if factory is None:
+        raise ValueError(f"引擎 {eng_type} 未注册构造工厂")
+    return factory(projectConfig, eng_type, proxyPool, tokenPool)
 
 
 def fplugins_load_file(file_path: str, fPlugins: list) -> Tuple[List[Dict], Any]:

@@ -11,9 +11,9 @@ from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
 from openai._types import NOT_GIVEN
+from GalTransl.TerminalOutput import should_print_translation_logs
 import re
 import sys
-from GalTransl.TerminalOutput import should_print_translation_logs
 
 
 def _print_translation_block(text: str) -> None:
@@ -440,7 +440,11 @@ class BaseTranslate(BaseEngine):
         return trans_result_list
 
     def translate(self, trans_list: CTransList, gptdict: str = "") -> None:
-        pass
+        """批量翻译单批句子；子类（如 ForGalJsonMulitChat）须实现并返回 (成功句数, 结果列表)。
+
+        本方法保留空实现（非 abstractmethod）：BaseTranslate 作为中间基类承载可单测的
+        翻译层通用逻辑，测试用 __new__ 绕过初始化来实例化它，abstractmethod 会阻断该模式。
+        """
 
     async def batch_translate(
         self,
@@ -477,7 +481,6 @@ class BaseTranslate(BaseEngine):
         len_trans_list = len(translist_unhit)
         transl_step_count = 0
         while i < len_trans_list:
-            # await asyncio.sleep(1)
             trans_list_split = (
                 translist_unhit[i : i + num_pre_request]
                 if (i + num_pre_request < len_trans_list)

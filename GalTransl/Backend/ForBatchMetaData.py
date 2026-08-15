@@ -8,7 +8,7 @@ from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import extract_code_blocks
-from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
 from GalTransl.server_runtime import record_runtime_notice
 from GalTransl.Backend.ForGalJsonMulitChat import (
@@ -42,6 +42,7 @@ ForBatchMetaData - 批次级元数据(BatchMetadata)生成后端（高质量翻�
 """
 
 
+@register_engine("ForBatchMetaData")
 class ForBatchMetaData(BaseEngine):
     def __init__(
         self,
@@ -115,69 +116,18 @@ class ForBatchMetaData(BaseEngine):
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
 
-    # 0.0 全局提示词上下文
+    # 0.0 全局提示词上下文（实现见 GalTransl.Backend.context）
     def _ensure_global_prompt_loaded(self) -> None:
-        """惰性载入 GlobalPrompt.json（仅执行一次）。"""
-        if self._global_prompt_loaded:
-            return
-        self._global_prompt_loaded = True
-        explicit = getattr(self.pj_config, "global_prompt", None)
-        if isinstance(explicit, dict):
-            self._global_prompt = explicit
-            LOGGER.debug("[BatchMetaData] 使用已注入的 GlobalPrompt（来自流水线）")
-            return
-        try:
-            from GalTransl.Backend.ForGlobalPrompt import load_global_prompt
-            self._global_prompt = load_global_prompt(self.pj_config)
-            if self._global_prompt:
-                LOGGER.debug("[BatchMetaData] 已从 pass0_cache 载入 GlobalPrompt 上下文")
-        except Exception as e:
-            LOGGER.debug(f"[BatchMetaData] 载入 GlobalPrompt 失败：{e}")
-            self._global_prompt = None
+        from GalTransl.Backend.context import ensure_global_prompt_loaded
+        ensure_global_prompt_loaded(self, "BatchMetaData")
 
     def _build_global_prompt_block(self, filename: str = "") -> str:
-        """格式化 GlobalPrompt 为提示词附加段落。
-
-        有路线图归属时注入「路线剧情 + 带标注的全量 GlobalPrompt」；无归属或
-        没有路线图时仅注入全量 GlobalPrompt。标注说明全局剧情为游戏整体剧情、
-        可能与当前文件不完全对应，以路线剧情和文件元数据为准。
-        """
-        route_block = self._format_route_context_for_file(filename)
-        self._ensure_global_prompt_loaded()
-        if not self._global_prompt:
-            return route_block
-        from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
-        gp_block = _format_global_prompt_as_context(
-            self._global_prompt, annotate_plot=bool(route_block)
-        )
-        if route_block and gp_block:
-            LOGGER.debug(
-                f"[BatchMetaData] {filename} 注入路线剧情 + 带标注的全局提示词"
-            )
-            return f"{route_block}\n{gp_block}"
-        return route_block or gp_block
+        from GalTransl.Backend.context import format_global_prompt_with_route_direct
+        return format_global_prompt_with_route_direct(self, "BatchMetaData", filename)
 
     def _format_route_context_for_file(self, filename: str) -> str:
-        """按当前文件所属路线返回剧情上下文块；无归属/无路线图时返回空串。"""
-        from GalTransl.Backend.ForPlotRouteMap import (
-            _format_route_context,
-            load_plot_route_map,
-        )
-
-        try:
-            plot_route_map = load_plot_route_map(self.pj_config)
-            if not plot_route_map:
-                return ""
-            base = strip_chunk_suffix(filename)
-            ctx = _format_route_context(plot_route_map, base)
-            if ctx:
-                LOGGER.debug(f"[BatchMetaData] {filename} 注入路线剧情（{base}）")
-            return ctx
-        except Exception as e:
-            LOGGER.warning(
-                f"[BatchMetaData] 按路线注入剧情失败：{e}"
-            )
-            return ""
+        from GalTransl.Backend.context import format_route_context_for_file_direct
+        return format_route_context_for_file_direct(self, "BatchMetaData", filename)
 
     # 0. 文件级剧情元数据载入与格式化
     def _ensure_file_metadata_loaded(self) -> None:

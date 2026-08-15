@@ -30,12 +30,14 @@ GalTransl 是一个 Galgame（视觉小说）自动翻译工具，利用大语�
 ┌──────────────────────────▼──────────────────────────────────┐
 │  翻译流水线 GalTransl/Frontend/LLMTranslate.py               │
 │  · 读文件 → 切 chunk → worker 协程池 → 逐 chunk 翻译 → 合并输出  │
-│  └─ Backend/BaseTranslate.py（LLM 后端基类，OpenAI 兼容）      │
-│      ├─ ForGalJsonMulitChat  ← 主翻译后端（多轮对话）          │
-│      ├─ ForGal-full-pipeline  ← 完整流水线编排                 │
+│  └─ Backend/BaseEngine.py（API 客户端基类，OpenAI 兼容）        │
+│      ├─ BaseTranslate.py（翻译轮流水线基类）                    │
+│      │    └─ ForGalJsonMulitChat ← 主翻译后端（多轮对话）        │
+│      │         ├─ ForImproveTranslation（译文改进）             │
+│      │         └─ ForBRStation（换行修复）                     │
 │      ├─ ForGlobalPrompt / ForFileMetaData / ForBatchMetaData  │
 │      ├─ ForPlotRouteMap（剧情路线图）/ GenDic（GPT 字典生成）   │
-│      └─ ForImproveTranslation / ForBRStation（译文质量改进）   │
+│      └─ 共享模块：metadata.py / utils.py / context.py          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -56,8 +58,12 @@ GalTransl 是一个 Galgame（视觉小说）自动翻译工具，利用大语�
 | `Service.py` | 任务调度服务层：`JobSpec`/`JobState` 数据类、`run_job_async()`/`run_job()`、取消（`JobCancelledError`）、错误日志（`error.log`，1MB 上限截断）、backend profile / prompt 覆盖注入 |
 | `Runner.py` | 翻译运行编排器：`run_galtransl()` 挂载 job 日志 handler（线程过滤防并发重复）、插件加载（yapsy）、代理池/令牌池/分割器初始化、`start_time` 定时启动 |
 | `Frontend/LLMTranslate.py` | **主翻译编排器**：`doLLMTranslate()` 读文件 → 切 chunk → worker 协程池（队列+哨兵）→ 单 chunk 翻译 → 后处理合并输出；`doLLMTranslSingleChunk()`；完整流水线 `_run_full_pipeline()`；自适应并发（`autoAdjustWorkers`） |
-| `Backend/BaseTranslate.py` | **所有 LLM 后端基类**：OpenAI 兼容客户端构建（多 token）、`ask_chatbot()`（流式/重试/429 退避/RPM 限制/API 调用日志）、`batch_translate()`、`_batch_translate_common()`、响应解析与失败兜底、动态句数调节 |
-| `Backend/ForGalJsonMulitChat.py` | **主翻译后端**：多轮对话、注入 FileMetaData/BatchMetadata/GlobalPrompt、恢复上下文（`restore_context`）、H 词过滤 |
+| `Backend/BaseEngine.py` | **所有 LLM 后端 API 客户端基类**：OpenAI 兼容客户端构建（多 token）、`ask_chatbot()`（流式/重试/429 退避/RPM 限制/API 调用日志）、思考参数路由、全局 RPM 限制、请求健康度统计；含引擎注册表 `ENGINE_REGISTRY`/`@register_engine` |
+| `Backend/BaseTranslate.py` | **翻译轮流水线基类**（继承 BaseEngine）：`batch_translate()`、`_batch_translate_common()`、切批/动态句数调节、上下文恢复（`restore_context`）、译文归一化与缓存落盘 |
+| `Backend/ForGalJsonMulitChat.py` | **主翻译后端**（继承 BaseTranslate）：多轮对话、注入 FileMetaData/BatchMetadata/GlobalPrompt、恢复上下文、H 词过滤 |
+| `Backend/metadata.py` | 文件级/批次级元数据实体（`FileMetaData`/`BatchMetadata`）与缓存加载器 |
+| `Backend/utils.py` | 共享纯工具：换行符检测、区间解析、批次规整（`normalize_batch_intervals`）、分批后缀剥离 |
+| `Backend/context.py` | 全局提示词/路线图上下文装配（供 ForGalJsonMulitChat/ForFileMetaData/ForBatchMetaData/ForPlotRouteMap 复用） |
 | `Backend/ForGlobalPrompt.py` | 全局游戏分析：读压缩全文生成角色/剧情/风格，写 `pass0_cache/GlobalPrompt.json` |
 | `Backend/ForFileMetaData.py` | 文件级元数据：逐文件生成角色/服装/剧情/标签，写 `pass1_cache/*.meta.json` |
 | `Backend/ForBatchMetaData.py` | 批次级元数据：划分翻译区间并标注视角/氛围/H/用词色彩，写 `pass2_cache/*.batch.json` |
