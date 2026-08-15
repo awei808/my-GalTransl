@@ -2,17 +2,10 @@
 
 与 ForJPResidue 完全同构：继承其模板基类，仅覆盖类属性（目标问题类型 /
 日志标签 / 运行态 stage / 是否注入 problem）与提示词，筛选、分桶、解析、
-错误恢复全部复用父类，不出现任何平行实现路径。
-
-差异仅四处（均为类属性/提示词覆盖，无逻辑分叉）：
-1. _problem_types 改为 CProblemType.用词不当（父类筛选口径一致）；
-2. _inject_problem=True：输入通过基类 problem_types 注入 problem（命中禁用词
-   随原文/译文一并给模型，后端不自行计算禁用词）；
-3. _log_tag / _stage 改为「禁用词修复」标识；
-4. 提示词覆盖为禁用词修复专用。
+错误恢复全部复用父类，不出现任何平行实现路径。引擎标识：ForBanWordFix
 """
 
-from GalTransl.Problem import CProblemType
+from GalTransl.ConfigHelper import CProblemType
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.ForJPResidue import ForJPResidue
 from GalTransl.Backend.Prompts import FORBAN_SYSTEM, FORGAL_JSON_BANFIX_PROMPT
@@ -23,7 +16,7 @@ class ForBanWordFix(ForJPResidue):
     """禁用词修复后端：针对「用词不当」问题译文生成备选译文。
 
     继承 ForJPResidue 的完整 batch_translate / 解析 / 错误恢复机制，
-    仅覆盖类属性与提示词，不重写任何流程方法。
+    仅覆盖类属性与提示词，不重写任何流程方法。引擎标识：ForBanWordFix
     """
 
     # 覆盖：命中「用词不当」问题（父类筛选口径一致）
@@ -41,7 +34,7 @@ class ForBanWordFix(ForJPResidue):
         eng_type: str,
         proxy_pool=None,
         token_pool=None,
-    ):
+    ) -> None:
         """初始化禁用词修复后端。
 
         Args:
@@ -54,6 +47,5 @@ class ForBanWordFix(ForJPResidue):
         # 覆盖提示词：禁用词修复专用（模板占位符风格与 JP 版一致，走 replace 注入）
         self.system_prompt = FORBAN_SYSTEM
         self.trans_prompt = FORGAL_JSON_BANFIX_PROMPT
-        self.user_prompt = FORGAL_JSON_BANFIX_PROMPT
         # 与 ForJPResidue 对齐：覆盖默认值后重新应用用户模板 override
         self._apply_internal_prompt_template_overrides()
