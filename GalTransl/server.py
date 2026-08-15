@@ -50,6 +50,8 @@ from GalTransl.Backend.Prompts import (
     FORIMPROVE_SYSTEM,
     FORBR_SYSTEM,
     FORJP_SYSTEM,
+    FORBAN_SYSTEM,
+    FORGAL_JSON_BANFIX_PROMPT,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
 )
@@ -1630,6 +1632,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForJPResidue": {
         "system_prompt": FORJP_SYSTEM,
         "user_prompt": FORGAL_JSON_JPREPAIR_PROMPT,
+    },
+    "ForBanWordFix": {
+        "system_prompt": FORBAN_SYSTEM,
+        "user_prompt": FORGAL_JSON_BANFIX_PROMPT,
     },
     "ForPlotRouteMap": {
         "system_prompt": FORPLOTROUTE_SYSTEM,

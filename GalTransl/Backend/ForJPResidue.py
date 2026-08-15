@@ -27,13 +27,27 @@ from GalTransl.Utils import extract_code_blocks, fix_quotes
 
 @register_engine("ForJPResidue")
 class ForJPResidue(ForGalJsonMulitChat):
-    """
-    残留日文修复后端：向 AI 发送「文件级元数据 + 翻译规范 + 字典 + 当前译文
-    （仅含残留日文问题标注的句子，并携带对应原文 src，不带 problem 标注）」，
-    让模型对照原文修复残留日文，并把备选译文写入各句 alt_dst。
+    """残留日文修复后端：针对「残留日文」问题译文生成备选译文（写入 alt_dst）。
+
+    本类作为「按问题类型修复译文」的模板基类：子类仅需覆盖下列类属性与提示词，
+    即可复用完整的筛选 / 分桶 / 解析 / 错误恢复流程，避免平行重写导致口径漂移：
+      - _problem_types：命中的 CProblemType 白名单（筛选依据）。
+      - _log_tag：日志前缀（如 "[残留日文]"）。
+      - _stage：运行态错误上报的阶段名（如 "残留日文修复"）。
+      - _inject_problem：是否把问题字符串注入输入 JSONL 给模型（JP 不注入，
+        让模型对照原文自行判断应译/应留；Ban 注入，让模型直接看到命中禁用词）。
 
     引擎标识：ForJPResidue
     """
+
+    # 子类覆盖：命中的译文问题类型
+    _problem_types = [CProblemType.残留日文]
+    # 子类覆盖：日志前缀
+    _log_tag = "[残留日文]"
+    # 子类覆盖：运行态错误上报阶段名
+    _stage = "残留日文修复"
+    # 子类覆盖：是否把问题字符串注入输入 JSONL
+    _inject_problem = False
 
     def __init__(
         self,
@@ -59,17 +73,18 @@ class ForJPResidue(ForGalJsonMulitChat):
         self._apply_internal_prompt_template_overrides()
 
     def _has_jp_residue(self, tran) -> bool:
-        """判断单句是否带有「残留日文」问题且译文有效、可送审。
+        """判断单句是否带有本后端目标问题类型且译文有效、可送审。
 
         与 ForBRStation._has_newline_anomaly 同构：先做译文有效性前置过滤
         （排除空译文、失败译文、用户标记跳过检查的句子），再用统一口径匹配
-        CProblemType.残留日文，避免与问题检测逻辑口径不一致。
+        self._problem_types，避免与问题检测逻辑口径不一致。子类仅通过覆盖
+        _problem_types 改变命中类型，筛选流程完全一致。
 
         Args:
             tran: 待判断的 CTrans 句子对象。
 
         Returns:
-            是否应送入残留日文修复。
+            是否应送入修复。
         """
         if not tran.problem:
             return False
@@ -80,7 +95,7 @@ class ForJPResidue(ForGalJsonMulitChat):
         if getattr(tran, "skip_check", False):
             return False
         kept = ForGalJsonMulitChat._filter_problem_by_types(
-            tran.problem, [CProblemType.残留日文]
+            tran.problem, self._problem_types
         )
         return bool(kept)
 
@@ -120,11 +135,11 @@ class ForJPResidue(ForGalJsonMulitChat):
         Returns:
             CTransList: 与输入一致（alt_dst 已就地更新）。
         """
-        # 仅筛选带有「残留日文」问题标注、且已有有效译文的句子。
+        # 仅筛选带有本后端目标问题标注、且已有有效译文的句子。
         target_trans_list = [t for t in trans_list if self._has_jp_residue(t)]
         total = len(target_trans_list)
         if total == 0:
-            LOGGER.info(f"[残留日文] {filename} 无可处理的残留日文译文，跳过")
+            LOGGER.info(f"{self._log_tag} {filename} 无可处理的问题译文，跳过")
             return trans_list
 
         # 用原始文件名独立分桶，从首轮重建（不混用翻译轮历史）
@@ -139,7 +154,7 @@ class ForJPResidue(ForGalJsonMulitChat):
         total_batches = (total + num_per_request - 1) // num_per_request
         fix_count = 0
         LOGGER.info(
-            f"[残留日文] {filename} 开始残留日文修复，共 {total} 句，"
+            f"{self._log_tag} {filename} 开始修复，共 {total} 句，"
             f"{total_batches} 批"
         )
 
@@ -158,13 +173,15 @@ class ForJPResidue(ForGalJsonMulitChat):
                     )
                 except Exception:
                     batch_gptdict = ""
-            # 输入携带当前生效译文（proofread_zh 优先，否则 pre_dst）与原文 src，
-            # 不注入 problem：残留日文需对照原文判断应译/应留，交由 AI 自行决策，
-            # 不被 problem 字符串引导。
+            # 输入携带当前生效译文（proofread_zh 优先，否则 pre_dst）与原文 src；
+            # 是否注入 problem 由各子类 _inject_problem 决定：残留日文不注入
+            # （对照原文自行判断应译/应留），禁用词注入（让模型看到命中禁用词）。
+            _problem_types = self._problem_types if self._inject_problem else None
             input_list, sig_list, n_symbol, input_src = self._build_input_jsonlines(
                 batch,
                 proofread=True,
                 filename=filename,
+                problem_types=_problem_types,
                 include_src=True,
             )
             conv = self._ensure_conversation(filename)
@@ -186,7 +203,7 @@ class ForJPResidue(ForGalJsonMulitChat):
             if self.pj_config.active_workers == 1:
                 _round = "首轮" if is_first_round else "续轮"
                 LOGGER.info(
-                    f"-> 残留日文修复输入[{_round}] | backend={self.eng_type} | "
+                    f"-> 修复输入[{_round}] | backend={self.eng_type} | "
                     f"sentences={len(batch)}"
                 )
                 LOGGER.info("->输出：")
@@ -199,7 +216,7 @@ class ForJPResidue(ForGalJsonMulitChat):
                 raise
             except Exception as e:
                 LOGGER.warning(
-                    f"[残留日文][{filename}:{idx_tip}]LLM调用失败："
+                    f"{self._log_tag}[{filename}:{idx_tip}]LLM调用失败："
                     f"{type(e).__name__}: {e}"
                 )
                 self._record_jp_runtime_error(
@@ -221,7 +238,7 @@ class ForJPResidue(ForGalJsonMulitChat):
                     # 代码块，只取 [0] 会丢失后续句子的修复译文
                     if len(code_list) > 1:
                         LOGGER.debug(
-                            f"[残留日文][{filename}] 模型输出 {len(code_list)} 个代码块，"
+                            f"{self._log_tag}[{filename}] 模型输出 {len(code_list)} 个代码块，"
                             f"已合并解析"
                         )
                     result_text = "\n".join(code_list)
@@ -238,7 +255,7 @@ class ForJPResidue(ForGalJsonMulitChat):
             # 控制台"最近错误"，便于定位模型输出格式问题。
             if result_text.strip() and found_count == 0:
                 _jp_warn_msg = (
-                    f"[残留日文][{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
+                    f"{self._log_tag}[{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
                     f"better（输出格式异常或内容问题），本次 0 句修复"
                 )
                 LOGGER.warning(_jp_warn_msg)
@@ -250,14 +267,14 @@ class ForJPResidue(ForGalJsonMulitChat):
             )
             fix_count += success_count
             LOGGER.debug(
-                f"[残留日文] {filename} 批次 {batch_no}/{total_batches}（序号 {idx_tip}）"
+                f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}（序号 {idx_tip}）"
                 f"已评估，修复 {success_count} 句"
             )
 
         if fix_count > 0:
-            LOGGER.info(f"[残留日文] {filename} 共修复 {fix_count} 句")
+            LOGGER.info(f"{self._log_tag} {filename} 共修复 {fix_count} 句")
         else:
-            LOGGER.info(f"[残留日文] {filename} 未发现需修复的残留日文")
+            LOGGER.info(f"{self._log_tag} {filename} 未发现需修复的问题译文")
         return trans_list
 
     def _build_jp_first_round_content(
@@ -398,15 +415,20 @@ class ForJPResidue(ForGalJsonMulitChat):
     ) -> None:
         """残留日文修复运行态错误上报（工作台"最近错误"卡片）。"""
         try:
-            from GalTransl.server_runtime import record_runtime_error
+            from GalTransl.server import record_runtime_error
 
             record_runtime_error(
-                filename=filename,
-                engine=self.eng_type,
-                stage="残留日文修复",
+                getattr(
+                    self.pj_config,
+                    "runtime_project_dir",
+                    self.pj_config.getProjectDir(),
+                ),
+                kind="parse",
                 message=message,
-                batch_index=idx_tip,
-                model=model,
+                filename=filename,
+                index_range=str(idx_tip),
+                model=model or self.get_last_chatbot_model(),
+                level="warning",
             )
         except Exception as e:
-            LOGGER.debug(f"[残留日文] 运行态错误上报失败: {e}")
+            LOGGER.debug(f"{self._log_tag} 运行态错误上报失败: {e}")

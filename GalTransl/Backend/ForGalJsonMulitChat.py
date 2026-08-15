@@ -241,6 +241,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             "标点错漏": ("本无", "本有"),
             "语言不通": ("语言不通-非GBK",),
             "字典使用": ("未使用",),
+            "用词不当": ("h场景用词不当",),
         }
         allowed = {
             (t.name if hasattr(t, "name") else str(t)).strip() for t in problem_types

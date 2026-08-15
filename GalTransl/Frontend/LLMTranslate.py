@@ -721,13 +721,16 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 
-    # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）/ 残留日文修复（ForJPResidue）----
-    if eng_type in ("ForBRStation", "ForJPResidue"):
+    # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）/ 残留日文修复（ForJPResidue）/ 禁用词修复（ForBanWordFix）----
+    if eng_type in ("ForBRStation", "ForJPResidue", "ForBanWordFix"):
         _check_stop_requested(projectConfig)
-        # 按引擎区分日志前缀与运行态阶段名，避免 JP 误显示"换行修复"
-        _is_jp = eng_type == "ForJPResidue"
-        _log_tag = "[残留日文修复]" if _is_jp else "[换行修复]"
-        _stage_tag = "残留日文修复" if _is_jp else "换行位置异常修复"
+        # 按引擎区分日志前缀与运行态阶段名，避免互相误显示
+        if eng_type == "ForJPResidue":
+            _log_tag, _stage_tag = "[残留日文修复]", "残留日文修复"
+        elif eng_type == "ForBanWordFix":
+            _log_tag, _stage_tag = "[禁用词修复]", "禁用词修复"
+        else:
+            _log_tag, _stage_tag = "[换行修复]", "换行位置异常修复"
         await ensure_model_available_if_needed(projectConfig)
         # 载入字典：主流程的字典初始化位于翻译阶段，独立分支需自行加载，
         # 否则 projectConfig.pre_dic 为 None 导致 preprocess_trans_list 崩溃
@@ -2365,7 +2368,7 @@ def _resolve_after_translation_mode(projectConfig: CProjectConfig) -> str:
         return "none"
     mode = str(mode).strip().lower()
     # 仅保留白名单内 token，过滤非法配置
-    allowed = {"none", "improve", "brfix", "jpfix"}
+    allowed = {"none", "improve", "brfix", "jpfix", "banfix"}
     parts = [p for p in mode.split("+") if p in allowed]
     if not parts:
         LOGGER.warning(f"[后处理] gpt.afterTranslation 非法值 '{mode}'，回退 none")
@@ -2394,6 +2397,7 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
     from GalTransl.Backend.ForBRStation import ForBRStation
     from GalTransl.Backend.ForJPResidue import ForJPResidue
+    from GalTransl.Backend.ForBanWordFix import ForBanWordFix
 
     _api = None
     try:
@@ -2415,6 +2419,13 @@ async def _run_after_trans_single_file(
             _api = ForJPResidue(
                 projectConfig,
                 "ForJPResidue",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+        elif mode == "banfix":
+            _api = ForBanWordFix(
+                projectConfig,
+                "ForBanWordFix",
                 projectConfig.proxyPool,
                 projectConfig.tokenPool,
             )
