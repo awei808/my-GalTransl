@@ -105,6 +105,7 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForGal-json-multi-chat": "GalTransl.Backend.ForGalJsonMulitChat",
     "ForImproveTranslation": "GalTransl.Backend.ForImproveTranslation",
     "ForBRStation": "GalTransl.Backend.ForBRStation",
+    "ForJPResidue": "GalTransl.Backend.ForJPResidue",
     "GenDic": "GalTransl.Backend.GenDic",
     "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
     "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",

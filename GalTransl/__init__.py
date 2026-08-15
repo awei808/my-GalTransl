@@ -84,6 +84,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "仅对带有「换行位置异常」问题标注的译文，生成备选译文，可在校对审核页一键交换。",
         "en": "Line-break position fix: for sentences flagged with 'line-break position anomaly', generates alternative translations (alt_dst in cache), swappable in review page."
     },
+    "ForJPResidue": {
+        "zh-cn": "仅对带有「残留日文」问题标注的译文，对照原文生成修复残留日文的备选译文，可在校对审核页一键交换。",
+        "en": "JP-residue fix: for sentences flagged with 'residual Japanese', generates alternative translations (alt_dst in cache) by comparing with source, swappable in review page."
+    },
     "ForFileMetaData": {
         "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 gt_input/FileMetaData.json。",
         "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes gt_input/FileMetaData.json."
@@ -120,7 +124,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

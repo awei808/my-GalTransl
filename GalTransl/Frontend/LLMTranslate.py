@@ -721,9 +721,13 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
         return True
 
-    # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）----
-    if eng_type == "ForBRStation":
+    # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）/ 残留日文修复（ForJPResidue）----
+    if eng_type in ("ForBRStation", "ForJPResidue"):
         _check_stop_requested(projectConfig)
+        # 按引擎区分日志前缀与运行态阶段名，避免 JP 误显示"换行修复"
+        _is_jp = eng_type == "ForJPResidue"
+        _log_tag = "[残留日文修复]" if _is_jp else "[换行修复]"
+        _stage_tag = "残留日文修复" if _is_jp else "换行位置异常修复"
         await ensure_model_available_if_needed(projectConfig)
         # 载入字典：主流程的字典初始化位于翻译阶段，独立分支需自行加载，
         # 否则 projectConfig.pre_dic 为 None 导致 preprocess_trans_list 崩溃
@@ -748,9 +752,9 @@ async def doLLMTranslate(
         worker_count = max(1, workers_per_project)
         projectConfig.active_workers = worker_count
         LOGGER.info(
-            f"[换行修复] 开始为 {total} 个文件执行换行位置异常修复，并发 {worker_count} worker"
+            f"{_log_tag} 开始为 {total} 个文件执行{_stage_tag}，并发 {worker_count} worker"
         )
-        _update_runtime(projectConfig, stage="换行位置异常修复")
+        _update_runtime(projectConfig, stage=_stage_tag)
         num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
             num_better = int(num_better) if num_better else 100
@@ -767,7 +771,7 @@ async def doLLMTranslate(
             )
             cache_file_path = joinpath(cache_dir, file_name)
             if not isPathExists(cache_file_path):
-                LOGGER.warning(f"[换行修复] {file_name} 无缓存译文，跳过")
+                LOGGER.warning(f"{_log_tag} {file_name} 无缓存译文，跳过")
                 return
             # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
             # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
@@ -815,7 +819,7 @@ async def doLLMTranslate(
                 )
             else:
                 LOGGER.warning(
-                    f"[换行修复] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                    f"{_log_tag} {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
                 )
 
         # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
@@ -829,7 +833,7 @@ async def doLLMTranslate(
             # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
             worker_token = WORKER_ID_CTX.set(str(worker_index))
             LOGGER.debug(
-                f"[换行修复] worker_loop[{worker_index}] 启动, "
+                f"{_log_tag} worker_loop[{worker_index}] 启动, "
                 f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
             )
             try:
@@ -856,8 +860,8 @@ async def doLLMTranslate(
                     task.cancel()
             await asyncio.gather(*br_tasks, return_exceptions=True)
             raise
-        LOGGER.info("[换行修复] 换行位置异常修复完成")
-        _update_runtime(projectConfig, stage="换行位置异常修复完成")
+        LOGGER.info(f"{_log_tag} {_stage_tag}完成")
+        _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
         return True
 
     # ---- 2.7 独立引擎：译文质量改进（ForImproveTranslation）----
@@ -2361,7 +2365,7 @@ def _resolve_after_translation_mode(projectConfig: CProjectConfig) -> str:
         return "none"
     mode = str(mode).strip().lower()
     # 仅保留白名单内 token，过滤非法配置
-    allowed = {"none", "improve", "brfix"}
+    allowed = {"none", "improve", "brfix", "jpfix"}
     parts = [p for p in mode.split("+") if p in allowed]
     if not parts:
         LOGGER.warning(f"[后处理] gpt.afterTranslation 非法值 '{mode}'，回退 none")
@@ -2389,6 +2393,7 @@ async def _run_after_trans_single_file(
     from GalTransl.Service import JobCancelledError
     from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
     from GalTransl.Backend.ForBRStation import ForBRStation
+    from GalTransl.Backend.ForJPResidue import ForJPResidue
 
     _api = None
     try:
@@ -2403,6 +2408,13 @@ async def _run_after_trans_single_file(
             _api = ForBRStation(
                 projectConfig,
                 "ForBRStation",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+        elif mode == "jpfix":
+            _api = ForJPResidue(
+                projectConfig,
+                "ForJPResidue",
                 projectConfig.proxyPool,
                 projectConfig.tokenPool,
             )

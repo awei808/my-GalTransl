@@ -38,6 +38,7 @@ from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
     FORGAL_JSON_IMPROVE_PROMPT,
     FORGAL_JSON_BRSTATION_PROMPT,
+    FORGAL_JSON_JPREPAIR_PROMPT,
     FORPLOTROUTE_PROMPT,
     FORPLOTROUTE_SYSTEM,
     FORFILEMETA_PROMPT,
@@ -48,6 +49,7 @@ from GalTransl.Backend.Prompts import (
     FORGLOBAL_SYSTEM,
     FORIMPROVE_SYSTEM,
     FORBR_SYSTEM,
+    FORJP_SYSTEM,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
 )
@@ -1624,6 +1626,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForBRStation": {
         "system_prompt": FORBR_SYSTEM,
         "user_prompt": FORGAL_JSON_BRSTATION_PROMPT,
+    },
+    "ForJPResidue": {
+        "system_prompt": FORJP_SYSTEM,
+        "user_prompt": FORGAL_JSON_JPREPAIR_PROMPT,
     },
     "ForPlotRouteMap": {
         "system_prompt": FORPLOTROUTE_SYSTEM,
