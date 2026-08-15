@@ -201,6 +201,25 @@ def find_problems(
                     bad_lines.append(str(_i))
             if bad_lines:
                 problem_list.append("换行位置异常：第" + "、".join(bad_lines) + "行")
+        if CProblemType.频繁换行 in find_type:
+            # 仅检测换行符：译文有效字符少却出现多次换行（真实/字面换行均归一化计入）
+            if post_dst:
+                _clean = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
+                _clean = _clean.replace("\r\n", "\n").replace("\r", "\n")
+                _newline = _clean.count("\n")
+                _valid_len = _clean_text_len(post_dst)
+                _hit = False
+                if _valid_len < 20 and _newline >= 3:
+                    _hit = True
+                elif _valid_len < 10 and _newline >= 2:
+                    _hit = True
+                if _hit:
+                    problem_list.append(
+                        f"频繁换行：有效字符{_valid_len}，换行{_newline}次"
+                    )
+                    LOGGER.debug(
+                        f"频繁换行：index={tran.index}, 有效字符={_valid_len}, 换行={_newline}次"
+                    )
         if CProblemType.比日文长 in find_type or CProblemType.比日文长严格 in find_type:
             len_beta = 1.3
             min_diff=8

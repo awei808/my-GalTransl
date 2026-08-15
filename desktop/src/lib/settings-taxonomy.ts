@@ -133,6 +133,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.gpt.numPerRequestBetter",
           "common.gpt.enableProblemInject",
           "common.gpt.problemInjectTypes",
+          "common.gpt.swapFixToCurrent",
         ],
       },
     ],

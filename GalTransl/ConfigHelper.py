@@ -117,6 +117,7 @@ class CProblemType(Enum):
     状语过长 = 16
     用词不当 = 17
     h场景用词不当 = 17  # 旧配置兼容别名：老项目 problemList 仍写 h场景用词不当
+    频繁换行 = 18
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:

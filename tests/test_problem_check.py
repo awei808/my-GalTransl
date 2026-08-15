@@ -510,6 +510,104 @@ class NewlinePositionTests(_Base):
         self.assertNotIn("换行位置异常", problem)
 
 
+class FrequentNewlineTests(_Base):
+    """频繁换行：译文有效字符少却出现多次换行（仅检测换行符，不按标点切小句）。"""
+
+    def _set_problem_config(self, project_dir: str) -> None:
+        cfg_path = os.path.join(project_dir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {"problemList": ["频繁换行"]}
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+
+    def _check(self, pid: str, pre_dst: str):
+        entries = [
+            {
+                "index": 1,
+                "name": "",
+                "pre_src": "原文",
+                "post_src": "原文",
+                "pre_dst": pre_dst,
+            }
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{pid}/cache/check",
+            body={"filename": "pass3_cache/fn.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        return {r["index"]: r for r in body["results"]}[1]["problem"]
+
+    def test_triggers_3_newlines_under_20_chars(self) -> None:
+        # <20 字符且 ≥3 次换行 → 报"频繁换行"
+        _, init = self._init_project("fn_3n")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        # 有效字符 8（2×4），换行 3 次
+        problem = self._check(pid, "好！\n走！\n去！\n回！")
+        self.assertIn("频繁换行", problem)
+
+    def test_triggers_2_newlines_under_10_chars(self) -> None:
+        # <10 字符且 ≥2 次换行 → 报"频繁换行"
+        _, init = self._init_project("fn_2n")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        # 有效字符 6（3×2），换行 2 次
+        problem = self._check(pid, "好！\n走！\n去。")
+        self.assertIn("频繁换行", problem)
+
+    def test_no_trigger_long_text_many_newlines(self) -> None:
+        # 字符数足够多（≥20）→ 即使换行多也不报
+        _, init = self._init_project("fn_long")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        # 有效字符 28，换行 4 次
+        problem = self._check(
+            pid,
+            "这是第一句话。\n这是第二句话。\n这是第三句话。\n这是第四句话。",
+        )
+        self.assertNotIn("频繁换行", problem)
+
+    def test_no_trigger_single_newline_short_text(self) -> None:
+        # 短但只有 1 次换行（未达 ≥2）→ 不报
+        _, init = self._init_project("fn_1n")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        # 有效字符 4，换行 1 次
+        problem = self._check(pid, "好！\n走！")
+        self.assertNotIn("频繁换行", problem)
+
+    def test_no_trigger_punctuation_only(self) -> None:
+        # 仅自然标点、无换行 → 不报（不再按句末标点切分小句）
+        _, init = self._init_project("fn_punct")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        # 有效字符 12，0 次换行
+        problem = self._check(pid, "好。走。去。")
+        self.assertNotIn("频繁换行", problem)
+
+    def test_no_trigger_wrapped_in_dialogue_symbol(self) -> None:
+        # 对话引号「」包裹的短句：recover_dialogue_symbol 补回引号后无换行 → 不报
+        # 回归 index 17 误报（旧逻辑把「好！」的」误切成 2 段）
+        _, init = self._init_project("fn_wrap")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        # 有效字符 4，0 次换行
+        problem = self._check(pid, "「好！」")
+        self.assertNotIn("频繁换行", problem)
+
+
+    def test_problem_types_catalog_includes_frequent_newline(self) -> None:
+        # /api/problem-types 应返回"频繁换行"条目（与 CProblemType 同步）
+        _, init = self._init_project("fn_cat")
+        pid = init["project_id"]
+        status, body = self._req("GET", "/api/problem-types")
+        self.assertEqual(status, 200)
+        names = [t["name"] for t in body["problem_types"]]
+        self.assertIn("频繁换行", names)
+
+
 class ModifierLengthTests(_Base):
     """定语过长（是……的）/ 状语过长（在……中/里、……地）检测。"""
 
