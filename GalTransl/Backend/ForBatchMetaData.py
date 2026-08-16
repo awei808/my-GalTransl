@@ -418,14 +418,14 @@ class ForBatchMetaData(BaseEngine):
         # 超限提示：文件行数超过最大可自然划分范围，或存在「区间过大」的批次时给出一次性提示（前端 toast）
         if max_index > self.max_natural_lines:
             record_runtime_notice(
-                self.pj_config.getProjectDir(),
+                self.runtime_project_dir,
                 f"[批次划分] {filename} 共 {max_index} 行，超过最大可自然划分范围 "
                 f"{self.max_natural_lines} 行（max_batch_size={self.max_batch_size} × "
                 f"max_batches={self.max_batches} × 0.9），划分的批次可能过大",
             )
         if any(b.get("区间过大") for b in meta["批次"]):
             record_runtime_notice(
-                self.pj_config.getProjectDir(),
+                self.runtime_project_dir,
                 f"[批次划分] {filename} 存在超过 {self.max_batch_size} 行的区间，"
                 f"已标注「区间过大」，翻译时该批次将整体发送",
             )

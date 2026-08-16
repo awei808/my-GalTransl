@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from GalTransl.COpenAI import COpenAITokenPool, COpenAIToken
 from GalTransl.ConfigHelper import CProxyPool, build_httpx_proxy_kwargs
 from GalTransl import LOGGER, LANG_SUPPORTED
-from GalTransl.i18n import get_text
+from GalTransl.i18n import GT_LANG, get_text
 from GalTransl.ConfigHelper import (
     CProjectConfig,
 )
@@ -204,13 +204,13 @@ class BaseEngine:
             self.target_lang = "zh-cn"
         if self.source_lang not in LANG_SUPPORTED.keys():
             raise ValueError(
-                get_text("invalid_source_language", self.target_lang, self.source_lang)
+                get_text("invalid_source_language", GT_LANG, self.source_lang)
             )
         else:
             self.source_lang = LANG_SUPPORTED[self.source_lang]
         if self.target_lang not in LANG_SUPPORTED.keys():
             raise ValueError(
-                get_text("invalid_target_language", self.target_lang, self.target_lang)
+                get_text("invalid_target_language", GT_LANG, self.target_lang)
             )
         else:
             self.target_lang = LANG_SUPPORTED[self.target_lang]

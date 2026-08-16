@@ -11,7 +11,6 @@ from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
 from openai._types import NOT_GIVEN
-from GalTransl.TerminalOutput import should_print_translation_logs
 from GalTransl.Backend.Prompts import H_WORDS_LIST
 import re
 import sys
@@ -449,73 +448,22 @@ class BaseTranslate(BaseEngine):
         retran_key: str = "",
         h_scene: bool = False,
     ) -> CTransList:
-        translist_unhit = list(trans_list)
+        """兼容旧调用方的批量翻译入口：委托 _batch_translate_common 统一切批/重试/缓存逻辑。
 
-        if self.skipH:
-            LOGGER.warning("skipH: 将跳过含有敏感词的句子")
-            h_words_list = H_WORDS_LIST
-            translist_unhit = [
-                tran
-                for tran in translist_unhit
-                if not any(word in tran.post_src for word in h_words_list)
-            ]
-
-        if len(translist_unhit) == 0:
-            return []
-        # 新文件重置chatbot
-        if self.last_file_name != filename:
-            self.reset_conversation()
-            self.last_file_name = filename
-        i = 0
-
-        trans_result_list = []
-        len_trans_list = len(translist_unhit)
-        transl_step_count = 0
-        while i < len_trans_list:
-            trans_list_split = (
-                translist_unhit[i : i + num_pre_request]
-                if (i + num_pre_request < len_trans_list)
-                else translist_unhit[i:]
-            )
-
-            dic_prompt = (
-                gpt_dic.gen_prompt(
-                    trans_list_split, scene="h" if h_scene else "nh"
-                )
-                if gpt_dic
-                else ""
-            )
-
-            num, trans_result = await self.translate(
-                trans_list_split, dic_prompt, proofread=proofread
-            )
-
-            if num > 0:
-                i += num
-            result_output = ""
-            for trans in trans_result:
-                result_output = result_output + repr(trans)
-            if should_print_translation_logs(self.pj_config):
-                _print_translation_block(result_output)
-            trans_result_list += trans_result
-            transl_step_count += 1
-            if transl_step_count >= self.save_steps:
-                await save_transCache_to_json(
-                    trans_result,
-                    cache_file_path,
-                    project_dir=getattr(
-                        self.pj_config,
-                        "runtime_project_dir",
-                        self.pj_config.getProjectDir(),
-                    ),
-                )
-                transl_step_count = 0
-            if should_print_translation_logs(self.pj_config):
-                LOGGER.info(
-                    f"{filename}: {str(len(trans_result_list))}/{str(len_trans_list)}"
-                )
-
-        return trans_result_list
+        retry_failed / retran_key 为历史签名遗留参数，委托路径不使用。
+        skipH 过滤由 _batch_translate_common 的 h_words_list 参数处理（与
+        ForGalJsonMulitChat 主路径一致），此处不再重复告警。
+        """
+        return await self._batch_translate_common(
+            filename,
+            cache_file_path,
+            list(trans_list),
+            num_pre_request,
+            gpt_dic=gpt_dic,
+            proofread=proofread,
+            h_scene=h_scene,
+            h_words_list=H_WORDS_LIST if self.skipH else None,
+        )
 
     def _get_restore_context_failed_markers(self) -> tuple[str, ...]:
         return ("(Failed)",)

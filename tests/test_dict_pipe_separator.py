@@ -721,9 +721,11 @@ class BaseTranslateBatchSceneTests(unittest.IsolatedAsyncioTestCase):
         inst.last_file_name = ""
         inst.pj_config = mock.MagicMock()
         inst.save_steps = 100
+        inst.dynamic_num_per_request = False
+        inst._check_stop_requested = lambda *a, **k: None
         inst.reset_conversation = lambda *a, **k: None
 
-        async def _translate(batch, dic_prompt, proofread=False):
+        async def _translate(batch, dic_prompt, proofread=False, **kwargs):
             return len(batch), []
 
         inst.translate = _translate
