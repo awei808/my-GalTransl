@@ -3,6 +3,7 @@ Tauri WebView2 MCP Server
 
 通过 Playwright CDP 直连 Tauri 应用的 WebView2，提供浏览器自动化能力。
 用于 CodeBuddy AI 自动捕获前端报错、检查页面结构。
+连接断开后（关闭/重启 Tauri 窗口）会自动清理并重连，无需重启 MCP 服务。
 
 用法:
   python desktop/scripts/tauri_webview_mcp.py [--cdp-port PORT]
@@ -29,39 +30,43 @@ from playwright.async_api import async_playwright
 # 全局状态
 _page = None
 _browser = None
+_playwright = None
 _console_messages = []
 _network_requests = []
 _connected = False
+_connect_lock = None      # asyncio.Lock：串行化连接/重连，避免竞态重复建连
+_connected_event = None   # asyncio.Event：连接就绪信号，工具调用等待它
+_CDP_PORT = 9222          # 当前 CDP 端口（用于错误提示）
+_TOOL_WAIT_TIMEOUT = 30.0 # 工具调用在未连接时等待重连的超时秒数
 
 
-async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
+async def _connect_until_success(cdp_port: int, delay: float = 1.5) -> None:
     """
-    通过 CDP 连接到 Tauri WebView2。
-    无限轮询等待 WebView2 就绪，不会因为连接失败而退出。
+    通过 CDP 连接 Tauri WebView2，直到成功为止（调用方须持有 _connect_lock）。
+    每次（重）连接都重新注册控制台/网络监听并清空历史缓存。
     """
-    global _page, _browser, _console_messages, _network_requests, _connected
-
+    global _page, _browser, _playwright, _connected
     attempt = 0
     while True:
         attempt += 1
         p = None
         try:
             p = await async_playwright().start()
-            _browser = await p.chromium.connect_over_cdp(
+            browser = await p.chromium.connect_over_cdp(
                 f"http://127.0.0.1:{cdp_port}"
             )
 
             # 获取或创建页面
-            contexts = _browser.contexts
+            contexts = browser.contexts
             if contexts and contexts[0].pages:
-                _page = contexts[0].pages[0]
+                page = contexts[0].pages[0]
             else:
-                ctx = contexts[0] if contexts else await _browser.new_context()
-                _page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                ctx = contexts[0] if contexts else await browser.new_context()
+                page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
             # 注册控制台消息监听
-            _console_messages = []
-            _page.on("console", lambda msg: _console_messages.append({
+            _console_messages.clear()
+            page.on("console", lambda msg: _console_messages.append({
                 "type": msg.type,
                 "text": msg.text,
                 "url": msg.location.get("url", ""),
@@ -70,22 +75,27 @@ async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
             }))
 
             # 注册网络请求监听
-            _network_requests = []
-            _page.on("request", lambda req: _network_requests.append({
+            _network_requests.clear()
+            page.on("request", lambda req: _network_requests.append({
                 "url": req.url,
                 "method": req.method,
                 "resource_type": req.resource_type,
                 "headers": dict(req.headers),
                 "timestamp": _safe_start_time(req),
             }))
-            _page.on("requestfailed", lambda req: _network_requests.append({
+            page.on("requestfailed", lambda req: _network_requests.append({
                 "url": req.url,
                 "method": req.method,
                 "type": "requestfailed",
                 "failure": _safe_failure_text(req),
             }))
 
+            # WebView2 退出/连接断开时置为未连接，由监控任务统一清理与重连
+            browser.on("disconnected", _on_browser_disconnected)
+
+            _page, _browser, _playwright = page, browser, p
             _connected = True
+            _connected_event.set()
             print(f"[tauri-webview-mcp] 已连接到 WebView2 (CDP 端口 {cdp_port})",
                   file=sys.stderr, flush=True)
             return
@@ -102,6 +112,9 @@ async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
             if attempt == 1:
                 print(f"[tauri-webview-mcp] 正在等待 Tauri WebView2 (CDP 端口 {cdp_port}) 就绪...",
                       file=sys.stderr, flush=True)
+            elif attempt % 20 == 0:
+                print(f"[tauri-webview-mcp] 已重试 {attempt} 次仍无法连接，继续等待...",
+                      file=sys.stderr, flush=True)
             if p is not None:
                 try:
                     await p.stop()
@@ -110,10 +123,78 @@ async def connect_to_webview(cdp_port: int, delay: float = 1.5) -> None:
             await asyncio.sleep(delay)
 
 
-def _require_page():
-    """确保已连接到页面"""
-    if _page is None:
-        raise RuntimeError("未连接到 WebView2，请先启动 Tauri 应用并确保 CDP 端口已开启")
+async def _on_browser_disconnected(*args) -> None:
+    """CDP 连接断开事件回调：仅置为未连接，由 monitor 任务负责清理与重连"""
+    global _connected
+    if _connected:
+        print("[tauri-webview-mcp] WebView2 连接已断开（CDP disconnected），开始重连...",
+              file=sys.stderr, flush=True)
+    _connected = False
+    _connected_event.clear()
+
+
+async def _is_connection_alive() -> bool:
+    """低开销心跳：页面能执行 JS 视为连接存活（兜底 disconnected 事件丢失/WebView2 挂死）"""
+    page = _page
+    if page is None or _browser is None:
+        return False
+    try:
+        await asyncio.wait_for(page.evaluate("1"), timeout=2.0)
+        return True
+    except Exception:
+        return False
+
+
+async def _cleanup_connection() -> None:
+    """清理失效连接（幂等）。只停 Playwright 实例断开 CDP，不向 WebView2 发送关闭命令"""
+    global _page, _browser, _playwright, _connected
+    _connected = False
+    _connected_event.clear()
+    _page = None
+    p = _playwright
+    _browser, _playwright = None, None
+    if p is not None:
+        try:
+            await p.stop()
+        except Exception:
+            pass
+
+
+async def monitor_connection(cdp_port: int, delay: float = 1.5, heartbeat_interval: float = 5.0) -> None:
+    """
+    常驻监控任务：保证始终有可用的 WebView2 连接。
+    未连接时持续重连；已连接时周期性心跳，断线后自动清理并重连。
+    """
+    global _connected
+    while True:
+        if not _connected:
+            async with _connect_lock:
+                if not _connected:
+                    await _connect_until_success(cdp_port, delay)
+        else:
+            if await _is_connection_alive():
+                await asyncio.sleep(heartbeat_interval)
+            else:
+                print("[tauri-webview-mcp] WebView2 心跳检测失败，连接已断开，开始重连...",
+                      file=sys.stderr, flush=True)
+                await _cleanup_connection()
+
+
+async def _ensure_page(timeout: float = 30.0):
+    """确保有可用页面；未连接时等待后台重连，超时给出明确中文错误"""
+    if _page is not None and _connected:
+        return _page
+    if _connected_event is None:
+        raise RuntimeError("MCP 服务尚未初始化")
+    print("[tauri-webview-mcp] 工具在未连接状态下被调用，等待 WebView2 重连...",
+          file=sys.stderr, flush=True)
+    try:
+        await asyncio.wait_for(_connected_event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"未连接到 WebView2（{timeout:.0f}s 内未重连成功）。"
+            f"请启动 Tauri 应用，并确保以 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port={_CDP_PORT} 启动"
+        ) from None
     return _page
 
 
@@ -288,9 +369,9 @@ async def handle_call_tool(
 ) -> CallToolResult:
     name = params.name
     arguments = params.arguments or {}
-    page = _require_page()
 
     try:
+        page = await _ensure_page(_TOOL_WAIT_TIMEOUT)
         if name == "browser_navigate":
             url = arguments["url"]
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -459,20 +540,46 @@ async def main() -> None:
         default=9222,
         help="WebView2 CDP 调试端口（默认 9222）",
     )
+    parser.add_argument(
+        "--reconnect-interval",
+        type=float,
+        default=1.5,
+        help="重连尝试间隔秒数（默认 1.5）",
+    )
+    parser.add_argument(
+        "--heartbeat-interval",
+        type=float,
+        default=5.0,
+        help="连接心跳检查间隔秒数（默认 5.0）",
+    )
+    parser.add_argument(
+        "--tool-wait-timeout",
+        type=float,
+        default=30.0,
+        help="工具调用在未连接时等待重连的超时秒数（默认 30）",
+    )
     args = parser.parse_args()
+
+    global _connect_lock, _connected_event, _CDP_PORT, _TOOL_WAIT_TIMEOUT
+    _CDP_PORT = args.cdp_port
+    _TOOL_WAIT_TIMEOUT = args.tool_wait_timeout
+    _connect_lock = asyncio.Lock()
+    _connected_event = asyncio.Event()
 
     # 创建 MCP Server
     server = Server(
         name="tauri-webview-mcp",
-        version="0.1.0",
-        description="通过 CDP 直连 Tauri WebView2，捕获前端报错和检查页面结构",
+        version="0.2.0",
+        description="通过 CDP 直连 Tauri WebView2，捕获前端报错和检查页面结构（断开后自动重连）",
         on_list_tools=handle_list_tools,
         on_call_tool=handle_call_tool,
     )
 
-    # 先启动 stdio 握手，WebView2 连接放后台任务，避免未就绪时阻塞 MCP 启用
+    # 先启动 stdio 握手，WebView2 连接放后台监控任务，避免未就绪时阻塞 MCP 启用
     async with stdio_server() as (read_stream, write_stream):
-        connect_task = asyncio.create_task(connect_to_webview(args.cdp_port))
+        monitor_task = asyncio.create_task(
+            monitor_connection(args.cdp_port, args.reconnect_interval, args.heartbeat_interval)
+        )
         try:
             init_options = server.create_initialization_options()
             await server.run(
@@ -482,9 +589,9 @@ async def main() -> None:
                 raise_exceptions=True,
             )
         finally:
-            connect_task.cancel()
+            monitor_task.cancel()
             try:
-                await connect_task
+                await monitor_task
             except (asyncio.CancelledError, Exception):
                 pass
 
