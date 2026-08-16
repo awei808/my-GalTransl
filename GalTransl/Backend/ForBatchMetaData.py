@@ -4,7 +4,6 @@ from typing import Optional
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
-from GalTransl.Dictionary import CGptDict
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
 from GalTransl.server_runtime import record_runtime_notice
@@ -248,7 +247,6 @@ class ForBatchMetaData(BaseEngine):
         self,
         json_list: list,
         filename: str = "",
-        gpt_dic: Optional[CGptDict] = None,
         force_regen: bool = False,
     ) -> bool:
         if not filename:

@@ -5,7 +5,6 @@ from typing import Optional
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
-from GalTransl.Dictionary import CGptDict
 from GalTransl.Backend.utils import (
     build_script_text,
     coerce_bool,
@@ -156,7 +155,6 @@ class ForFileMetaData(BaseEngine):
         self,
         json_list: list,
         filename: str = "",
-        gpt_dic: Optional[CGptDict] = None,
         force_regen: bool = False,
     ) -> bool:
         if not filename:

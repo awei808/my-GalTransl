@@ -426,12 +426,22 @@ class BaseTranslate(BaseEngine):
 
         return trans_result_list
 
-    def translate(self, trans_list: CTransList, gptdict: str = "") -> None:
+    async def translate(
+        self,
+        trans_list: CTransList,
+        gptdict: str = "",
+        proofread: bool = False,
+        filename: str = "",
+    ) -> tuple[int, CTransList]:
         """批量翻译单批句子；子类（如 ForGalJsonMulitChat）须实现并返回 (成功句数, 结果列表)。
 
-        本方法保留空实现（非 abstractmethod）：BaseTranslate 作为中间基类承载可单测的
-        翻译层通用逻辑，测试用 __new__ 绕过初始化来实例化它，abstractmethod 会阻断该模式。
+        基类签名与实际契约对齐（异步、携带 proofread/filename，供
+        _batch_translate_common 以关键字调用）。本方法保留空实现（非
+        abstractmethod）：BaseTranslate 作为中间基类承载可单测的翻译层通用
+        逻辑，测试用 __new__ 绕过初始化来实例化它，abstractmethod 会阻断该模式。
+        默认返回 (0, [])，即未配置翻译能力的中间基类不产生结果。
         """
+        return 0, []
 
     async def batch_translate(
         self,

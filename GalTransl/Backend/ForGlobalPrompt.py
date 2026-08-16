@@ -31,7 +31,7 @@ from GalTransl.Dictionary import CGptDict
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
 from GalTransl.Backend.utils import coerce_bool, extract_json_object
-from GalTransl.DataValidator import validate_global_prompt, validate_llm_response
+from GalTransl.DataValidator import validate_global_prompt
 
 
 # ── 全局提示词加载工具函数 ──
@@ -302,31 +302,16 @@ class ForGlobalPrompt(BaseEngine):
         """
         从 LLM 返回的原始文本中解析 GlobalPrompt JSON。
 
-        处理流程：
-          1. 去除 </think> 内容（推理模型）
-          2. 提取代码块（```json ... ```）
-          3. 定位 JSON 对象边界（{ ... }）
-          4. JSON 解析
-          5. 校验顶层类型
+        与其它元数据引擎统一走 utils.extract_json_object（去 </think>、代码块提取、
+        JSON 边界定位、容错解析），不再走 DataValidator.validate_llm_response 的
+        重复 JSON 提取路径；仅保留 GlobalPrompt 特有的乱码(U+FFFD)诊断。
+        内容级校验由 batch_translate 中的 validate_global_prompt 负责。
         """
         if not text or not text.strip():
             LOGGER.debug("[GlobalPrompt] LLM 返回为空，跳过")
             return None
-
-        # 校验 LLM 原始响应
-        validation = validate_llm_response(text, expected_format="json")
-        if not validation["valid"]:
-            for err in validation["errors"]:
-                LOGGER.warning(f"[GlobalPrompt] LLM 响应校验失败：{err}")
-            for warn in validation["warnings"]:
-                LOGGER.debug(f"[GlobalPrompt] LLM 响应校验警告：{warn}")
-
-        # 尝试使用校验结果中已解析的数据
-        parsed = validation.get("parsed_data")
-        if isinstance(parsed, dict):
-            return parsed
-
-        # 回退：统一 JSON 提取（兼容非标准格式）
+        if "\ufffd" in text:
+            LOGGER.warning("[GlobalPrompt] LLM 返回包含乱码字符（U+FFFD 替换字符）")
         return extract_json_object(text, tag="GlobalPrompt")
 
     @staticmethod
@@ -412,7 +397,6 @@ class ForGlobalPrompt(BaseEngine):
         self,
         compressed_data: Dict[str, str],
         external_info: str = "",
-        gpt_dic: Optional[CGptDict] = None,
     ) -> bool:
         """
         全局提示词生成的入口方法。
@@ -420,7 +404,6 @@ class ForGlobalPrompt(BaseEngine):
         Args:
             compressed_data: {文件路径: 压缩后文本}，来自 TextCompressor
             external_info: 外部信息字符串（游戏名称、简介、制作公司等，用户自由填写）
-            gpt_dic: GPT 字典（未使用，保留以兼容基类接口）
 
         Returns:
             True 如果生成成功并写入 GlobalPrompt.json，否则 False
