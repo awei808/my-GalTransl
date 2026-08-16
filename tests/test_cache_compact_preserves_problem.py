@@ -242,6 +242,7 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 print_translation_log_in_terminal=True,
                 getCommonConfigSection=lambda: {"loggingLevel": "info"},
                 getKey=lambda key, default=None: 1 if key == "workersPerProject" else default,
+                get_workers_per_project=lambda: 1,
                 getCachePath=lambda: cache_dir,
             )
 
@@ -329,6 +330,7 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 print_translation_log_in_terminal=True,
                 getCommonConfigSection=lambda: {"loggingLevel": "info"},
                 getKey=lambda key, default=None: 1 if key == "workersPerProject" else default,
+                get_workers_per_project=lambda: 1,
                 getCachePath=lambda: cache_dir,
             )
 
