@@ -50,8 +50,6 @@ class BaseTranslate(BaseEngine):
         self.restore_context_mode = config.getKey("gpt.restoreContextMode", True)
         # 多轮对话上下文句数
         self.contextNum: int = config.getKey("gpt.contextNum", 8)
-        # 智能重试
-        self.smartRetry: bool = config.getKey("smartRetry", True)
         # 动态句数（按 429/解析异常自动调节每批句数）
         self.dynamic_num_per_request = self._coerce_bool(
             config.getKey("gpt.dynamicNumPerRequestTranslate", False)

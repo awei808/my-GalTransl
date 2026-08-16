@@ -25,11 +25,9 @@ from types import SimpleNamespace, MethodType
 from unittest.mock import AsyncMock, patch
 
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.ForGalJsonMulitChat import (
-    ForGalJsonMulitChat,
-    FileMetaData,
-    detect_line_break_symbol,
-)
+from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+from GalTransl.Backend.metadata import FileMetaData
+from GalTransl.Backend.utils import detect_line_break_symbol
 from GalTransl.Backend.Prompts import FORGAL_JSON_TRANS_PROMPT
 from GalTransl.CSentense import CSentense
 

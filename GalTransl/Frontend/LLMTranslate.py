@@ -460,9 +460,8 @@ async def doLLMTranslate(
     post_dic_list = projectConfig.getDictCfgSection()["postDict"]
     gpt_dic_list = projectConfig.getDictCfgSection()["gpt.dict"]
     default_dic_dir = projectConfig.getDictCfgSection()["defaultDictFolder"]
-    # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
-    _workers_raw = projectConfig.getKey("workersPerProject")
-    workersPerProject = int(_workers_raw) if _workers_raw is not None else 1
+    # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+    workersPerProject = projectConfig.get_workers_per_project()
     semaphore = asyncio.Semaphore(workersPerProject)
     adaptive_state = AdaptiveWorkerState(
         max_workers=max(1, workersPerProject),
@@ -499,7 +498,7 @@ async def doLLMTranslate(
     # 获取待翻译文件列表
     file_list = get_file_list(projectConfig.getInputPath())
     # 载入 gt_input 中的 FileMetaData.json
-    from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata
+    from GalTransl.Backend.metadata import load_file_metadata
     projectConfig.file_metadata = load_file_metadata(projectConfig)
     if not file_list:
         # dump-name / GenDic 等仅基于输入文件的短路流程，空目录不算致命错误，友好返回
@@ -599,15 +598,14 @@ async def doLLMTranslate(
         # 载入已有缓存映射，跳过已生成元数据的文件
         existing_fm_map = {}
         try:
-            from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+            from GalTransl.Backend.metadata import load_file_metadata_map
             existing_fm_map = load_file_metadata_map(projectConfig)
         except Exception as exc:
             LOGGER.debug(f"[FileMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
         # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
-        _workers_raw = projectConfig.getKey("workersPerProject")
-        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+        workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
         await _run_meta_worker_pool(
             projectConfig, gptapi, file_json_lists,
@@ -618,7 +616,7 @@ async def doLLMTranslate(
         LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
 
         # 交叉验证：检查 FileMetaData.json 条目数
-        from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+        from GalTransl.Backend.metadata import load_file_metadata_map
         try:
             fm_map = load_file_metadata_map(projectConfig)
             fm_count = len(fm_map)
@@ -683,15 +681,14 @@ async def doLLMTranslate(
         # 载入已有缓存映射，跳过已划分批次的文件
         existing_bm_map = {}
         try:
-            from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
+            from GalTransl.Backend.metadata import load_batch_metadata_map
             existing_bm_map = load_batch_metadata_map(projectConfig)
         except Exception as exc:
             LOGGER.debug(f"[BatchMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
         # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
-        _workers_raw = projectConfig.getKey("workersPerProject")
-        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+        workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
         await _run_meta_worker_pool(
             projectConfig, gptapi, file_json_lists,
@@ -702,7 +699,7 @@ async def doLLMTranslate(
         LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
 
         # 交叉验证：检查 BatchMetadata.json 条目数
-        from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
+        from GalTransl.Backend.metadata import load_batch_metadata_map
         try:
             bm_map = load_batch_metadata_map(projectConfig)
             bm_count = len(bm_map)
@@ -752,8 +749,7 @@ async def doLLMTranslate(
         gptapi = await init_gptapi(projectConfig)
         total = len(file_json_lists)
         # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
-        _workers_raw = projectConfig.getKey("workersPerProject")
-        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
         projectConfig.active_workers = worker_count
         LOGGER.info(
@@ -891,8 +887,7 @@ async def doLLMTranslate(
         gptapi = await init_gptapi(projectConfig)
         total = len(file_json_lists)
         # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
-        _workers_raw = projectConfig.getKey("workersPerProject")
-        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
         projectConfig.active_workers = worker_count
         LOGGER.info(f"[改进轮] 开始为 {total} 个文件执行译文质量改进评估，并发 {worker_count} worker")
@@ -1590,7 +1585,7 @@ async def _run_full_pipeline(
         )
     else:
         from GalTransl.Backend.ForFileMetaData import ForFileMetaData
-        from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+        from GalTransl.Backend.metadata import load_file_metadata_map
 
         gptapi_filemeta = ForFileMetaData(
             projectConfig, "ForFileMetaData",
@@ -1603,9 +1598,8 @@ async def _run_full_pipeline(
             "internals.pipeline.forceRegenFileMeta", False
         )
         # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
-        _workers_raw = projectConfig.getKey("workersPerProject")
-        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+        workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
         processed_fm = await _run_meta_worker_pool(
             projectConfig, gptapi_filemeta, file_json_lists,
@@ -1709,7 +1703,7 @@ async def _run_full_pipeline(
         )
     else:
         from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
-        from GalTransl.Backend.ForGalJsonMulitChat import load_batch_metadata_map
+        from GalTransl.Backend.metadata import load_batch_metadata_map
 
         gptapi_batchmeta = ForBatchMetaData(
             projectConfig, "ForBatchMetaData",
@@ -1722,9 +1716,8 @@ async def _run_full_pipeline(
             "internals.pipeline.forceRegenBatchMeta", False
         )
         # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # 兼容 YAML 中写成字符串（如 workersPerProject: '3'）的情况，统一强转为 int
-        _workers_raw = projectConfig.getKey("workersPerProject")
-        workers_per_project = int(_workers_raw) if _workers_raw is not None else 1
+        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+        workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
         processed_bm = await _run_meta_worker_pool(
             projectConfig, gptapi_batchmeta, file_json_lists,
@@ -1815,9 +1808,8 @@ async def _run_translation_phase(
     fPlugins = projectConfig.fPlugins
     tPlugins = projectConfig.tPlugins
     input_splitter = projectConfig.input_splitter
-    # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
-    _workers_raw = projectConfig.getKey("workersPerProject")
-    workersPerProject = int(_workers_raw) if _workers_raw is not None else 1
+    # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+    workersPerProject = projectConfig.get_workers_per_project()
 
     pre_dic_list = projectConfig.getDictCfgSection()["preDict"]
     post_dic_list = projectConfig.getDictCfgSection()["postDict"]

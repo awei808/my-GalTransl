@@ -8,13 +8,16 @@
 引擎标识：ForBRStation
 """
 
+from typing import Optional
+
+from GalTransl.COpenAI import COpenAITokenPool
+from GalTransl.ConfigHelper import CProblemType, CProxyPool, CProjectConfig
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseProblemFixRound
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_BRSTATION_PROMPT,
     FORBR_SYSTEM,
 )
-from GalTransl.ConfigHelper import CProblemType
 
 
 @register_engine("ForBRStation")
@@ -38,10 +41,10 @@ class ForBRStation(BaseProblemFixRound):
 
     def __init__(
         self,
-        config,
+        config: CProjectConfig,
         eng_type: str,
-        proxy_pool=None,
-        token_pool=None,
+        proxy_pool: Optional[CProxyPool] = None,
+        token_pool: Optional[COpenAITokenPool] = None,
     ) -> None:
         """
         初始化换行位置异常修复后端。

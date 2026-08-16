@@ -1,14 +1,20 @@
-import json
 import math
 import os
-from typing import Optional, List
+from typing import Optional
 
 from GalTransl.COpenAI import COpenAITokenPool
-from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
+from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
-from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Backend.utils import coerce_bool, extract_json_object
+from GalTransl.Backend.utils import (
+    build_script_text,
+    coerce_bool,
+    extract_json_object,
+)
+from GalTransl.Backend.metadata import (
+    build_glossary_prompt_text,
+    save_metadata_json,
+)
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT, FORFILEMETA_SYSTEM
 
@@ -19,7 +25,7 @@ ForFileMetaData - 文件级元数据(FileMetaData)生成后端
 该后端不翻译文本、不使用多轮对话、使用专用系统提示词。
 它读取一个 Galgame 剧本文件（gt_input 下的 *.txt.json），把全文作为 user 消息
 发给 LLM，要求模型概括剧情并输出一个 JSON 对象（角色/服装/剧情/标签），
-解析后按文件名 id 合并写入 gt_input/FileMetaData.json。
+解析后按文件名写入 transl_cache/pass1_cache/{filename}.meta.json（per-file 存储）。
 
 默认会把项目的 translation_guideline（翻译规范，即 gpt.translation_guideline
 指向的文件内容）注入提示词，供模型在命名角色/标签、把握剧情风格时遵循；
@@ -96,93 +102,20 @@ class ForFileMetaData(BaseEngine):
     def _build_script_text(self, json_list: list, filename: str = "") -> str:
         """把 json_list（每行一个 {name, message} 对象）拼成可读剧本正文。
 
-        同时检查字段完整性：统计无 message/name 的条目数。
+        实现收口于 utils.build_script_text（与 ForBatchMetaData 共用），
+        本方法保持「无行号/不压平/仅 name」的文件级元数据口径并返回正文串。
         """
-        if not isinstance(json_list, list):
-            LOGGER.warning(
-                f"[FileMetaData] {filename} _build_script_text 收到非 list 参数"
-            )
-            return ""
-        out: List[str] = []
-        no_msg = 0
-        no_name = 0
-        for i, item in enumerate(json_list):
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name", "") or ""
-            msg = item.get("message", "") or ""
-            if not msg:
-                no_msg += 1
-            if not name:
-                no_name += 1
-            if name:
-                out.append(f"{name}：{msg}")
-            else:
-                out.append(msg)
-
-        # 字段完整性日志
-        total = len(json_list)
-        if no_msg > 0:
-            if no_msg == total:
-                LOGGER.warning(
-                    f"[FileMetaData] {filename} 全部 {total} 个条目均无 message 字段，"
-                    f"提示词将为空"
-                )
-                return ""
-            LOGGER.warning(
-                f"[FileMetaData] {filename} {no_msg}/{total} 个条目缺少 message 字段"
-            )
-        if no_name > 0 and no_name < total:
-            LOGGER.debug(
-                f"[FileMetaData] {filename} {no_name}/{total} 个条目无 name 字段（纯旁白行）"
-            )
-        return "\n".join(out)
+        script_text, _max_index = build_script_text(
+            json_list, filename, tag="FileMetaData"
+        )
+        return script_text
 
     def _build_glossary_text(self, json_list: list) -> str:
         """按需注入 GPT 字典：仅将当前文件中实际出现的条目格式化为 Markdown 译表。
 
-        与多轮翻译后端策略一致：先用 json_list 构造 CTransList，再通过
-        CGptDict.gen_prompt 检测哪些字典条目实际出现在原文中，只注入命中条目。
+        实现收口于 metadata.build_glossary_prompt_text（与 ForBatchMetaData 共用）。
         """
-        if not json_list:
-            return ""
-        dict_cfg = self.pj_config.getDictCfgSection()
-        if not dict_cfg:
-            return ""
-        gpt_dic_list = dict_cfg.get("gpt.dict", [])
-        if not gpt_dic_list:
-            return ""
-        default_dic_dir = dict_cfg.get("defaultDictFolder", "")
-        try:
-            paths = initDictList(
-                gpt_dic_list, default_dic_dir, self.pj_config.getProjectDir()
-            )
-            gpt_dic = CGptDict(paths)
-        except Exception as e:
-            LOGGER.warning(f"[FileMetaData] 载入 GPT 字典失败，文件级元数据将不含专名译表：{e}")
-            return ""
-
-        # 从 json_list 构造临时 CTransList（metadata 阶段 post_src 未计算，用 pre_src 代替）
-        trans_list = []
-        for item in json_list:
-            if not isinstance(item, dict):
-                continue
-            msg = str(item.get("message", ""))
-            if not msg:
-                continue
-            tran = CSentense(msg, speaker=str(item.get("name", "") or ""))
-            tran.post_src = tran.pre_src
-            trans_list.append(tran)
-
-        # 元数据阶段不分流，仅注入非 h 字典，避免 h 词条污染整体剧情描述
-        glossary = gpt_dic.gen_prompt(trans_list, scene="nh") if trans_list else ""
-        if glossary:
-            LOGGER.debug(
-                f"[FileMetaData] 按需注入 GPT 字典，命中 {glossary.count(chr(10)) - 3} 条"
-            )
-        else:
-            LOGGER.debug("[FileMetaData] 当前文件无命中 GPT 字典条目")
-        return glossary
+        return build_glossary_prompt_text(json_list, self.pj_config, "FileMetaData")
 
     # 2. 解析与规整 LLM 返回的 JSON
     @staticmethod
@@ -210,15 +143,13 @@ class ForFileMetaData(BaseEngine):
             "标签": tags,
         }
 
-    # 3. 写入 per-file 元数据文件（无锁、不合并，每文件独立存储）
+    # 3. 写入 per-file 元数据文件（实现收口于 metadata.save_metadata_json，原子写）
     def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS1_CACHE_DIR
-        out_dir = os.path.join(self.pj_config.getCachePath(), PASS1_CACHE_DIR)
-        os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, f"{filename}.meta.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
-        LOGGER.debug(f"[FileMetaData] 已保存 {path}")
+
+        save_metadata_json(
+            self.pj_config, PASS1_CACHE_DIR, filename, "meta", meta, "FileMetaData"
+        )
 
     # 4. 入口
     async def batch_translate(
@@ -276,21 +207,14 @@ class ForFileMetaData(BaseEngine):
             f"[FileMetaData] {filename} 提示词长度：{len(prompt)} 字符，"
             f"脚本 {_num_lines} 句，剧情上限 {max_chars} 字"
         )
-        try:
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ]
-            rsp, token = await self.ask_chatbot(
-                messages=messages,
-                file_name=filename,
-                max_retry_count=3,
-            )
-        except Exception as e:
-            LOGGER.error(
-                f"[FileMetaData] {filename} LLM 请求失败：{type(e).__name__}: {e}",
-                exc_info=True,
-            )
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        rsp, token = await self._call_llm_with_error_report(
+            messages, filename, max_retry_count=3, tag="FileMetaData"
+        )
+        if rsp is None:
             return False
 
         meta = self._parse_meta(rsp or "", filename)

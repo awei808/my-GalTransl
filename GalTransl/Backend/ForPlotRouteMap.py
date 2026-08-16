@@ -268,6 +268,13 @@ class ForPlotRouteMap(BaseEngine):
                     f"[PlotRouteMap] LLM 请求失败：{type(e).__name__}: {e}",
                     exc_info=True,
                 )
+                self._record_runtime_error(
+                    kind="llm",
+                    message=f"{type(e).__name__}: {e}",
+                    filename="PlotRouteMap",
+                    index_range="-",
+                    level="error",
+                )
                 return False
 
             obj = self._parse_result(rsp or "")

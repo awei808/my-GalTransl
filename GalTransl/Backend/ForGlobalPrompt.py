@@ -465,21 +465,14 @@ class ForGlobalPrompt(BaseEngine):
         )
 
         # ── 调用 LLM ──
-        try:
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ]
-            rsp, token = await self.ask_chatbot(
-                messages=messages,
-                file_name="GlobalPrompt",
-                max_retry_count=3,
-            )
-        except Exception as e:
-            LOGGER.error(
-                f"[GlobalPrompt] LLM 请求失败：{type(e).__name__}: {e}",
-                exc_info=True,
-            )
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        rsp, token = await self._call_llm_with_error_report(
+            messages, "GlobalPrompt", max_retry_count=3, tag="GlobalPrompt"
+        )
+        if rsp is None:
             return False
 
         # ── 解析响应 ──

@@ -1,7 +1,7 @@
 import unittest
 
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.ForGalJsonMulitChat import (
+from GalTransl.Backend.utils import (
     detect_line_break_symbol,
     detect_batch_line_break_symbol,
 )

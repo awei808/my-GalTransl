@@ -6,12 +6,12 @@
 """
 import unittest
 
-from GalTransl.Backend.ForGalJsonMulitChat import (
+from GalTransl.Backend.utils import (
     parse_interval,
     strip_chunk_suffix,
     normalize_batch_intervals,
-    BatchMetadata,
 )
+from GalTransl.Backend.metadata import BatchMetadata
 from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
 
 

@@ -66,6 +66,89 @@ def detect_batch_line_break_symbol(post_src_list: List[str]) -> str:
     return ""
 
 
+def build_script_text(
+    json_list: list,
+    filename: str = "",
+    tag: str = "MetaData",
+    use_line_numbers: bool = False,
+    flatten_whitespace: bool = False,
+    accept_names_plural: bool = False,
+) -> Tuple[str, int]:
+    """把 json_list（每行 {name, message} 对象）拼成可读剧本正文。
+
+    统一 ForFileMetaData / ForBatchMetaData 的剧本正文构造口径，差异由参数控制：
+
+      - use_line_numbers：前缀 ``[行号]`` 并统计 max_index（批次划分需要）；
+        行号规则与 Loader/CSplitter 的 runtime_index 一致（优先行内显式 index）。
+      - flatten_whitespace：压平 \\r\\n/\\n/\\t 为空格（保护逐行结构）。
+      - accept_names_plural：name 缺失时回退读取 names（兼容复数名字段）。
+
+    同时统计字段完整性（无 message/name 的条目数）并输出日志。
+
+    Args:
+        json_list: 待拼接的条目列表（每项 dict，含 name/message 字段）。
+        filename: 文件名（用于日志定位）。
+        tag: 日志前缀（如 "FileMetaData" / "BatchMetaData"）。
+        use_line_numbers: 是否输出 ``[行号]`` 前缀并统计 max_index。
+        flatten_whitespace: 是否压平换行/制表符。
+        accept_names_plural: 是否在 name 缺失时回退 names 字段。
+
+    Returns:
+        (script_text, max_index)：拼接后的正文，以及最大行号（无行号模式下为 0）。
+    """
+    if not isinstance(json_list, list):
+        LOGGER.warning(f"[{tag}] {filename} build_script_text 收到非 list 参数")
+        return "", 0
+
+    out: List[str] = []
+    max_index = 0
+    no_msg = 0
+    no_name = 0
+    for i, item in enumerate(json_list):
+        if not isinstance(item, dict):
+            continue
+        idx = i + 1
+        if use_line_numbers:
+            raw_idx = item.get("index")
+            if isinstance(raw_idx, int):
+                idx = raw_idx
+            elif isinstance(raw_idx, str) and raw_idx.isdigit():
+                idx = int(raw_idx)
+            max_index = max(max_index, idx)
+        name = item.get("name", "") or ""
+        if not name and accept_names_plural:
+            name = item.get("names", "") or ""
+        msg = item.get("message", "") or ""
+        if not msg:
+            no_msg += 1
+        if flatten_whitespace:
+            msg = str(msg).replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
+        if name:
+            out.append(f"[{idx}] {name}：{msg}" if use_line_numbers else f"{name}：{msg}")
+        else:
+            if not name:
+                no_name += 1
+            out.append(f"[{idx}] {msg}" if use_line_numbers else str(msg))
+
+    # 字段完整性日志
+    total = len(json_list)
+    if no_msg > 0:
+        if no_msg == total:
+            LOGGER.warning(
+                f"[{tag}] {filename} 全部 {total} 个条目均无 message 字段，"
+                f"提示词将为空"
+            )
+            return "", max_index
+        LOGGER.warning(
+            f"[{tag}] {filename} {no_msg}/{total} 个条目缺少 message 字段"
+        )
+    if no_name > 0 and no_name < total:
+        LOGGER.debug(
+            f"[{tag}] {filename} {no_name}/{total} 个条目无 name 字段（纯旁白行）"
+        )
+    return "\n".join(out), max_index
+
+
 # ── 共享区间工具（批次级元数据生成与多轮翻译分组复用）──
 # 历史实现中，ForBatchMetaData 与 ForGalJsonMulitChat 各自重复实现区间解析，
 # 对脏数据（非整数、长度不足、lo>hi 写反）的处理方式不一致且均静默丢弃。

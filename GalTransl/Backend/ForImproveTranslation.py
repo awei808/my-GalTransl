@@ -1,5 +1,9 @@
 """改进轮后端：整文件翻译完成后评估译文质量，生成可替换的备选译文。"""
 
+from typing import Optional
+
+from GalTransl.COpenAI import COpenAITokenPool
+from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseImproveRound
 from GalTransl.Backend.Prompts import (
@@ -20,10 +24,10 @@ class ForImproveTranslation(BaseImproveRound):
 
     def __init__(
         self,
-        config,
+        config: CProjectConfig,
         eng_type: str,
-        proxy_pool=None,
-        token_pool=None,
+        proxy_pool: Optional[CProxyPool] = None,
+        token_pool: Optional[COpenAITokenPool] = None,
     ) -> None:
         """
         初始化改进轮后端。

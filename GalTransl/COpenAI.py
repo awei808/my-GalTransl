@@ -386,9 +386,8 @@ async def init_sakura_endpoint_queue(projectConfig: CProjectConfig) -> Optional[
     初始化的端点队列，如果不需要则返回None
     """
 
-    # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
-    _workers_raw = projectConfig.getKey("workersPerProject")
-    workersPerProject = int(_workers_raw) if _workers_raw is not None else 1
+    # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+    workersPerProject = projectConfig.get_workers_per_project()
     sakura_endpoint_queue = asyncio.Queue()
     section_name = "SakuraLLM"
     endpoints = normalize_sakura_endpoints(projectConfig.getBackendConfigSection(section_name))

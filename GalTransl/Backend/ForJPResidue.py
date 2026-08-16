@@ -8,13 +8,16 @@
 引擎标识：ForJPResidue
 """
 
+from typing import Optional
+
+from GalTransl.COpenAI import COpenAITokenPool
+from GalTransl.ConfigHelper import CProblemType, CProxyPool, CProjectConfig
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseProblemFixRound
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_JPREPAIR_PROMPT,
     FORJP_SYSTEM,
 )
-from GalTransl.ConfigHelper import CProblemType
 
 
 @register_engine("ForJPResidue")
@@ -40,10 +43,10 @@ class ForJPResidue(BaseProblemFixRound):
 
     def __init__(
         self,
-        config,
+        config: CProjectConfig,
         eng_type: str,
-        proxy_pool=None,
-        token_pool=None,
+        proxy_pool: Optional[CProxyPool] = None,
+        token_pool: Optional[COpenAITokenPool] = None,
     ) -> None:
         """
         初始化残留日文修复后端。

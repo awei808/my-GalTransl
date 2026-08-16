@@ -235,7 +235,7 @@ async def run_job_async(
         return current_state
 
     try:
-        update_runtime_status(spec.project_dir, workers_active=0, workers_configured=int(cfg.getKey("workersPerProject") or 1))
+        update_runtime_status(spec.project_dir, workers_active=0, workers_configured=cfg.get_workers_per_project())
         await run_galtransl(cfg, spec.translator, stop_event=stop_event)
         current_state.status = "completed"
         current_state.success = True

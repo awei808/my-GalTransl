@@ -16,6 +16,47 @@ from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.utils import parse_interval
 
 
+def save_metadata_json(
+    projectConfig: "CProjectConfig",
+    cache_dir_name: str,
+    filename: str,
+    suffix: str,
+    meta: dict,
+    tag: str,
+) -> str:
+    """原子写入 per-file 元数据 JSON（``{filename}.{suffix}.json``）。
+
+    ForFileMetaData（pass1_cache/*.meta.json）与 ForBatchMetaData
+    （pass2_cache/*.batch.json）共用同一写盘路径：先写同目录临时文件再
+    os.replace 原子替换，避免写一半崩溃留下截断文件。返回写入的文件路径。
+
+    Args:
+        projectConfig: 项目配置（取 getCachePath()）。
+        cache_dir_name: 缓存子目录常量（PASS1_CACHE_DIR / PASS2_CACHE_DIR）。
+        filename: 元数据归属的文件名。
+        suffix: 文件名后缀（"meta" / "batch"）。
+        meta: 待写入的元数据 dict。
+        tag: 日志前缀（"FileMetaData" / "BatchMetaData"）。
+    """
+    out_dir = os.path.join(projectConfig.getCachePath(), cache_dir_name)
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{filename}.{suffix}.json")
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+    LOGGER.debug(f"[{tag}] 已保存 {path}")
+    return path
+
+
 class FileMetaData:
     """文件级元数据类
 
@@ -63,6 +104,108 @@ class FileMetaData:
             f"plot={self.plot!r}, "
             f"tags={self.tags!r})"
         )
+
+
+def format_file_metadata_block(
+    metadata: "FileMetaData", include_guidance: bool = True
+) -> str:
+    """把文件级元数据格式化为提示词附加段落（<plot_metadata> 包裹版）。
+
+    供 ForGalJsonMulitChat（翻译轮首轮）与 ForBatchMetaData（批次划分提示词）
+    共用同一形态，避免「文件级元数据」在两条提示词链里的口径漂移。
+
+    Args:
+        metadata: 文件级元数据对象。
+        include_guidance: 是否附带翻译轮专属指导语（“保持人物译名…后续轮次…”）。
+            翻译轮传 True；批次划分等非翻译场景传 False，仅保留 <plot_metadata> 标签块。
+    """
+    def _join(value: object) -> str:
+        """把 str 或 list[str] 规范为「、」分隔串；空值返回 None。"""
+        if value is None or value == "":
+            return None
+        if isinstance(value, list):
+            items = [str(x).strip() for x in value if str(x).strip() != ""]
+            return "、".join(items) if items else None
+        s = str(value).strip()
+        return s if s else None
+
+    id_line = f"id: {metadata.id}\n" if metadata.id else ""
+    character = _join(metadata.character) or "无"
+    costume = _join(metadata.costume) or "无"
+    plot = _join(metadata.plot) or "无"
+    tags = _join(metadata.tags) or "无"
+    block = (
+        "\n<plot_metadata>\n"
+        f"{id_line}"
+        f"角色: {character}\n"
+        f"服装: {costume}\n"
+        f"剧情: {plot}\n"
+        f"标签: {tags}\n"
+        "</plot_metadata>\n"
+    )
+    if include_guidance:
+        block += (
+            "请参考上述 <plot_metadata> 中的剧情元数据：保持人物译名"
+            "（与「角色」列表一致）、语气与剧情基调前后统一。"
+            "后续轮次将只提供待翻译句子，无需重复翻译要求。\n"
+        )
+    return block
+
+
+def build_glossary_prompt_text(
+    json_list: list, projectConfig: "CProjectConfig", tag: str
+) -> str:
+    """按需注入 GPT 字典：仅将当前文件中实际出现的条目格式化为 Markdown 译表。
+
+    ForFileMetaData / ForBatchMetaData 共用（元数据阶段不分流、仅注入非 h 字典，
+    避免 h 词条污染整体剧情描述）。先用 json_list 构造临时 CTransList，再经
+    CGptDict.gen_prompt 只注入命中条目；无字典/无命中时返回空串。
+
+    Args:
+        json_list: 待分析条目列表（每项含 name/message）。
+        projectConfig: 项目配置（读取 dictionary 段）。
+        tag: 日志前缀（"FileMetaData" / "BatchMetaData"）。
+    """
+    if not json_list:
+        return ""
+    dict_cfg = projectConfig.getDictCfgSection()
+    if not dict_cfg:
+        return ""
+    gpt_dic_list = dict_cfg.get("gpt.dict", [])
+    if not gpt_dic_list:
+        return ""
+    try:
+        from GalTransl.ConfigHelper import initDictList
+        from GalTransl.Dictionary import CGptDict
+        from GalTransl.CSentense import CSentense
+
+        paths = initDictList(
+            gpt_dic_list, dict_cfg.get("defaultDictFolder", ""), projectConfig.getProjectDir()
+        )
+        gpt_dic = CGptDict(paths)
+    except Exception as e:
+        LOGGER.warning(f"[{tag}] 载入 GPT 字典失败，元数据将不含专名译表：{e}")
+        return ""
+
+    trans_list = []
+    for item in json_list:
+        if not isinstance(item, dict):
+            continue
+        msg = str(item.get("message", ""))
+        if not msg:
+            continue
+        tran = CSentense(msg, speaker=str(item.get("name", "") or ""))
+        tran.post_src = tran.pre_src
+        trans_list.append(tran)
+
+    glossary = gpt_dic.gen_prompt(trans_list, scene="nh") if trans_list else ""
+    if glossary:
+        LOGGER.debug(
+            f"[{tag}] 按需注入 GPT 字典，命中 {glossary.count(chr(10)) - 3} 条"
+        )
+    else:
+        LOGGER.debug(f"[{tag}] 当前文件无命中 GPT 字典条目")
+    return glossary
 
 
 def load_file_metadata(projectConfig: "CProjectConfig", filename: str = "") -> Optional[FileMetaData]:

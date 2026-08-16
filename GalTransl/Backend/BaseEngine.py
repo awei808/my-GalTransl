@@ -235,10 +235,6 @@ class BaseEngine:
         else:
             self.target_lang = LANG_SUPPORTED[self.target_lang]
 
-        # 429等待时间（废弃）
-        self.wait_time = config.getKey("gpt.tooManyRequestsWaitTime", 60)
-        # 跳过重试
-        self.skipRetry = config.getKey("skipRetry", False)
         # 跳过h
         self.skipH = config.getKey("skipH", False)
 
@@ -421,6 +417,47 @@ class BaseEngine:
             from GalTransl.Service import JobCancelledError
 
             raise JobCancelledError()
+
+    async def _call_llm_with_error_report(
+        self,
+        messages: list,
+        filename: str,
+        max_retry_count: int = 3,
+        tag: str = "",
+        kind: str = "llm",
+    ) -> tuple:
+        """单次 LLM 调用 + 统一运行态错误上报（元数据类引擎共用）。
+
+        成功返回 ``(rsp, token)``；失败时记录 LOGGER.error（含 exc_info）并上报
+        运行态（kind=llm，供工作台"最近错误"卡片），返回 ``(None, None)``，
+        由调用方按空响应处理（如 _parse_meta(rsp or "") 返回 None 后走失败分支）。
+
+        注意：JobCancelledError 不被本方法截获，会沿调用栈上抛（与翻译轮一致），
+        保证取消任务不被误记成 LLM 调用失败。
+        """
+        try:
+            return await self.ask_chatbot(
+                messages=messages,
+                file_name=filename,
+                max_retry_count=max_retry_count,
+            )
+        except Exception as e:
+            from GalTransl.Service import JobCancelledError
+
+            if isinstance(e, JobCancelledError):
+                raise
+            LOGGER.error(
+                f"[{tag}] {filename} LLM 请求失败：{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            self._record_runtime_error(
+                kind=kind,
+                message=f"{type(e).__name__}: {e}",
+                filename=filename,
+                index_range="-",
+                level="error",
+            )
+            return None, None
 
     def _build_guideline_block(self) -> str:
         """按 _inject_guideline 开关构建翻译规范注入块（带标题；关闭或为空时返回空串）。

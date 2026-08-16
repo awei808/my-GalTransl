@@ -4,14 +4,12 @@ import json
 import asyncio
 import re
 from random import choice
-from typing import Any, Optional, List, Set, Tuple
+from typing import Any, Optional, List, Set
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
-from GalTransl.i18n import get_text
 from GalTransl.CSentense import CSentense, CTransList
-from GalTransl.Cache import save_transCache_to_json
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes
 from GalTransl.Backend.Prompts import (
@@ -28,21 +26,18 @@ from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.metadata import (
     FileMetaData,
     BatchMetadata,
-    load_file_metadata,
+    format_file_metadata_block,
     load_file_metadata_map,
     load_batch_metadata_map,
 )
 from GalTransl.Backend.utils import (
-    detect_line_break_symbol,
     detect_batch_line_break_symbol,
     parse_interval,
-    normalize_batch_intervals,
     preprocess_jsonline_response,
     strip_chunk_suffix,
 )
 from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
 from GalTransl.Service import JobCancelledError
-from openai._types import NOT_GIVEN
 
 
 """ForGalJsonMulitChat - 基于 JSON-line 格式的多轮对话视觉小说脚本翻译后端
@@ -268,8 +263,10 @@ class ForGalJsonMulitChat(BaseTranslate):
     # 2. 提示词拼接
 
     def _format_file_metadata_block(self, metadata: FileMetaData) -> str:
-        """
-        将剧情元数据格式化为提示词附加段落（第一轮对话中使用）。
+        """将剧情元数据格式化为提示词附加段落（第一轮对话中使用）。
+
+        实现收口在 metadata.format_file_metadata_block（与 ForBatchMetaData
+        共用同一 <plot_metadata> 形态），本方法保留为翻译轮入口。
 
         Args:
             metadata: 剧情元数据对象（属性：id/角色/服装/剧情/标签）
@@ -277,33 +274,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         Returns:
             追加在翻译提示词之后的剧情元数据文本块
         """
-        def _join(value: object) -> str:
-            """把 str 或 list[str] 规范为「、」分隔串；空值返回 None。"""
-            if value is None or value == "":
-                return None
-            if isinstance(value, list):
-                items = [str(x).strip() for x in value if str(x).strip() != ""]
-                return "、".join(items) if items else None
-            s = str(value).strip()
-            return s if s else None
-
-        id_line = f"id: {metadata.id}\n" if metadata.id else ""
-        character = _join(metadata.character) or "无"
-        costume = _join(metadata.costume) or "无"
-        plot = _join(metadata.plot) or "无"
-        tags = _join(metadata.tags) or "无"
-        return (
-            "\n<plot_metadata>\n"
-            f"{id_line}"
-            f"角色: {character}\n"
-            f"服装: {costume}\n"
-            f"剧情: {plot}\n"
-            f"标签: {tags}\n"
-            "</plot_metadata>\n"
-            "请参考上述 <plot_metadata> 中的剧情元数据：保持人物译名"
-            "（与「角色」列表一致）、语气与剧情基调前后统一。"
-            "后续轮次将只提供待翻译句子，无需重复翻译要求。\n"
-        )
+        return format_file_metadata_block(metadata)
 
     def _build_round_user_content(
         self,
@@ -565,7 +536,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         cursor["i"] += 1
         i = cursor["i"]
         if (
-            isinstance(line_json, dict) == False
+            not isinstance(line_json, dict)
             or "id" not in line_json
             or type(line_json["id"]) != int
             or i > len(trans_list) - 1
@@ -906,12 +877,6 @@ class ForGalJsonMulitChat(BaseTranslate):
         # 处理分批后缀：file_0 -> file
         return self._file_metadata_by_file.get(strip_chunk_suffix(filename))
 
-    def set_batch_metadata(
-        self, batch_metadata: BatchMetadata, filename: str = ""
-    ) -> None:
-        """设置指定文件的批次级元数据（显式注入，优先级高于自动载入）。"""
-        self.batch_metadata_map[filename] = batch_metadata
-
     def _ensure_batch_metadata_loaded(self) -> None:
         """惰性载入 BatchMetadata.json（仅执行一次）。"""
         if self._batch_metadata_loaded:
@@ -1157,7 +1122,8 @@ class ForGalJsonMulitChat(BaseTranslate):
 
         始终保留 system 消息（index 0）与第一轮 user 消息（index 1，含剧情元数据），
         仅裁剪中间的历史轮次，保留最近的若干轮。
-        当前配置项中未设置相应配置，也就是说裁剪功能实际是没有实现的。暂不考虑实现
+        裁剪轮数由配置 gpt.multiRoundMaxHistory 控制（0=不裁剪，默认 0）。
+
         Args:
             messages: 完整 messages 列表
 
@@ -1409,9 +1375,11 @@ class ForGalJsonMulitChat(BaseTranslate):
         gpt_dic: CGptDict = None,
         proofread: bool = False,
         retran_key: str = "",
-        translist_hit: CTransList = [],
-        translist_unhit: CTransList = [],
+        translist_hit: Optional[CTransList] = None,
+        translist_unhit: Optional[CTransList] = None,
     ) -> CTransList:
+        # translist_hit 为历史遗留参数（未使用）；unhit 缺省时按空列表处理
+        translist_unhit = translist_unhit or []
         # 新文件：重置该文件的对话历史，确保以第一轮（含元数据）开始
         if self.last_file_name != filename:
             self.reset_conversation(filename)

@@ -91,10 +91,14 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
         gpt_dic=None,
         proofread: bool = False,
         retran_key: str = "",
-        translist_hit: list = [],
-        translist_unhit: list = [],
+        translist_hit: Optional[list] = None,
+        translist_unhit: Optional[list] = None,
     ) -> CTransList:
-        """通用稀疏修复轮入口：不覆盖主译文，只写 alt_dst（或按子类策略处理）。"""
+        """通用稀疏修复轮入口：不覆盖主译文，只写 alt_dst（或按子类策略处理）。
+
+        translist_hit / translist_unhit 为历史遗留签名参数（兼容旧调用方），
+        本入口以 trans_list 为准，不使用这两个参数。
+        """
         target_trans_list = self._filter_target_translations(trans_list)
         total = len(target_trans_list)
         if total == 0:

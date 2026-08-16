@@ -259,6 +259,20 @@ class CProjectConfig:
     def getKey(self, key: str, default: None = None) -> str | bool | int | None:
         return self.keyValues.get(key, default)
 
+    def get_workers_per_project(self) -> int:
+        """项目级并行 worker 数（workersPerProject），统一收口解析口径。
+
+        兼容 YAML 字符串写法（如 '4'）；缺失/非法回退 1；0 或负数抬为 1
+        （避免 asyncio.Semaphore(0) 死锁）。全库并发数读取统一走本方法。
+        注：Runner/server 中以 workersPerProject 作为「切分数量回退」的两处
+        读取不属并发语义，未收口。
+        """
+        raw = self.getKey("workersPerProject")
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 1
+
     def getProblemAnalyzeConfig(self, backendName: str) -> list[CProblemType]:
         if backendName not in self.projectConfig["problemAnalyze"]:
             return []

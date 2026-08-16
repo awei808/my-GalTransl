@@ -1,17 +1,21 @@
-import json
 import os
-from typing import Optional, List
+from typing import Optional
 
 from GalTransl.COpenAI import COpenAITokenPool
-from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
+from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
-from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
 from GalTransl.server_runtime import record_runtime_notice
-from GalTransl.Backend.metadata import load_file_metadata_map
+from GalTransl.Backend.metadata import (
+    build_glossary_prompt_text,
+    format_file_metadata_block,
+    load_file_metadata_map,
+    save_metadata_json,
+)
 from GalTransl.Backend.utils import (
+    build_script_text,
     coerce_bool,
     extract_json_object,
     normalize_batch_intervals,
@@ -34,7 +38,7 @@ ForBatchMetaData - 批次级元数据(BatchMetadata)生成后端（高质量翻�
   - h：是否为露骨性描写(H)
   - 用词色彩：对本区间译文用词风格的具体指导
 
-解析后按文件名 id 合并写入 gt_input/BatchMetadata.json。
+解析后按文件名写入 transl_cache/pass2_cache/{filename}.batch.json（per-file 存储）。
 第三次启动翻译后端（ForGal-json-multi-chat）时，会按每批句子所处的全局行号
 区间，将对应区间的批次级元数据注入首轮提示词（[batch_metadata] 占位符）。
 
@@ -56,8 +60,8 @@ class ForBatchMetaData(BaseEngine):
         初始化 ForBatchMetaData 后端。
 
         与 ForFileMetaData 类似：使用专用系统提示词、不翻译、不多轮。
-        额外地，会在首次需要时惰性载入 gt_input（及上层目录）的
-        FileMetaData.json，作为每个文件划分区间时的文件级背景。
+        额外地，会在首次需要时惰性载入 pass1_cache 的
+        文件级元数据（FileMetaData），作为每个文件划分区间时的文件级背景。
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
 
@@ -142,10 +146,11 @@ class ForBatchMetaData(BaseEngine):
             self._file_metadata_by_file = {}
 
     def _build_file_metadata_block(self, filename: str) -> str:
-        """取该文件的文件级剧情元数据，格式化为提示词背景块。
+        """取该文件的文件级剧情元数据，格式化为提示词背景块（<plot_metadata> 包裹版）。
 
-        找不到对应条目（未生成 FileMetaData.json 或缺少该文件）时返回空串，
-        对应模板中的 [plot_metadata] 会被替换为空。
+        与翻译轮共用 metadata.format_file_metadata_block 的形态（不含翻译轮专属
+        指导语）；找不到对应条目（未生成 FileMetaData.json 或缺少该文件）时返回
+        空串，对应模板中的 [plot_metadata] 会被替换为空。
         """
         self._ensure_file_metadata_loaded()
         md = self._file_metadata_by_file.get(filename)
@@ -158,22 +163,7 @@ class ForBatchMetaData(BaseEngine):
                 f"该文件将不含文件级剧情背景"
             )
             return ""
-
-        def _join(value) -> str:
-            if value is None or value == "":
-                return "无"
-            if isinstance(value, list):
-                items = [str(x).strip() for x in value if str(x).strip() != ""]
-                return "、".join(items) if items else "无"
-            s = str(value).strip()
-            return s if s else "无"
-
-        return (
-            f"角色: {_join(md.character)}\n"
-            f"服装: {_join(md.costume)}\n"
-            f"剧情: {_join(md.plot)}\n"
-            f"标签: {_join(md.tags)}\n"
-        )
+        return format_file_metadata_block(md, include_guidance=False)
 
     # 1. 组装提示词
     def _build_prompt_request(
@@ -200,104 +190,31 @@ class ForBatchMetaData(BaseEngine):
     def _build_script_text(self, json_list: list, filename: str = "") -> tuple:
         """把 json_list 拼成带全局行号的可读剧本正文。
 
+        实现收口于 utils.build_script_text（与 ForFileMetaData 共用），
+        本方法保持批次划分口径：带 [行号] 前缀、压平换行/制表符、兼容 names 字段。
+
         行号规则与 Loader.load_transList / CSplitter 中 runtime_index 一致：
         优先取行内显式 index，否则用 1 起的位置序号（i+1）。这样生成的区间
         行号能与翻译阶段每个句子的 runtime_index 精确对应。
 
-        同时检查字段完整性：统计无 message/name 的条目数。
-
         Returns:
             (script_text, max_index)：拼接后的正文，以及最大行号（供裁剪区间用）
         """
-        if not isinstance(json_list, list):
-            LOGGER.warning(
-                f"[BatchMetaData] {filename} _build_script_text 收到非 list 参数"
-            )
-            return "", 0
-        out: List[str] = []
-        max_index = 0
-        no_msg = 0
-        for i, item in enumerate(json_list):
-            if not isinstance(item, dict):
-                continue
-            raw_idx = item.get("index")
-            if isinstance(raw_idx, int):
-                idx = raw_idx
-            elif isinstance(raw_idx, str) and raw_idx.isdigit():
-                idx = int(raw_idx)
-            else:
-                idx = i + 1
-            max_index = max(max_index, idx)
-            name = item.get("name", item.get("names", "")) or ""
-            msg = item.get("message", "") or ""
-            if not msg:
-                no_msg += 1
-            # 压平换行/制表符，避免破坏逐行结构
-            msg = str(msg).replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
-            if name:
-                out.append(f"[{idx}] {name}：{msg}")
-            else:
-                out.append(f"[{idx}] {msg}")
-
-        # 字段完整性日志
-        total = len(json_list)
-        if no_msg > 0:
-            if no_msg == total:
-                LOGGER.warning(
-                    f"[BatchMetaData] {filename} 全部 {total} 个条目均无 message 字段，"
-                    f"提示词将为空"
-                )
-                return "", max_index
-            LOGGER.warning(
-                f"[BatchMetaData] {filename} {no_msg}/{total} 个条目缺少 message 字段"
-            )
-        return "\n".join(out), max_index
+        return build_script_text(
+            json_list,
+            filename,
+            tag="BatchMetaData",
+            use_line_numbers=True,
+            flatten_whitespace=True,
+            accept_names_plural=True,
+        )
 
     def _build_glossary_text(self, json_list: list) -> str:
         """按需注入 GPT 字典：仅将当前文件中实际出现的条目格式化为 Markdown 译表。
 
-        与多轮翻译后端策略一致：先用 json_list 构造 CTransList，再通过
-        CGptDict.gen_prompt 检测哪些字典条目实际出现在原文中，只注入命中条目。
+        实现收口于 metadata.build_glossary_prompt_text（与 ForFileMetaData 共用）。
         """
-        if not json_list:
-            return ""
-        dict_cfg = self.pj_config.getDictCfgSection()
-        if not dict_cfg:
-            return ""
-        gpt_dic_list = dict_cfg.get("gpt.dict", [])
-        if not gpt_dic_list:
-            return ""
-        default_dic_dir = dict_cfg.get("defaultDictFolder", "")
-        try:
-            paths = initDictList(
-                gpt_dic_list, default_dic_dir, self.pj_config.getProjectDir()
-            )
-            gpt_dic = CGptDict(paths)
-        except Exception as e:
-            LOGGER.warning(f"[BatchMetaData] 载入 GPT 字典失败，批次元数据将不含专名译表：{e}")
-            return ""
-
-        # 从 json_list 构造临时 CTransList
-        trans_list = []
-        for item in json_list:
-            if not isinstance(item, dict):
-                continue
-            msg = str(item.get("message", ""))
-            if not msg:
-                continue
-            tran = CSentense(msg, speaker=str(item.get("name", "") or ""))
-            tran.post_src = tran.pre_src
-            trans_list.append(tran)
-
-        # 元数据阶段不分流，仅注入非 h 字典，避免 h 词条污染整体剧情描述
-        glossary = gpt_dic.gen_prompt(trans_list, scene="nh") if trans_list else ""
-        if glossary:
-            LOGGER.debug(
-                f"[BatchMetaData] 按需注入 GPT 字典，命中 {glossary.count(chr(10)) - 3} 条"
-            )
-        else:
-            LOGGER.debug("[BatchMetaData] 当前文件无命中 GPT 字典条目")
-        return glossary
+        return build_glossary_prompt_text(json_list, self.pj_config, "BatchMetaData")
 
     # 3. 解析与规整 LLM 返回的 JSON
     @staticmethod
@@ -318,15 +235,13 @@ class ForBatchMetaData(BaseEngine):
         )
         return {"id": filename, "批次": cleaned}
 
-    # 4. 写入 per-file 批次元数据（无锁、不合并，每文件独立存储）
+    # 4. 写入 per-file 批次元数据（实现收口于 metadata.save_metadata_json，原子写）
     def _save_metadata(self, meta: dict, filename: str = "") -> None:
         from GalTransl import PASS2_CACHE_DIR
-        out_dir = os.path.join(self.pj_config.getCachePath(), PASS2_CACHE_DIR)
-        os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, f"{filename}.batch.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
-        LOGGER.debug(f"[BatchMetaData] 已保存 {path}")
+
+        save_metadata_json(
+            self.pj_config, PASS2_CACHE_DIR, filename, "batch", meta, "BatchMetaData"
+        )
 
     # 5. 入口
     async def batch_translate(
@@ -381,25 +296,14 @@ class ForBatchMetaData(BaseEngine):
             f"[BatchMetaData] {filename} 提示词长度：{len(prompt)} 字符，"
             f"脚本 {len(json_list)} 句，最大行号 {max_index}"
         )
-        try:
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ]
-            rsp, token = await self.ask_chatbot(
-                messages=messages,
-                file_name=filename,
-                max_retry_count=3,
-            )
-        except Exception as e:
-            LOGGER.error(f"[BatchMetaData] {filename} LLM 请求失败：{type(e).__name__}: {e}", exc_info=True)
-            self._record_runtime_error(
-                kind="llm",
-                message=f"{type(e).__name__}: {e}",
-                filename=filename,
-                index_range="-",
-                level="error",
-            )
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        rsp, token = await self._call_llm_with_error_report(
+            messages, filename, max_retry_count=3, tag="BatchMetaData"
+        )
+        if rsp is None:
             return False
 
         meta = self._parse_meta(rsp or "", filename)
