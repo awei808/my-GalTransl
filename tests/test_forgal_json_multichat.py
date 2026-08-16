@@ -842,8 +842,7 @@ class InitMultiRoundTests(unittest.TestCase):
         with patch.object(BaseTranslate, "__init__", lambda self, *a, **k: None), \
              patch.object(BaseTranslate, "init_chatbot", lambda self, *a, **k: None), \
              patch.object(ForGalJsonMulitChat, "_apply_internal_prompt_template_overrides",
-                          lambda self: None), \
-             patch.object(ForGalJsonMulitChat, "_set_temp_type", lambda self, *a, **k: None):
+                          lambda self: None):
             t = ForGalJsonMulitChat(config, "eng", None, token_pool)
         return t
 

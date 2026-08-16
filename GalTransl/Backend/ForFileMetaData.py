@@ -77,27 +77,18 @@ class ForFileMetaData(BaseEngine):
         - 关闭（config 设 internals.forfilemeta.inject_guideline=false）或
           规范为空时，占位段被替换为空，不会留下悬挂的标题。
 
-        其余占位符（[Input]/[Glossary]/[SourceLang]/[TargetLang]/[max_chars]）沿用基类行为。
+        其余占位符（[Input]/[Glossary]/[plot_metadata]/[batch_metadata]/
+        [global_prompt]/[SourceLang]/[TargetLang]）由基类统一替换。
 
         Args:
             max_chars: 剧情概括字数上限，按公式 clamp(20 + 63·max(0, log₂(句数/15)), 20, 400) 自动计算
         """
-        prompt_req = self.trans_prompt
-        if self._inject_guideline:
-            guideline = getattr(self.pj_config, "translation_guideline", "") or ""
-        else:
-            guideline = ""
-        guideline = (guideline or "").strip()
-        if guideline:
-            block = f"# 翻译规范\n{guideline}\n"
-        else:
-            block = ""
-        prompt_req = prompt_req.replace("[translation_guideline]", block)
-        prompt_req = prompt_req.replace("[global_prompt]", self._build_global_prompt_block())
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
+        prompt_req = super()._build_prompt_request(
+            input_src,
+            gptdict,
+            translation_guideline=self._build_guideline_block(),
+            global_prompt=self._build_global_prompt_block(),
+        )
         prompt_req = prompt_req.replace("[max_chars]", str(max_chars))
         return prompt_req
 
@@ -235,6 +226,7 @@ class ForFileMetaData(BaseEngine):
         json_list: list,
         filename: str = "",
         gpt_dic: Optional[CGptDict] = None,
+        force_regen: bool = False,
     ) -> bool:
         if not filename:
             LOGGER.warning("[FileMetaData] 未提供 filename，跳过该文件")
@@ -251,14 +243,18 @@ class ForFileMetaData(BaseEngine):
             LOGGER.warning(f"[FileMetaData] {filename} json_list 为空，跳过")
             return False
 
-        # 缓存命中：pass1_cache 中已有该文件的元数据则跳过 LLM 调用
+        # 缓存命中：pass1_cache 中已有该文件的元数据则跳过 LLM 调用；
+        # force_regen=True 时忽略已有缓存强制重新生成（与流水线 forceRegenFileMeta 对齐）
         from GalTransl import PASS1_CACHE_DIR
         cache_path = os.path.join(
             self.pj_config.getCachePath(), PASS1_CACHE_DIR, f"{filename}.meta.json"
         )
-        if os.path.isfile(cache_path):
+        cache_exists = os.path.isfile(cache_path)
+        if cache_exists and not force_regen:
             LOGGER.debug(f"[FileMetaData] 缓存命中，跳过 LLM 调用: {filename}")
             return True
+        if cache_exists and force_regen:
+            LOGGER.info(f"[FileMetaData] forceRegen 开启，忽略已有缓存重新生成: {filename}")
 
         script_text = self._build_script_text(json_list, filename)
         if not script_text:

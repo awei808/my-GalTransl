@@ -45,5 +45,5 @@ class ForBanWordFix(ForJPResidue):
         # 覆盖提示词：禁用词修复专用（模板占位符风格与 JP 版一致，走 replace 注入）
         self.system_prompt = FORBAN_SYSTEM
         self.trans_prompt = FORGAL_JSON_BANFIX_PROMPT
-        # 与 ForJPResidue 对齐：覆盖默认值后重新应用用户模板 override
-        self._apply_internal_prompt_template_overrides()
+        # 与 ForJPResidue 对齐：覆盖默认值后统一重放 change_prompt 与用户模板 override
+        self._finalize_prompts()

@@ -307,6 +307,11 @@ H_WORDS = 'M1AKQVblpbPlhKoKR+OCueODneODg+ODiApOVFIKU0VYClNNClNPRApU44OQ44OD44KvC
 
 H_WORDS_LIST=base64.b64decode(H_WORDS.encode()).decode().split("\n")
 
+# 翻译失败标记（翻译轮/修复轮/GenDic 共用单一口径）
+# 前缀用于回填失败句译文（如 "(Failed)原句"）；元组用于各处的失败判定。
+FAILED_PREFIX = "(Failed)"
+FAILED_MARKERS = ("(Failed)", "(翻译失败)")
+
 # 批次级元数据：H 区间/非 H 区间的差异化翻译指导文案
 # H 区间：允许直译露骨描写，但需维持原文的节奏与分寸；并可注入项目 hCheckDict 禁用词表
 # 非 H 区间：保持克制，避免露骨/暧昧用词

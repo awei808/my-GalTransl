@@ -13,10 +13,18 @@ from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import contains_katakana, is_all_chinese, decompress_file_lzma
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
-from GalTransl.Backend.Prompts import GENDIC_PROMPT, GENDIC_SYSTEM, H_WORDS_LIST
+from GalTransl.Backend.Prompts import (
+    GENDIC_PROMPT,
+    GENDIC_SYSTEM,
+    H_WORDS_LIST,
+    FAILED_PREFIX,
+)
 import collections
 from threading import Lock
 from GalTransl.TerminalOutput import should_print_translation_logs, terminal_progress
+
+# 本后端已经长时间未维护，目前不推荐使用，且短时间内无维护的打算
+# 审查和修改代码时，可忽略该文件
 
 # 正则补充层：连续片假名字串（含・）
 _KATAKANA_SEQ_RE = re.compile(r"[ァ-ヶー・]{2,}")
@@ -58,9 +66,10 @@ class GenDic(BaseEngine):
         self.dic_counter = collections.Counter()
         self.dic_list = []
         self.dic_votes = collections.defaultdict(collections.Counter)
-        # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况，统一强转为 int
+        # 兼容 YAML 中写成字符串（如 workersPerProject: '4'）的情况；
+        # 复用基类 _coerce_positive_int（非法值回退默认、0 抬为 1，避免 Semaphore(0) 死锁）
         _w = config.getKey("workersPerProject")
-        self.wokers = int(_w) if _w is not None else 1
+        self.wokers = self._coerce_positive_int(_w, 1)
         self.counter_lock = Lock()
         self.list_lock = Lock()
         self.progress_lock = Lock()
@@ -73,12 +82,7 @@ class GenDic(BaseEngine):
         self._apply_internal_prompt_template_overrides()
         backend_cfg = config.getBackendConfigSection("OpenAI-Compatible")
         raw_retry = backend_cfg.get("genDicMaxApiRetries", 6)
-        try:
-            parsed_retry = int(raw_retry)
-        except (TypeError, ValueError):
-            parsed_retry = 6
-        self.gendic_max_api_retries = max(1, parsed_retry)
-        pass
+        self.gendic_max_api_retries = self._coerce_positive_int(raw_retry, 6)
 
     def _load_existing_gpt_terms(self) -> Dict[str, Tuple[str, str]]:
         result_path = os.path.join(self.pj_config.getProjectDir(), "项目GPT字典-生成.txt")
@@ -97,12 +101,6 @@ class GenDic(BaseEngine):
                 if dic.search_word and dic.replace_word and dic.search_word not in existing_terms:
                     existing_terms[dic.search_word] = (dic.replace_word, getattr(dic, "note", "") or "")
         return existing_terms
-
-    def _raise_if_stop_requested(self) -> None:
-        if self._is_stop_requested(self.pj_config):
-            from GalTransl.Service import JobCancelledError
-
-            raise JobCancelledError()
 
     def _update_runtime(self, **kwargs: Any) -> None:
         try:
@@ -221,7 +219,7 @@ class GenDic(BaseEngine):
             return
         entry = {
             "__cache_key": f"gendic-task-{int(task_index)}",
-            "pre_dst": "OK" if success else "(Failed)",
+            "pre_dst": "OK" if success else FAILED_PREFIX,
             "problem": "" if success else (message or "GenDic 任务失败"),
         }
         line = json.dumps(entry, ensure_ascii=False)
@@ -251,11 +249,11 @@ class GenDic(BaseEngine):
         )
 
     async def llm_gen_dic(self, text: str, name_list: list[str] = [], task_index: int = 0) -> bool:
-        self._raise_if_stop_requested()
+        self._check_stop_requested()
         hint = "无"
         name_hit = []
         for name in name_list:
-            self._raise_if_stop_requested()
+            self._check_stop_requested()
             if name in text:
                 name_hit.append(name)
 
@@ -280,7 +278,7 @@ class GenDic(BaseEngine):
         if "{hint}" in prompt:
             prompt = prompt.replace("{hint}", hint)
 
-        self._raise_if_stop_requested()
+        self._check_stop_requested()
         try:
             rsp, token = await self.ask_chatbot(
                 prompt=prompt,
@@ -323,7 +321,7 @@ class GenDic(BaseEngine):
         lines = rsp.split("\n")
         valid_entries = []
         for line in lines:
-            self._raise_if_stop_requested()
+            self._check_stop_requested()
             sp = line.split("\t")
             if len(sp) < 3:
                 continue
@@ -381,7 +379,7 @@ class GenDic(BaseEngine):
         cancelled_error: Optional[JobCancelledError] = None
 
         try:
-            self._raise_if_stop_requested()
+            self._check_stop_requested()
             self._update_runtime(stage="GenDic 分词处理中", current_file="准备分词")
             with terminal_progress(should_print_translation_logs(self.pj_config), title="载入分词……") as bar:
                 # get tmp dir
@@ -413,7 +411,7 @@ class GenDic(BaseEngine):
                 max_len = 512
                 tmp_text = ""
                 for item in json_list:
-                    self._raise_if_stop_requested()
+                    self._check_stop_requested()
                     if len(tmp_text) > max_len:
                         segment_list.append(tmp_text)
                         tmp_text = ""
@@ -434,11 +432,11 @@ class GenDic(BaseEngine):
                 all_text = "\n".join(segment_list)
 
                 for item in segment_list:
-                    self._raise_if_stop_requested()
+                    self._check_stop_requested()
                     tmp_words = set()
                     tokens = tokenizer.tokenize(item)
                     for token in tokens:
-                        self._raise_if_stop_requested()
+                        self._check_stop_requested()
                         surf = token.surface()
                         tag = token.tag(0)
                         if len(surf) <= 1:
@@ -472,7 +470,7 @@ class GenDic(BaseEngine):
             }
             segment_words_list_new = []
             for item in segment_words_list:
-                self._raise_if_stop_requested()
+                self._check_stop_requested()
                 item_new = set()
                 for word in item:
                     if word in word_counter:
@@ -487,7 +485,7 @@ class GenDic(BaseEngine):
 
             async def process_item_async(idx):
                 async with sem:
-                    self._raise_if_stop_requested()
+                    self._check_stop_requested()
                     try:
                         item = segment_list[idx]
                         ok = await self.llm_gen_dic(item, name_list=list(name_set), task_index=idx)
@@ -518,7 +516,7 @@ class GenDic(BaseEngine):
                 try:
                     for f in asyncio.as_completed(tasks):
                         idx, ok, error_message = await f
-                        self._raise_if_stop_requested()
+                        self._check_stop_requested()
                         completed_tasks += 1
                         self._append_runtime_progress(idx, ok, error_message)
                         remaining = len(tasks) - completed_tasks

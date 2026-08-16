@@ -56,8 +56,8 @@ class ForBRStation(BaseProblemFixRound):
         # 覆盖基类（翻译轮）的系统提示词为换行修复轮专用角色声明
         self.system_prompt = FORBR_SYSTEM
         self.trans_prompt = FORGAL_JSON_BRSTATION_PROMPT
-        # 覆盖默认值后重新应用用户模板 override（基类 __init__ 已应用过一次）
-        self._apply_internal_prompt_template_overrides()
+        # 覆盖默认值后统一重放 change_prompt 与用户模板 override（基类 __init__ 已应用过一次）
+        self._finalize_prompts()
 
     @staticmethod
     def _build_br_issue_guide() -> str:
@@ -87,30 +87,8 @@ class ForBRStation(BaseProblemFixRound):
         ]
         return "\n".join(lines)
 
-    def _build_first_round_content(
-        self, input_src: str, gptdict: str, filename: str
-    ) -> str:
-        """换行修复首轮内容：以专用提示词为模板，注入术语表、剧情元数据与输入。"""
-        prompt_req = self.trans_prompt
-        prompt_req = prompt_req.replace(
-            "[translation_guideline]", self.pj_config.translation_guideline
+    def _apply_extra_first_round_replacements(self, prompt_req: str) -> str:
+        """注入换行修复专用说明（[br_issue_guide] 占位符）。"""
+        return prompt_req.replace(
+            "[br_issue_guide]", self._build_br_issue_guide()
         )
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        prompt_req = prompt_req.replace("[br_issue_guide]", self._build_br_issue_guide())
-        metadata = self._resolve_file_metadata(filename)
-        metadata_block = (
-            self._format_file_metadata_block(metadata)
-            if metadata is not None
-            else ""
-        )
-        prompt_req = prompt_req.replace("[plot_metadata]", metadata_block)
-        prompt_req = prompt_req.replace("[batch_metadata]", "")
-        # 全局提示词（GlobalPrompt）：仅首轮注入，与翻译轮一致
-        prompt_req = prompt_req.replace(
-            "[global_prompt]", self._format_global_prompt_block(filename) or ""
-        )
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
-        prompt_req = self._apply_history_result(prompt_req, filename)
-        return prompt_req

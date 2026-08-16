@@ -179,24 +179,18 @@ class ForBatchMetaData(BaseEngine):
     def _build_prompt_request(
         self, input_src: str, gptdict: str, file_metadata: str = "", filename: str = ""
     ) -> str:
-        """在基类占位符替换基础上，增加 translation_guideline 的可控注入和最大批次限制。"""
-        prompt_req = self.trans_prompt
-        if self._inject_guideline:
-            guideline = getattr(self.pj_config, "translation_guideline", "") or ""
-        else:
-            guideline = ""
-        guideline = (guideline or "").strip()
-        if guideline:
-            block = f"# 翻译规范\n{guideline}\n"
-        else:
-            block = ""
-        prompt_req = prompt_req.replace("[translation_guideline]", block)
-        prompt_req = prompt_req.replace("[global_prompt]", self._build_global_prompt_block(filename))
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        prompt_req = prompt_req.replace("[plot_metadata]", file_metadata)
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
+        """在基类占位符替换基础上，增加 translation_guideline 的可控注入和最大批次限制。
+
+        公共占位符（[Input]/[Glossary]/[plot_metadata]/[batch_metadata]/
+        [global_prompt]/[SourceLang]/[TargetLang]）由基类统一替换。
+        """
+        prompt_req = super()._build_prompt_request(
+            input_src,
+            gptdict,
+            plot_metadata=file_metadata,
+            translation_guideline=self._build_guideline_block(),
+            global_prompt=self._build_global_prompt_block(filename),
+        )
         prompt_req = prompt_req.replace("[max_batches]", str(self.max_batches))
         prompt_req = prompt_req.replace("[min_batch_size]", str(self.min_batch_size))
         prompt_req = prompt_req.replace("[max_batch_size]", str(self.max_batch_size))
@@ -340,6 +334,7 @@ class ForBatchMetaData(BaseEngine):
         json_list: list,
         filename: str = "",
         gpt_dic: Optional[CGptDict] = None,
+        force_regen: bool = False,
     ) -> bool:
         if not filename:
             LOGGER.warning("[BatchMetaData] 未提供 filename，跳过该文件")
@@ -356,14 +351,18 @@ class ForBatchMetaData(BaseEngine):
             LOGGER.warning(f"[BatchMetaData] {filename} json_list 为空，跳过")
             return False
 
-        # 缓存命中：pass2_cache 中已有该文件的批次元数据则跳过 LLM 调用
+        # 缓存命中：pass2_cache 中已有该文件的批次元数据则跳过 LLM 调用；
+        # force_regen=True 时忽略已有缓存强制重新生成（与流水线 forceRegenBatchMeta 对齐）
         from GalTransl import PASS2_CACHE_DIR
         cache_path = os.path.join(
             self.pj_config.getCachePath(), PASS2_CACHE_DIR, f"{filename}.batch.json"
         )
-        if os.path.isfile(cache_path):
+        cache_exists = os.path.isfile(cache_path)
+        if cache_exists and not force_regen:
             LOGGER.debug(f"[BatchMetaData] 缓存命中，跳过 LLM 调用: {filename}")
             return True
+        if cache_exists and force_regen:
+            LOGGER.info(f"[BatchMetaData] forceRegen 开启，忽略已有缓存重新生成: {filename}")
 
         script_text, max_index = self._build_script_text(json_list, filename)
         if not script_text:

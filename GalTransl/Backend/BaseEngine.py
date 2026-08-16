@@ -154,6 +154,26 @@ def register_engine(name: str):
     return _deco
 
 
+def _apply_change_prompt(config: CProjectConfig, prompt: str) -> str:
+    """应用 common.gpt.change_prompt 对 user 提示词模板的修改。
+
+    AdditionalPrompt：在模板头部拼接 "# Additional Requirements: <内容>"；
+    OverwritePrompt：用 prompt_content 整体替换模板。两者仅当 prompt_content
+    非空时生效（change_prompt 默认 "no" 直接返回原模板）。
+
+    翻译轮在 init_chatbot 中调用本函数；修复轮在覆盖专用模板后经
+    BaseFixRound._finalize_prompts 再次调用，使同一配置对修复轮同样生效。
+    """
+    common = CProjectConfig.getProjectConfig(config)["common"]
+    change_prompt = common.get("gpt.change_prompt", "no")
+    prompt_content = common.get("gpt.prompt_content", "")
+    if change_prompt == "AdditionalPrompt" and prompt_content != "":
+        prompt = "# Additional Requirements: " + prompt_content + "\n" + prompt
+    if change_prompt == "OverwritePrompt" and prompt_content != "":
+        prompt = prompt_content
+    return prompt
+
+
 class BaseEngine:
     """LLM API 客户端基类：所有翻译/元数据/字典后端共用的底层能力。
 
@@ -247,7 +267,6 @@ class BaseEngine:
         else:
             self.proxyProvider = None
 
-        self._current_temp_type = ""
         self._shutdown_done = False
 
         if self.target_lang == "Simplified_Chinese":
@@ -318,21 +337,7 @@ class BaseEngine:
             "extra_body", ""
         )
 
-        change_prompt = CProjectConfig.getProjectConfig(config)["common"].get(
-            "gpt.change_prompt", "no"
-        )
-        prompt_content = CProjectConfig.getProjectConfig(config)["common"].get(
-            "gpt.prompt_content", ""
-        )
-        if change_prompt == "AdditionalPrompt" and prompt_content != "":
-            self.trans_prompt = (
-                "# Additional Requirements: "
-                + prompt_content
-                + "\n"
-                + self.trans_prompt
-            )
-        if change_prompt == "OverwritePrompt" and prompt_content != "":
-            self.trans_prompt = prompt_content
+        self.trans_prompt = _apply_change_prompt(config, self.trans_prompt)
 
         # 规范化 apiErrorWait："auto"/非法值->-1，数字字符串->int，避免后续比较的 TypeError
         if isinstance(self.apiErrorWait, bool):
@@ -417,23 +422,63 @@ class BaseEngine:
 
             raise JobCancelledError()
 
+    def _build_guideline_block(self) -> str:
+        """按 _inject_guideline 开关构建翻译规范注入块（带标题；关闭或为空时返回空串）。
+
+        仅文件级/批次级/全局分析三个元数据类后端使用（ForFileMetaData /
+        ForBatchMetaData / ForGlobalPrompt），对应配置键按引擎命名空间隔离：
+        internals.forfilemeta.inject_guideline / internals.forbatchmeta.inject_guideline /
+        internals.forglobalprompt.inject_guideline。该开关**不作用于翻译轮与修复轮**
+        （ForGalJsonMulitChat、ForImproveTranslation、ForBRStation、ForJPResidue、
+        ForBanWordFix），它们由 _build_prompt_request 默认裸替换
+        pj_config.translation_guideline（无条件注入，无此开关）。
+        """
+        if getattr(self, "_inject_guideline", True):
+            guideline = getattr(self.pj_config, "translation_guideline", "") or ""
+        else:
+            guideline = ""
+        guideline = (guideline or "").strip()
+        if guideline:
+            return f"# 翻译规范\n{guideline}\n"
+        return ""
+
     def _build_prompt_request(
         self,
         input_src: str,
         gptdict: str,
         plot_metadata: str = "",
         batch_metadata: str = "",
+        translation_guideline: Optional[str] = None,
+        global_prompt: str = "",
     ) -> str:
+        """按统一占位符口径装配 user 提示词。
+
+        Args:
+            input_src: 待处理输入文本（替换 [Input]）。
+            gptdict: 术语表（替换 [Glossary]）。
+            plot_metadata: 文件级元数据块（替换 [plot_metadata]，默认空串清除占位符）。
+            batch_metadata: 批次级元数据块（替换 [batch_metadata]，默认空串清除占位符）。
+            translation_guideline: 翻译规范块；None 时使用
+                ``pj_config.translation_guideline``（裸替换，翻译轮/修复轮默认行为）。
+                子类（文件级/批次级/全局分析）可传入带标题或为空的规整块以覆盖。
+            global_prompt: 全局提示词块（替换 [global_prompt]，默认空串清除占位符）。
+
+        Returns:
+            占位符替换后的提示词文本。
+        """
         prompt_req = self.trans_prompt
-        prompt_req = prompt_req.replace(
-            "[translation_guideline]", self.pj_config.translation_guideline
-        )
+        if translation_guideline is None:
+            guideline = self.pj_config.translation_guideline
+        else:
+            guideline = translation_guideline
+        prompt_req = prompt_req.replace("[translation_guideline]", guideline)
         prompt_req = prompt_req.replace("[Input]", input_src)
         prompt_req = prompt_req.replace("[Glossary]", gptdict)
         prompt_req = prompt_req.replace("[plot_metadata]", plot_metadata)
         # 批次级元数据(BatchMetadata)：默认空串（占位符被清除），
         # 仅多轮后端在首轮按需注入。其余后端不受影响。
         prompt_req = prompt_req.replace("[batch_metadata]", batch_metadata)
+        prompt_req = prompt_req.replace("[global_prompt]", global_prompt)
         prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         return prompt_req

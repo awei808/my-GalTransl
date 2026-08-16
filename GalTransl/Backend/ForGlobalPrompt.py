@@ -203,35 +203,20 @@ class ForGlobalPrompt(BaseEngine):
     ) -> str:
         """
         在基类占位符替换的基础上，增加 GlobalPrompt 特有的占位符：
-        [ExternalInfo] — 外部信息（游戏名称、简介、制作公司等）
-        """
-        prompt_req = self.trans_prompt
+        [ExternalInfo] — 外部信息（游戏名称、简介、制作公司等）。
 
+        公共占位符（[Input]/[Glossary]/[translation_guideline]/
+        [SourceLang]/[TargetLang]）由基类统一替换。
+        """
+        prompt_req = super()._build_prompt_request(
+            input_src,
+            gptdict,
+            translation_guideline=self._build_guideline_block(),
+        )
         # 外部信息：用户自由填写的游戏相关信息
         prompt_req = prompt_req.replace(
             "[ExternalInfo]", external_info or "（未提供外部信息）"
         )
-
-        # 翻译规范可控注入
-        if self._inject_guideline:
-            guideline = (
-                getattr(self.pj_config, "translation_guideline", "") or ""
-            )
-        else:
-            guideline = ""
-        guideline = (guideline or "").strip()
-        if guideline:
-            block = f"# 翻译规范\n{guideline}\n"
-        else:
-            block = ""
-        prompt_req = prompt_req.replace("[translation_guideline]", block)
-
-        # 其余占位符
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
-
         return prompt_req
 
     # 1. 构建输入文本

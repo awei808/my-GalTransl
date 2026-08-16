@@ -58,5 +58,5 @@ class ForJPResidue(BaseProblemFixRound):
         # 覆盖基类（翻译轮）的系统提示词为残留日文修复轮专用角色声明
         self.system_prompt = FORJP_SYSTEM
         self.trans_prompt = FORGAL_JSON_JPREPAIR_PROMPT
-        # 覆盖默认值后重新应用用户模板 override（基类 __init__ 已应用过一次）
-        self._apply_internal_prompt_template_overrides()
+        # 覆盖默认值后统一重放 change_prompt 与用户模板 override（基类 __init__ 已应用过一次）
+        self._finalize_prompts()

@@ -126,7 +126,9 @@ async def _run_meta_worker_pool(
                     stage=f"{stage_prefix} {fname}",
                 )
                 # 仅成功（返回 True）才计数，LLM 业务失败返回 False 不计入已处理
-                ok = await gptapi.batch_translate(jsons, filename=fname)
+                ok = await gptapi.batch_translate(
+                    jsons, filename=fname, force_regen=force_regen
+                )
                 if ok:
                     processed += 1
                 LOGGER.debug(

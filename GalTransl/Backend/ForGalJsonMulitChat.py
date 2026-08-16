@@ -13,7 +13,7 @@ from GalTransl.i18n import get_text
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.Cache import save_transCache_to_json
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Utils import extract_code_blocks, fix_quotes
+from GalTransl.Utils import fix_quotes
 from GalTransl.Backend.Prompts import (
     FORTRANS_SYSTEM,
     FORGAL_JSON_TRANS_PROMPT,
@@ -21,6 +21,7 @@ from GalTransl.Backend.Prompts import (
     H_BATCH_GUIDE,
     H_BATCH_FORBIDDEN,
     NORMAL_BATCH_GUIDE,
+    FAILED_MARKERS,
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.BaseEngine import register_engine
@@ -36,6 +37,7 @@ from GalTransl.Backend.utils import (
     detect_batch_line_break_symbol,
     parse_interval,
     normalize_batch_intervals,
+    preprocess_jsonline_response,
     strip_chunk_suffix,
 )
 from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
@@ -351,10 +353,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 gptdict,
                 plot_metadata=metadata_block,
                 batch_metadata=batch_metadata_block,
-            )
-            # 注入全局提示词
-            prompt_req = prompt_req.replace(
-                "[global_prompt]", global_prompt_block or ""
+                global_prompt=global_prompt_block,
             )
             # 多轮模式下历史由对话本身携带，[history_result] 置为 None
             prompt_req = self._apply_history_result(prompt_req, filename)
@@ -644,18 +643,13 @@ class ForGalJsonMulitChat(BaseTranslate):
         Returns:
             (success_count, result_trans_list)
         """
-        # 统一做 </think> 截断、代码块提取、sig 定位与引号修正
-        result_text = raw_resp or ""
-        if "</think>" in result_text:
-            result_text = result_text.split("</think>")[-1]
-        if "```json" in result_text:
-            lang_list, code_list = extract_code_blocks(result_text)
-            if len(lang_list) > 0 and len(code_list) > 0:
-                result_text = code_list[0]
-        sig_start = re.search(r"\b[a-z0-9]{3}\|\{\"id\"", result_text)
-        if sig_start:
-            result_text = result_text[sig_start.start() :]
-        result_text = fix_quotes(result_text)
+        # 统一做 </think> 截断、代码块提取、sig 定位与引号修正。
+        # 与稀疏修复轮共用 utils.preprocess_jsonline_response 入口；
+        # merge_code_blocks=False 保持翻译轮「取首个代码块」现状
+        # （修复轮经 BaseFixRound 走默认合并，两轮行为各自保持）。
+        result_text = preprocess_jsonline_response(
+            raw_resp or "", merge_code_blocks=False
+        )
 
         key_name = "dst" if not proofread else "newdst"
 
@@ -829,7 +823,6 @@ class ForGalJsonMulitChat(BaseTranslate):
 
         self.last_file_name = ""
         self.init_chatbot(eng_type=eng_type, config=config)
-        self._set_temp_type("precise")
 
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
@@ -1439,7 +1432,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 gpt_dic=gpt_dic,
                 proofread=proofread,
                 glossary_style="gpt",
-                failed_markers=("(Failed)", "(翻译失败)"),
+                failed_markers=FAILED_MARKERS,
                 h_words_list=H_WORDS_LIST,
                 ensure_last_translations=True,
                 h_scene=self._group_is_h_scene(translist_unhit, filename),
@@ -1459,7 +1452,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 gpt_dic=gpt_dic,
                 proofread=proofread,
                 glossary_style="gpt",
-                failed_markers=("(Failed)", "(翻译失败)"),
+                failed_markers=FAILED_MARKERS,
                 h_words_list=H_WORDS_LIST,
                 ensure_last_translations=True,
                 force_static=True,  # 有元数据：禁用动态模式，段内不沿 numPerRequestTranslate 切

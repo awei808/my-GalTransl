@@ -16,6 +16,7 @@ from GalTransl import LOGGER
 from GalTransl.CSentense import CTransList
 from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+from GalTransl.Backend.Prompts import FAILED_PREFIX
 from GalTransl.Backend.utils import (
     decode_json_line_part,
     preprocess_jsonline_response,
@@ -48,7 +49,7 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
             return False
         if tran.post_src == "" or tran.pre_dst == "":
             return False
-        if "(Failed)" in tran.pre_dst:
+        if FAILED_PREFIX in tran.pre_dst:
             return False
         if getattr(tran, "skip_check", False):
             return False
@@ -203,7 +204,44 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
     def _build_first_round_content(
         self, input_src: str, gptdict: str, filename: str
     ) -> str:
-        raise NotImplementedError
+        """构建修复轮首轮 user 内容（统一占位符口径，走基类 _build_prompt_request）。
+
+        子类可覆盖 _apply_extra_first_round_replacements 注入特有占位符
+        （如 [br_issue_guide]），无需整段重写本方法。
+        """
+        metadata = self._resolve_file_metadata(filename)
+        metadata_block = (
+            self._format_file_metadata_block(metadata)
+            if metadata is not None
+            else ""
+        )
+        prompt_req = super()._build_prompt_request(
+            input_src,
+            gptdict,
+            plot_metadata=metadata_block,
+            batch_metadata="",
+            global_prompt=self._format_global_prompt_block(filename) or "",
+        )
+        prompt_req = self._apply_extra_first_round_replacements(prompt_req)
+        return self._apply_history_result(prompt_req, filename)
+
+    def _apply_extra_first_round_replacements(self, prompt_req: str) -> str:
+        """子类可在此替换特有占位符，如 [br_issue_guide]。"""
+        return prompt_req
+
+    def _finalize_prompts(self) -> None:
+        """修复轮覆盖专用模板后，重新应用 change_prompt 与用户模板 override。
+
+        基类 __init__ 链中 change_prompt 作用于翻译轮模板，随后被修复轮专用模板
+        覆盖丢弃；此处对修复轮模板重新应用，使 common.gpt.change_prompt 对修复轮
+        同样生效。注意优先级：本方法先应用 change_prompt 再应用用户 override
+        （override 优先），与翻译轮（override 先于 init_chatbot，change_prompt 优先）
+        相反，属刻意保留的既有行为。
+        """
+        from GalTransl.Backend.BaseEngine import _apply_change_prompt
+
+        self.trans_prompt = _apply_change_prompt(self.pj_config, self.trans_prompt)
+        self._apply_internal_prompt_template_overrides()
 
     def _parse_fix_response(
         self, result_text: str, trans_list: CTransList, n_symbol: str
@@ -277,36 +315,6 @@ class BaseProblemFixRound(BaseSparseFixRound):
     _inject_problem = True
     _include_src = True
 
-    def _build_first_round_content(
-        self, input_src: str, gptdict: str, filename: str
-    ) -> str:
-        prompt_req = self.trans_prompt
-        prompt_req = prompt_req.replace(
-            "[translation_guideline]", self.pj_config.translation_guideline
-        )
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        prompt_req = self._apply_extra_first_round_replacements(prompt_req)
-        metadata = self._resolve_file_metadata(filename)
-        metadata_block = (
-            self._format_file_metadata_block(metadata)
-            if metadata is not None
-            else ""
-        )
-        prompt_req = prompt_req.replace("[plot_metadata]", metadata_block)
-        prompt_req = prompt_req.replace("[batch_metadata]", "")
-        prompt_req = prompt_req.replace(
-            "[global_prompt]", self._format_global_prompt_block(filename) or ""
-        )
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
-        prompt_req = self._apply_history_result(prompt_req, filename)
-        return prompt_req
-
-    def _apply_extra_first_round_replacements(self, prompt_req: str) -> str:
-        """子类可在此替换特有占位符，如 [br_issue_guide]。"""
-        return prompt_req
-
     def _apply_better_result(
         self, tran, current_dst: str, normalized: str, line_id: int
     ) -> bool:
@@ -337,7 +345,7 @@ class BaseImproveRound(BaseSparseFixRound):
             for t in trans_list
             if t.post_src != ""
             and t.pre_dst != ""
-            and "(Failed)" not in t.pre_dst
+            and FAILED_PREFIX not in t.pre_dst
             and not getattr(t, "skip_check", False)
         ]
 
@@ -347,31 +355,6 @@ class BaseImproveRound(BaseSparseFixRound):
         return self._coerce_problem_type_list(
             self.pj_config.getKey("gpt.problemInjectTypes")
         )
-
-    def _build_first_round_content(
-        self, input_src: str, gptdict: str, filename: str
-    ) -> str:
-        prompt_req = self.trans_prompt
-        prompt_req = prompt_req.replace(
-            "[translation_guideline]", self.pj_config.translation_guideline
-        )
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        metadata = self._resolve_file_metadata(filename)
-        metadata_block = (
-            self._format_file_metadata_block(metadata)
-            if metadata is not None
-            else ""
-        )
-        prompt_req = prompt_req.replace("[plot_metadata]", metadata_block)
-        prompt_req = prompt_req.replace("[batch_metadata]", "")
-        prompt_req = prompt_req.replace(
-            "[global_prompt]", self._format_global_prompt_block(filename) or ""
-        )
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
-        prompt_req = self._apply_history_result(prompt_req, filename)
-        return prompt_req
 
     @staticmethod
     def _coerce_problem_type_list(raw_types) -> list:

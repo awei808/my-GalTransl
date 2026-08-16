@@ -10,8 +10,7 @@ from GalTransl.Cache import save_transCache_to_json
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
-from openai._types import NOT_GIVEN
-from GalTransl.Backend.Prompts import H_WORDS_LIST
+from GalTransl.Backend.Prompts import FAILED_MARKERS, FAILED_PREFIX, H_WORDS_LIST
 import re
 import sys
 
@@ -98,7 +97,7 @@ class BaseTranslate(BaseEngine):
             return
 
         current = self._get_effective_num_per_request(requested_count, proofread=False)
-        failed_markers = ("(Failed)", "(翻译失败)")
+        failed_markers = FAILED_MARKERS
         has_failed_result = any(
             any(marker in getattr(trans, "pre_dst", "") for marker in failed_markers)
             for trans in trans_result
@@ -261,7 +260,7 @@ class BaseTranslate(BaseEngine):
         model_name: str,
         proofread: bool = False,
         retain_failed: bool = True,
-        translate_failed_prefix: str = "(Failed)",
+        translate_failed_prefix: str = FAILED_PREFIX,
         translate_problem_message: str = "翻译失败",
         proofread_problem_message: str = "翻译失败",
         proofread_problem_append: bool = True,
@@ -274,7 +273,7 @@ class BaseTranslate(BaseEngine):
             return max(0, start_index)
 
         i = max(0, start_index)
-        failed_model_name = f"{model_name}(Failed)"
+        failed_model_name = f"{model_name}{FAILED_PREFIX}"
         while i < len(trans_list):
             current_tran = trans_list[i]
             if not proofread:
@@ -307,7 +306,7 @@ class BaseTranslate(BaseEngine):
         gpt_dic: CGptDict = None,
         proofread: bool = False,
         glossary_style: str = "",
-        failed_markers: tuple[str, ...] = ("(Failed)",),
+        failed_markers: tuple[str, ...] = FAILED_MARKERS,
         h_words_list: Optional[List[str]] = None,
         ensure_last_translations: bool = False,
         force_static: bool = False,
@@ -466,7 +465,7 @@ class BaseTranslate(BaseEngine):
         )
 
     def _get_restore_context_failed_markers(self) -> tuple[str, ...]:
-        return ("(Failed)",)
+        return FAILED_MARKERS
 
     def _format_restore_context_line(self, current_tran: CSentense) -> str:
         raise NotImplementedError
@@ -521,12 +520,3 @@ class BaseTranslate(BaseEngine):
         self.last_translations[filename] = self._format_restore_context_payload(
             context_lines
         )
-
-    def _set_temp_type(self, style_name: str) -> None:
-        if self._current_temp_type == style_name:
-            return
-        self._current_temp_type = style_name
-        temperature = 0.6
-        frequency_penalty = NOT_GIVEN
-        self.temperature = temperature
-        self.frequency_penalty = frequency_penalty

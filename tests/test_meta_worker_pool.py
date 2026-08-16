@@ -27,13 +27,13 @@ class FakeGptApi:
         self._lock = asyncio.Lock()
         self._in_flight = 0
 
-    async def batch_translate(self, json_list: list, filename: str = "") -> bool:
+    async def batch_translate(self, json_list: list, filename: str = "", force_regen: bool = False) -> bool:
         # 统计在途请求数峰值（同一时刻并发的 worker 数）
         async with self._lock:
             self._in_flight += 1
             self.max_concurrency = max(self.max_concurrency, self._in_flight)
         await asyncio.sleep(0.02)
-        self.calls.append(filename)
+        self.calls.append((filename, force_regen))
         async with self._lock:
             self._in_flight -= 1
         return True
@@ -56,16 +56,16 @@ def _mk_files(n: int) -> dict:
 class FailingGptApi(FakeGptApi):
     """batch_translate 返回 False（LLM 业务失败）模拟。"""
 
-    async def batch_translate(self, json_list: list, filename: str = "") -> bool:
-        self.calls.append(filename)
+    async def batch_translate(self, json_list: list, filename: str = "", force_regen: bool = False) -> bool:
+        self.calls.append((filename, force_regen))
         return False
 
 
 class ThrowingGptApi(FakeGptApi):
     """batch_translate 抛未捕获异常（写盘失败等）模拟。"""
 
-    async def batch_translate(self, json_list: list, filename: str = "") -> bool:
-        self.calls.append(filename)
+    async def batch_translate(self, json_list: list, filename: str = "", force_regen: bool = False) -> bool:
+        self.calls.append((filename, force_regen))
         raise IOError("disk full")
 
 
@@ -81,8 +81,12 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
             tag="Test", stage_prefix="测试",
         )
         self.assertEqual(processed, 6)
-        # 每个文件恰好处理一次
-        self.assertEqual(sorted(gptapi.calls), sorted(f"f{i}.txt.json" for i in range(6)))
+        # 每个文件恰好处理一次（默认 force_regen=False）
+        self.assertEqual(
+            sorted(c[0] for c in gptapi.calls),
+            sorted(f"f{i}.txt.json" for i in range(6)),
+        )
+        self.assertTrue(all(c[1] is False for c in gptapi.calls))
         # 3 worker 并发时应出现过 >1 的在途峰值
         self.assertGreater(gptapi.max_concurrency, 1)
         self.assertLessEqual(gptapi.max_concurrency, 3)
@@ -97,7 +101,9 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
             tag="Test", stage_prefix="测试",
         )
         self.assertEqual(processed, 2)
-        self.assertEqual(sorted(gptapi.calls), ["f1.txt.json", "f3.txt.json"])
+        self.assertEqual(
+            sorted(c[0] for c in gptapi.calls), ["f1.txt.json", "f3.txt.json"]
+        )
 
     async def test_force_regen_ignores_cache(self) -> None:
         gptapi = FakeGptApi()
@@ -110,6 +116,8 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(processed, 3)
         self.assertEqual(len(gptapi.calls), 3)
+        # force_regen 被透传到引擎层
+        self.assertTrue(all(c[1] is True for c in gptapi.calls))
 
     async def test_empty_input_returns_zero(self) -> None:
         gptapi = FakeGptApi()
@@ -143,7 +151,7 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
             tag="Test", stage_prefix="测试",
         )
         self.assertEqual(processed, 1)
-        self.assertEqual(gptapi.calls, ["f0.txt.json"])
+        self.assertEqual([c[0] for c in gptapi.calls], ["f0.txt.json"])
 
     async def test_failed_files_not_counted_as_processed(self) -> None:
         # batch_translate 返回 False（LLM 业务失败）不抛异常，不计入 processed
@@ -156,7 +164,10 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(processed, 0)
         # 文件仍被全部尝试处理
-        self.assertEqual(sorted(gptapi.calls), sorted(f"f{i}.txt.json" for i in range(4)))
+        self.assertEqual(
+            sorted(c[0] for c in gptapi.calls),
+            sorted(f"f{i}.txt.json" for i in range(4)),
+        )
 
     async def test_worker_exception_cancels_entire_pool(self) -> None:
         # batch_translate 抛未捕获异常：异常向上传播，且其余 worker 被取消（无孤儿任务）
