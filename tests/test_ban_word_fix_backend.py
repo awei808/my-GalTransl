@@ -2,7 +2,7 @@
 
 ForBanWordFix 与 ForJPResidue 完全同构（仅覆盖类属性与提示词），不重写流程方法，
 故本测试聚焦其类属性覆盖带来的实质差异：
-1. 筛选：经父类 _has_jp_residue 命中「用词不当」（_problem_types 覆盖），
+1. 筛选：经父类 _has_target_problem 命中「用词不当」（_problem_types 覆盖），
    且 CProblemType 为 IntEnum、problem 文案用中文成员名拼接，必须按 .name 口径匹配；
 2. 输入注入：_inject_problem=True 使基类 _build_input_jsonlines 携带 problem 字段
    （命中禁用词随原文/译文一并给模型）。
@@ -60,9 +60,9 @@ def _make_tran(index: int, problem: str, pre_dst: str) -> CSentense:
 
 
 class BanWordFixFilterTests(unittest.TestCase):
-    """筛选口径：经父类 _has_jp_residue + 子类 _problem_types，仅命中「用词不当」。
+    """筛选口径：经父类 _has_target_problem + 子类 _problem_types，仅命中「用词不当」。
 
-    子类不重写 _has_jp_residue，故此处调用即父类实现，命中结果由 _problem_types
+    子类不重写 _has_target_problem，故此处调用即父类实现，命中结果由 _problem_types
     覆盖（[CProblemType.用词不当]）决定。
     """
 
@@ -73,27 +73,27 @@ class BanWordFixFilterTests(unittest.TestCase):
     def test_hits_word_inappropriate_with_valid_dst(self) -> None:
         backend = self._backend()
         tran = _make_tran(1, "用词不当：模型师、造型师", "她是模型师。")
-        self.assertTrue(backend._has_jp_residue(tran))
+        self.assertTrue(backend._has_target_problem(tran))
 
     def test_skips_no_problem(self) -> None:
         backend = self._backend()
         tran = _make_tran(2, "", "她是造型师。")
-        self.assertFalse(backend._has_jp_residue(tran))
+        self.assertFalse(backend._has_target_problem(tran))
 
     def test_skips_other_problem_type(self) -> None:
         backend = self._backend()
         tran = _make_tran(3, "残留日文：です", "她是造型师。")
-        self.assertFalse(backend._has_jp_residue(tran))
+        self.assertFalse(backend._has_target_problem(tran))
 
     def test_skips_failed_dst(self) -> None:
         backend = self._backend()
         tran = _make_tran(4, "用词不当：模型师", "(Failed)")
-        self.assertFalse(backend._has_jp_residue(tran))
+        self.assertFalse(backend._has_target_problem(tran))
 
     def test_skips_empty_dst(self) -> None:
         backend = self._backend()
         tran = _make_tran(5, "用词不当：模型师", "")
-        self.assertFalse(backend._has_jp_residue(tran))
+        self.assertFalse(backend._has_target_problem(tran))
 
 
 class BanWordFixInputInjectionTests(unittest.TestCase):

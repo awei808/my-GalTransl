@@ -13,6 +13,7 @@ from GalTransl.ConfigHelper import (
     CProjectConfig,
 )
 from GalTransl.Utils import load_guideline_file
+from GalTransl.Backend.utils import coerce_bool
 from GalTransl.TerminalOutput import should_print_translation_logs
 from openai import RateLimitError, AsyncOpenAI
 from openai import DefaultAioHttpClient
@@ -256,11 +257,7 @@ class BaseEngine:
 
     @staticmethod
     def _coerce_bool(value) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"true", "1", "yes", "on"}
-        return bool(value)
+        return coerce_bool(value, default=False)
 
     @staticmethod
     def _coerce_positive_int(value: Any, default: int) -> int:
@@ -488,6 +485,68 @@ class BaseEngine:
             self.request_health_metrics.record(latency_seconds, is_rate_limited)
         except Exception:
             return
+
+    @property
+    def runtime_project_dir(self) -> str:
+        """当前任务的项目根目录（服务端模式下优先取 runtime_project_dir）。"""
+        return getattr(
+            self.pj_config, "runtime_project_dir", None
+        ) or self.pj_config.getProjectDir()
+
+    def _record_runtime_error(
+        self,
+        kind: str,
+        message: str,
+        filename: str = "",
+        index_range: str = "",
+        model: Optional[str] = None,
+        level: str = "error",
+        retry_count: Optional[int] = None,
+        sleep_seconds: Optional[float] = None,
+    ) -> None:
+        """统一运行态错误上报（工作台"最近错误"卡片），失败静默。"""
+        try:
+            from GalTransl.server import record_runtime_error
+
+            record_runtime_error(
+                self.runtime_project_dir,
+                kind=kind,
+                message=message,
+                filename=filename,
+                index_range=index_range,
+                model=model or self.get_last_chatbot_model(),
+                level=level,
+                retry_count=retry_count,
+                sleep_seconds=sleep_seconds,
+            )
+        except Exception:
+            pass
+
+    def _record_runtime_success(
+        self,
+        filename: str,
+        *,
+        index: int = 0,
+        speaker: Optional[str] = None,
+        source_preview: str = "",
+        translation_preview: str = "",
+        trans_by: str = "",
+    ) -> None:
+        """统一运行态成功上报（工作台"最近成功"卡片），失败静默。"""
+        try:
+            from GalTransl.server import record_runtime_success
+
+            record_runtime_success(
+                self.runtime_project_dir,
+                filename=filename,
+                index=index,
+                speaker=speaker,
+                source_preview=source_preview,
+                translation_preview=translation_preview,
+                trans_by=trans_by,
+            )
+        except Exception:
+            pass
 
     def get_last_chatbot_model(self) -> str:
         """返回当前 task 最近一次 LLM 请求使用的模型名（多 worker 场景下按 task 隔离）。"""
@@ -920,20 +979,15 @@ class BaseEngine:
                         f"[API Error]{token_info}{file_name} {message_text}"
                     )
 
-                    try:
-                        from GalTransl.server import record_runtime_error
-                        record_runtime_error(
-                            getattr(self.pj_config, "runtime_project_dir", self.pj_config.getProjectDir()),
-                            kind="api",
-                            message=message_text,
-                            filename=raw_file_name,
-                            retry_count=api_try_count,
-                            model=getattr(token, "model_name", ""),
-                            sleep_seconds=float(sleep_time),
-                            level="warning",
-                        )
-                    except Exception:
-                        pass
+                    self._record_runtime_error(
+                        kind="api",
+                        message=message_text,
+                        filename=raw_file_name,
+                        retry_count=api_try_count,
+                        model=getattr(token, "model_name", "") or None,
+                        sleep_seconds=float(sleep_time),
+                        level="warning",
+                    )
 
                 await self._interruptible_sleep(sleep_time)
 

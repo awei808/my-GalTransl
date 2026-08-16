@@ -12,6 +12,7 @@ from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
 from openai._types import NOT_GIVEN
 from GalTransl.TerminalOutput import should_print_translation_logs
+from GalTransl.Backend.Prompts import H_WORDS_LIST
 import re
 import sys
 
@@ -167,24 +168,14 @@ class BaseTranslate(BaseEngine):
         return prompt_req
 
     def _record_runtime_success(self, filename: str, trans: CSentense) -> None:
-        try:
-            from GalTransl.server import record_runtime_success
-
-            record_runtime_success(
-                getattr(
-                    self.pj_config,
-                    "runtime_project_dir",
-                    self.pj_config.getProjectDir(),
-                ),
-                filename=filename,
-                index=getattr(trans, "runtime_index", getattr(trans, "index", 0)),
-                speaker=getattr(trans, "speaker", None),
-                source_preview=getattr(trans, "post_src", ""),
-                translation_preview=getattr(trans, "pre_dst", ""),
-                trans_by=getattr(trans, "trans_by", ""),
-            )
-        except Exception:
-            pass
+        super()._record_runtime_success(
+            filename,
+            index=getattr(trans, "runtime_index", getattr(trans, "index", 0)),
+            speaker=getattr(trans, "speaker", None),
+            source_preview=getattr(trans, "post_src", ""),
+            translation_preview=getattr(trans, "pre_dst", ""),
+            trans_by=getattr(trans, "trans_by", ""),
+        )
 
     def _normalize_parsed_translation_text(
         self, line_dst: str, current_tran: CSentense, n_symbol: str
@@ -462,7 +453,7 @@ class BaseTranslate(BaseEngine):
 
         if self.skipH:
             LOGGER.warning("skipH: 将跳过含有敏感词的句子")
-            h_words_list = globals().get("H_WORDS_LIST", [])
+            h_words_list = H_WORDS_LIST
             translist_unhit = [
                 tran
                 for tran in translist_unhit

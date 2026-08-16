@@ -28,9 +28,9 @@ from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig, initDictList
 from GalTransl import LOGGER, PASS0_CACHE_DIR
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
+from GalTransl.Backend.utils import coerce_bool, extract_json_object
 from GalTransl.DataValidator import validate_global_prompt, validate_llm_response
 
 
@@ -188,12 +188,7 @@ class ForGlobalPrompt(BaseEngine):
         raw = self.pj_config.getKey(
             "internals.forglobalprompt.inject_guideline", True
         )
-        if isinstance(raw, bool):
-            self._inject_guideline = raw
-        else:
-            self._inject_guideline = (
-                str(raw).strip().lower() not in ("false", "0", "no", "")
-            )
+        self._inject_guideline = coerce_bool(raw, default=True)
 
         # 跨文件写 GlobalPrompt.json 时的互斥锁（虽然当前只有一次写入，
         # 但保留锁以防未来并发场景）
@@ -346,40 +341,8 @@ class ForGlobalPrompt(BaseEngine):
         if isinstance(parsed, dict):
             return parsed
 
-        # 回退：手动解析（兼容非标准格式）
-        if "</think>" in text:
-            text = text.split("</think>")[-1]
-
-        lang_list, code_list = extract_code_blocks(text)
-        if code_list:
-            text = code_list[0]
-
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            LOGGER.debug(
-                f"[GlobalPrompt] LLM 返回中未找到 JSON 对象，"
-                f"原文前 200 字：{text[:200]}"
-            )
-            return None
-
-        try:
-            obj = json.loads(text[start : end + 1])
-        except json.JSONDecodeError as e:
-            LOGGER.debug(
-                f"[GlobalPrompt] JSON 解析失败：{e}，"
-                f"原文前 200 字：{text[start:end+1][:200]}"
-            )
-            return None
-
-        if not isinstance(obj, dict):
-            LOGGER.debug(
-                f"[GlobalPrompt] 解析结果不是 dict，"
-                f"实际类型：{type(obj).__name__}"
-            )
-            return None
-
-        return obj
+        # 回退：统一 JSON 提取（兼容非标准格式）
+        return extract_json_object(text, tag="GlobalPrompt")
 
     @staticmethod
     def _normalize_global_prompt(obj: dict) -> dict:

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from GalTransl import LOGGER, PASS0_CACHE_DIR
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORPLOTROUTE_PROMPT, FORPLOTROUTE_SYSTEM
+from GalTransl.Backend.utils import extract_json_object
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
 
@@ -108,7 +109,7 @@ class ForPlotRouteMap(BaseEngine):
     # 构建输入：各文件剧情摘要
     def _build_file_summaries(self) -> str:
         """从 FileMetaData 读取各文件「角色/剧情/标签」，拼成输入清单。"""
-        from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+        from GalTransl.Backend.metadata import load_file_metadata_map
 
         fm_map = load_file_metadata_map(self.pj_config)
         if not fm_map:
@@ -131,24 +132,17 @@ class ForPlotRouteMap(BaseEngine):
             )
         return "\n".join(lines)
 
+
     # 解析与规整 LLM 返回
     @staticmethod
     def _parse_result(text: str) -> Optional[dict]:
-        """提取 LLM 返回的 JSON 对象。"""
+        """提取 LLM 返回的 JSON 对象（统一走 extract_json_object）。"""
         if not text or not text.strip():
             return None
-        if "</think>" in text:
-            text = text.split("</think>")[-1]
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
+        obj = extract_json_object(text, tag="PlotRouteMap")
+        if obj is None:
             LOGGER.warning(f"[PlotRouteMap] LLM 返回中未找到 JSON 对象：{text[:200]}")
-            return None
-        try:
-            return json.loads(text[start : end + 1])
-        except Exception as e:
-            LOGGER.warning(f"[PlotRouteMap] JSON 解析失败：{e}，原文前 200 字：{text[:200]}")
-            return None
+        return obj
 
     @staticmethod
     def _normalize_result(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,7 +173,7 @@ class ForPlotRouteMap(BaseEngine):
 
     def _check_file_coverage(self, data: Dict[str, Any]) -> None:
         """校验「文件归属」是否覆盖全部输入文件；缺失时输出 warning（不阻断）。"""
-        from GalTransl.Backend.ForGalJsonMulitChat import load_file_metadata_map
+        from GalTransl.Backend.metadata import load_file_metadata_map
 
         fm_map = load_file_metadata_map(self.pj_config)
         if not fm_map:

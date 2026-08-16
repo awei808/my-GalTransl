@@ -3,8 +3,8 @@
 
 覆盖：
   - 缓存序列化：CSentense.alt_dst <-> 缓存条目 alt_dst 的往返
-  - _parse_improve_jsonline_text：按 id 稀疏解析（better -> alt_dst）、乱行容错
-  - _build_improve_first_round_content：首轮含改进提示词/术语表/剧情元数据
+  - _parse_fix_response（基类）：按 id 稀疏解析（better -> alt_dst）、乱行容错
+  - _build_first_round_content：首轮含改进提示词/术语表/剧情元数据
   - batch_translate（翻译接口）集成：稀疏输出 / 无改进空输出 / 分批 / 解析失败跳过
 """
 
@@ -130,7 +130,7 @@ class CacheAltDstSerializationTests(unittest.TestCase):
 
 
 class ParseImproveJsonlineTests(unittest.TestCase):
-    """_parse_improve_jsonline_text：按 id 稀疏解析 better -> alt_dst。"""
+    """基类 _parse_fix_response：按 id 稀疏解析 better -> alt_dst。"""
 
     def setUp(self) -> None:
         self.t = make_translator()
@@ -143,8 +143,10 @@ class ParseImproveJsonlineTests(unittest.TestCase):
             '{"id":0,"better":"备0"}\n'
             + '{"id":2,"better":"备2"}\n'
         )
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
-        self.assertEqual(count, 2)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, ""
+        )
+        self.assertEqual(success, 2)
         self.assertEqual(self.trans_list[0].alt_dst, "备0")
         self.assertEqual(self.trans_list[1].alt_dst, "")
         self.assertEqual(self.trans_list[2].alt_dst, "备2")
@@ -155,8 +157,10 @@ class ParseImproveJsonlineTests(unittest.TestCase):
             self.trans_list, True, "f.json"
         )
         result_text = sig_list[1] + '|{"id":1,"better":"备1"}\n'
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
-        self.assertEqual(count, 1)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, ""
+        )
+        self.assertEqual(success, 1)
         self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
     def test_garbage_lines_ignored(self) -> None:
@@ -167,23 +171,29 @@ class ParseImproveJsonlineTests(unittest.TestCase):
             + '{"id":0,"dst":"错误key"}\n'
             + '{"id":1,"better":"备1"}\n'
         )
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
-        self.assertEqual(count, 1)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, ""
+        )
+        self.assertEqual(success, 1)
         self.assertEqual(self.trans_list[0].alt_dst, "")
         self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
     def test_empty_or_garbled_better_rejected(self) -> None:
         result_text = '{"id":1,"better":""}\n{"id":2,"better":"\ufffd\x8c"}\n'
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
-        self.assertEqual(count, 0)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, ""
+        )
+        self.assertEqual(success, 0)
         self.assertTrue(all(tr.alt_dst == "" for tr in self.trans_list))
 
     def test_better_equal_to_pre_dst_is_rejected(self) -> None:
         # 模型逐字回显初译：better 与 pre_dst 相同应被跳过
         self.trans_list[0].pre_dst = "译文A"
         result_text = '{"id":0,"better":"译文A"}\n{"id":1,"better":"备1"}\n'
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
-        self.assertEqual(count, 1)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, ""
+        )
+        self.assertEqual(success, 1)
         self.assertEqual(self.trans_list[0].alt_dst, "")
         self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
@@ -192,8 +202,10 @@ class ParseImproveJsonlineTests(unittest.TestCase):
         self.trans_list[0].pre_dst = "初译A"
         self.trans_list[0].proofread_zh = "校对A"
         result_text = '{"id":0,"better":"校对A"}\n{"id":1,"better":"备1"}\n'
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "")
-        self.assertEqual(count, 1)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, ""
+        )
+        self.assertEqual(success, 1)
         self.assertEqual(self.trans_list[0].alt_dst, "")
         self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
@@ -201,8 +213,10 @@ class ParseImproveJsonlineTests(unittest.TestCase):
         # 模型按 prompt 用 <br> 换行，pre_dst 用 \r\n：归一化后相同应跳过
         self.trans_list[0].pre_dst = "前\r\n后"
         result_text = '{"id":0,"better":"前<br>后"}\n{"id":1,"better":"备1"}\n'
-        count = self.t._parse_improve_jsonline_text(result_text, self.trans_list, "\r\n")
-        self.assertEqual(count, 1)
+        success, _found = self.t._parse_fix_response(
+            result_text, self.trans_list, "\r\n"
+        )
+        self.assertEqual(success, 1)
         self.assertEqual(self.trans_list[0].alt_dst, "")
         self.assertEqual(self.trans_list[1].alt_dst, "备1")
 
@@ -216,7 +230,7 @@ class BuildImproveFirstRoundTests(unittest.TestCase):
         trans = CSentense("原文", index=0)
         trans.pre_dst = "译文"
         _, _, _, input_src = t._build_input_jsonlines([trans], True, "f.json")
-        content = t._build_improve_first_round_content(input_src, "术语表", "f.json")
+        content = t._build_first_round_content(input_src, "术语表", "f.json")
         self.assertIn("质量改进评估", content)
         self.assertIn("术语表", content)
         self.assertIn("角色: 创", content)
@@ -231,7 +245,7 @@ class BuildImproveFirstRoundTests(unittest.TestCase):
         trans = CSentense("原文", index=0)
         trans.pre_dst = "译文"
         _, _, _, input_src = t._build_input_jsonlines([trans], True, "f.json")
-        content = t._build_improve_first_round_content(input_src, "", "f.json")
+        content = t._build_first_round_content(input_src, "", "f.json")
         self.assertNotIn("<plot_metadata>", content)
 
 

@@ -705,24 +705,14 @@ class ForGalJsonMulitChat(BaseTranslate):
 
         if error_flag:
             # 记录运行时错误到服务端，供桌面端展示
-            try:
-                from GalTransl.server import record_runtime_error
-
-                record_runtime_error(
-                    getattr(
-                        self.pj_config,
-                        "runtime_project_dir",
-                        self.pj_config.getProjectDir(),
-                    ),
-                    kind="parse",
-                    message=error_message,
-                    filename=filename,
-                    index_range=str(idx_tip),
-                    model=getattr(token, "model_name", ""),
-                    level="warning",
-                )
-            except Exception:
-                pass
+            self._record_runtime_error(
+                kind="parse",
+                message=error_message,
+                filename=filename,
+                index_range=str(idx_tip),
+                model=getattr(token, "model_name", "") or None,
+                level="warning",
+            )
 
             LOGGER.warning(
                 f"[解析错误][{filename}:{idx_tip}]解析结果出错：{error_message}"
@@ -1351,24 +1341,13 @@ class ForGalJsonMulitChat(BaseTranslate):
                     f"[LLM调用失败][{filename}:{idx_tip}] {type(e).__name__}: {e}",
                     exc_info=True,
                 )
-                try:
-                    from GalTransl.server import record_runtime_error
-
-                    record_runtime_error(
-                        getattr(
-                            self.pj_config,
-                            "runtime_project_dir",
-                            self.pj_config.getProjectDir(),
-                        ),
-                        kind="llm",
-                        message=f"{type(e).__name__}: {e}",
-                        filename=filename,
-                        index_range=str(idx_tip),
-                        model=self.get_last_chatbot_model(),
-                        level="error",
-                    )
-                except Exception:
-                    pass
+                self._record_runtime_error(
+                    kind="llm",
+                    message=f"{type(e).__name__}: {e}",
+                    filename=filename,
+                    index_range=str(idx_tip),
+                    level="error",
+                )
                 # 空响应交给 _handle_parse_result 走失败兜底（标 (Failed)）
                 raw_resp, token = "", None
 

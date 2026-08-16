@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
+import json
 import re
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from GalTransl import LOGGER
 
@@ -96,13 +97,122 @@ def parse_interval(raw: object) -> Optional[Tuple[int, int]]:
 
 def _to_bool_meta(v: object) -> bool:
     """把多种表示的布尔字段规整为 bool（与批次元数据生成保持一致）。"""
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return v != 0
-    if isinstance(v, str):
-        return v.strip().lower() in ("true", "1", "yes", "是", "y")
-    return False
+    return coerce_bool(v, default=False)
+
+
+
+def coerce_bool(value: object, default: bool = False) -> bool:
+    """统一把多种配置写法转成 bool。
+
+    与旧 BaseEngine._coerce_bool / utils._to_bool_meta 兼容，并补充常见中英文开关：
+    true/false、1/0、yes/no、on/off、是/否、y/n。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1", "yes", "on", "是", "y"):
+            return True
+        if s in ("false", "0", "no", "off", "否", "n", ""):
+            return False
+        return default
+    return default
+
+
+def extract_json_object(
+    text: str,
+    tag: str = "",
+    filename: str = "",
+    merge_code_blocks: bool = False,
+) -> Optional[dict]:
+    """从 LLM 返回文本中稳健提取一个 JSON 对象。
+
+    统一处理 ``</think>``、Markdown 代码块、首尾垃圾字符、``{}`` 边界定位。
+    供 ForGlobalPrompt / ForFileMetaData / ForBatchMetaData / ForPlotRouteMap 等
+    元数据类后端复用，避免各后端 JSON 解析口径不一致。
+    """
+    if not text or not text.strip():
+        if filename:
+            LOGGER.debug(f"[{tag}] {filename} LLM 返回为空，跳过")
+        return None
+
+    if "</think>" in text:
+        text = text.split("</think>")[-1]
+
+    if "```" in text:
+        from GalTransl.Utils import extract_code_blocks
+        _lang_list, code_list = extract_code_blocks(text)
+        if code_list:
+            text = "\n".join(code_list) if merge_code_blocks else code_list[0]
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        LOGGER.debug(
+            f"[{tag}] {filename} LLM 返回中未找到 JSON 对象，"
+            f"原文前 200 字：{text[:200]}"
+        )
+        return None
+
+    try:
+        obj = json.loads(text[start : end + 1])
+    except json.JSONDecodeError as e:
+        LOGGER.debug(
+            f"[{tag}] {filename} JSON 解析失败：{e}，"
+            f"原文前 200 字：{text[start:end+1][:200]}"
+        )
+        return None
+
+    if not isinstance(obj, dict):
+        LOGGER.debug(f"[{tag}] {filename} 解析结果不是 dict，实际类型：{type(obj).__name__}")
+        return None
+    return obj
+
+
+def preprocess_jsonline_response(text: str, merge_code_blocks: bool = True) -> str:
+    """预处理 LLM 返回的 jsonline 文本：去 think、合并/提取代码块、定位锚点、修引号。
+
+    翻译轮与稀疏修复轮都应使用同一入口，避免“取第一个代码块 vs 合并代码块”的差异。
+    """
+    if not text:
+        return ""
+    result = text
+    if "</think>" in result:
+        result = result.split("</think>")[-1]
+    if "```" in result:
+        from GalTransl.Utils import extract_code_blocks
+        _lang_list, code_list = extract_code_blocks(result)
+        if code_list:
+            result = "\n".join(code_list) if merge_code_blocks else code_list[0]
+    sig_start = re.search(r"\b[a-z0-9]{3}\|\{\"id\"", result)
+    if sig_start:
+        result = result[sig_start.start():]
+    from GalTransl.Utils import fix_quotes
+    result = fix_quotes(result)
+    return result
+
+
+def decode_json_line_part(json_part: str) -> Optional[dict]:
+    """容错解析单行 JSON 对象。
+
+    优先严格 ``json.loads``；失败时从首个 ``{`` 起用 ``raw_decode`` 解析第一个
+    JSON 值并忽略尾随垃圾，避免模型输出 ``</br>``、``；`` 等多余字符时丢句。
+    """
+    try:
+        obj = json.loads(json_part)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        pass
+    start = json_part.find("{")
+    if start == -1:
+        return None
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(json_part[start:])
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def strip_chunk_suffix(filename: str) -> str:

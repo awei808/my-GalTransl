@@ -104,40 +104,11 @@ class GenDic(BaseEngine):
 
             raise JobCancelledError()
 
-    def _runtime_project_dir(self) -> str:
-        return getattr(self.pj_config, "runtime_project_dir", self.pj_config.getProjectDir())
-
     def _update_runtime(self, **kwargs: Any) -> None:
         try:
             from GalTransl.server import update_runtime_status
 
-            update_runtime_status(self._runtime_project_dir(), **kwargs)
-        except Exception:
-            return
-
-    def _record_runtime_error(
-        self,
-        *,
-        kind: str,
-        message: str,
-        task_index: int | None = None,
-        retry_count: int | None = None,
-        model: str = "",
-        level: str = "error",
-    ) -> None:
-        try:
-            from GalTransl.server import record_runtime_error
-
-            record_runtime_error(
-                self._runtime_project_dir(),
-                kind=kind,
-                message=message,
-                filename=self.progress_display_name,
-                index_range=(str(task_index) if task_index is not None else ""),
-                retry_count=retry_count,
-                model=model,
-                level=level,
-            )
+            update_runtime_status(self.runtime_project_dir, **kwargs)
         except Exception:
             return
 
@@ -271,20 +242,13 @@ class GenDic(BaseEngine):
             self.progress_append_path = ""
 
     def _record_runtime_success(self, index: int, source_preview: str, translation_preview: str) -> None:
-        try:
-            from GalTransl.server import record_runtime_success
-
-            record_runtime_success(
-                self._runtime_project_dir(),
-                filename=self.progress_display_name,
-                index=int(index),
-                speaker=None,
-                source_preview=source_preview,
-                translation_preview=translation_preview,
-                trans_by=self.get_last_chatbot_model() or "GenDic",
-            )
-        except Exception:
-            return
+        super()._record_runtime_success(
+            self.progress_display_name,
+            index=int(index),
+            source_preview=source_preview,
+            translation_preview=translation_preview,
+            trans_by=self.get_last_chatbot_model() or "GenDic",
+        )
 
     async def llm_gen_dic(self, text: str, name_list: list[str] = [], task_index: int = 0) -> bool:
         self._raise_if_stop_requested()
@@ -334,9 +298,10 @@ class GenDic(BaseEngine):
             self._record_runtime_error(
                 kind="api",
                 message=error_message,
-                task_index=task_index,
+                filename=self.progress_display_name,
+                index_range=str(task_index),
                 retry_count=self.gendic_max_api_retries,
-                model=getattr(token, "model_name", "") if 'token' in locals() else "",
+                model=getattr(token, "model_name", "") if 'token' in locals() else None,
             )
             return False
 
@@ -349,7 +314,8 @@ class GenDic(BaseEngine):
             self._record_runtime_error(
                 kind="parse",
                 message=warning_message,
-                task_index=task_index,
+                filename=self.progress_display_name,
+                index_range=str(task_index),
                 level="warning",
             )
             return False
@@ -380,7 +346,8 @@ class GenDic(BaseEngine):
             self._record_runtime_error(
                 kind="parse",
                 message=warning_message,
-                task_index=task_index,
+                filename=self.progress_display_name,
+                index_range=str(task_index),
                 level="warning",
             )
             return False

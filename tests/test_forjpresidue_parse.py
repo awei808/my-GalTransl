@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 """ForJPResidue 残留日文修复解析逻辑的单元测试。
 
-覆盖：
-  - 尾随垃圾（如 </br>、；）不丢句（_decode_json_part 容错）
-  - 返回 (success_count, found_count)；无 better 字段时 found_count=0
+覆盖（基类 BaseSparseFixRound._parse_fix_response / _record_round_runtime_error）：
+  - decode_json_line_part（utils）：尾随垃圾（如 </br>、；）不丢句
+  - _parse_fix_response：返回 (success_count, found_count)；无 better 字段时 found=0
   - 多行拼接输入按 id 稀疏解析（id 不连续、顺序无关）
   - better 与当前译文相同仍跳过、不计 success 的行为
   - 输入携带 src、不携带 problem 的口径（解析仅按 id 定位，与 problem 无关）
+  - _record_round_runtime_error 以正确签名调用 record_runtime_error
 """
 import unittest
 
 from GalTransl.CSentense import CSentense
 from GalTransl.Backend.ForJPResidue import ForJPResidue
+from GalTransl.Backend.utils import decode_json_line_part
 
 
 class _FakeOpencc:
@@ -23,12 +25,12 @@ class _FakeOpencc:
 
 
 class _FakePjConfig:
-    """配置替身：_parse_jp_jsonline_text 仅用 getKey 读取 swap 开关，默认关闭。
+    """配置替身：_parse_fix_response 仅用 getKey 读取 swap 开关，默认关闭。
 
     与生产默认行为一致（未配置 gpt.swapFixToCurrent 时不交换），测试只验证
     alt_dst 写入，不验证交换路径，故返回默认 False 即可。
 
-    额外提供 runtime_project_dir / getProjectDir / getKey，供 _record_jp_runtime_error
+    额外提供 runtime_project_dir / getProjectDir / getKey，供 _record_round_runtime_error
     构造运行态上报的 project_dir 使用（与 ForBRStation 同口径）。
     """
 
@@ -43,7 +45,7 @@ class _FakePjConfig:
 
 
 def _make_parser(target_lang: str = "Chinese (Simplified)"):
-    """绕过重型 __init__，仅装配 _parse_jp_jsonline_text 所需属性。"""
+    """绕过重型 __init__，仅装配 _parse_fix_response 所需属性。"""
     obj = object.__new__(ForJPResidue)
     obj.target_lang = target_lang
     obj.opencc = _FakeOpencc()
@@ -62,40 +64,38 @@ def _trans(index, pre_dst, src=None):
 class DecodeJsonPartTests(unittest.TestCase):
     def test_clean_json(self):
         self.assertEqual(
-            ForJPResidue._decode_json_part('{"id": 1, "better": "好"}'),
+            decode_json_line_part('{"id": 1, "better": "好"}'),
             {"id": 1, "better": "好"},
         )
 
     def test_trailing_br_garbage(self):
         # 模型在 JSON 后误加 </br>，raw_decode 应忽略尾随垃圾
         self.assertEqual(
-            ForJPResidue._decode_json_part('{"id": 94, "better": "abc"}</br>'),
+            decode_json_line_part('{"id": 94, "better": "abc"}</br>'),
             {"id": 94, "better": "abc"},
         )
 
     def test_trailing_punctuation(self):
         self.assertEqual(
-            ForJPResidue._decode_json_part('{"id": 1, "better": "x"}；'),
+            decode_json_line_part('{"id": 1, "better": "x"}；'),
             {"id": 1, "better": "x"},
         )
 
     def test_leading_garbage(self):
         # 从首个 { 开始解析，忽略前置思考文字
         self.assertEqual(
-            ForJPResidue._decode_json_part('思考：{"id": 1, "better": "y"}'),
+            decode_json_line_part('思考：{"id": 1, "better": "y"}'),
             {"id": 1, "better": "y"},
         )
 
     def test_brace_inside_string_kept(self):
         # better 值内含 } 时不得被错误截断
         s = '{"id": 1, "better": "说}话"}'
-        self.assertEqual(
-            ForJPResidue._decode_json_part(s), {"id": 1, "better": "说}话"}
-        )
+        self.assertEqual(decode_json_line_part(s), {"id": 1, "better": "说}话"})
 
     def test_not_json_returns_none(self):
-        self.assertIsNone(ForJPResidue._decode_json_part("纯文本没有 JSON"))
-        self.assertIsNone(ForJPResidue._decode_json_part(""))
+        self.assertIsNone(decode_json_line_part("纯文本没有 JSON"))
+        self.assertIsNone(decode_json_line_part(""))
 
 
 class ParseJpJsonlineTests(unittest.TestCase):
@@ -104,7 +104,7 @@ class ParseJpJsonlineTests(unittest.TestCase):
         trans = _trans(94, "她像ノシ一样笑了。", src="彼女はノシと笑った")
         parser = _make_parser()
         line = 'p4c|{"id": 94, "better": "她像诺西一样笑了。"}</br>'
-        success, found = parser._parse_jp_jsonline_text(line, [trans], "<br>")
+        success, found = parser._parse_fix_response(line, [trans], "<br>")
         self.assertEqual(found, 1)
         self.assertEqual(success, 1)
         self.assertEqual(trans.alt_dst, "她像诺西一样笑了。")
@@ -120,7 +120,7 @@ class ParseJpJsonlineTests(unittest.TestCase):
                 'tc7|{"id": 14, "better": "c1"}',
             ]
         )
-        success, found = parser._parse_jp_jsonline_text(text, trans_list, "<br>")
+        success, found = parser._parse_fix_response(text, trans_list, "<br>")
         self.assertEqual(found, 3)
         self.assertEqual(success, 3)
         self.assertEqual(trans_list[0].alt_dst, "a1")
@@ -132,7 +132,7 @@ class ParseJpJsonlineTests(unittest.TestCase):
         trans = _trans(1, "旧译文")
         parser = _make_parser()
         text = 'nnk|{"id": 1, "dst": "旧译文"}'
-        success, found = parser._parse_jp_jsonline_text(text, [trans], "<br>")
+        success, found = parser._parse_fix_response(text, [trans], "<br>")
         self.assertEqual(found, 0)
         self.assertEqual(success, 0)
         self.assertEqual(trans.alt_dst, "")
@@ -142,7 +142,7 @@ class ParseJpJsonlineTests(unittest.TestCase):
         trans = _trans(3, "读书。", src="本を読む")
         parser = _make_parser()
         text = 'tma|{"id": 3, "better": "读书。"}'
-        success, found = parser._parse_jp_jsonline_text(text, [trans], "<br>")
+        success, found = parser._parse_fix_response(text, [trans], "<br>")
         self.assertEqual(found, 1)
         self.assertEqual(success, 0)
         self.assertEqual(trans.alt_dst, "")
@@ -152,27 +152,24 @@ class ParseJpJsonlineTests(unittest.TestCase):
         trans = _trans(7, "魔法を使う", src="魔法を使う")
         parser = _make_parser()
         text = 'abc|{"id": 7, "better": "使用魔法"}'
-        success, found = parser._parse_jp_jsonline_text(text, [trans], "<br>")
+        success, found = parser._parse_fix_response(text, [trans], "<br>")
         self.assertEqual(found, 1)
         self.assertEqual(success, 1)
         self.assertEqual(trans.alt_dst, "使用魔法")
 
 
 class RecordRuntimeErrorSignatureTests(unittest.TestCase):
-    """_record_jp_runtime_error 必须以正确签名调用 record_runtime_error。
+    """_record_round_runtime_error 必须以正确签名调用 record_runtime_error。
 
     历史遗留：旧实现缺必填的 project_dir 位置参、缺 kind 关键字参，并传了
     不存在的 engine/stage/batch_index，导致 TypeError 被静默吞、上报失效。
-    本类验证对齐 ForBRStation 的正确签名（含 project_dir/kind/index_range/level，
-    且不传 engine/stage/batch_index）。ForBanWordFix 继承同一方法，一并覆盖。
+    本类验证对齐正确签名（含 project_dir/kind/index_range/level，且不传
+    engine/stage/batch_index）。ForBanWordFix 继承同一方法，一并覆盖。
     """
 
     def _make_reporter(self, project_dir: str = "/fake/project"):
-        # 轻量装配：仅注入 _record_jp_runtime_error 所需属性
+        # 轻量装配：仅注入 _record_round_runtime_error 所需属性
         obj = object.__new__(ForJPResidue)
-        obj.eng_type = "ForJPResidue"
-        obj._log_tag = "[残留日文]"
-        obj._stage = "残留日文修复"
         obj.pj_config = _FakePjConfig(project_dir)
         obj.get_last_chatbot_model = lambda: "fake-model"
         return obj
@@ -193,7 +190,7 @@ class RecordRuntimeErrorSignatureTests(unittest.TestCase):
         srv_mod.record_runtime_error = _fake_record
         try:
             reporter = self._make_reporter("/proj/a")
-            reporter._record_jp_runtime_error("f.json", "1~3", "msg", None)
+            reporter._record_round_runtime_error("f.json", "1~3", "msg", None)
         finally:
             srv_mod.record_runtime_error = original
 
@@ -210,7 +207,7 @@ class RecordRuntimeErrorSignatureTests(unittest.TestCase):
         self.assertNotIn("batch_index", captured)
 
     def test_ban_word_fix_inherits_fixed_signature(self):
-        # ForBanWordFix 继承 _record_jp_runtime_error，同样必须签名正确
+        # ForBanWordFix 继承 _record_round_runtime_error，同样必须签名正确
         from GalTransl.Backend.ForBanWordFix import ForBanWordFix
 
         captured = {}
@@ -225,12 +222,9 @@ class RecordRuntimeErrorSignatureTests(unittest.TestCase):
         srv_mod.record_runtime_error = _fake_record
         try:
             obj = object.__new__(ForBanWordFix)
-            obj.eng_type = "ForBanWordFix"
-            obj._log_tag = "[禁用词修复]"
-            obj._stage = "禁用词修复"
             obj.pj_config = _FakePjConfig("/proj/b")
             obj.get_last_chatbot_model = lambda: "fake-model-2"
-            obj._record_jp_runtime_error("g.json", "4~6", "msg", None)
+            obj._record_round_runtime_error("g.json", "4~6", "msg", None)
         finally:
             srv_mod.record_runtime_error = original
 

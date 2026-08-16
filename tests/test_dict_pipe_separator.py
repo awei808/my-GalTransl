@@ -619,11 +619,8 @@ def _make_improve_inst(cls, h_scene: bool):
     inst._trim_conversation = lambda messages: messages
     inst._build_idx_tip = lambda batch: ""
     inst._build_input_jsonlines = lambda *a, **k: ("", [], 0, "")
-    inst._build_improve_first_round_content = lambda *a, **k: ""
-    inst._build_br_first_round_content = lambda *a, **k: ""
-    inst._record_improve_runtime_error = lambda *a, **k: None
-    inst._record_br_runtime_error = lambda *a, **k: None
-    inst._has_newline_anomaly = lambda tran: True
+    inst._build_first_round_content = lambda *a, **k: ""
+    inst._record_round_runtime_error = lambda *a, **k: None
     inst._group_is_h_scene = lambda group, filename: h_scene
 
     async def _fail_llm(*a, **k):
@@ -637,12 +634,14 @@ class SceneWiringBatchTranslateTests(unittest.IsolatedAsyncioTestCase):
     """P0：改进轮 / 换行修复轮按 h 场景传 scene 给 gen_prompt"""
 
     def _make_trans(self, count=2) -> list:
-        # pre_dst 非空是改进轮/换行修复轮 valid 过滤的前提
+        # pre_dst 非空是改进轮/换行修复轮 valid 过滤的前提；
+        # problem 带「换行位置异常」是 ForBRStation 基类 _has_target_problem 命中的前提
         trans = []
         for i in range(1, count + 1):
             t = CSentense(pre_src=f"line{i}", index=i)
             t.post_src = f"line{i}"
             t.pre_dst = f"译文{i}"
+            t.problem = "换行位置异常：第1行"
             trans.append(t)
         return trans
 

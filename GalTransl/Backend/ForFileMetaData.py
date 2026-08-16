@@ -8,7 +8,7 @@ from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
 from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Utils import extract_code_blocks
+from GalTransl.Backend.utils import coerce_bool, extract_json_object
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT, FORFILEMETA_SYSTEM
 
@@ -53,12 +53,7 @@ class ForFileMetaData(BaseEngine):
 
         # 是否把项目翻译规范注入提示词（默认开启，可在 internals.forfilemeta.inject_guideline 关闭）
         raw = self.pj_config.getKey("internals.forfilemeta.inject_guideline", True)
-        if isinstance(raw, bool):
-            self._inject_guideline = raw
-        else:
-            self._inject_guideline = (
-                str(raw).strip().lower() not in ("false", "0", "no", "")
-            )
+        self._inject_guideline = coerce_bool(raw, default=True)
 
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
@@ -201,33 +196,7 @@ class ForFileMetaData(BaseEngine):
     # 2. 解析与规整 LLM 返回的 JSON
     @staticmethod
     def _parse_meta(text: str, filename: str = "") -> Optional[dict]:
-        if not text or not text.strip():
-            if filename:
-                LOGGER.debug(f"[FileMetaData] {filename} LLM 返回为空，跳过")
-            return None
-        if "</think>" in text:
-            text = text.split("</think>")[-1]
-        lang_list, code_list = extract_code_blocks(text)
-        if code_list:
-            text = code_list[0]
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            if filename:
-                LOGGER.debug(
-                    f"[FileMetaData] {filename} LLM 返回中未找到 JSON 对象，"
-                    f"原文前 200 字：{text[:200]}"
-                )
-            return None
-        try:
-            return json.loads(text[start : end + 1])
-        except Exception as e:
-            if filename:
-                LOGGER.debug(
-                    f"[FileMetaData] {filename} JSON 解析失败：{e}，"
-                    f"原文前 200 字：{text[:200]}"
-                )
-            return None
+        return extract_json_object(text, tag="FileMetaData", filename=filename)
 
     @staticmethod
     def _normalize_meta(obj: dict, filename: str) -> dict:

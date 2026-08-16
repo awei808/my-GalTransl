@@ -7,12 +7,13 @@ from GalTransl.ConfigHelper import CProxyPool, initDictList, CProjectConfig
 from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Utils import extract_code_blocks
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
 from GalTransl.server_runtime import record_runtime_notice
-from GalTransl.Backend.ForGalJsonMulitChat import (
-    load_file_metadata_map,
+from GalTransl.Backend.metadata import load_file_metadata_map
+from GalTransl.Backend.utils import (
+    coerce_bool,
+    extract_json_object,
     normalize_batch_intervals,
     strip_chunk_suffix,
 )
@@ -66,12 +67,7 @@ class ForBatchMetaData(BaseEngine):
 
         # 是否把项目翻译规范注入提示词（默认开启，可在 internals.forbatchmeta.inject_guideline 关闭）
         raw = self.pj_config.getKey("internals.forbatchmeta.inject_guideline", True)
-        if isinstance(raw, bool):
-            self._inject_guideline = raw
-        else:
-            self._inject_guideline = (
-                str(raw).strip().lower() not in ("false", "0", "no", "")
-            )
+        self._inject_guideline = coerce_bool(raw, default=True)
 
         # 最大批次数限制，默认 20；可在 config 的 internals.forbatchmeta.max_batches 设置
         self.max_batches = self.pj_config.getKey("internals.forbatchmeta.max_batches", 20)
@@ -312,33 +308,7 @@ class ForBatchMetaData(BaseEngine):
     # 3. 解析与规整 LLM 返回的 JSON
     @staticmethod
     def _parse_meta(text: str, filename: str = "") -> Optional[dict]:
-        if not text or not text.strip():
-            if filename:
-                LOGGER.debug(f"[BatchMetaData] {filename} LLM 返回为空，跳过")
-            return None
-        if "</think>" in text:
-            text = text.split("</think>")[-1]
-        lang_list, code_list = extract_code_blocks(text)
-        if code_list:
-            text = code_list[0]
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            if filename:
-                LOGGER.debug(
-                    f"[BatchMetaData] {filename} LLM 返回中未找到 JSON 对象，"
-                    f"原文前 200 字：{text[:200]}"
-                )
-            return None
-        try:
-            return json.loads(text[start : end + 1])
-        except Exception as e:
-            if filename:
-                LOGGER.debug(
-                    f"[BatchMetaData] {filename} JSON 解析失败：{e}，"
-                    f"原文前 200 字：{text[:200]}"
-                )
-            return None
+        return extract_json_object(text, tag="BatchMetaData", filename=filename)
 
     @staticmethod
     def _normalize_meta(obj: dict, filename: str, max_index: int,
@@ -424,24 +394,13 @@ class ForBatchMetaData(BaseEngine):
             )
         except Exception as e:
             LOGGER.error(f"[BatchMetaData] {filename} LLM 请求失败：{type(e).__name__}: {e}", exc_info=True)
-            try:
-                from GalTransl.server import record_runtime_error
-
-                record_runtime_error(
-                    getattr(
-                        self.pj_config,
-                        "runtime_project_dir",
-                        self.pj_config.getProjectDir(),
-                    ),
-                    kind="llm",
-                    message=f"{type(e).__name__}: {e}",
-                    filename=filename,
-                    index_range="-",
-                    model=self.get_last_chatbot_model(),
-                    level="error",
-                )
-            except Exception:
-                pass
+            self._record_runtime_error(
+                kind="llm",
+                message=f"{type(e).__name__}: {e}",
+                filename=filename,
+                index_range="-",
+                level="error",
+            )
             return False
 
         meta = self._parse_meta(rsp or "", filename)

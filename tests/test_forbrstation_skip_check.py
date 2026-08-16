@@ -49,14 +49,14 @@ def make_translator():
         self._captured_input = input_src
         return "FIRST_ROUND_CONTENT\n" + input_src
 
-    t._build_br_first_round_content = MethodType(_fake_first_round, t)
+    t._build_first_round_content = MethodType(_fake_first_round, t)
     t._resolve_file_metadata = MethodType(lambda self, *a, **k: None, t)
     t._format_file_metadata_block = MethodType(lambda self, *a, **k: "", t)
     t._format_global_prompt_block = MethodType(lambda self, *a, **k: "", t)
     t._apply_history_result = MethodType(lambda self, p, *a, **k: p, t)
     t._trim_conversation = MethodType(lambda self, conv, *a, **k: conv, t)
     t._build_idx_tip = MethodType(lambda self, lst, *a, **k: "1~2", t)
-    t._record_br_runtime_error = MethodType(lambda self, *a, **k: None, t)
+    t._record_round_runtime_error = MethodType(lambda self, *a, **k: None, t)
     t.get_last_chatbot_model = MethodType(lambda self, *a, **k: "m", t)
     return t
 
@@ -81,7 +81,7 @@ class SkipCheckFilterTests(unittest.TestCase):
 
         t._call_llm = MethodType(fake_call_llm, t)
         # 解析返回 0，避免写 alt_dst 干扰断言
-        t._parse_br_jsonline_text = MethodType(lambda self, *a, **k: (0, 0), t)
+        t._parse_fix_response = MethodType(lambda self, *a, **k: (0, 0), t)
         await t.batch_translate("f.json", "f.json", trans_list, 100, gpt_dic=None)
         return called, t._captured_input
 

@@ -23,8 +23,6 @@ class ForBanWordFix(ForJPResidue):
     _problem_types = [CProblemType.用词不当]
     # 覆盖：日志前缀
     _log_tag = "[禁用词修复]"
-    # 覆盖：运行态错误上报阶段名
-    _stage = "禁用词修复"
     # 覆盖：把命中禁用词随原文/译文一并给模型
     _inject_problem = True
 
