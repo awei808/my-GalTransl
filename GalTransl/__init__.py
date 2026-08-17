@@ -92,6 +92,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "仅对带有「用词不当」问题标注（含禁用词）的译文，对照原文与问题生成去掉禁用词的备选译文，可在校对审核页一键交换。",
         "en": "Ban-word fix: for sentences flagged with 'inappropriate wording' (banned words), generates alternative translations (alt_dst in cache) by comparing source and problem, swappable in review page."
     },
+    "ForSemCheck": {
+        "zh-cn": "语义差异检测：用本地/外部AI逐句对照原文与译文，仅将语义极大差异（疑似错译/漏译/译文串行）的句子标记为「疑似错误」问题，不修改译文、不生成备选译文。",
+        "en": "Semantic difference detection: AI compares source and translation per sentence, flags only sentences with huge semantic difference (suspected mistranslation/omission/misalignment) as 'suspected error' problems; never modifies translations."
+    },
     "ForFileMetaData": {
         "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 gt_input/FileMetaData.json。",
         "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes gt_input/FileMetaData.json."

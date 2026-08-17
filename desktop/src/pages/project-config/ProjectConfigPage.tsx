@@ -448,18 +448,15 @@ const KEYWORD_LABELS: Record<string, string> = {
   混合: "混合",
 };
 
+// 语义检测启用开关：后端已实现，前端开放编辑；TODO 仅作记录，渲染豁免徽标与禁用
+const SEMCHECK_ENABLED_KEY = "common.gpt.semCheck.enabled";
+
 /**
  * 待实现/待验证的配置项：设置页渲染 TODO 徽标并禁用编辑（防止误改），
  * 功能落地并验证通过后移除对应条目。
  */
 const TODO_CONFIG_KEYS: Record<string, string> = {
-  "common.gpt.semCheck.enabled": "功能开发中，配置暂不生效",
-  "common.gpt.semCheck.endpoint": "功能开发中，配置暂不生效",
-  "common.gpt.semCheck.modelName": "功能开发中，配置暂不生效",
-  "common.gpt.semCheck.apiKey": "功能开发中，配置暂不生效",
-  "common.gpt.semCheck.apiTimeout": "功能开发中，配置暂不生效",
-  "common.gpt.semCheck.stream": "功能开发中，配置暂不生效",
-  "common.gpt.semCheck.provider": "功能开发中，配置暂不生效",
+  [SEMCHECK_ENABLED_KEY]: "功能开发中，配置暂不生效",
 };
 
 export function ProjectConfigPage() {
@@ -745,6 +742,8 @@ export function ProjectConfigPage() {
     const [key, , dtype] = item;
     // 待实现/待验证的配置项：渲染 TODO 徽标并禁用编辑（功能落地后从 TODO_CONFIG_KEYS 移除）
     const todoMsg = TODO_CONFIG_KEYS[key];
+    // 语义检测启用开关已实现可编辑：TODO 仅作记录，渲染时豁免徽标与禁用
+    const effectiveTodoMsg = key === SEMCHECK_ENABLED_KEY ? "" : todoMsg;
     // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
     if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
     // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理
@@ -817,10 +816,10 @@ export function ProjectConfigPage() {
     const val = getValue(key);
     const isNonScalar = dtype === "object-array" || dtype === "array";
     return (
-      <div class="pc-row" classList={{ "pc-row--todo": !!todoMsg }}>
+      <div class="pc-row" classList={{ "pc-row--todo": !!effectiveTodoMsg }}>
         <div class="pc-row-label">
           <span class="pc-label">{getFieldLabel(key)}</span>
-          <Show when={todoMsg}>
+          <Show when={effectiveTodoMsg}>
             <span class="pc-todo-badge">TODO</span>
           </Show>
           <div class="pc-key-hint">
@@ -829,12 +828,12 @@ export function ProjectConfigPage() {
           <Show when={getFieldHint(key)}>
             <p class="pc-desc">{getFieldHint(key)}</p>
           </Show>
-          <Show when={todoMsg}>
-            <p class="pc-desc pc-desc--todo">⚠ {todoMsg}，暂时不可修改</p>
+          <Show when={effectiveTodoMsg}>
+            <p class="pc-desc pc-desc--todo">⚠ {effectiveTodoMsg}，暂时不可修改</p>
           </Show>
         </div>
         <div class="pc-row-control">
-          <fieldset disabled={!!todoMsg} class="pc-fieldset">
+          <fieldset disabled={!!effectiveTodoMsg} class="pc-fieldset">
           <Show
             when={!isNonScalar && type !== "boolean"}
             fallback={
