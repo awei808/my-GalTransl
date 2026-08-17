@@ -5304,6 +5304,40 @@ a:hover {
   word-break: break-word;
 }
 
+/* 待实现/待验证配置项的 TODO 徽标（与 .pc-label 同行展示） */
+.pc-todo-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #8a6d1a;
+  background: #fdf3d0;
+  border: 1px solid #e6cf8a;
+  border-radius: 4px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.pc-row--todo {
+  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.02));
+}
+
+.pc-desc--todo {
+  color: #a16207;
+}
+
+/* 包裹控件用：去掉 fieldset 默认边框，保持 flex 布局（disabled 时统一禁用内部控件） */
+.pc-fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .pc-key-hint {
   display: flex;
   align-items: center;

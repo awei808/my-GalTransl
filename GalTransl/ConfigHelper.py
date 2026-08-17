@@ -118,6 +118,7 @@ class CProblemType(Enum):
     用词不当 = 17
     h场景用词不当 = 17  # 旧配置兼容别名：老项目 problemList 仍写 h场景用词不当
     频繁换行 = 18
+    疑似错误 = 19  # 本地/外部 AI 语义差异检测：原文与译文语义极大差异（疑似错译/漏译/串行）
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:

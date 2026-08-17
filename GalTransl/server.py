@@ -305,6 +305,7 @@ def _run_problem_detection(
         s.doub_content = e.get("doub_content", "")
         s.unknown_proper_noun = e.get("unknown_proper_noun", "")
         s.skip_check = e.get("skip_check", False)
+        s.suspected_error = e.get("suspected_error", "")
         trans_list.append(s)
 
     for i, s in enumerate(trans_list):
@@ -1708,6 +1709,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "用词不当", "description": "非 H 场景译文含禁用词（按禁用词库匹配），或 H 剧情区间译文出现不符合 H 场景的词语（按 H 词库匹配）。"},
     {"name": "状语过长", "description": "译文出现「在……中/里」或「……地」状语且中间长度超过「状语最大长度」阈值。（测试中，可能误检）"},
     {"name": "频繁换行", "description": "译文有效字符数不足却切出过多小句（<20字符且≥3小句，或<10字符且≥2小句），短译文却频繁断句。（测试中，可能误检）"},
+    {"name": "疑似错误", "description": "AI 语义检测（ForSemCheck）：判定原文与译文语义存在极大差异（疑似错译/漏译/译文串行）。"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)

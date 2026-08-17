@@ -296,6 +296,12 @@ def find_problems(
         if "(Failed)" in post_dst:
             problem_list.append("翻译失败")
 
+        # AI 语义检测标记（ForSemCheck 产出）：字段非空即标"疑似错误"。
+        # suspected_error 是持久化信号，problem 是输出，规则重检/校对保存每次重跑都会重新认领。
+        if CProblemType.疑似错误 in find_type:
+            if getattr(tran, "suspected_error", "") != "":
+                problem_list.append("疑似错误")
+
         # 定语/状语过长：只检测最终成品 post_dst（无校对时即 pre_dst），与旧分支对齐避免重复
         if CProblemType.定语过长 in find_type or CProblemType.状语过长 in find_type:
             if post_dst:

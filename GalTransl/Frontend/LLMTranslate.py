@@ -1001,6 +1001,132 @@ async def doLLMTranslate(
         _update_runtime(projectConfig, stage="译文质量改进完成")
         return True
 
+    # ---- 2.7c 独立引擎：语义差异检测（ForSemCheck）----
+    if eng_type == "ForSemCheck":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+        # 载入译前字典：主流程的字典初始化位于翻译阶段，独立分支需自行加载，
+        # 否则 projectConfig.pre_dic 为 None 导致 preprocess_trans_list 崩溃
+        projectConfig.pre_dic = CNormalDic(
+            initDictList(pre_dic_list, default_dic_dir, project_dir)
+        )
+        projectConfig.post_dic = CNormalDic(
+            initDictList(post_dic_list, default_dic_dir, project_dir)
+        )
+        projectConfig.gpt_dic = CGptDict(
+            initDictList(gpt_dic_list, default_dic_dir, project_dir)
+        )
+        gptapi = await init_gptapi(projectConfig)
+        total = len(file_json_lists)
+        worker_count = max(1, projectConfig.get_workers_per_project())
+        projectConfig.active_workers = worker_count
+        LOGGER.info(
+            f"[语义检测] 开始为 {total} 个文件执行语义差异检测，并发 {worker_count} worker"
+        )
+        _update_runtime(projectConfig, stage="语义差异检测")
+        num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+        try:
+            num_better = int(num_better) if num_better else 100
+        except (TypeError, ValueError):
+            num_better = 100
+
+        async def _semcheck_single_file(file_path: str, json_list: list) -> None:
+            """处理单个文件的语义检测：重建句子、命中缓存、检测并写回 suspected_error。"""
+            _check_stop_requested(projectConfig)
+            file_name = (
+                file_path.replace(input_dir, "")
+                .lstrip(os_sep)
+                .replace(os_sep, "-}")
+            )
+            cache_file_path = joinpath(cache_dir, file_name)
+            if not isPathExists(cache_file_path):
+                LOGGER.warning(f"[语义检测] {file_name} 无缓存译文，跳过")
+                return
+            from GalTransl.Loader import load_transList
+
+            trans_list, _ = load_transList(json_list)
+            preprocess_trans_list(
+                trans_list,
+                projectConfig,
+                projectConfig.pre_dic,
+                projectConfig.tPlugins,
+            )
+            await get_transCache_from_json(
+                trans_list,
+                cache_file_path,
+                retry_failed=False,
+                proofread=False,
+                retran_key="",
+                eng_type=eng_type,
+            )
+            _update_runtime(projectConfig, current_file=file_name)
+            await gptapi.batch_translate(
+                file_name,
+                cache_file_path,
+                trans_list,
+                num_better,
+                gpt_dic=projectConfig.gpt_dic,
+            )
+            # 落盘前重跑 find_problems：让 suspected_error 被认领为「疑似错误」problem
+            h_ranges = _resolve_file_h_ranges(
+                project_dir, cache_file_path, projectConfig
+            )
+            find_problems(trans_list, projectConfig, projectConfig.gpt_dic, h_ranges=h_ranges)
+            # 保存缓存快照（写 suspected_error 与 problem）
+            has_content = any(
+                t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
+                for t in trans_list
+            )
+            if has_content:
+                await save_transCache_to_json(
+                    trans_list,
+                    cache_file_path,
+                    post_save=True,
+                    project_dir=_runtime_project_dir(projectConfig),
+                )
+            else:
+                LOGGER.warning(
+                    f"[语义检测] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                )
+
+        file_queue: asyncio.Queue = asyncio.Queue()
+        for file_path, json_list in file_json_lists.items():
+            file_queue.put_nowait((file_path, json_list))
+        for _ in range(worker_count):
+            file_queue.put_nowait(None)
+
+        async def _semcheck_worker_loop(worker_index: int) -> None:
+            worker_token = WORKER_ID_CTX.set(str(worker_index))
+            LOGGER.debug(
+                f"[语义检测] worker_loop[{worker_index}] 启动, "
+                f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+            )
+            try:
+                while True:
+                    _check_stop_requested(projectConfig)
+                    item = await file_queue.get()
+                    if item is None:
+                        return
+                    file_path, json_list = item
+                    await _semcheck_single_file(file_path, json_list)
+            finally:
+                WORKER_ID_CTX.reset(worker_token)
+
+        semcheck_tasks = [
+            asyncio.create_task(_semcheck_worker_loop(i)) for i in range(worker_count)
+        ]
+        try:
+            await asyncio.gather(*semcheck_tasks)
+        except Exception:
+            for task in semcheck_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*semcheck_tasks, return_exceptions=True)
+            raise
+        LOGGER.info("[语义检测] 语义差异检测完成")
+        _update_runtime(projectConfig, stage="语义差异检测完成")
+        return True
+
     # ---- 2.8 独立引擎：仅生成全局游戏分析（ForGlobalPrompt）----
     if eng_type == "ForGlobalPrompt":
         _check_stop_requested(projectConfig)
@@ -2362,7 +2488,7 @@ def _resolve_after_translation_mode(projectConfig: CProjectConfig) -> str:
         return "none"
     mode = str(mode).strip().lower()
     # 仅保留白名单内 token，过滤非法配置
-    allowed = {"none", "improve", "brfix", "jpfix", "banfix"}
+    allowed = {"none", "improve", "brfix", "jpfix", "banfix", "semcheck"}
     parts = [p for p in mode.split("+") if p in allowed]
     if not parts:
         LOGGER.warning(f"[后处理] gpt.afterTranslation 非法值 '{mode}'，回退 none")
@@ -2392,6 +2518,7 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForBRStation import ForBRStation
     from GalTransl.Backend.ForJPResidue import ForJPResidue
     from GalTransl.Backend.ForBanWordFix import ForBanWordFix
+    from GalTransl.Backend.ForSemCheck import ForSemCheck
 
     _api = None
     try:
@@ -2420,6 +2547,13 @@ async def _run_after_trans_single_file(
             _api = ForBanWordFix(
                 projectConfig,
                 "ForBanWordFix",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+        elif mode == "semcheck":
+            _api = ForSemCheck(
+                projectConfig,
+                "ForSemCheck",
                 projectConfig.proxyPool,
                 projectConfig.tokenPool,
             )

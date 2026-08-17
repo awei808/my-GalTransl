@@ -44,6 +44,7 @@ class CSentense:
         self.doub_content = ""  # 用于记录疑问句的内容 For GPT4
         self.unknown_proper_noun = ""  # 用于记录未知的专有名词 For GPT4
         self._alt_dst = ""  # AI 备选译文（改进轮产出，前端可交换为正式译文）
+        self.suspected_error = ""  # AI 语义检测标记（ForSemCheck 产出，非空即视为"疑似错误"，由 find_problems 认领）
 
         self.prev_tran: CSentense = None  # 指向上一个tran
         self.next_tran: CSentense = None  # 指向下一个tran

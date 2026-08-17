@@ -71,11 +71,39 @@ const REMOVED_CONFIG_KEYS = new Set<string>([
 const FIELD_UI: Record<string, FieldUI> = {
   "common.gpt.afterTranslation": {
     label: "翻译后处理后端",
-    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；残留日文修复（jpfix）对照原文清除残留日文生成备选译文；可 + 组合（improve+brfix、improve+brfix+jpfix 等，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation / ForJPResidue 手动触发。",
+    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；残留日文修复（jpfix）对照原文清除残留日文生成备选译文；语义差异检测（semcheck）用本地/外部AI判定疑似错译、漏译、译文串行并标记「疑似错误」问题；可 + 组合（improve+brfix、improve+brfix+semcheck 等，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation / ForJPResidue / ForSemCheck 手动触发。",
   },
   "common.gpt.swapFixToCurrent": {
     label: "修复轮结果自动交换当前译文",
     hint: "开启后，修复轮（brfix/jpfix）生成的备选译文会与当前译文交换属性：修复结果直接覆盖当前译文（校对结果优先，否则初译），原译文存入备选译文可在校对页回退。关闭时修复结果仅作为备选译文，需手动交换。",
+  },
+  "common.gpt.semCheck.enabled": {
+    label: "启用语义差异检测",
+    hint: "总开关。开启且配置好端点后，ForSemCheck 后端判定原文与译文是否存在极大语义差异（疑似错译/漏译/译文串行），命中句写入 suspected_error 并被问题检测标记为「疑似错误」。",
+  },
+  "common.gpt.semCheck.endpoint": {
+    label: "语义检测端点",
+    hint: "OpenAI 兼容端点，本地 llama.cpp 与外部大模型通用，自动补 /v1。本地示例：http://127.0.0.1:8080（llama-server 启动：llama-server -m 模型.gguf -c 8192 --host 127.0.0.1 --port 8080）。",
+  },
+  "common.gpt.semCheck.modelName": {
+    label: "语义检测模型名",
+    hint: "本地填 GGUF 模型名（如 gemma-3-270m-it-q4_k_m）；外部填服务商模型名（如 deepseek-chat）。",
+  },
+  "common.gpt.semCheck.apiKey": {
+    label: "语义检测 API 密钥",
+    hint: "本地服务器（llama-server 不校验 key）任意占位即可；外部服务填真实密钥。",
+  },
+  "common.gpt.semCheck.apiTimeout": {
+    label: "语义检测超时（秒）",
+    hint: "单次判定请求的超时上限。",
+  },
+  "common.gpt.semCheck.stream": {
+    label: "语义检测流式输出",
+    hint: "开启流式输出可提前中断，减少等待。",
+  },
+  "common.gpt.semCheck.provider": {
+    label: "语义检测服务商路由",
+    hint: "思考参数路由：auto 按模型名自动推断（gemma 等本地模型不发送思考参数）；外部大模型可显式指定（如 deepseek）避免误发不兼容参数。",
   },
   "internals.pipeline.enableValidate": {
     label: "开启阶段 0：输入数据校验",
@@ -403,16 +431,35 @@ const KEYWORD_LABELS: Record<string, string> = {
   improve: "改进轮",
   brfix: "换行修复",
   jpfix: "残留日文修复",
+  semcheck: "语义差异检测",
   "improve+brfix": "改进轮 + 换行修复（按顺序）",
   "improve+jpfix": "改进轮 + 残留日文修复（按顺序）",
   "brfix+jpfix": "换行修复 + 残留日文修复（按顺序）",
   "improve+brfix+jpfix": "改进轮 + 换行修复 + 残留日文修复（按顺序）",
+  "improve+semcheck": "改进轮 + 语义差异检测（按顺序）",
+  "improve+brfix+semcheck": "改进轮 + 换行修复 + 语义差异检测（按顺序）",
+  "improve+jpfix+semcheck": "改进轮 + 残留日文修复 + 语义差异检测（按顺序）",
+  "improve+brfix+jpfix+semcheck": "改进轮 + 换行修复 + 残留日文修复 + 语义差异检测（按顺序）",
   // 剧情路线图结构类型（与向导 PLOT_STRUCTURE_TYPES 的 value 一致）
   线性: "线性（链）",
   树: "树（树状分支）",
   "有向无环图": "有向无环图（DAG）",
   "有向有环图": "有向有环图（含循环）",
   混合: "混合",
+};
+
+/**
+ * 待实现/待验证的配置项：设置页渲染 TODO 徽标并禁用编辑（防止误改），
+ * 功能落地并验证通过后移除对应条目。
+ */
+const TODO_CONFIG_KEYS: Record<string, string> = {
+  "common.gpt.semCheck.enabled": "功能开发中，配置暂不生效",
+  "common.gpt.semCheck.endpoint": "功能开发中，配置暂不生效",
+  "common.gpt.semCheck.modelName": "功能开发中，配置暂不生效",
+  "common.gpt.semCheck.apiKey": "功能开发中，配置暂不生效",
+  "common.gpt.semCheck.apiTimeout": "功能开发中，配置暂不生效",
+  "common.gpt.semCheck.stream": "功能开发中，配置暂不生效",
+  "common.gpt.semCheck.provider": "功能开发中，配置暂不生效",
 };
 
 export function ProjectConfigPage() {
@@ -696,6 +743,8 @@ export function ProjectConfigPage() {
   /** 单个配置项的渲染（通用列表） */
   function renderFieldRow(item: [string, ConfigValue, string]) {
     const [key, , dtype] = item;
+    // 待实现/待验证的配置项：渲染 TODO 徽标并禁用编辑（功能落地后从 TODO_CONFIG_KEYS 移除）
+    const todoMsg = TODO_CONFIG_KEYS[key];
     // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
     if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
     // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理
@@ -768,17 +817,24 @@ export function ProjectConfigPage() {
     const val = getValue(key);
     const isNonScalar = dtype === "object-array" || dtype === "array";
     return (
-      <div class="pc-row">
+      <div class="pc-row" classList={{ "pc-row--todo": !!todoMsg }}>
         <div class="pc-row-label">
           <span class="pc-label">{getFieldLabel(key)}</span>
+          <Show when={todoMsg}>
+            <span class="pc-todo-badge">TODO</span>
+          </Show>
           <div class="pc-key-hint">
             <code class="pc-key">{key}</code>
           </div>
           <Show when={getFieldHint(key)}>
             <p class="pc-desc">{getFieldHint(key)}</p>
           </Show>
+          <Show when={todoMsg}>
+            <p class="pc-desc pc-desc--todo">⚠ {todoMsg}，暂时不可修改</p>
+          </Show>
         </div>
         <div class="pc-row-control">
+          <fieldset disabled={!!todoMsg} class="pc-fieldset">
           <Show
             when={!isNonScalar && type !== "boolean"}
             fallback={
@@ -930,6 +986,7 @@ export function ProjectConfigPage() {
               </Match>
             </Switch>
           </Show>
+          </fieldset>
         </div>
       </div>
     );
