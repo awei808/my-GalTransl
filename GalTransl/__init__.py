@@ -77,23 +77,23 @@ TRANSLATOR_SUPPORTED = {
         "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports FileMetaData and BatchMetadata injection."
     },
     "ForImproveTranslation": {
-        "zh-cn": "整文件翻译完成后评估译文，对可改进的句子生成备选译文，可在校对审核页一键交换。",
+        "zh-cn": "整文件翻译完成后评估译文，对可改进的句子生成备选译文，",
         "en": "Translation quality improvement: evaluates the whole file after translation, generates alternative translations (alt_dst in cache), swappable in review page."
     },
     "ForBRStation": {
-        "zh-cn": "仅对带有「换行位置异常」问题标注的译文，生成备选译文，可在校对审核页一键交换。",
+        "zh-cn": "对「换行位置异常」问题译文，生成备选译文，",
         "en": "Line-break position fix: for sentences flagged with 'line-break position anomaly', generates alternative translations (alt_dst in cache), swappable in review page."
     },
     "ForJPResidue": {
-        "zh-cn": "仅对带有「残留日文」问题标注的译文，对照原文生成修复残留日文的备选译文，可在校对审核页一键交换。",
+        "zh-cn": "对「残留日文」问题译文，对照原文生成备选译文，",
         "en": "JP-residue fix: for sentences flagged with 'residual Japanese', generates alternative translations (alt_dst in cache) by comparing with source, swappable in review page."
     },
     "ForBanWordFix": {
-        "zh-cn": "仅对带有「用词不当」问题标注（含禁用词）的译文，对照原文与问题生成去掉禁用词的备选译文，可在校对审核页一键交换。",
+        "zh-cn": "对「用词不当」问题译文，对照原文与问题生成备选译文，",
         "en": "Ban-word fix: for sentences flagged with 'inappropriate wording' (banned words), generates alternative translations (alt_dst in cache) by comparing source and problem, swappable in review page."
     },
     "ForSemCheck": {
-        "zh-cn": "语义差异检测：用本地/外部AI逐句对照原文与译文，仅将语义极大差异（疑似错译/漏译/译文串行）的句子标记为「疑似错误」问题，不修改译文、不生成备选译文。",
+        "zh-cn": "逐句对照原文与译文，仅将语义极大差异的句子标记为「疑似错误」问题，不修改译文、不生成备选译文。",
         "en": "Semantic difference detection: AI compares source and translation per sentence, flags only sentences with huge semantic difference (suspected mistranslation/omission/misalignment) as 'suspected error' problems; never modifies translations."
     },
     "ForFileMetaData": {
