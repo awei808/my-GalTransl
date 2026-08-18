@@ -70,7 +70,7 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
-  gpt.afterTranslation: none # 完整流水线翻译完成后追加的后处理后端：none不追加；improve改进轮；brfix换行修复；jpfix残留日文修复；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；可+组合（逐文件、按顺序）。[none/improve/brfix/jpfix/semcheck/improve+brfix+semcheck...]
+  gpt.afterTranslation: [] # 完整流水线翻译完成后追加的后处理后端（阶段 7）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮；brfix换行修复；jpfix残留日文修复；banfix禁用词修复；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck]
   gpt.enableBetterTranslation: false # [已废弃] 由 gpt.afterTranslation 取代。旧项目兼容：true 等价于 afterTranslation=improve。[True/False]
   gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
@@ -100,6 +100,7 @@ internals:
     forceRegenPlotRoute: false    # 是否强制重新生成剧情路线图（即使已存在）[True/False]
     enableBatchMeta: true         # 阶段5 批次级元数据 [True/False]
     enableTranslate: true         # 阶段6 翻译执行 [True/False]
+    enableImprove: true           # 阶段7 修复和改进译文（后处理，按 gpt.afterTranslation 顺序执行）[True/False]
   # ForPlotRouteMap 后端专用配置（剧情路线图）
   plotroute:
     structureType: "树"           # 剧情结构类型 [线性/树/有向无环图/有向有环图/混合]

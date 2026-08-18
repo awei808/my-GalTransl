@@ -105,7 +105,7 @@ TRANSLATOR_SUPPORTED = {
         "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes gt_input/BatchMetadata.json for multi-turn translation."
     },
     "ForPlotRouteMap": {
-        "zh-cn": "基于各文件剧情+剧情大纲生成剧情路线图，结果写入 transl_cache/pass0_cache/PlotRouteMap.json。",
+        "zh-cn": "基于各文件剧情+剧情大纲生成剧情路线图和对应线路剧情",
         "en": "Generate plot route map from per-file metadata & user outline; writes PlotRouteMap.json for translation injection."
     },
     "GenDic": {

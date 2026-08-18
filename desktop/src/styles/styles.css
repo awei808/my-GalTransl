@@ -3301,6 +3301,56 @@ a:hover {
   color: var(--color-text-secondary);
 }
 
+/* ── 向导/设置：修复与改进后处理顺序编辑器（数字框） ── */
+.after-trans-list {
+  /* 复用 pipeline-stage-list 的纵向布局与滚动 */
+  max-height: 300px;
+}
+
+.after-trans-item {
+  justify-content: flex-start;
+}
+
+.after-trans-item__num-wrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.after-trans-item__num {
+  width: 44px;
+  height: 28px;
+  text-align: center;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.after-trans-item__num:focus {
+  border-color: var(--color-brand-primary);
+}
+
+/* 隐藏步进箭头，保持紧凑 */
+.after-trans-item__num::-webkit-inner-spin-button,
+.after-trans-item__num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+.after-trans-item__num::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.after-trans-item__body {
+  flex: 1;
+}
+
 /* ── 向导：剧情路线图设置 ── */
 .plotroute-config {
   display: flex;

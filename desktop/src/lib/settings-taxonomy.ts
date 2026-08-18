@@ -28,7 +28,11 @@ export interface TaxonomySubsection {
 }
 
 /** 项目设置页：固定卡片类型（由 ProjectConfigPage 专用的自定义控件渲染，不入通用列表） */
-export type FixedCardKind = "translationGuideline" | "externalInfo" | "problemAnalyze";
+export type FixedCardKind =
+  | "translationGuideline"
+  | "externalInfo"
+  | "problemAnalyze"
+  | "afterTranslation";
 
 /** 项目设置页：一级分类（section） */
 export interface TaxonomySection {
@@ -151,7 +155,6 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
       {
         title: "",
         keys: [
-          "common.gpt.afterTranslation",
           "internals.pipeline.forceRegenDic",
           "internals.pipeline.abortOnDicFailure",
           "internals.pipeline.forceRegenPlotRoute",
@@ -168,9 +171,12 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.pipeline.enablePlotRoute",
           "internals.pipeline.enableBatchMeta",
           "internals.pipeline.enableTranslate",
+          "internals.pipeline.enableImprove",
         ],
       },
     ],
+    // 翻译后处理后端：有序数组专用卡片（数字框编辑器），不入通用列表
+    fixedCards: ["afterTranslation"],
   },
   {
     title: "翻译后端-剧情路线图",

@@ -1,3 +1,5 @@
+import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
+
 interface PipelineStageItem {
   key: string;
   label: string;
@@ -51,6 +53,11 @@ const PIPELINE_STAGES: PipelineStageItem[] = [
     label: "阶段 6：翻译执行",
     hint: "调用 AI 翻译。关闭后流水线只执行前置分析阶段，不进行翻译。",
   },
+  {
+    key: "enableImprove",
+    label: "阶段 7：修复和改进译文",
+    hint: "翻译完成后逐文件执行下方「修复和改进译文」中选中的后端（按数字顺序）。关闭后整个阶段跳过。",
+  },
 ];
 
 // 剧情路线图的结构类型（含专业术语通俗说明）
@@ -90,11 +97,14 @@ interface StepPipelineSettingsProps {
   /** 剧情路线图：结构类型与用户大纲（纯文本） */
   plotStructureType: string;
   plotOutline: string;
+  /** 修复和改进译文（阶段 7）后处理顺序：有序后端 key 数组 */
+  afterTranslationOrder: string[];
   onGameInfoChange: (v: string) => void;
   onStageToggle: (key: string, enabled: boolean) => void;
   onSampleToggle: (key: string, checked: boolean) => void;
   onPlotStructureTypeChange: (v: string) => void;
   onPlotOutlineChange: (v: string) => void;
+  onAfterTranslationOrderChange: (order: string[]) => void;
 }
 
 /**
@@ -169,6 +179,18 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
             阶段开关控制该阶段是否在流水线中执行。「生成示例文件」独立于开关：勾选后会在对应缓存目录生成
             GlobalPrompt.json / PlotRouteMap.json / {"文件名.meta.json"} / {"文件名.batch.json"}，
             并自动禁用该阶段（空模板需跳过生成）。填写完示例内容后，请到「后端设置」中重新开启对应阶段。
+          </span>
+        </div>
+        <div class="field wizard-settings-grid__full">
+          <span class="field__label">修复和改进译文（阶段 7 后处理顺序）</span>
+          <AfterTranslationOrderEditor
+            value={props.afterTranslationOrder}
+            onChange={props.onAfterTranslationOrderChange}
+          />
+          <span class="field__hint">
+            在数字框中填入数字表示该后端在阶段 7 中的执行顺序（数字几就第几步执行）；留空则不执行。
+            点击数字框自动分配当前最小可用序号，清空后其余后端自动紧凑重排。顺序写入
+            config.yaml 的 common.gpt.afterTranslation（有序数组）；关闭「阶段 7」开关后此处不生效。
           </span>
         </div>
         <div class="field wizard-settings-grid__full">

@@ -2382,9 +2382,9 @@ async def postprocess_results(
     写完整 jsonl 快照（这也是唯一一次把 append 日志合并入主快照的时机）。
     随后合并所有 chunk 的结果，套用 name 替换表并经文件插件写出最终译文。
 
-    若 gpt.afterTranslation 配置为 improve/brfix（或组合 improve+brfix），会在保存
-    快照前先执行对应后处理后端（独立实例、逐文件），把模型给出的备选译文写入各句
-    alt_dst，随快照一并落盘。none 则跳过。
+    若 gpt.afterTranslation 配置为有序数组（或旧字符串组合），会在保存
+    快照前先按数组顺序执行对应后处理后端（独立实例、逐文件），把模型给出的
+    备选译文写入各句 alt_dst，随快照一并落盘。空列表则跳过。
     """
 
     proj_dir = projectConfig.getProjectDir()
@@ -2396,58 +2396,65 @@ async def postprocess_results(
     name_replaceDict = projectConfig.name_replaceDict
 
     # 后处理阶段（替代原"向多轮对话追加改进轮"）：整文件翻译+校对完成后，
-    # 按 gpt.afterTranslation 配置逐文件调度改进轮/换行修复后端（none 跳过）。
+    # 按 gpt.afterTranslation 配置逐文件调度修复/改进后端（空列表跳过）。
     # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
-    _after_mode = _resolve_after_translation_mode(projectConfig)
-    if _after_mode != "none":
-        merged_trans = []
-        for _chunk in resultChunks:
-            merged_trans.extend(_chunk.trans_list)
-        _orig_name = (
-            resultChunks[0].file_path.replace(input_dir, "")
-            .lstrip(os_sep)
-            .replace(os_sep, "-}")
-        )
-        _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
-        try:
-            _num_better = int(_num_better) if _num_better else 100
-        except (TypeError, ValueError):
-            _num_better = 100
-        # 组合 improve+brfix 按序执行，brfix 最后定稿 alt_dst
-        for _m in _after_mode.split("+"):
-            _update_runtime(projectConfig, stage=f"后处理-{_m}")
-            LOGGER.info(
-                f"[后处理] 开始：{_m}，文件={_orig_name}"
+    _after_order = _resolve_after_translation_order(projectConfig)
+    if _after_order:
+        _improve_enabled = projectConfig.getKey("internals.pipeline.enableImprove", True)
+        if not _improve_enabled:
+            LOGGER.debug(
+                f"[后处理] 阶段 7 已禁用（enableImprove=false），"
+                f"跳过 {len(_after_order)} 个后处理后端：{'+'.join(_after_order)}"
             )
+        else:
+            merged_trans = []
+            for _chunk in resultChunks:
+                merged_trans.extend(_chunk.trans_list)
+            _orig_name = (
+                resultChunks[0].file_path.replace(input_dir, "")
+                .lstrip(os_sep)
+                .replace(os_sep, "-}")
+            )
+            _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
             try:
-                await _run_after_trans_single_file(
-                    _m,
-                    _orig_name,
-                    resultChunks[0].file_path,
-                    merged_trans,
-                    projectConfig,
-                    _num_better,
+                _num_better = int(_num_better) if _num_better else 100
+            except (TypeError, ValueError):
+                _num_better = 100
+            # 按配置数组顺序依次执行（数组顺序即执行顺序）
+            for _m in _after_order:
+                _update_runtime(projectConfig, stage=f"后处理-{_m}")
+                LOGGER.info(
+                    f"[后处理] 开始：{_m}，文件={_orig_name}"
                 )
-                LOGGER.info(f"[后处理] 完成：{_m}，文件={_orig_name}")
-            except Exception as e:
-                from GalTransl.Service import JobCancelledError
-
-                if isinstance(e, JobCancelledError):
-                    raise
-                LOGGER.warning(
-                    f"[后处理/{_m}] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
-                )
-                # 上报到控制台"最近错误"
                 try:
-                    from GalTransl.server import record_runtime_error
-
-                    record_runtime_error(
-                        _runtime_project_dir(projectConfig),
-                        kind="api",
-                        message=f"[后处理/{_m}] {resultChunks[0].file_path}: {e}",
+                    await _run_after_trans_single_file(
+                        _m,
+                        _orig_name,
+                        resultChunks[0].file_path,
+                        merged_trans,
+                        projectConfig,
+                        _num_better,
                     )
-                except Exception as _re:
-                    LOGGER.warning(f"[后处理] 错误上报失败：{_re}")
+                    LOGGER.info(f"[后处理] 完成：{_m}，文件={_orig_name}")
+                except Exception as e:
+                    from GalTransl.Service import JobCancelledError
+
+                    if isinstance(e, JobCancelledError):
+                        raise
+                    LOGGER.warning(
+                        f"[后处理/{_m}] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
+                    )
+                    # 上报到控制台"最近错误"
+                    try:
+                        from GalTransl.server import record_runtime_error
+
+                        record_runtime_error(
+                            _runtime_project_dir(projectConfig),
+                            kind="api",
+                            message=f"[后处理/{_m}] {resultChunks[0].file_path}: {e}",
+                        )
+                    except Exception as _re:
+                        LOGGER.warning(f"[后处理] 错误上报失败：{_re}")
 
     # 对每个分块执行错误检查和缓存保存
     for i, chunk in enumerate(resultChunks):
@@ -2491,29 +2498,47 @@ async def postprocess_results(
         LOGGER.info(f"+++ 结果保存 (project_dir){output_file_path.replace(proj_dir,'')}")
 
 
-def _resolve_after_translation_mode(projectConfig: CProjectConfig) -> str:
-    """解析流水线翻译后处理后端配置。
+def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list[str]:
+    """解析流水线翻译后处理后端配置，返回有序后端列表（数组顺序即执行顺序）。
 
-    读取 gpt.afterTranslation（none/improve/brfix/improve+brfix 组合）。
-    缺省时回退 gpt.enableBetterTranslation（true→improve）以兼容旧项目配置。
+    读取 gpt.afterTranslation：接受有序数组（如 [improve, brfix]）或旧字符串
+    （none / improve+brfix 组合），统一解析为白名单内的有序 key 列表；
+    空列表表示不执行。缺省时回退 gpt.enableBetterTranslation（true→[improve]）
+    以兼容旧项目配置。
     """
-    mode = projectConfig.getKey("gpt.afterTranslation")
-    if not mode:
+    allowed = {"improve", "brfix", "jpfix", "banfix", "semcheck"}
+    raw = projectConfig.getKey("gpt.afterTranslation")
+
+    def _filter_parts(parts: list[str]) -> list[str]:
+        seen = set()
+        result: list[str] = []
+        for part in parts:
+            p = part.strip().lower()
+            if p == "none":
+                continue
+            if p in allowed and p not in seen:
+                seen.add(p)
+                result.append(p)
+        return result
+
+    if isinstance(raw, list):
+        parts = [str(item) for item in raw if isinstance(item, str)]
+        return _filter_parts(parts)
+    if isinstance(raw, str):
+        mode = raw.strip().lower()
+        if not mode or mode == "none":
+            return []
+        return _filter_parts(mode.split("+"))
+    if not raw:
         # 旧项目兼容：enableBetterTranslation 已废弃，true 等价于 improve
         if projectConfig.getKey("gpt.enableBetterTranslation"):
             LOGGER.debug(
                 "[后处理] gpt.afterTranslation 缺省，回退 enableBetterTranslation=true→improve"
             )
-            return "improve"
-        return "none"
-    mode = str(mode).strip().lower()
-    # 仅保留白名单内 token，过滤非法配置
-    allowed = {"none", "improve", "brfix", "jpfix", "banfix", "semcheck"}
-    parts = [p for p in mode.split("+") if p in allowed]
-    if not parts:
-        LOGGER.warning(f"[后处理] gpt.afterTranslation 非法值 '{mode}'，回退 none")
-        return "none"
-    return "+".join(parts)
+            return ["improve"]
+        return []
+    LOGGER.warning(f"[后处理] gpt.afterTranslation 非法值 '{raw}'，回退不执行")
+    return []
 
 
 async def _run_after_trans_single_file(

@@ -41,6 +41,7 @@ const DEFAULT_STAGE_ENABLED: Record<string, boolean> = {
   enablePlotRoute: true,
   enableBatchMeta: true,
   enableTranslate: true,
+  enableImprove: true,
 };
 
 /* 等待任务结束（completed/failed/cancelled），带超时保护 */
@@ -114,6 +115,8 @@ export function NewProjectWizard() {
   // 剧情路线图：结构类型（默认树）与用户大纲（纯文本）
   const [plotStructureType, setPlotStructureType] = createSignal("树");
   const [plotOutline, setPlotOutline] = createSignal("");
+  // 修复和改进译文（阶段 7）后处理顺序：有序后端 key 数组（空数组 = 不执行）
+  const [afterTranslationOrder, setAfterTranslationOrder] = createSignal<string[]>([]);
 
   // Step 6
   const [nameJobStatus, setNameJobStatus] = createSignal<
@@ -280,6 +283,8 @@ export function NewProjectWizard() {
         // 动态句数调整默认开启（已取代原"单次翻译句数 gpt.numPerRequestTranslate"，后者由后端默认值接管）
         "gpt.dynamicNumPerRequestTranslate": false,
         "gpt.contextNum": 8,
+        // 修复和改进译文（阶段 7）后处理顺序：有序数组（空数组 = 不执行）
+        "gpt.afterTranslation": afterTranslationOrder(),
       };
       // 翻译规范文件：写入 common 段扁平键 gpt.translation_guideline（后端 CProjectConfig.getKey
       // 只读该位置，见 GalTransl/ConfigHelper.py；不要写顶层 gpt 段，否则选择会被后端忽略）。
@@ -543,6 +548,7 @@ export function NewProjectWizard() {
               sampleStages={sampleStages()}
               plotStructureType={plotStructureType()}
               plotOutline={plotOutline()}
+              afterTranslationOrder={afterTranslationOrder()}
               onGameInfoChange={setGameInfo}
               onStageToggle={(key, enabled) =>
                 setStageEnabled((prev) => ({ ...prev, [key]: enabled }))
@@ -562,6 +568,7 @@ export function NewProjectWizard() {
               }}
               onPlotStructureTypeChange={setPlotStructureType}
               onPlotOutlineChange={setPlotOutline}
+              onAfterTranslationOrderChange={setAfterTranslationOrder}
             />
           )}
           {currentStep() === 5 && (

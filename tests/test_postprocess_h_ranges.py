@@ -43,6 +43,12 @@ class _FakeProjectConfig:
     def file_save_funcs(self) -> dict:
         return {}
 
+    def getKey(self, key: str, default: None = None):
+        # 后处理阶段默认启用；其余键取默认值（测试不依赖具体值）
+        if key == "internals.pipeline.enableImprove":
+            return True
+        return default
+
 
 class PostprocessHRangesPassTests(unittest.TestCase):
     def _make_chunk(self, file_path: str = "/tmp/proj/gt_input/story.txt.json") -> SimpleNamespace:
@@ -68,8 +74,8 @@ class PostprocessHRangesPassTests(unittest.TestCase):
             "GalTransl.Frontend.LLMTranslate.find_problems",
             side_effect=_fake_find_problems,
         ), patch(
-            "GalTransl.Frontend.LLMTranslate._resolve_after_translation_mode",
-            return_value="none",
+            "GalTransl.Frontend.LLMTranslate._resolve_after_translation_order",
+            return_value=[],
         ), patch(
             "GalTransl.Frontend.LLMTranslate._update_runtime",
             return_value=None,
@@ -102,8 +108,8 @@ class PostprocessHRangesPassTests(unittest.TestCase):
             "GalTransl.Frontend.LLMTranslate.find_problems",
             side_effect=_fake_find_problems,
         ), patch(
-            "GalTransl.Frontend.LLMTranslate._resolve_after_translation_mode",
-            return_value="none",
+            "GalTransl.Frontend.LLMTranslate._resolve_after_translation_order",
+            return_value=[],
         ), patch(
             "GalTransl.Frontend.LLMTranslate._update_runtime",
             return_value=None,

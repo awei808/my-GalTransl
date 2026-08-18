@@ -7,6 +7,8 @@ import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../
 import type { ProblemTypeInfo } from "../../lib/api/types";
 import { classifyKeys } from "../../lib/settings-taxonomy";
 import type { FixedCardKind } from "../../lib/settings-taxonomy";
+import { parseAfterTranslation } from "../../lib/afterTranslation";
+import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
 type ConfigValue =
@@ -52,6 +54,8 @@ const HIDDEN_CONFIG_KEYS = new Set<string>([
   // gpt.enableBetterTranslation 已废弃，由 gpt.afterTranslation 取代；
   // 旧值经 migrateBetterTranslationKey 迁移（true→afterTranslation=improve）后隐藏，避免遗留项误导用户
   "common.gpt.enableBetterTranslation",
+  // 翻译后处理后端：改为「翻译后端-完整流水线」区的数字框专用卡片（有序数组），不入通用列表
+  "common.gpt.afterTranslation",
 ]);
 // problemAnalyze 已移回项目设置「问题检测」专用卡片渲染（随保存配置按钮写回 YAML）。
 // 此处仅让该键不出现在通用列表里（避免与专用卡片重复），不再整体隐藏。
@@ -77,10 +81,6 @@ const REMOVED_CONFIG_KEYS = new Set<string>([
 // dynamicNumPerRequestTranslate*）已整体弃用，移入 HIDDEN_CONFIG_KEYS 不再显示；
 // 故 CONDITIONAL_SECTION_KEYS 与 conditionalItems 板块已移除。
 const FIELD_UI: Record<string, FieldUI> = {
-  "common.gpt.afterTranslation": {
-    label: "翻译后处理后端",
-    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；残留日文修复（jpfix）对照原文清除残留日文生成备选译文；语义差异检测（semcheck）用翻译配置的 AI 模型判定疑似错译、漏译、译文串行并标记「疑似错误」问题；可 + 组合（improve+brfix、improve+brfix+semcheck 等，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation / ForJPResidue / ForSemCheck 手动触发。",
-  },
   "common.gpt.swapFixToCurrent": {
     label: "修复轮结果自动交换当前译文",
     hint: "开启后，修复轮（brfix/jpfix）生成的备选译文会与当前译文交换属性：修复结果直接覆盖当前译文（校对结果优先，否则初译），原译文存入备选译文可在校对页回退。关闭时修复结果仅作为备选译文，需手动交换。",
@@ -323,8 +323,9 @@ function migrateGuidelineKey(obj: Record<string, ConfigValue>): Record<string, C
 /**
  * gpt.enableBetterTranslation 已废弃，由 gpt.afterTranslation 取代。
  * 加载/保存时把旧值迁移：enableBetterTranslation=true 且无 afterTranslation 时，写入
- * common 段扁平键 gpt.afterTranslation=improve（与后端 _resolve_after_translation_mode 兼容回退一致），
- * 并清理三处旧键残留（common 扁平键 / common.gpt 嵌套 / 顶层 gpt），避免遗留项误导用户。
+ * common 段扁平键 gpt.afterTranslation=["improve"]（与后端 _resolve_after_translation_order
+ * 兼容回退一致，值为有序数组），并清理三处旧键残留（common 扁平键 / common.gpt 嵌套 / 顶层 gpt），
+ * 避免遗留项误导用户。
  */
 function migrateBetterTranslationKey(obj: Record<string, ConfigValue>): Record<string, ConfigValue> {
   const next: Record<string, ConfigValue> = { ...obj };
@@ -354,20 +355,20 @@ function migrateBetterTranslationKey(obj: Record<string, ConfigValue>): Record<s
   if (!enabled) {
     // 旧键残留清理（即使为 false，避免遗留废弃项）
     cleanupBetterTranslation(next, common, commonNested, gpt, false);
-    // 补全默认值：老项目若从未设置过 afterTranslation，按出厂默认补 none，
-    // 否则该配置项不会出现在前端通用列表（walk 只遍历 config 中存在的键）。
+    // 补全默认值：老项目若从未设置过 afterTranslation，按出厂默认补空数组，
+    // 否则该配置项不会出现在专用卡片（walk 只遍历 config 中存在的键）。
     if (!hasNew && common && typeof common === "object") {
       const commonCopy = { ...common };
-      commonCopy["gpt.afterTranslation"] = "none";
+      commonCopy["gpt.afterTranslation"] = [];
       next.common = commonCopy;
     }
     return next;
   }
 
-  // enableBetterTranslation=true 且无 afterTranslation：按兼容语义迁移为 improve
+  // enableBetterTranslation=true 且无 afterTranslation：按兼容语义迁移为 [improve]
   if (!hasNew && common && typeof common === "object") {
     const commonCopy = { ...common };
-    commonCopy["gpt.afterTranslation"] = "improve";
+    commonCopy["gpt.afterTranslation"] = ["improve"];
     next.common = commonCopy;
   }
   cleanupBetterTranslation(next, common, commonNested, gpt, true);
@@ -1048,6 +1049,31 @@ export function ProjectConfigPage() {
               </select>
             </Show>
           </div>
+        </div>
+      );
+    }
+    // kind === "afterTranslation"：修复和改进译文（阶段 7）后处理顺序
+    if (kind === "afterTranslation") {
+      const order = () => parseAfterTranslation(getValue("common.gpt.afterTranslation"));
+      return (
+        <div class="pc-external-info">
+          <div class="pc-row-label">
+            <span class="pc-label">翻译后处理后端（阶段 7 执行顺序）</span>
+            <div class="pc-key-hint">
+              <code class="pc-key">common.gpt.afterTranslation</code>
+            </div>
+            <p class="pc-desc">
+              完整流水线翻译完成后（阶段 7），按数字顺序逐文件执行修复/改进后端；留空则不执行。
+              数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 7：
+              修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
+              ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
+              对已翻译文件手动执行。
+            </p>
+          </div>
+          <AfterTranslationOrderEditor
+            value={order()}
+            onChange={(o) => setValue("common.gpt.afterTranslation", o)}
+          />
         </div>
       );
     }
