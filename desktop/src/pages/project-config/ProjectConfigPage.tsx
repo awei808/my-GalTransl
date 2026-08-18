@@ -105,6 +105,10 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "语义检测服务商路由",
     hint: "思考参数路由：auto 按模型名自动推断（gemma 等本地模型不发送思考参数）；外部大模型可显式指定（如 deepseek）避免误发不兼容参数。",
   },
+  "common.gpt.numPerRequestSemCheck": {
+    label: "语义检测每批句数",
+    hint: "单次语义判定请求发送的句子数，越小越稳但越慢；本地小模型建议 20-30，避免一次发送过多导致质量下降。",
+  },
   "internals.pipeline.enableValidate": {
     label: "开启阶段 0：输入数据校验",
     hint: "关闭后跳过输入文件校验，直接进入下一阶段（不建议关闭）。",

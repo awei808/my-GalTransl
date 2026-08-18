@@ -79,6 +79,7 @@ common:
   # 语义差异检测（ForSemCheck）：判断原文与译文是否存在极大语义差异（疑似错译/漏译/串行），
   # 命中句写入 suspected_error 并被问题检测认领为「疑似错误」。独立于主翻译端点，
   # 本地 llama.cpp 与外部 OpenAI 兼容大模型通用；与 gpt.afterTranslation=semcheck 配合使用。
+  gpt.numPerRequestSemCheck: 20 # 语义检测每批发送的句子数，越小越稳但越慢；本地小模型建议 20-30。[1-512]
   gpt.semCheck.enabled: false # 是否启用语义差异检测。[True/False]
   gpt.semCheck.endpoint: http://127.0.0.1:8080 # OpenAI 兼容端点：本地 llama.cpp（如 http://127.0.0.1:8080）或外部服务，自动补 /v1；llama-server 启动示例：llama-server -m gemma-3-270m-it-Q4_K_M.gguf -c 8192 --host 127.0.0.1 --port 8080
   gpt.semCheck.modelName: gemma-3-270m-it-q4_k_m # 模型名：本地填 GGUF 名；外部填模型名（如 deepseek-chat）

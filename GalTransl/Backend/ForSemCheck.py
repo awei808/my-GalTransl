@@ -13,6 +13,7 @@ from GalTransl import LOGGER
 from GalTransl.COpenAI import COpenAIToken, COpenAITokenPool
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
+from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseSparseFixRound
 from GalTransl.Backend.Prompts import (
@@ -20,7 +21,7 @@ from GalTransl.Backend.Prompts import (
     FORGAL_JSON_SEMCHECK_PROMPT,
     FORSEMCHECK_SYSTEM,
 )
-from GalTransl.Backend.utils import decode_json_line_part
+from GalTransl.Backend.utils import decode_json_line_part, preprocess_jsonline_response
 
 
 @register_engine("ForSemCheck")
@@ -129,10 +130,13 @@ class ForSemCheck(BaseSparseFixRound):
         translist_hit: Optional[list] = None,
         translist_unhit: Optional[list] = None,
     ) -> CTransList:
-        """检测轮入口：禁用/未配置时降级跳过；否则清旧标记后复用基类分桶流程。
+        """检测轮入口：禁用/未配置时降级跳过；否则清旧标记后单轮逐批检测。
 
         suspected_error 为持久化信号：进入检测即清除全部旧标记再写新结果（幂等），
         避免重复运行累积误报。
+        单轮模式：不维护多轮对话历史（不累积上下文），每批只发送
+        [system] + 本批 user（仅注入任务说明与批次 input），不注入术语表、
+        批次元数据、历史结果、翻译规范、全局分析、文件级元数据。
         """
         if self._disabled_reason:
             LOGGER.warning(
@@ -141,18 +145,90 @@ class ForSemCheck(BaseSparseFixRound):
             return trans_list
         for t in trans_list:
             t.suspected_error = ""
-        return await super().batch_translate(
-            filename,
-            cache_file_path,
-            trans_list,
-            num_pre_request,
-            retry_failed=retry_failed,
-            gpt_dic=gpt_dic,
-            proofread=proofread,
-            retran_key=retran_key,
-            translist_hit=translist_hit,
-            translist_unhit=translist_unhit,
+        targets = self._filter_target_translations(trans_list)
+        total = len(targets)
+        if total == 0:
+            LOGGER.info(f"{self._log_tag} {filename} 无可检测的有效译文，跳过")
+            return trans_list
+        # 语义检测独立批次：优先 gpt.numPerRequestSemCheck（默认20），
+        # 未配置时回退改进轮批次，再兜底调用方实参。本地小模型批次不宜过大。
+        num_per_request = self._coerce_positive_int(
+            self.pj_config.getKey("gpt.numPerRequestSemCheck"),
+            self._coerce_positive_int(
+                self.pj_config.getKey("gpt.numPerRequestBetter"),
+                num_pre_request or 20,
+            ),
         )
+        total_batches = (total + num_per_request - 1) // num_per_request
+        hit_count = 0
+        LOGGER.info(
+            f"{self._log_tag} {filename} 开始单轮语义差异检测，共 {total} 句，{total_batches} 批"
+        )
+        for batch_no, start in enumerate(range(0, total, num_per_request), start=1):
+            self._check_stop_requested()
+            batch = targets[start : start + num_per_request]
+            idx_tip = self._build_idx_tip(batch)
+            _input_list, _sig_list, n_symbol, input_src = self._build_input_jsonlines(
+                batch,
+                proofread=True,
+                filename=filename,
+                include_src=True,
+            )
+            user_content = self._build_semcheck_user_content(input_src)
+            call_messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+            if self.pj_config.active_workers == 1:
+                LOGGER.info(
+                    f"-> 语义检测输入[{batch_no}/{total_batches}] | "
+                    f"backend={self.eng_type} | sentences={len(batch)}"
+                )
+            try:
+                raw_resp, _token = await self._call_llm(
+                    call_messages, filename, idx_tip, None
+                )
+            except JobCancelledError:
+                raise
+            except Exception as e:
+                LOGGER.warning(
+                    f"{self._log_tag}[{filename}:{idx_tip}]LLM调用失败："
+                    f"{type(e).__name__}: {e}"
+                )
+                self._record_round_runtime_error(
+                    filename, idx_tip, f"{type(e).__name__}: {e}", None
+                )
+                continue
+            result_text = preprocess_jsonline_response(raw_resp or "")
+            batch_hit, _found = self._parse_fix_response(result_text, batch, n_symbol)
+            if self._warn_on_zero_found and result_text.strip() and _found == 0:
+                _warn_msg = (
+                    f"{self._log_tag}[{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
+                    f"命中（输出格式异常或内容问题），本次 0 句处理"
+                )
+                LOGGER.warning(_warn_msg)
+                self._record_round_runtime_error(filename, idx_tip, _warn_msg, None)
+            hit_count += batch_hit
+            LOGGER.debug(
+                f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
+                f"（序号 {idx_tip}）命中 {batch_hit} 句"
+            )
+        if hit_count > 0:
+            LOGGER.info(f"{self._log_tag} {filename} 语义检测完成，共命中 {hit_count} 句")
+        else:
+            LOGGER.info(f"{self._log_tag} {filename} 语义检测完成，未发现疑似错误")
+        return trans_list
+
+    def _build_semcheck_user_content(self, input_src: str) -> str:
+        """单轮拼接语义检测 user 提示词：仅注入任务说明与批次 input。
+
+        模板已精简为「任务说明 + input 块」，此处只做 [TargetLang]、[Input]
+        两个占位符替换，不注入术语表/批次元数据/历史结果/翻译规范等其它内容。
+        """
+        prompt_req = self.trans_prompt
+        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
+        prompt_req = prompt_req.replace("[Input]", input_src)
+        return prompt_req
 
     def _parse_fix_response(
         self, result_text: str, trans_list: CTransList, n_symbol: str

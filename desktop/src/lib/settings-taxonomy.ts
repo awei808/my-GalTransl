@@ -139,6 +139,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
       {
         title: "语义差异检测（ForSemCheck）",
         keys: [
+          "common.gpt.numPerRequestSemCheck",
           "common.gpt.semCheck.enabled",
           "common.gpt.semCheck.endpoint",
           "common.gpt.semCheck.modelName",
