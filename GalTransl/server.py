@@ -2208,6 +2208,13 @@ class JobRegistry:
         translator = str(payload.get("translator", "")).strip()
         backend_profile = str(payload.get("backend_profile", "")).strip()
         backend_profile_data = payload.get("backend_profile_data")
+        # 提示词模板覆盖：前端按 translator 键控的 system/user prompt 覆盖（非法类型防御性忽略）
+        prompt_template_overrides = payload.get("prompt_template_overrides")
+        if prompt_template_overrides is not None and not isinstance(prompt_template_overrides, dict):
+            LOGGER.warning(
+                f"[job] prompt_template_overrides 类型非法，已忽略: {type(prompt_template_overrides).__name__}"
+            )
+            prompt_template_overrides = {}
 
         if not project_dir:
             raise ValueError("project_dir is required")
@@ -2237,6 +2244,7 @@ class JobRegistry:
                 translator=translator,
                 backend_profile=backend_profile,
                 backend_profile_data=backend_profile_data if isinstance(backend_profile_data, dict) else {},
+                prompt_template_overrides=prompt_template_overrides or {},
             )
             state = create_job_state(spec)
             reset_runtime_project(project_dir)
@@ -3436,42 +3444,52 @@ def build_handler(registry: JobRegistry) -> type:
                             try:
                                 with open(fp, "rb") as f:
                                     entries = orjson.loads(f.read())
-                                file_changed = False
-                                file_matches = 0
-                                for e in entries:
-                                    if not isinstance(e, dict):
-                                        continue
-                                    src_key = "post_src" if "post_src" in e else ("post_jp" if "post_jp" in e else None)
-                                    dst_key = "pre_dst" if "pre_dst" in e else ("pre_zh" if "pre_zh" in e else None)
-                                    # replace in src
-                                    if field in ("src", "all") and src_key and query in e.get(src_key, ""):
-                                        if not dry_run:
-                                            e[src_key] = e[src_key].replace(query, replacement)
-                                        file_matches += 1
-                                        file_changed = True
-                                    # replace in dst
-                                    if field in ("dst", "all") and dst_key and query in e.get(dst_key, ""):
-                                        if not dry_run:
-                                            e[dst_key] = e[dst_key].replace(query, replacement)
-                                        file_matches += 1
-                                        file_changed = True
-                                    # also replace in proofread_dst / proofread_zh
-                                    if field in ("dst", "all"):
-                                        pr_key = "proofread_dst" if "proofread_dst" in e else ("proofread_zh" if "proofread_zh" in e else None)
-                                        if pr_key and query in e.get(pr_key, ""):
-                                            if not dry_run:
-                                                e[pr_key] = e[pr_key].replace(query, replacement)
-                                            file_matches += 1
-                                            file_changed = True
-                                if file_matches > 0:
-                                    total_matches += file_matches
-                                    total_files += 1
-                                    detail: dict = {"filename": name, "matches": file_matches}
-                                    if file_changed and not dry_run:
-                                        detail["entries"] = entries
-                                    file_details.append(detail)
                             except Exception:
                                 continue
+                            file_changed = False
+                            file_matches = 0
+                            for e in entries:
+                                if not isinstance(e, dict):
+                                    continue
+                                src_key = "post_src" if "post_src" in e else ("post_jp" if "post_jp" in e else None)
+                                dst_key = "pre_dst" if "pre_dst" in e else ("pre_zh" if "pre_zh" in e else None)
+                                # replace in src
+                                if field in ("src", "all") and src_key and query in e.get(src_key, ""):
+                                    if not dry_run:
+                                        e[src_key] = e[src_key].replace(query, replacement)
+                                    file_matches += 1
+                                    file_changed = True
+                                # replace in dst
+                                if field in ("dst", "all") and dst_key and query in e.get(dst_key, ""):
+                                    if not dry_run:
+                                        e[dst_key] = e[dst_key].replace(query, replacement)
+                                    file_matches += 1
+                                    file_changed = True
+                                # also replace in proofread_dst / proofread_zh
+                                if field in ("dst", "all"):
+                                    pr_key = "proofread_dst" if "proofread_dst" in e else ("proofread_zh" if "proofread_zh" in e else None)
+                                    if pr_key and query in e.get(pr_key, ""):
+                                        if not dry_run:
+                                            e[pr_key] = e[pr_key].replace(query, replacement)
+                                        file_matches += 1
+                                        file_changed = True
+                            if file_matches > 0:
+                                total_matches += file_matches
+                                total_files += 1
+                                detail: dict = {"filename": name, "matches": file_matches}
+                                # dry_run 与真实替换都返回 entries：dry_run 中条目未被修改（替换前原值），
+                                # 供前端构造撤销栈的 before 快照；真实替换后返回替换后值作 after 快照
+                                if file_changed:
+                                    detail["entries"] = entries
+                                file_details.append(detail)
+                                # 真实替换写盘（原子写：临时文件 + os.replace）。
+                                # 此前该端点从不落盘、前端也不保存，替换结果只在响应里，实际不生效；
+                                # 写盘失败直接抛出（500），不再被"跳过损坏文件"的容错吞掉
+                                if not dry_run and file_changed:
+                                    tmp_path = fp + ".tmp"
+                                    with open(tmp_path, "wb") as f:
+                                        f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
+                                    os.replace(tmp_path, fp)
                     if not dry_run and total_matches > 0:
                         _append_engine_log(
                             project_dir,
