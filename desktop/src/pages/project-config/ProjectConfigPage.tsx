@@ -1138,7 +1138,7 @@ export function ProjectConfigPage() {
             <label class="pc-label" for="attributive-max-length">
               定语最大长度（定语过长）
             </label>
-            <p class="pc-desc">「是……的」中间定语超过该字数即报「定语过长」，默认 10。⚠️ 测试中，可能误检。</p>
+            <p class="pc-desc">「是……的」中间定语超过该字数即报「定语过长」，默认 10。</p>
           </div>
           <div class="pc-row-control">
             <input
@@ -1161,7 +1161,7 @@ export function ProjectConfigPage() {
             <label class="pc-label" for="adverbial-max-length">
               状语最大长度（状语过长）
             </label>
-            <p class="pc-desc">「在……中/里」或「……地」状语超过该字数即报「状语过长」，默认 12。⚠️ 测试中，可能误检。</p>
+            <p class="pc-desc">「在……中/里」或「……地」状语超过该字数即报「状语过长」，默认 12。</p>
           </div>
           <div class="pc-row-control">
             <input
