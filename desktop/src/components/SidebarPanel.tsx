@@ -4,6 +4,7 @@ import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
 import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
+import { buildReplaceUndoEntries } from "../lib/replaceUndo";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
 import { getErrorMessage } from "../lib/errors";
@@ -366,7 +367,7 @@ function FindReplacePanel() {
     }
     setReplacing(true);
     try {
-      // 先执行 dryRun 确认数量
+      // 先执行 dryRun 确认数量（dry_run 响应携带替换前原值 entries，作为撤销 before 快照）
       const dryRes = await replaceCache(pid, q, r, "dst", true);
       if (dryRes.total_matches === 0) {
         toast.info("未找到可替换的匹配项");
@@ -374,25 +375,15 @@ function FindReplacePanel() {
         return;
       }
 
-      // 记录到 undo
-      for (const fd of dryRes.file_details) {
-        if (fd.entries) {
-          for (const e of fd.entries) {
-            pushUndo({
-              id: `${fd.filename}:${e.index}`,
-              file: fd.filename,
-              index: e.index,
-              before: { pre_dst: e.pre_dst },
-              after: { pre_dst: r },
-              description: "查找替换",
-            });
-          }
-        }
-      }
-
-      // 执行真实替换
+      // 执行真实替换（响应携带替换后 entries，作为撤销 after 快照）
       const res = await replaceCache(pid, q, r, "dst", false);
       toast.success(`已替换 ${res.total_matches} 个匹配项，涉及 ${res.total_files} 个文件`);
+
+      // 替换成功后构造撤销栈：before=替换前原值，after=替换后值，仅入栈实际发生变化的条目
+      for (const entry of buildReplaceUndoEntries(dryRes, res)) {
+        pushUndo(entry);
+      }
+
       // 重新搜索
       await handleSearch();
     } catch (e) {

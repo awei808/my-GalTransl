@@ -429,6 +429,8 @@ class CNormalDic:
         input_translate：这个句子所在的Translate对象
         full_match：是否全匹配，默认False，开启后查找词完全等于input_text才替换
         """
+        # 条件字典"同上"标记：记录上一个条件词条是否命中（首条条件词条命中"~"时回退 False，避免 UnboundLocalError）
+        last_one_success = False
         # 遍历每个BasicDicElement做替换
         for dic in self.dic_list:
             # 场景字典判断
