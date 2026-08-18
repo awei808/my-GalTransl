@@ -84,6 +84,7 @@ const shortcutTabs: TabDef[] = [
     view: "settings-backend",
     label: "后端设置（项目设置）",
     shortcutView: "project-config",
+    shortcutScrollTarget: "pc-top",
     needsProject: true,
   },
   {

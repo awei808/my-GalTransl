@@ -573,8 +573,11 @@ export function ProjectConfigPage() {
   // 处理 ActivityBar 快捷按钮发起的滚动定位（等配置加载完成、问题检测卡片内容稳定后执行并清除标记）
   createEffect(() => {
     const target = appState.settingsScrollTarget;
-    if (!target || target !== "pc-group-problem-analyze") return;
-    if (loading() || problemTypesLoading()) return;
+    // 仅处理已知锚点；pc-top 为页面顶部，pc-group-problem-analyze 为问题检测分组
+    if (!target || (target !== "pc-group-problem-analyze" && target !== "pc-top")) return;
+    // 问题检测分组需等内容加载稳定再滚动；页面顶部无需等待问题类型
+    const waitProblemTypes = target === "pc-group-problem-analyze";
+    if (loading() || (waitProblemTypes && problemTypesLoading())) return;
     requestAnimationFrame(() => {
       const el = document.getElementById(target);
       if (el) {
@@ -937,11 +940,14 @@ export function ProjectConfigPage() {
                     />
                   }
                 >
-                  {/* 剧情大纲：多行输入（Enter 换行，方案与游戏外部信息一致） */}
+                  {/* 剧情大纲：多行输入（Enter 换行，方案与游戏外部信息一致）
+                      注意：value 必须直接调 getValue(key) 读取响应式值，不能用外层 const val 快照——
+                      通用列表项经带值缓存签名的 <For> 包裹，renderFieldRow 仅挂载时执行一次，
+                      const val 捕获的是首次渲染快照，setValue 后不刷新会导致 onKeyDown 插入的换行不可见。 */}
                   <textarea
                     class="field__input pc-input pc-textarea-multiline"
                     rows={5}
-                    value={String(val ?? "")}
+                    value={String(getValue(key) ?? "")}
                     onInput={(e) => setValue(key, e.currentTarget.value)}
                     onKeyDown={(e) => {
                       if (e.key !== "Enter" || e.isComposing) return;
@@ -1448,7 +1454,7 @@ export function ProjectConfigPage() {
   });
 
   return (
-    <div class="page page-project-config">
+    <div class="page page-project-config" id="pc-top">
       <div class="pc-header">
         <div>
           <h2 class="page-title">后端设置（项目设置）</h2>
