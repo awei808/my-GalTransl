@@ -175,6 +175,17 @@ class LineBreakFix(GTextPlugin):
         :return: 处理后的文本
         """
         slices = text.split(self.linebreak)
+        # 译文换行数多于目标：合并相邻片段（优先合并总长最短的一对，保持行均衡）直至数量一致，
+        # 修复原实现 join(slices[:target_breaks+1]) 截断丢文本的问题
+        if len(slices) - 1 > target_breaks:
+            LOGGER.debug(f"[{self.pname}] 译文换行数多于原文，合并多余换行: {len(slices) - 1} -> {target_breaks}")
+        while len(slices) - 1 > target_breaks:
+            merge_idx = min(
+                range(len(slices) - 1),
+                key=lambda k: len(slices[k]) + len(slices[k + 1]),
+            )
+            slices[merge_idx] = slices[merge_idx] + slices[merge_idx + 1]
+            del slices[merge_idx + 1]
         while len(slices) - 1 < target_breaks:
             longest_slice_index = max(range(len(slices)), key=lambda i: len(slices[i]))
             longest_slice = slices[longest_slice_index]
