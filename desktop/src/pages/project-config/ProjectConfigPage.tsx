@@ -61,9 +61,17 @@ const LIST_OMITTED_KEYS = new Set<string>([
   "problemAnalyze.avgSentenceLengthThreshold",
   "problemAnalyze.avgSentenceLengthThresholdH",
 ]);
-// 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口
+// 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口；
+// gpt.semCheck.* 已随 ForSemCheck 跟随主翻译 profile 而废弃（旧配置残留键一并隐藏）
 const REMOVED_CONFIG_KEYS = new Set<string>([
   "common.gpt.contextNum",
+  "common.gpt.semCheck.enabled",
+  "common.gpt.semCheck.endpoint",
+  "common.gpt.semCheck.modelName",
+  "common.gpt.semCheck.apiKey",
+  "common.gpt.semCheck.apiTimeout",
+  "common.gpt.semCheck.stream",
+  "common.gpt.semCheck.provider",
 ]);
 // 注：「仅在无批次级元数据时启用」的退化分支键（numPerRequestTranslate / splitFile* /
 // dynamicNumPerRequestTranslate*）已整体弃用，移入 HIDDEN_CONFIG_KEYS 不再显示；
@@ -71,43 +79,15 @@ const REMOVED_CONFIG_KEYS = new Set<string>([
 const FIELD_UI: Record<string, FieldUI> = {
   "common.gpt.afterTranslation": {
     label: "翻译后处理后端",
-    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；残留日文修复（jpfix）对照原文清除残留日文生成备选译文；语义差异检测（semcheck）用本地/外部AI判定疑似错译、漏译、译文串行并标记「疑似错误」问题；可 + 组合（improve+brfix、improve+brfix+semcheck 等，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation / ForJPResidue / ForSemCheck 手动触发。",
+    hint: "完整流水线翻译完成后逐文件追加的后处理：无（none）不追加；改进轮（improve）让AI评估并给出备选译文；换行修复（brfix）修复译文内异常换行；残留日文修复（jpfix）对照原文清除残留日文生成备选译文；语义差异检测（semcheck）用翻译配置的 AI 模型判定疑似错译、漏译、译文串行并标记「疑似错误」问题；可 + 组合（improve+brfix、improve+brfix+semcheck 等，按顺序执行）。也可直接在后端的下拉中选 ForImproveTranslation / ForBRStation / ForJPResidue / ForSemCheck 手动触发。",
   },
   "common.gpt.swapFixToCurrent": {
     label: "修复轮结果自动交换当前译文",
     hint: "开启后，修复轮（brfix/jpfix）生成的备选译文会与当前译文交换属性：修复结果直接覆盖当前译文（校对结果优先，否则初译），原译文存入备选译文可在校对页回退。关闭时修复结果仅作为备选译文，需手动交换。",
   },
-  "common.gpt.semCheck.enabled": {
-    label: "启用语义差异检测",
-    hint: "总开关。开启且配置好端点后，ForSemCheck 后端判定原文与译文是否存在极大语义差异（疑似错译/漏译/译文串行），命中句写入 suspected_error 并被问题检测标记为「疑似错误」。",
-  },
-  "common.gpt.semCheck.endpoint": {
-    label: "语义检测端点",
-    hint: "OpenAI 兼容端点，本地 llama.cpp 与外部大模型通用，自动补 /v1。本地示例：http://127.0.0.1:8080（llama-server 启动：llama-server -m 模型.gguf -c 8192 --host 127.0.0.1 --port 8080）。",
-  },
-  "common.gpt.semCheck.modelName": {
-    label: "语义检测模型名",
-    hint: "本地填 GGUF 模型名（如 gemma-3-270m-it-q4_k_m）；外部填服务商模型名（如 deepseek-chat）。",
-  },
-  "common.gpt.semCheck.apiKey": {
-    label: "语义检测 API 密钥",
-    hint: "本地服务器（llama-server 不校验 key）任意占位即可；外部服务填真实密钥。",
-  },
-  "common.gpt.semCheck.apiTimeout": {
-    label: "语义检测超时（秒）",
-    hint: "单次判定请求的超时上限。",
-  },
-  "common.gpt.semCheck.stream": {
-    label: "语义检测流式输出",
-    hint: "开启流式输出可提前中断，减少等待。",
-  },
-  "common.gpt.semCheck.provider": {
-    label: "语义检测服务商路由",
-    hint: "思考参数路由：auto 按模型名自动推断（gemma 等本地模型不发送思考参数）；外部大模型可显式指定（如 deepseek）避免误发不兼容参数。",
-  },
   "common.gpt.numPerRequestSemCheck": {
     label: "语义检测每批句数",
-    hint: "单次语义判定请求发送的句子数，越小越稳但越慢；本地小模型建议 20-30，避免一次发送过多导致质量下降。",
+    hint: "单次语义判定请求发送的句子数，越小越稳但越慢，避免一次发送过多导致质量下降。",
   },
   "internals.pipeline.enableValidate": {
     label: "开启阶段 0：输入数据校验",
@@ -452,16 +432,9 @@ const KEYWORD_LABELS: Record<string, string> = {
   混合: "混合",
 };
 
-// 语义检测启用开关：后端已实现，前端开放编辑；TODO 仅作记录，渲染豁免徽标与禁用
-const SEMCHECK_ENABLED_KEY = "common.gpt.semCheck.enabled";
-
-/**
- * 待实现/待验证的配置项：设置页渲染 TODO 徽标并禁用编辑（防止误改），
- * 功能落地并验证通过后移除对应条目。
- */
-const TODO_CONFIG_KEYS: Record<string, string> = {
-  [SEMCHECK_ENABLED_KEY]: "功能开发中，配置暂不生效",
-};
+// 待实现/待验证的配置项：设置页渲染 TODO 徽标并禁用编辑（防止误改），
+// 功能落地并验证通过后移除对应条目。
+const TODO_CONFIG_KEYS: Record<string, string> = {};
 
 export function ProjectConfigPage() {
   const [config, setConfig] = createSignal<Record<string, ConfigValue>>({});
@@ -745,9 +718,7 @@ export function ProjectConfigPage() {
   function renderFieldRow(item: [string, ConfigValue, string]) {
     const [key, , dtype] = item;
     // 待实现/待验证的配置项：渲染 TODO 徽标并禁用编辑（功能落地后从 TODO_CONFIG_KEYS 移除）
-    const todoMsg = TODO_CONFIG_KEYS[key];
-    // 语义检测启用开关已实现可编辑：TODO 仅作记录，渲染时豁免徽标与禁用
-    const effectiveTodoMsg = key === SEMCHECK_ENABLED_KEY ? "" : todoMsg;
+    const effectiveTodoMsg = TODO_CONFIG_KEYS[key];
     // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
     if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
     // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理

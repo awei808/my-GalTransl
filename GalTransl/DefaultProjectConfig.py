@@ -76,17 +76,7 @@ common:
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
   gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
   gpt.swapFixToCurrent: false # 修复轮（brfix/jpfix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
-  # 语义差异检测（ForSemCheck）：判断原文与译文是否存在极大语义差异（疑似错译/漏译/串行），
-  # 命中句写入 suspected_error 并被问题检测认领为「疑似错误」。独立于主翻译端点，
-  # 本地 llama.cpp 与外部 OpenAI 兼容大模型通用；与 gpt.afterTranslation=semcheck 配合使用。
-  gpt.numPerRequestSemCheck: 20 # 语义检测每批发送的句子数，越小越稳但越慢；本地小模型建议 20-30。[1-512]
-  gpt.semCheck.enabled: false # 是否启用语义差异检测。[True/False]
-  gpt.semCheck.endpoint: http://127.0.0.1:8080 # OpenAI 兼容端点：本地 llama.cpp（如 http://127.0.0.1:8080）或外部服务，自动补 /v1；llama-server 启动示例：llama-server -m gemma-3-270m-it-Q4_K_M.gguf -c 8192 --host 127.0.0.1 --port 8080
-  gpt.semCheck.modelName: gemma-3-270m-it-q4_k_m # 模型名：本地填 GGUF 名；外部填模型名（如 deepseek-chat）
-  gpt.semCheck.apiKey: local # API 密钥：本地服务器任意占位即可；外部填真实 key
-  gpt.semCheck.apiTimeout: 120 # 请求超时（秒）。[1-600]
-  gpt.semCheck.stream: true # 流式输出。[True/False]
-  gpt.semCheck.provider: auto # 思考参数路由：auto 按模型名自动推断（gemma 等不发送）；外部大模型可显式指定（如 deepseek）避免误发不兼容参数。[auto/openai/deepseek/qwen/glm/gemini/anthropic/grok/kimi]
+  gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   # Sakura/GalTransl
   gpt.token_limit: 0 # (Sakura/GalTransl) 单轮token上限；0表示不限制。用于避免上下文溢出。
   # 调试日志
@@ -150,7 +140,7 @@ problemAnalyze:
     #- 比日文长严格 # 比日文长1倍以上就提醒
     #- 长句丢失换行 # 译文平均分句长度超过 avgSentenceLengthThreshold，疑似丢失应有换行
     #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）之后
-    - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领；需配置 gpt.semCheck
+    - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
   avgSentenceLengthThreshold: 17 # 长句丢失换行的分句长度阈值，默认17，建议范围15~25
   avgSentenceLengthThresholdH: 24 # 长句丢失换行的H场景专用分句长度阈值，默认24，建议范围20~30
 

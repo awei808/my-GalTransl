@@ -10,7 +10,7 @@
 from typing import Optional, Tuple
 
 from GalTransl import LOGGER
-from GalTransl.COpenAI import COpenAIToken, COpenAITokenPool
+from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl.Service import JobCancelledError
@@ -24,6 +24,13 @@ from GalTransl.Backend.Prompts import (
 from GalTransl.Backend.utils import decode_json_line_part, preprocess_jsonline_response
 
 
+class _EmptyTokenPool:
+    """空令牌池占位：主 profile 不可用时保证基类 init_chatbot 不崩溃（不发任何请求）。"""
+
+    def get_available_token(self) -> list:
+        return []
+
+
 @register_engine("ForSemCheck")
 class ForSemCheck(BaseSparseFixRound):
     """语义差异检测后端。
@@ -32,8 +39,10 @@ class ForSemCheck(BaseSparseFixRound):
     差异的句子 id（可选 reason），本后端为命中句置 suspected_error 标记。
     问题类型统一由 find_problems 认领为「疑似错误」。
 
-    端点独立于主翻译 profile（gpt.semCheck.* 段）：本地 llama.cpp 与外部
-    OpenAI 兼容大模型通用；未启用或未配置时降级跳过，不发任何请求。
+    与主翻译 profile 共用令牌池（与其他后处理后端 ForImproveTranslation /
+    ForBRStation 等一致）：外部 OpenAI 兼容大模型与本地 llama.cpp 均可直接
+    使用，取决于「后端配置」页所选端点；主池无可用 token 时降级跳过，不发
+    任何请求。
 
     引擎标识：ForSemCheck
     """
@@ -57,52 +66,37 @@ class ForSemCheck(BaseSparseFixRound):
         """
         初始化语义差异检测后端。
 
+        与其他后处理后端一致，直接复用主翻译 profile 的令牌池（token_pool），
+        不维护独立端点：外部 OpenAI 兼容大模型与本地 llama.cpp 均可用，
+        取决于「后端配置」页所选端点。
+
         Args:
             config: 项目配置对象。
             eng_type: 引擎标识（ForSemCheck）。
             proxy_pool: 代理池对象，为 None 时不使用代理。
-            token_pool: 主翻译令牌池；本引擎使用独立端点（gpt.semCheck.*），
-                不使用该参数，避免校对请求误打到主翻译 profile。
+            token_pool: 主翻译令牌池；为 None 时按主 profile 自动构建。
         """
         self._disabled_reason = ""
-        enabled = self._coerce_bool(config.getKey("gpt.semCheck.enabled", False))
-        endpoint = (config.getKey("gpt.semCheck.endpoint", "") or "").strip()
-        if not enabled:
-            self._disabled_reason = "gpt.semCheck.enabled 未启用"
-        elif not endpoint:
-            self._disabled_reason = "gpt.semCheck.endpoint 未配置"
-
-        model_name = (config.getKey("gpt.semCheck.modelName", "") or "").strip()
-        api_key = (config.getKey("gpt.semCheck.apiKey", "local") or "").strip()
-        stream = self._coerce_bool(config.getKey("gpt.semCheck.stream", True))
-        provider = (config.getKey("gpt.semCheck.provider", "auto") or "auto").strip()
-
-        # 独立令牌池：仅包含语义检测端点，与主翻译 profile 隔离（不误打云端）。
-        # 禁用/未配置时 endpoint 为空 → token 列表为空，本引擎不发任何请求。
-        sem_pool = COpenAITokenPool(config, eng_type)
-        if endpoint:
-            sem_token = COpenAIToken(
-                token=api_key or "local",
-                domain=endpoint,
-                model_name=model_name or "local-model",
-                stream=stream,
-                isAvailable=True,
-            )
-            sem_pool.tokens = [(True, sem_token)]
-        else:
-            sem_pool.tokens = []
-        super().__init__(config, eng_type, proxy_pool, sem_pool)
+        if token_pool is None:
+            # 直接实例化（测试/独立调用）未传池：按主 profile 自建，与其他调用路径一致
+            try:
+                token_pool = COpenAITokenPool(config, eng_type)
+            except Exception as e:
+                # 老项目缺 OpenAI-Compatible 段等极端场景：降级禁用，不中断后处理
+                LOGGER.warning(
+                    f"{self._log_tag} 主翻译令牌池构建失败：{type(e).__name__}: {e}"
+                )
+                self._disabled_reason = "主翻译令牌池构建失败"
+                token_pool = _EmptyTokenPool()
+        if not getattr(token_pool, "get_available_token", lambda: [])():
+            if not self._disabled_reason:
+                self._disabled_reason = (
+                    "主翻译令牌池无可用 token（请在「后端配置」页配置 OpenAI 兼容端点）"
+                )
+        super().__init__(config, eng_type, proxy_pool, token_pool)
         # 覆盖基类（翻译轮）的系统提示词为检测轮专用角色声明
         self.system_prompt = FORSEMCHECK_SYSTEM
         self.trans_prompt = FORGAL_JSON_SEMCHECK_PROMPT
-        # 思考参数路由：按 gpt.semCheck.provider 覆盖主 profile 推断（auto=按模型名推断，
-        # 如外部 deepseek 可显式指定，避免误发不兼容参数）
-        self.provider = provider
-        # 语义检测专用超时：独立于主翻译 profile 的 apiTimeout（防御非法配置回退 120）
-        try:
-            self.api_timeout = int(config.getKey("gpt.semCheck.apiTimeout", 120) or 120)
-        except (TypeError, ValueError):
-            self.api_timeout = 120
         # 覆盖默认值后统一重放 change_prompt 与用户模板 override（基类 __init__ 已应用过一次）
         self._finalize_prompts()
 

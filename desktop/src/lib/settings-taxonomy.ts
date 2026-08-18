@@ -140,13 +140,6 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         title: "语义差异检测（ForSemCheck）",
         keys: [
           "common.gpt.numPerRequestSemCheck",
-          "common.gpt.semCheck.enabled",
-          "common.gpt.semCheck.endpoint",
-          "common.gpt.semCheck.modelName",
-          "common.gpt.semCheck.apiKey",
-          "common.gpt.semCheck.apiTimeout",
-          "common.gpt.semCheck.stream",
-          "common.gpt.semCheck.provider",
         ],
       },
     ],

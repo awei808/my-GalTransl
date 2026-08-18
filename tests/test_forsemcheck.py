@@ -6,7 +6,7 @@
   - 脏 JSON 容错（尾随垃圾 / 前置思考文字）与未知 id 跳过
   - find_problems 认领：suspected_error 非空 → 输出「疑似错误」问题
   - _filter_target_translations：全量已译句（含 h 场景），排除无译文/Failed/skip_check
-  - batch_translate：未启用/未配置时降级跳过（不发请求、保留旧标记）；启用时清旧标记（幂等）
+  - batch_translate：主翻译令牌池无可用 token 时降级跳过（不发请求、保留旧标记）；可用时清旧标记（幂等）
   - 单轮 user 提示词：只注入任务说明与批次 input，不注入术语表/批次元数据/历史/规范等
   - Cache._build_cache_obj：suspected_error 随快照落盘
 """
@@ -161,7 +161,7 @@ class BatchTranslateGuardTests(unittest.TestCase):
     def test_disabled_skips_and_keeps_old_mark(self) -> None:
         obj = object.__new__(ForSemCheck)
         obj._log_tag = "[语义检测]"
-        obj._disabled_reason = "gpt.semCheck.enabled 未启用"
+        obj._disabled_reason = "主翻译令牌池无可用 token"
         trans = _trans(1)
         trans.suspected_error = "旧标记"
         trans_list = [trans]

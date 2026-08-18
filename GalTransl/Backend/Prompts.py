@@ -200,7 +200,7 @@ FORGAL_JSON_BRSTATION_PROMPT = _build_json_round_prompt(_BRSTATION_TASK, with_in
 # 语义差异检测轮（ForSemCheck）：系统角色声明与用户提示词模板。
 # 仅判断原文与译文是否存在「极大语义差异」（疑似错译/漏译/串行），不产出译文、
 # 不润色；命中句由后端置 suspected_error 标记，find_problems 认领为「疑似错误」。
-# 端点由 gpt.semCheck.* 独立配置，本地 llama.cpp 与外部 OpenAI 兼容大模型通用。
+# 端点跟随主翻译 profile（与 ForImproveTranslation 等后处理后端一致）。
 FORSEMCHECK_SYSTEM = "你是 Galgame 译文质检员，只负责判断日文原文与译文是否存在极大语义差异，不修改译文、不输出译文、不润色。"
 
 _SEMCHECK_TASK = """<process_requirements>
