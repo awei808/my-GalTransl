@@ -197,6 +197,8 @@ export function TranslateConsole() {
     async function poll() {
       try {
         const rt = await fetchProjectRuntime(projectId);
+        // await 期间可能已切换项目：仅当仍是本项目时才应用结果，避免旧数据污染 runtime/prevJobStatus
+        if (appState.activeProjectId !== projectId) return;
         pollErrorCount = 0;
         setRuntime(rt);
         // 一次性提示：后端流水线阶段告知（如术语表跳过/生成），toast 后清除避免重复

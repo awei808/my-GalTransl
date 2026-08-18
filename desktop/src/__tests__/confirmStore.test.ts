@@ -128,4 +128,58 @@ describe("confirmStore — 三按钮确认流程", () => {
     const result: ConfirmResult = await promise;
     expect(result.action).toBe("cancel");
   });
+
+  it("排队：活动弹窗期间 show() 不覆盖旧 promise，关闭后展示下一个", async () => {
+    const first = confirm.show({
+      title: "A",
+      confirmText: "确定",
+      cancelText: "取消",
+    });
+    expect(getConfirmState().visible).toBe(true);
+    expect(getConfirmState().options?.title).toBe("A");
+
+    // 第二个 show 排队，不立即显示、不覆盖第一个
+    const second = confirm.show({
+      title: "B",
+      confirmText: "确定",
+      cancelText: "取消",
+    });
+    expect(getConfirmState().visible).toBe(true);
+    expect(getConfirmState().options?.title).toBe("A");
+
+    // 关闭第一个 → 第二个显示
+    confirm.resolve(false);
+    expect(getConfirmState().visible).toBe(true);
+    expect(getConfirmState().options?.title).toBe("B");
+
+    // 关闭第二个
+    confirm.resolve(true);
+    const r1 = await first;
+    const r2 = await second;
+    expect(r1.confirmed).toBe(false);
+    expect(r2.confirmed).toBe(true);
+  });
+
+  it("连续 resolve 依次关闭队列中的弹窗", async () => {
+    const first = confirm.show({ title: "A", confirmText: "确定", cancelText: "取消" });
+    const second = confirm.show({ title: "B", confirmText: "确定", cancelText: "取消" });
+
+    confirm.resolve(false); // 关闭 A → 显示 B
+    expect(getConfirmState().options?.title).toBe("B");
+
+    confirm.resolve(false); // 关闭 B（连续操作语义：依次关闭，非覆盖）
+    expect(getConfirmState().visible).toBe(false);
+
+    expect((await first).confirmed).toBe(false);
+    expect((await second).confirmed).toBe(false);
+  });
+
+  it("弹窗已全部关闭后 resolve 为 no-op（守卫）", async () => {
+    const first = confirm.show({ title: "A", confirmText: "确定", cancelText: "取消" });
+    confirm.resolve(false);
+    // 弹窗已关闭且无队列：再次 resolve 不应抛错、不应显示任何弹窗
+    expect(() => confirm.resolve(false)).not.toThrow();
+    expect(getConfirmState().visible).toBe(false);
+    expect((await first).confirmed).toBe(false);
+  });
 });

@@ -39,9 +39,12 @@ function signature(tree: FileNode[]): string {
 }
 
 async function tick() {
-  if (!activePid) return;
+  const pid = activePid;
+  if (!pid) return;
   try {
-    const res = await fetchProjectFiles(activePid);
+    const res = await fetchProjectFiles(pid);
+    // await 期间可能已切换/停止监控：丢弃过期响应，避免旧项目数据写入 cacheTree/版本号
+    if (activePid !== pid) return;
     const tree = res.cache_files ?? [];
 
     const sizes: Record<string, number> = {};

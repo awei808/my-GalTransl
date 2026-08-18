@@ -132,13 +132,23 @@ export function navigateTo(view: ActiveView) {
  * @param configFileName 若调用方已知真实配置名（如新建项目恒为 config.yaml）可直接传入，跳过探测。
  */
 export async function openProject(projectId: string, opts?: { configFileName?: string }) {
-  // 先同步设置导航与项目 ID，保证页面立即切换
+  // 先同步设置导航与项目 ID，保证页面立即切换；同时重置上一项目的状态残留
+  // （旧 activeFilePath/dirtyFiles/cacheTree/reviewJumpToIndex 等被带到新项目会
+  //  造成打开错误文件、误弹未保存确认、文件树闪现旧项目）
   setAppState({
     activeProjectId: projectId,
     activeConfigFileName: opts?.configFileName ?? null,
     activeView: "translate",
     sidebarOpen: true,
     sidebarTab: null,
+    activeFilePath: null,
+    dirtyFiles: [],
+    cacheTree: [],
+    cacheVersion: 0,
+    problemVersion: 0,
+    reviewJumpToIndex: null,
+    prevJobStatus: "",
+    modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   });
 
   // 未显式提供时，向后端探测真实配置名（config.inc.yaml 优先于 config.yaml）

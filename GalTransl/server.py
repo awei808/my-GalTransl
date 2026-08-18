@@ -716,7 +716,7 @@ def _parse_yaml_comments(yaml_text: str) -> dict[str, str]:
 
 def _build_config_schema() -> dict[str, Any]:
     """从 DEFAULT_PROJECT_CONFIG_YAML 模板生成配置 schema：
-    返回 { parameters: { "path.to.key": { "comment": "...", "children": [...] } } }
+    返回 { parameters: { "path.to.key": "注释文本" } }（值为字符串注释，非对象）
     """
     comments = _parse_yaml_comments(DEFAULT_PROJECT_CONFIG_YAML)
     return {"parameters": comments}

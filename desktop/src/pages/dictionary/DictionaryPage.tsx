@@ -316,8 +316,8 @@ export function DictionaryPage() {
     if (!pid()) return;
     setGenerating(true);
     try {
-      // 1. 提交生成任务（后端返回异步 job_id）
-      const submitRes = await generateNameTable(pid()!);
+      // 1. 提交生成任务（后端返回异步 job_id）；config.inc.yaml 项目须传真实配置名
+      const submitRes = await generateNameTable(pid()!, getActiveConfigFileName());
       const jobId = submitRes.job_id;
       if (!jobId) {
         toast.error("提交人名提取任务失败：未返回任务 ID");

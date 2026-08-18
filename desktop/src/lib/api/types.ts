@@ -482,9 +482,6 @@ export type NameTableResponse = {
 
 export type NameTableGenerateResponse = {
   success: boolean;
-  source_file: string;
-  names: NameEntry[];
-  total: number;
   job_id?: string;
 };
 

@@ -444,8 +444,10 @@ export async function fetchNameTable(projectId: string) {
   return apiRequest<NameTableResponse>(`/api/projects/${projectId}/name-table`);
 }
 
-export async function generateNameTable(projectId: string) {
-  return apiRequest<NameTableGenerateResponse>(`/api/projects/${projectId}/name-table/generate`, {
+export async function generateNameTable(projectId: string, configFileName?: string) {
+  // config.inc.yaml 项目必须显式传配置名，否则后端默认 config.yaml 提交 dump-name 任务读错配置
+  const query = configFileName ? `?config=${encodeURIComponent(configFileName)}` : "";
+  return apiRequest<NameTableGenerateResponse>(`/api/projects/${projectId}/name-table/generate${query}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });

@@ -519,21 +519,26 @@ function ProblemList() {
     });
   }
 
+  // 请求序号：problemVersion 重拉 / pid 切换时递增，使旧请求的过期响应不再覆盖新结果
+  let problemSeq = 0;
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     // 依赖 problemVersion：任一缓存文件变化都刷新问题列表（修复"非当前文件保存后不刷新"盲区）
     void appState.problemVersion;
     if (!pid || appState.sidebarTab !== "problems") {
+      problemSeq++;  // 使在途响应立即过期
       setProblems([]);
       return;
     }
+    const seq = ++problemSeq;
     void fetchProblemTypes().then((r) => {
-      if (r) setProblemTypes(r);
+      if (seq === problemSeq && r) setProblemTypes(r);
     });
     // 查整个项目的问题，不按当前文件过滤（问题列表按文件名分组，已足够区分）
     fetchProjectProblems(pid)
       .then((res) => {
-        setProblems(res.problems ?? []);
+        if (seq === problemSeq) setProblems(res.problems ?? []);
       })
       .catch(() => {});
   });
@@ -752,16 +757,23 @@ function AltList() {
     });
   }
 
+  // 请求序号：problemVersion 重拉 / pid 切换时递增，使旧请求的过期响应不再覆盖新结果
+  let altSeq = 0;
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     // 复用问题列表版本号：任一缓存文件变化都刷新备选列表（覆盖外部修改盲区）
     void appState.problemVersion;
     if (!pid || appState.sidebarTab !== "alt") {
+      altSeq++;  // 使在途响应立即过期
       setAlts([]);
       return;
     }
+    const seq = ++altSeq;
     fetchProjectAltTranslations(pid)
-      .then((res) => setAlts(res.alts ?? []))
+      .then((res) => {
+        if (seq === altSeq) setAlts(res.alts ?? []);
+      })
       .catch(() => {});
   });
 

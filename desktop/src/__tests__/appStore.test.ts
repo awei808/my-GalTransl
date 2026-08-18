@@ -10,6 +10,7 @@ import {
   markClean,
   markDirty as md,
   markClean as mc,
+  openProject,
 } from "../stores/appStore";
 
 /** 重置 dirtyFiles 与 activeFilePath 到初始状态 */
@@ -129,5 +130,46 @@ describe("activeFilePath 守卫（模拟 onInput 中 if (appState.activeFilePath
       markDirty(appState.activeFilePath);
     }
     expect(appState.dirtyFiles).toEqual(["game/file.json"]);
+  });
+});
+
+describe("openProject 状态重置（M20）", () => {
+  beforeEach(() => {
+    // 清理 openProject 测试可能遗留的项目状态，避免污染其他用例
+    setAppState({
+      activeProjectId: null,
+      activeFilePath: null,
+      dirtyFiles: [],
+      cacheTree: [],
+      cacheVersion: 0,
+      problemVersion: 0,
+      reviewJumpToIndex: null,
+      prevJobStatus: "",
+    });
+  });
+
+  it("打开新项目时重置上一项目的状态残留", async () => {
+    // 模拟上一项目残留状态
+    setAppState({
+      activeProjectId: "old-project",
+      activeFilePath: "old/game.txt.json",
+      dirtyFiles: ["old/game.txt.json"],
+      cacheTree: [{ path: "old/x.json", name: "x.json", is_file: true, size: 1, modified: "" }],
+      cacheVersion: 5,
+      problemVersion: 3,
+      reviewJumpToIndex: 2,
+      prevJobStatus: "running",
+    });
+
+    await openProject("new-project", { configFileName: "config.yaml" });
+
+    expect(appState.activeProjectId).toBe("new-project");
+    expect(appState.activeFilePath).toBeNull();
+    expect(appState.dirtyFiles).toEqual([]);
+    expect(appState.cacheTree).toEqual([]);
+    expect(appState.cacheVersion).toBe(0);
+    expect(appState.problemVersion).toBe(0);
+    expect(appState.reviewJumpToIndex).toBeNull();
+    expect(appState.prevJobStatus).toBe("");
   });
 });
