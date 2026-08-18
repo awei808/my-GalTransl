@@ -366,8 +366,9 @@ python build_release.py --no-zip     # 不创建 zip
 ### 测试
 
 - **后端**：`unittest`（异步用 `IsolatedAsyncioTestCase`，pytest 可作为 runner）：`python -m pytest tests/ -v`
+- **后端全量 runner**：`python run_pytest_utf8.py`（以完整 Unicode 路径全量运行 `tests/`，规避中文路径下 PowerShell 的转码乱码；可透传 pytest 参数，如 `python run_pytest_utf8.py -v tests/test_xxx.py -k foo`）
 - **前端**：`vitest` + `jsdom` + `@solidjs/testing-library`：`cd desktop && npm run test`
-- 测试文件：后端在 `tests/test_*.py`（44 个测试文件，覆盖缓存/字典/元数据/API 端点/安全/运行时进度/剧情路线图/备选译文等），前端在 `desktop/src/__tests__/`（8 个测试文件）
+- 测试文件：后端在 `tests/test_*.py`（68 个测试文件，覆盖缓存/字典/元数据/API 端点/安全/运行时进度/剧情路线图/备选译文等），前端在 `desktop/src/__tests__/`（9 个测试文件）
 
 ### 调试辅助（结合测试翻译项目）
 

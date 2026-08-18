@@ -5,12 +5,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-TARGETS = [
-    "tests/test_forgal_json_multichat.py",
-    "tests/test_forbatchmeta.py",
-    "tests/test_batch_metadata_h_guide.py",
-]
+# 默认全量运行 tests/；可透传任意 pytest 参数覆盖，如：
+#   python run_pytest_utf8.py -v tests/test_xxx.py -k keyword
+args = sys.argv[1:] or ["tests/", "-q"]
 os.chdir(ROOT)
-cmd = [sys.executable, "-m", "pytest", *TARGETS, "-q"]
-result = subprocess.run(cmd)
+result = subprocess.run([sys.executable, "-m", "pytest", *args])
 sys.exit(result.returncode)
