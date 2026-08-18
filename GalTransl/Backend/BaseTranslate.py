@@ -382,7 +382,10 @@ class BaseTranslate(BaseEngine):
             if num > 0:
                 i += num
                 stall_count = 0  # 有成功即视为进展，重置连续失败计数
-            self.pj_config.bar(num)
+            # bar 仅在翻译阶段/GenDic 赋值；元数据引擎独立运行无 bar，判空避免 AttributeError
+            bar = getattr(self.pj_config, "bar", None)
+            if bar is not None:
+                bar(num)
             self._update_dynamic_num_per_request(
                 requested_count=len(trans_list_split),
                 completed_count=max(0, num),

@@ -70,6 +70,9 @@ class ApiLogger:
         trace_id = _new_trace_id()
         if self._writer_task is None or self._writer_task.done():
             self._start_writer(project_dir)
+        # 写入未启用（writeApiCallLog=false 或启动失败）：不入队，避免队列无界增长
+        if self._writer_task is None or self._writer_task.done():
+            return trace_id
         self._queue.put_nowait({
             "_stage": "request",
             "trace_id": trace_id,

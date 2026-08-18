@@ -21,6 +21,15 @@ def _utcnow_text() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
+def _parse_utc_text_timestamp(value: str) -> float:
+    """解析 _utcnow_text 生成的时间文本为 epoch 秒；非法返回 0.0。"""
+    try:
+        dt = datetime.fromisoformat(str(value).rstrip("Z"))
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def _normalize_version_text(value: str) -> str:
     return value.strip().removeprefix("v").removeprefix("V")
 
@@ -160,13 +169,38 @@ class RuntimeState:
 
 
 class RuntimeRegistry:
+    _MAX_STATES = 50  # 保留的项目状态数量上限
+    _STATE_TTL_SECONDS = 24 * 3600  # 超过上限时，仅清理 updated_at 早于该时长的状态
+
     def __init__(self) -> None:
         self._states: dict[str, RuntimeState] = {}
         self._lock = threading.Lock()
 
+    def _prune_stale_states_locked(self) -> None:
+        """超过数量上限时清理长时间未更新的项目状态（持锁调用，只删 >24h 未更新的）。"""
+        if len(self._states) <= self._MAX_STATES:
+            return
+        now_ts = datetime.utcnow().timestamp()
+        stale = [
+            (name, st)
+            for name, st in self._states.items()
+            if (ts := _parse_utc_text_timestamp(st.updated_at)) != 0.0
+            and now_ts - ts > self._STATE_TTL_SECONDS
+        ]
+        stale.sort(key=lambda kv: kv[1].updated_at)
+        removed = 0
+        for name, _ in stale:
+            if len(self._states) <= self._MAX_STATES:
+                break
+            self._states.pop(name, None)
+            removed += 1
+        if removed:
+            LOGGER.debug(f"[runtime] 清理过期项目状态: {removed} 个")
+
     def ensure_project(self, project_dir: str) -> RuntimeState:
         normalized = _normalize_project_dir(project_dir)
         with self._lock:
+            self._prune_stale_states_locked()
             state = self._states.get(normalized)
             if state is None:
                 state = RuntimeState(project_dir=project_dir)

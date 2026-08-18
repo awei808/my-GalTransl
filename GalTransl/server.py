@@ -2139,12 +2139,32 @@ INDEX_HTML = """<!DOCTYPE html>
 
 
 class JobRegistry:
+    _MAX_KEPT_JOBS = 200
+
     def __init__(self, max_workers: int | None = None) -> None:
         self._jobs: dict[str, JobState] = {}
         self._stop_events: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
         self._max_workers = max_workers or load_app_settings().get("maxConcurrentJobs", 4)
         self._executor = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="galtransl-job")
+
+    def _prune_jobs_locked(self) -> None:
+        """裁剪已完成的历史 job，保留最近 _MAX_KEPT_JOBS 条（运行中 job 永不删除）。持锁调用。"""
+        if len(self._jobs) <= self._MAX_KEPT_JOBS:
+            return
+        finished = sorted(
+            (job for job in self._jobs.values() if job.status not in {"pending", "running"}),
+            key=lambda job: job.created_at,
+        )
+        excess = len(self._jobs) - self._MAX_KEPT_JOBS
+        removed = 0
+        for job in finished:
+            if removed >= excess:
+                break
+            self._jobs.pop(job.job_id, None)
+            removed += 1
+        if removed:
+            LOGGER.debug(f"[job] 裁剪历史任务: {removed} 条")
 
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -2230,7 +2250,20 @@ class JobRegistry:
                 "项目GPT字典-生成.txt",
             )
 
+        # 锁外重置运行时状态：避免 JobRegistry 锁 → runtime 锁的嵌套顺序（submit 已保证同项目不并发提交，无竞态）
+        reset_runtime_project(project_dir)
+
         with self._lock:
+            # maxConcurrentJobs 变化后懒重建 executor（PUT /app-settings 只更新数值）：
+            # 在途任务留在旧 executor 线程收尾，新任务立即用新上限
+            if getattr(self._executor, "_max_workers", 0) != self._max_workers:
+                LOGGER.warning(
+                    f"[并发] 并发上限已调整，重建任务线程池: "
+                    f"{getattr(self._executor, '_max_workers', '?')} -> {self._max_workers}"
+                )
+                old_executor = self._executor
+                self._executor = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="galtransl-job")
+                old_executor.shutdown(wait=False)
             if self._has_running_job_for_project(project_dir):
                 raise ValueError("the project already has a pending or running job")
             if self._running_job_count() >= self._max_workers:
@@ -2247,9 +2280,9 @@ class JobRegistry:
                 prompt_template_overrides=prompt_template_overrides or {},
             )
             state = create_job_state(spec)
-            reset_runtime_project(project_dir)
             self._jobs[job_id] = state
             self._stop_events[_normalize_project_dir(project_dir)] = threading.Event()
+            self._prune_jobs_locked()
             self._executor.submit(self._execute_job, spec, state)
             return state.to_dict()
 
@@ -2687,6 +2720,15 @@ def build_handler(registry: JobRegistry) -> type:
                 if self.command != "POST":
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
                     return
+                # 翻译任务运行中读取缓存构建输出可能读到 worker 半写状态，拒绝执行（与 recheck-all 一致）
+                job = registry.get_project_job(project_dir)
+                if job is not None and job.status in {"pending", "running"}:
+                    LOGGER.warning(f"[cache] 构建输出被拒绝（翻译任务运行中）：{project_dir}")
+                    self._send_json(
+                        {"success": False, "error": "翻译进行中，请停止翻译后再构建输出"},
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
                 filenames: list[str] | None = None
                 content_length = int(self.headers.get("Content-Length", "0"))
                 if content_length > 0:
@@ -2704,6 +2746,15 @@ def build_handler(registry: JobRegistry) -> type:
             if sub_path.startswith("/build-output/"):
                 if self.command != "POST":
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                # 翻译任务运行中拒绝（与 recheck-all 一致）
+                job = registry.get_project_job(project_dir)
+                if job is not None and job.status in {"pending", "running"}:
+                    LOGGER.warning(f"[cache] 构建输出被拒绝（翻译任务运行中）：{project_dir}")
+                    self._send_json(
+                        {"success": False, "error": "翻译进行中，请停止翻译后再构建输出"},
+                        status=HTTPStatus.CONFLICT,
+                    )
                     return
                 filename = sub_path[len("/build-output/"):]
                 if not filename:
@@ -2934,6 +2985,15 @@ def build_handler(registry: JobRegistry) -> type:
             if sub_path == "/cache/save":
                 if self.command != "POST":
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                # 翻译任务运行中全量覆写缓存会与 worker 增量写盘互相覆盖丢数据，拒绝执行（与 recheck-all 一致）
+                job = registry.get_project_job(project_dir)
+                if job is not None and job.status in {"pending", "running"}:
+                    LOGGER.warning(f"[cache] 缓存保存被拒绝（翻译任务运行中）：{project_dir}")
+                    self._send_json(
+                        {"success": False, "error": "翻译进行中，请停止翻译后再保存缓存"},
+                        status=HTTPStatus.CONFLICT,
+                    )
                     return
                 try:
                     payload = self._read_json_body()
@@ -3239,6 +3299,15 @@ def build_handler(registry: JobRegistry) -> type:
                 if self.command != "POST":
                     self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
                     return
+                # 翻译任务运行中改写缓存会与 worker 增量写盘互相覆盖丢数据，拒绝执行（与 recheck-all 一致）
+                job = registry.get_project_job(project_dir)
+                if job is not None and job.status in {"pending", "running"}:
+                    LOGGER.warning(f"[cache] 缓存删除被拒绝（翻译任务运行中）：{project_dir}")
+                    self._send_json(
+                        {"success": False, "error": "翻译进行中，请停止翻译后再删除缓存条目"},
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
                 try:
                     payload = self._read_json_body()
                     filename = str(payload.get("filename", "")).strip()
@@ -3428,6 +3497,18 @@ def build_handler(registry: JobRegistry) -> type:
                         self._send_json({"error": "empty query"}, status=HTTPStatus.BAD_REQUEST)
                         return
 
+                    # 真实替换会写缓存文件：翻译任务运行中与 worker 增量写盘互相覆盖，拒绝执行
+                    # （dry_run 预览只读不落盘，保持可用）
+                    if not dry_run:
+                        job = registry.get_project_job(project_dir)
+                        if job is not None and job.status in {"pending", "running"}:
+                            LOGGER.warning(f"[cache] 批量替换被拒绝（翻译任务运行中）：{project_dir}")
+                            self._send_json(
+                                {"success": False, "error": "翻译进行中，请停止翻译后再执行替换"},
+                                status=HTTPStatus.CONFLICT,
+                            )
+                            return
+
                     import orjson
                     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
                     total_matches = 0
@@ -3603,10 +3684,11 @@ def build_handler(registry: JobRegistry) -> type:
                 runtime = RUNTIME_REGISTRY.get_runtime_snapshot(project_dir)
                 file_totals = runtime.get("file_totals", {})
                 cache_file_display_map = runtime.get("cache_file_display_map", {})
-                config_file_name = "config.yaml"
+                # 兜底用真实配置文件探测（config.inc.yaml 优先），避免无 job 历史时误用 config.yaml 读不到 retran 配置
+                config_file_name = _detect_config_file(project_dir)
                 job = registry.get_project_job(project_dir)
                 if job:
-                    config_file_name = job.config_file_name or "config.yaml"
+                    config_file_name = job.config_file_name or config_file_name
                 config_retran_key = RUNTIME_PROGRESS_CACHE.get_retran_key(project_dir, config_file_name)
                 retran_terms = _normalize_retran_terms(config_retran_key)
                 retran_key = ""
@@ -4734,6 +4816,11 @@ def build_handler(registry: JobRegistry) -> type:
                 try:
                     payload = self._read_json_body()
                     settings = save_app_settings(payload)
+                    # 同步更新并发上限数值；线程池在下次 submit 时懒重建
+                    new_max = settings.get("maxConcurrentJobs")
+                    if isinstance(new_max, int) and new_max > 0 and new_max != registry._max_workers:
+                        LOGGER.info(f"[并发] maxConcurrentJobs: {registry._max_workers} -> {new_max}（下次提交任务时生效）")
+                        registry._max_workers = new_max
                     self._send_json(settings)
                 except json.JSONDecodeError:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)

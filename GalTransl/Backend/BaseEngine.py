@@ -1016,9 +1016,12 @@ class BaseEngine:
                     token_info = ""
 
                 if is_rate_limited:
-                    self.pj_config.bar.text(
-                        "-> 检测到频率限制(429 RateLimitError)，翻译仍在进行中但速度将受影响..."
-                    )
+                    # bar 仅在翻译阶段/GenDic 赋值；元数据引擎独立运行无 bar，判空避免 AttributeError 打断退避重试
+                    bar = getattr(self.pj_config, "bar", None)
+                    if bar is not None:
+                        bar.text(
+                            "-> 检测到频率限制(429 RateLimitError)，翻译仍在进行中但速度将受影响..."
+                        )
                 else:
                     if file_name != "" and file_name[:1] != "[":
                         file_name = f"[{file_name}]"

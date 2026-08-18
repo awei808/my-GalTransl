@@ -250,10 +250,11 @@ class CProjectConfig:
         return self.projectConfig["backendSpecific"][backendName]
 
     def getDictCfgSection(self, key: str = "") -> dict:
+        dictionary = self.projectConfig.get("dictionary", {})
         if key == "":
-            return self.projectConfig["dictionary"]
-        elif key in self.projectConfig["dictionary"]:
-            return self.projectConfig["dictionary"][key]
+            return dictionary
+        elif key in dictionary:
+            return dictionary[key]
         else:
             return None
 
@@ -275,10 +276,11 @@ class CProjectConfig:
             return 1
 
     def getProblemAnalyzeConfig(self, backendName: str) -> list[CProblemType]:
-        if backendName not in self.projectConfig["problemAnalyze"]:
+        problem_analyze = self.projectConfig.get("problemAnalyze", {})
+        if backendName not in problem_analyze:
             return []
         result: list[CProblemType] = []
-        for i in self.projectConfig["problemAnalyze"][backendName]:
+        for i in problem_analyze[backendName]:
             result.append(CProblemType[i])
 
         return result
@@ -288,17 +290,18 @@ class CProjectConfig:
         return backendName in self.projectConfig.get("problemAnalyze", {})
 
     def getProblemAnalyzeArinashiDict(self) -> dict:
-        if "arinashiDict" not in self.projectConfig["problemAnalyze"]:
+        problem_analyze = self.projectConfig.get("problemAnalyze", {})
+        if "arinashiDict" not in problem_analyze:
             return {}
-        elif not self.projectConfig["problemAnalyze"]["arinashiDict"]:
+        elif not problem_analyze["arinashiDict"]:
             return {}
-        return self.projectConfig["problemAnalyze"]["arinashiDict"]
+        return problem_analyze["arinashiDict"]
 
     def getAvgSentenceLengthThreshold(self) -> int:
         """长句丢失换行的平均分句长度阈值，默认17，建议15~25。"""
         try:
             return int(
-                self.projectConfig["problemAnalyze"].get(
+                self.projectConfig.get("problemAnalyze", {}).get(
                     "avgSentenceLengthThreshold", 17
                 )
             )
@@ -309,7 +312,7 @@ class CProjectConfig:
         """长句丢失换行的 H 场景专用平均分句长度阈值，默认24，建议20~30。"""
         try:
             return int(
-                self.projectConfig["problemAnalyze"].get(
+                self.projectConfig.get("problemAnalyze", {}).get(
                     "avgSentenceLengthThresholdH", 24
                 )
             )
@@ -320,7 +323,7 @@ class CProjectConfig:
         """定语过长检测的定语最大长度，默认10，超过即报「定语过长」。"""
         try:
             return int(
-                self.projectConfig["problemAnalyze"].get(
+                self.projectConfig.get("problemAnalyze", {}).get(
                     "attributiveMaxLength", 10
                 )
             )
@@ -331,7 +334,7 @@ class CProjectConfig:
         """状语过长检测的状语最大长度，默认12，超过即报「状语过长」。"""
         try:
             return int(
-                self.projectConfig["problemAnalyze"].get(
+                self.projectConfig.get("problemAnalyze", {}).get(
                     "adverbialMaxLength", 12
                 )
             )
@@ -487,17 +490,12 @@ def loadConfigFile(path: str) -> dict:
     加载项目配置文件（YAML）
     """
     with open(path, "rb") as cfgfile:
-        cfg: dict = {}
         try:
-            cfg = safe_load(cfgfile.read())
+            parsed = safe_load(cfgfile.read())
         except Exception as err:
             LOGGER.error(f"error parsing config file: {err}")
-            return False
-        """
-        try:
-            validate(cfg)
-        except ValidationError as err:
-            LOGGER.error(f"config file is invaild: {err}")
-            return False
-        """
-        return cfg
+            raise ValueError(f"解析配置文件失败: {err}") from err
+        # 空文件 / 根节点非映射：直接报错，避免调用方拿到 None/非 dict 后出现误导性 AttributeError
+        if not isinstance(parsed, dict):
+            raise ValueError("配置文件根节点必须是映射（YAML dict），请检查配置文件内容")
+        return parsed

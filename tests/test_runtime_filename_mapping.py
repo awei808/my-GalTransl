@@ -13,6 +13,7 @@ class RuntimeFilenameMappingTests(unittest.TestCase):
             self.project_dir,
             file_totals={"chapter/scene.json": 100},
             cache_file_display_map={
+                # 磁盘多 chunk 缓存文件为 file_name_{index}.json（save_transCache_to_json 补 .json），键与磁盘一致
                 "chapter-}scene.json_1.json": "chapter/scene.json",
                 "chapter-}scene.json_2.json": "chapter/scene.json",
             },

@@ -40,6 +40,30 @@ def _cache_has(cache_obj: dict, key: str) -> bool:
     return False
 
 
+def _prev_nonempty_index(cache_list: list, i: int) -> int:
+    """向前跳过 post_src 为空的条目，返回首个非空邻居下标；无则 -1。
+
+    与 trans 侧缓存键构造（_build_cache_key_for_tran）的"跳过空 post_src 回溯"口径保持一致，
+    避免快照侧用相邻条目、trans 侧跳过空条目导致键分裂。
+    """
+    j = i - 1
+    while j >= 0:
+        if _cache_get(cache_list[j], "post_src", "") != "":
+            return j
+        j -= 1
+    return -1
+
+
+def _next_nonempty_index(cache_list: list, i: int) -> int:
+    """向后跳过 post_src 为空的条目，返回首个非空邻居下标；无则 -1。"""
+    j = i + 1
+    while j < len(cache_list):
+        if _cache_get(cache_list[j], "post_src", "") != "":
+            return j
+        j += 1
+    return -1
+
+
 _CACHE_APPEND_SUFFIX = ".append.jsonl"
 _CACHE_APPEND_WRITE_RETRY_TIMES = 6
 _CACHE_APPEND_WRITE_RETRY_DELAY = 0.08
@@ -167,10 +191,12 @@ def _build_cache_dict_from_snapshot(cache_list: list) -> tuple[dict, list[str]]:
     for i, cache in enumerate(cache_list):
         line_now, line_priv, line_next = "", "None", "None"
         line_now = f'{cache.get("name", "")}{_cache_get(cache, "pre_src", "")}'
-        if i > 0:
-            line_priv = f'{cache_list[i-1].get("name", "")}{_cache_get(cache_list[i-1], "pre_src", "")}'
-        if i < len(cache_list) - 1:
-            line_next = f'{cache_list[i+1].get("name", "")}{_cache_get(cache_list[i+1], "pre_src", "")}'
+        prev_i = _prev_nonempty_index(cache_list, i)
+        if prev_i >= 0:
+            line_priv = f'{cache_list[prev_i].get("name", "")}{_cache_get(cache_list[prev_i], "pre_src", "")}'
+        next_i = _next_nonempty_index(cache_list, i)
+        if next_i >= 0:
+            line_next = f'{cache_list[next_i].get("name", "")}{_cache_get(cache_list[next_i], "pre_src", "")}'
         line_priv = "None" if line_priv == "" else line_priv
         line_next = "None" if line_next == "" else line_next
         cache_key = line_priv + line_now + line_next
@@ -379,11 +405,13 @@ async def get_transCache_from_json(
                 cache_dictList = [c for c in cache_dictList if not c.get("_field_guide")]
                 for i, cache in enumerate(cache_dictList):
                     line_now, line_priv, line_next = "", "None", "None"
-                    line_now = f'{cache["name"]}{_cache_get(cache, "pre_src")}'
-                    if i > 0:
-                        line_priv = f'{cache_dictList[i-1]["name"]}{_cache_get(cache_dictList[i-1], "pre_src")}'
-                    if i < len(cache_dictList) - 1:
-                        line_next = f'{cache_dictList[i+1]["name"]}{_cache_get(cache_dictList[i+1], "pre_src")}'
+                    line_now = f'{cache.get("name", "")}{_cache_get(cache, "pre_src", "")}'
+                    prev_i = _prev_nonempty_index(cache_dictList, i)
+                    if prev_i >= 0:
+                        line_priv = f'{cache_dictList[prev_i].get("name", "")}{_cache_get(cache_dictList[prev_i], "pre_src", "")}'
+                    next_i = _next_nonempty_index(cache_dictList, i)
+                    if next_i >= 0:
+                        line_next = f'{cache_dictList[next_i].get("name", "")}{_cache_get(cache_dictList[next_i], "pre_src", "")}'
                     line_priv = "None" if line_priv == "" else line_priv
                     line_next = "None" if line_next == "" else line_next
                     cache_dict[line_priv + line_now + line_next] = cache

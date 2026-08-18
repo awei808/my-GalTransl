@@ -4,6 +4,27 @@ from os import path
 from json import loads
 from typing import Union, Tuple, List
 
+def _coerce_index(raw_index: object, pos: int) -> int:
+    """把输入 JSON 的 index 统一转为 int（字符串数字/无损 float 兼容），非法值抛带行号异常。
+
+    修复字符串 index 与 Problem.py 的 lo <= tran.index <= hi 整数比较冲突（M16）。
+    """
+    if isinstance(raw_index, bool):
+        raise ValueError(f"JSON第{pos + 1}项的 index 不能是布尔值")
+    if isinstance(raw_index, int):
+        return raw_index
+    if isinstance(raw_index, float):
+        if raw_index.is_integer():
+            return int(raw_index)
+        raise ValueError(f"JSON第{pos + 1}项的 index 不是整数: {raw_index!r}")
+    if isinstance(raw_index, str):
+        try:
+            return int(raw_index)
+        except ValueError:
+            raise ValueError(f"JSON第{pos + 1}项的 index 无法解析为整数: {raw_index!r}") from None
+    raise ValueError(f"JSON第{pos + 1}项的 index 类型非法: {type(raw_index).__name__}")
+
+
 def load_transList(json_path_or_list: Union[str, list]) -> Tuple[CTransList, list]:
     """
     从json文件路径、json字符串、json list中载入待翻译列表
@@ -42,7 +63,7 @@ def load_transList(json_path_or_list: Union[str, list]) -> Tuple[CTransList, lis
 
         name = item.get("name", item.get("names", ""))
         pre_src = item["message"]
-        index = item.get("index", i + 1)
+        index = _coerce_index(item.get("index", i + 1), i)
         tmp_tran = CSentense(pre_src, name, index)
         
         # 链接上下文

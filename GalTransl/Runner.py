@@ -2,7 +2,7 @@ import os, time, sys, datetime, threading
 from os.path import exists as isPathExists
 from os import makedirs as mkdir
 import logging, colorlog
-from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, new_version, GALTRANSL_VERSION,NEED_OpenAITokenPool
+from GalTransl import LOGGER, DEBUG_LEVEL, TRANSLATOR_SUPPORTED, new_version, GALTRANSL_VERSION,NEED_OpenAITokenPool
 from GalTransl.ApiLogger import cleanup_api_log
 from GalTransl.GTPlugin import GTextPlugin, GFilePlugin
 from GalTransl.COpenAI import COpenAITokenPool, init_sakura_endpoint_queue
@@ -43,6 +43,8 @@ class _ServerStatusFilter(logging.Filter):
     Allows WARNING+ and INFO messages that look like translation milestones
     (file start, file complete, project summary, etc.).
     Blocks per-line translation output and other noisy INFO messages.
+    DEBUG 放行与否由本 job 的 loggingLevel 决定（构造时传入），不再读全局
+    LOGGER 级别，避免并发 job 的 setLevel 互相干扰。
     """
     # Prefixes of INFO messages that are useful for observing backend state
     _ALLOWED_INFO_PREFIXES = (
@@ -59,13 +61,16 @@ class _ServerStatusFilter(logging.Filter):
         "[并发]",
     )
 
+    def __init__(self, debug_enabled: bool = False) -> None:
+        super().__init__()
+        self._debug_enabled = debug_enabled
+
     def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno >= logging.WARNING:
             return True
         if record.levelno < logging.INFO:
-            # 调试模式（全局 LOGGER 级别为 DEBUG）下，把 DEBUG 记录（含
-            # 每轮提示词 dump 等）也放行到服务端控制台，便于实时观察。
-            return LOGGER.getEffectiveLevel() <= logging.DEBUG
+            # 该 job 的 loggingLevel=debug 时放行 DEBUG 记录到服务端控制台
+            return self._debug_enabled
         msg = record.getMessage()
         return any(msg.startswith(p) for p in self._ALLOWED_INFO_PREFIXES)
 
@@ -144,14 +149,21 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
     _job_handlers: list[logging.Handler] = []
     _thread_filter = _JobThreadFilter()  # 只处理本线程日志，防止并发 job 日志重复
     is_server = getattr(cfg, "non_interactive", False)
+    # 本 job 的日志级别（config loggingLevel）
+    job_log_level = DEBUG_LEVEL[cfg.getCommonConfigSection().get("loggingLevel", "info")]
     if is_server:
-        # Server job: 轻量控制台输出（仅关键状态），不使用 alive_bar
+        # Server job: 轻量控制台输出（仅关键状态），不使用 alive_bar。
+        # logger 层必须放行 DEBUG（isEnabledFor 在 logger 层过滤，仅设 handler 级别无效），
+        # 并发隔离由各 job handler 级别 + _thread_filter 保证（setLevel 恒为同一 DEBUG 值）
+        LOGGER.setLevel(logging.DEBUG)
         handler = logging.StreamHandler(stream=sys.stdout)
+        handler.setLevel(job_log_level)
         handler.setFormatter(CONSOLE_FORMAT)
         handler.addFilter(_thread_filter)
-        handler.addFilter(_ServerStatusFilter())
+        handler.addFilter(_ServerStatusFilter(debug_enabled=job_log_level <= logging.DEBUG))
     else:
-        # CLI job: 完整终端输出 + alive_bar
+        # CLI job: 完整终端输出 + alive_bar。级别由 __main__.py 的 --debug-level 控制
+        # （LOGGER.setLevel），handler 不设级别以继承全局级别，保持 CLI 原有行为
         handler = logging.StreamHandler(stream=sys.stdout)
         handler.setFormatter(CONSOLE_FORMAT)
         handler.addFilter(_thread_filter)
@@ -162,6 +174,8 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
     if cfg.getCommonConfigSection().get("saveLog", False):
         log_path = os.path.join(PROJECT_DIR, "GalTransl.log")
         file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        if is_server:
+            file_handler.setLevel(job_log_level)
         file_handler.setFormatter(File_FORMAT)
         file_handler.addFilter(_thread_filter)
         LOGGER.addHandler(file_handler)

@@ -292,6 +292,8 @@ def _build_runtime_file_maps(ordered_chunks: list[SplitChunkMetadata], input_dir
         if chunk.total_chunks > 1:
             cache_key = f"{cache_key}_{chunk.chunk_index}"
 
+        # 磁盘缓存文件名：save_transCache_to_json 会对不以 .json 结尾的路径补一次 .json，
+        # 故多 chunk 磁盘文件为 file_name_{index}.json，此处补齐后与磁盘命名完全一致
         if not cache_key.endswith(".json"):
             cache_key = f"{cache_key}.json"
         cache_file_display_map[cache_key] = display_name
@@ -456,10 +458,10 @@ async def doLLMTranslate(
     input_dir = projectConfig.getInputPath()
     output_dir = projectConfig.getOutputPath()
     cache_dir = _pass3_cache_dir(projectConfig)
-    pre_dic_list = projectConfig.getDictCfgSection()["preDict"]
-    post_dic_list = projectConfig.getDictCfgSection()["postDict"]
-    gpt_dic_list = projectConfig.getDictCfgSection()["gpt.dict"]
-    default_dic_dir = projectConfig.getDictCfgSection()["defaultDictFolder"]
+    pre_dic_list = projectConfig.getDictCfgSection().get("preDict", [])
+    post_dic_list = projectConfig.getDictCfgSection().get("postDict", [])
+    gpt_dic_list = projectConfig.getDictCfgSection().get("gpt.dict", [])
+    default_dic_dir = projectConfig.getDictCfgSection().get("defaultDictFolder", "")
     # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
     workersPerProject = projectConfig.get_workers_per_project()
     semaphore = asyncio.Semaphore(workersPerProject)
@@ -579,6 +581,8 @@ async def doLLMTranslate(
             LOGGER.warning("[GenDic] 术语表生成失败，abortOnDicFailure=false 继续")
         else:
             LOGGER.info("[GenDic] GPT 字典生成完成")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
         return True
 
     if eng_type == "ForFileMetaData":
@@ -635,6 +639,8 @@ async def doLLMTranslate(
             )
 
         _update_runtime(projectConfig, stage="文件级元数据生成完毕")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
         return True
 
     if eng_type == "ForPlotRouteMap":
@@ -718,6 +724,8 @@ async def doLLMTranslate(
             )
 
         _update_runtime(projectConfig, stage="批次级元数据生成完毕")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
         return True
 
     # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）/ 残留日文修复（ForJPResidue）/ 禁用词修复（ForBanWordFix）----
@@ -863,6 +871,8 @@ async def doLLMTranslate(
             raise
         LOGGER.info(f"{_log_tag} {_stage_tag}完成")
         _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
         return True
 
     # ---- 2.7 独立引擎：译文质量改进（ForImproveTranslation）----
@@ -999,6 +1009,8 @@ async def doLLMTranslate(
             raise
         LOGGER.info("[改进轮] 译文质量改进完成")
         _update_runtime(projectConfig, stage="译文质量改进完成")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
         return True
 
     # ---- 2.7c 独立引擎：语义差异检测（ForSemCheck）----
@@ -1125,6 +1137,8 @@ async def doLLMTranslate(
             raise
         LOGGER.info("[语义检测] 语义差异检测完成")
         _update_runtime(projectConfig, stage="语义差异检测完成")
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
         return True
 
     # ---- 2.8 独立引擎：仅生成全局游戏分析（ForGlobalPrompt）----
@@ -1205,6 +1219,8 @@ async def doLLMTranslate(
             f"已写入 transl_cache/pass0_cache/GlobalPrompt.json"
         )
         _update_runtime(projectConfig, stage="全局游戏分析生成完毕")
+        if hasattr(gptapi_global, "shutdown"):
+            await gptapi_global.shutdown()
         return True
 
     # 3. 根据 sortBy 决定 chunk 顺序：name（文件名自然序）或 size（大 chunk 优先）
@@ -1608,6 +1624,8 @@ async def _run_full_pipeline(
             success = await gptapi_global.batch_translate(
                 compressed_texts, external_info=external_info
             )
+            if hasattr(gptapi_global, "shutdown"):
+                await gptapi_global.shutdown()
             if not success:
                 LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
                 raise RuntimeError("全局游戏分析生成失败")
@@ -1677,6 +1695,8 @@ async def _run_full_pipeline(
             for json_list in file_json_lists.values():
                 all_jsons.extend(json_list)
             dic_ok = await gptapi_dic.batch_translate(all_jsons)
+            if hasattr(gptapi_dic, "shutdown"):
+                await gptapi_dic.shutdown()
             # internals.pipeline.abortOnDicFailure：术语表构建失败（如分词模型加载失败）时中止流水线。
             # batch_translate 仅在硬失败（分词模型无法加载）时返回 False；分片级失败已被记录但
             # 视为部分成功（与流水线容错设计一致），不中止，避免误伤"文本无可提取词条"的合法场景。
@@ -1937,10 +1957,10 @@ async def _run_translation_phase(
     # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
     workersPerProject = projectConfig.get_workers_per_project()
 
-    pre_dic_list = projectConfig.getDictCfgSection()["preDict"]
-    post_dic_list = projectConfig.getDictCfgSection()["postDict"]
-    gpt_dic_list = projectConfig.getDictCfgSection()["gpt.dict"]
-    default_dic_dir = projectConfig.getDictCfgSection()["defaultDictFolder"]
+    pre_dic_list = projectConfig.getDictCfgSection().get("preDict", [])
+    post_dic_list = projectConfig.getDictCfgSection().get("postDict", [])
+    gpt_dic_list = projectConfig.getDictCfgSection().get("gpt.dict", [])
+    default_dic_dir = projectConfig.getDictCfgSection().get("defaultDictFolder", "")
 
     # 切块
     total_chunks = []

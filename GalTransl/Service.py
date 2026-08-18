@@ -9,7 +9,7 @@ import time
 import traceback
 from typing import Any
 
-from GalTransl import LOGGER, DEBUG_LEVEL
+from GalTransl import LOGGER
 from GalTransl.Cache import compact_cache_append_logs
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Runner import run_galtransl
@@ -191,9 +191,6 @@ async def run_job_async(
         cfg.runtime_project_dir = spec.project_dir
         app_settings = load_app_settings()
         cfg.print_translation_log_in_terminal = bool(app_settings.get("printTranslationLogInTerminal", True))
-        LOGGER.setLevel(
-            DEBUG_LEVEL[cfg.getCommonConfigSection().get("loggingLevel", "info")]
-        )
 
         profile = spec.backend_profile_data if isinstance(spec.backend_profile_data, dict) else {}
         if not profile and spec.backend_profile:

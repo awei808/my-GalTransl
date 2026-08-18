@@ -170,6 +170,7 @@ def validate_compression_integrity(
 ) -> dict:
     """
     校验压缩是否保留了关键信息。
+    （当前未接入生产流水线，仅测试覆盖；启用需在 TextCompressor 压缩后调用）
 
     检查项：
       - 角色名是否全部保留（如果提供了 all_names）
@@ -224,6 +225,7 @@ def validate_llm_response(
 ) -> dict:
     """
     校验 LLM 返回的原始响应。
+    （当前未接入生产流水线，仅测试覆盖；启用需在 ask_chatbot 响应解析处调用）
 
     检查项：
       - 非空字符串
@@ -466,6 +468,7 @@ def validate_global_prompt(data: Any) -> dict:
 def validate_file_metadata_entry(data: Any) -> dict:
     """
     校验单条 FileMetaData 条目格式。
+    （当前未接入生产流水线，仅测试覆盖；启用需在 ForFileMetaData 写盘前调用）
 
     必填字段：
       - id (str, 非空，一般为文件名)
@@ -507,6 +510,7 @@ def validate_batch_metadata_entry(
 ) -> dict:
     """
     校验单条 BatchMetadata 条目格式。
+    （当前未接入生产流水线，仅测试覆盖；启用需在 ForBatchMetaData 写盘前调用）
 
     必填字段：
       - id (str, 非空)
@@ -642,6 +646,7 @@ def cross_validate_counts(
 ) -> dict:
     """
     跨阶段计数交叉验证。
+    （当前未接入生产流水线，仅测试覆盖；启用需在阶段衔接处调用）
 
     Args:
         expected: 期望数量
@@ -688,6 +693,7 @@ def validate_translation_output(
 ) -> dict:
     """
     校验翻译输出完整性。
+    （当前未接入生产流水线，仅测试覆盖；启用需在翻译轮合并输出处调用）
 
     检查项：
       - 翻译行数与输入行数一致
