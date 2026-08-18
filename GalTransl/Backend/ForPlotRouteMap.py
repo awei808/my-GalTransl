@@ -8,6 +8,7 @@
 
 import json
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from GalTransl import LOGGER, PASS0_CACHE_DIR
@@ -164,12 +165,25 @@ class ForPlotRouteMap(BaseEngine):
 
     @staticmethod
     def _validate_mermaid(source: str) -> bool:
-        """简单校验 mermaid 源码是否形如图声明（flowchart/graph）而非纯文本。"""
+        """校验 mermaid 源码：以 flowchart/graph 开头，且 subgraph id 不含非法字符。
+
+        subgraph id 只允许字母/数字/下划线/连字符（含中文），
+        禁止 `·`、空白等字符（否则 mermaid 词法解析失败，前端渲染报 Syntax error）。
+        """
         if not source:
             return False
         first = next((l for l in source.splitlines() if l.strip()), "")
         head = first.strip().lower()
-        return head.startswith("flowchart") or head.startswith("graph")
+        if not (head.startswith("flowchart") or head.startswith("graph")):
+            return False
+        for line in source.splitlines():
+            m = re.match(r"^\s*subgraph\s+([^\[\s]+)", line)
+            if m and re.search(r"[^\w\-]", m.group(1)):
+                LOGGER.warning(
+                    f"[PlotRouteMap] subgraph id 含非法字符（将被拒绝）：{m.group(1)!r}"
+                )
+                return False
+        return True
 
     def _check_file_coverage(self, data: Dict[str, Any]) -> None:
         """校验「文件归属」是否覆盖全部输入文件；缺失时输出 warning（不阻断）。"""
@@ -248,9 +262,11 @@ class ForPlotRouteMap(BaseEngine):
 
         # LLM 请求→解析→规整→校验，最多 2 次（首次 + 输出格式不合格重试 1 次）
         retry_hint = (
-            "\n\n【格式纠正】上次输出不符合要求（JSON 不合法或 mermaid 语法错误）。"
+            "\n\n【格式纠正】上次输出不符合要求（JSON 不合法、mermaid 语法错误或 subgraph id 非法）。"
             "请仅输出一个 JSON 对象，包含 mermaid、文件归属、节点剧情 三个字段，"
             "且 mermaid 以 flowchart 或 graph 开头。"
+            "subgraph 的 id 必须使用英文/数字/下划线，显示名放在方括号内，"
+            "例如 subgraph prologue[\"序章\"]；节点 id 同样使用英文。"
         )
         for attempt in (1, 2):
             try:

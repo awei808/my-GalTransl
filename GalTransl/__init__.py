@@ -93,7 +93,7 @@ TRANSLATOR_SUPPORTED = {
         "en": "Ban-word fix: for sentences flagged with 'inappropriate wording' (banned words), generates alternative translations (alt_dst in cache) by comparing source and problem, swappable in review page."
     },
     "ForSemCheck": {
-        "zh-cn": "逐句对照原文与译文，仅将语义极大差异的句子标记为「疑似错误」问题，不修改译文、不生成备选译文。",
+        "zh-cn": "逐句对照原文与译文，仅将语义极大差异的句子标记为「疑似错误」问题。",
         "en": "Semantic difference detection: AI compares source and translation per sentence, flags only sentences with huge semantic difference (suspected mistranslation/omission/misalignment) as 'suspected error' problems; never modifies translations."
     },
     "ForFileMetaData": {
@@ -101,7 +101,7 @@ TRANSLATOR_SUPPORTED = {
         "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes gt_input/FileMetaData.json."
     },
     "ForBatchMetaData": {
-        "zh-cn": "依据文件级元数据，将原文划分批次，并标注视角/氛围/H/用词色彩，结果写入 gt_input/BatchMetadata.json。",
+        "zh-cn": "依据文件级元数据，将原文划分批次，并标注视角/氛围/H/用词色彩。",
         "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes gt_input/BatchMetadata.json for multi-turn translation."
     },
     "ForPlotRouteMap": {

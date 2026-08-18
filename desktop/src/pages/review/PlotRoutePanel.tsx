@@ -81,6 +81,8 @@ export function PlotRoutePanel(props: {
   let svgOrigW = 0;
   let svgOrigH = 0;
   let renderTimer: ReturnType<typeof setTimeout> | undefined;
+  /* 组件是否已卸载：在途异步渲染完成后据此丢弃结果，避免操作已销毁的 DOM */
+  let disposed = false;
   /* mermaid 渲染 id 序号：每次渲染用唯一 id，避免并发渲染时 mermaid 按固定 id 互删 DOM */
   let graphSeq = 0;
   /* 渲染请求序号：仅采纳最新一次 render 的结果，丢弃被新渲染取代的旧结果 */
@@ -125,12 +127,13 @@ export function PlotRoutePanel(props: {
   }
 
   async function render() {
-    if (!graphRef) return;
+    if (!graphRef || disposed) return;
     const seq = ++renderSeq;
     const graphId = `plotRouteGraph-${++graphSeq}`;
     setRenderError("");
     try {
       const mermaid = (await getMermaid()).default;
+      if (disposed) return;
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: "loose",
@@ -138,8 +141,10 @@ export function PlotRoutePanel(props: {
         fontFamily: '"Microsoft YaHei", sans-serif',
         flowchart: { htmlLabels: true, curve: "basis", padding: 12 },
       });
-      const { svg, bindFunctions } = await mermaid.render(graphId, source());
-      if (seq !== renderSeq) {
+      /* 传入 graphRef 作为渲染容器：mermaid 的临时 DOM 建在面板内而非 document.body，
+         渲染失败时错误 SVG 随面板销毁，不会残留在整页底部污染布局 */
+      const { svg, bindFunctions } = await mermaid.render(graphId, source(), graphRef);
+      if (disposed || seq !== renderSeq) {
         console.debug(`[PlotRoutePanel] 丢弃过期渲染结果（seq=${seq}）`);
         return;
       }
@@ -148,11 +153,13 @@ export function PlotRoutePanel(props: {
       setupSvg();
       bindInteractions();
     } catch (e) {
-      if (seq !== renderSeq) return;
+      if (disposed || seq !== renderSeq) return;
       const msg = String(e instanceof Error ? e.message : e).replace(/[<>&]/g, (c) =>
         ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string),
       );
       console.debug(`[PlotRoutePanel] 渲染失败（seq=${seq}）：${msg}`);
+      // 清掉 mermaid 留在容器内的错误 SVG，仅保留错误提示文本
+      if (graphRef) graphRef.innerHTML = "";
       setRenderError(msg);
     }
   }
@@ -339,7 +346,11 @@ export function PlotRoutePanel(props: {
   });
 
   onCleanup(() => {
+    disposed = true;
     clearTimeout(renderTimer);
+    /* 兜底：清理历史版本渲染失败时残留在 document.body 的 mermaid 临时容器，
+       避免错误 SVG 永久挂在整页底部（本次改动后容器建在面板内，正常不再产生） */
+    document.querySelectorAll('[id^="dplotRouteGraph-"]').forEach((el) => el.remove());
   });
 
   return (
