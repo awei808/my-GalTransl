@@ -344,7 +344,7 @@ export function classifyKeys(
   // 「其他设置」：漏归键单独成组（永远在最后）
   if (unclassified.length > 0) {
     groups.push({
-      section: { title: "其他设置", desc: "未在分类表中声明的配置项，请反馈以便归位。", subsections: [] },
+      section: { title: "其他设置", desc: "未分类的配置项，大多是原项目遗留，这些配置项的改动可能无法生效。", subsections: [] },
       directKeys: unclassified,
       subsections: [],
       fixedCards: [],
