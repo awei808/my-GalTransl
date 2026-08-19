@@ -53,8 +53,9 @@ class ForSemCheck(BaseSparseFixRound):
     _include_src = True
     # 不注入 problem（避免模型受规则问题干扰，只看语义）
     _inject_problem = False
-    # 响应非空但 0 命中时告警（疑似输出格式异常）
-    _warn_on_zero_found = True
+    # 0 命中（空代码块）是语义检测的常态结果（绝大多数句子无语义差异），
+    # 不告警也不计入最近错误；与 BaseImproveRound 对齐
+    _warn_on_zero_found = False
 
     def __init__(
         self,

@@ -518,6 +518,7 @@ export type AppSettings = {
   printTranslationLogInTerminal: boolean;
   maxConcurrentJobs?: number;
   writeApiCallLog?: boolean;
+  writeFrontendLog?: boolean;
 };
 
 export type ThemeMode = "light" | "dark" | "system";

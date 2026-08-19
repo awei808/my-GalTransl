@@ -313,5 +313,62 @@ class SemcheckBatchSplitTests(unittest.TestCase):
         self.assertEqual(sizes, [2, 2, 1])
 
 
+class SemcheckEmptyBlockTests(unittest.IsolatedAsyncioTestCase):
+    """模型输出空代码块（无命中）是语义检测的正常结果，不得记录运行时错误。"""
+
+    def _make_obj(self, llm_resp: str) -> ForSemCheck:
+        obj = object.__new__(ForSemCheck)
+        obj._log_tag = "[语义检测]"
+        obj._disabled_reason = ""
+        obj.pj_config = _FakeBatchConfig({})
+        obj.system_prompt = "system"
+        obj.trans_prompt = FORGAL_JSON_SEMCHECK_PROMPT
+        obj.target_lang = "Simplified_Chinese"
+        obj.eng_type = "ForSemCheck"
+        obj._recorded_errors = []
+
+        def fake_record(filename, idx_tip, message, model):
+            obj._recorded_errors.append((filename, idx_tip, message, model))
+
+        obj._record_round_runtime_error = fake_record
+
+        async def fake_llm(messages, filename, idx_tip, cb):
+            return llm_resp, None
+
+        obj._call_llm = fake_llm
+        return obj
+
+    async def _run(self, llm_resp: str) -> list:
+        obj = self._make_obj(llm_resp)
+        targets = [_trans(i) for i in range(1, 3)]
+        with patch.object(
+            ForSemCheck, "_filter_target_translations", return_value=targets
+        ):
+            await obj.batch_translate("f.json", "c.json", targets, 20)
+        return obj._recorded_errors
+
+    async def test_empty_code_block_not_recorded_as_error(self) -> None:
+        # 规范空块 / 残缺空块 / 同行空块：均代表「无命中」，正常，不告警
+        for resp in ('```jsonline\n\n```', '```jsonline\n```', '```jsonline ```'):
+            with self.subTest(resp=resp):
+                self.assertEqual(await self._run(resp), [])
+
+    async def test_failed_llm_call_still_recorded(self) -> None:
+        # LLM 调用失败仍应记录（与空代码块区分）
+        obj = self._make_obj("")
+
+        async def failing_llm(messages, filename, idx_tip, cb):
+            raise RuntimeError("boom")
+
+        obj._call_llm = failing_llm
+        targets = [_trans(i) for i in range(1, 3)]
+        with patch.object(
+            ForSemCheck, "_filter_target_translations", return_value=targets
+        ):
+            await obj.batch_translate("f.json", "c.json", targets, 20)
+        self.assertEqual(len(obj._recorded_errors), 1)
+        self.assertIn("boom", obj._recorded_errors[0][2])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,6 +97,26 @@ class PreprocessJsonlineResponseTests(unittest.TestCase):
         out = preprocess_jsonline_response("前导文字\na1b|{\"id\":1}\n")
         self.assertTrue(out.startswith("a1b|"), out)
 
+    def test_empty_code_blocks_normalized_to_empty(self) -> None:
+        # 修复/检测轮约定「无命中输出空代码块」：无论规范还是残缺形式，
+        # 空代码块都应归一到空串，避免残留围栏被误判为「有内容但 0 命中」
+        F = "```"
+        for raw in (
+            F + "jsonline\n\n" + F,  # 规范空块（内容空行）
+            F + "jsonline\n" + F,  # 无闭合换行的残缺空块
+            F + "jsonline " + F,  # 同行空块
+            F + "\n\n" + F,  # 无语言标签空块
+            F + "\n" + F,  # 无语言标签残缺空块
+            "检查完毕\n" + F + "jsonline\n\n" + F,  # 块外文字 + 规范空块
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(preprocess_jsonline_response(raw), "")
+
+    def test_inline_code_block_with_content_kept(self) -> None:
+        # 同行代码块内含真实内容：去除围栏后非空，仍应正常解析
+        out = preprocess_jsonline_response('```jsonline a1b|{"id":1} ```')
+        self.assertIn('"id":1', out)
+
 
 class DecodeJsonLinePartTests(unittest.TestCase):
     def test_clean(self) -> None:

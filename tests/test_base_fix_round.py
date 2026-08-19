@@ -281,6 +281,32 @@ class BatchTranslateIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await t.batch_translate("f.json", "f.json", trans_list, 100, gpt_dic=None)
         self.assertFalse(calls["flag"])
 
+    async def test_empty_code_block_is_not_format_error(self) -> None:
+        # 提示词约定「若整批无需修复，输出空代码块即可」：空代码块 = 无命中，
+        # 不得触发 _warn_on_zero_found 告警（残缺/同行空块均归一为空响应）
+        t = make_translator(ForJPResidue)
+        recorded = []
+        t._record_round_runtime_error = MethodType(
+            lambda self, *a, **k: recorded.append((a, k)), t
+        )
+        trans_list = [make_tran(1, "残留日文：です", "译1")]
+        for resp in ('```jsonline\n\n```', '```jsonline\n```', '```jsonline ```'):
+            with self.subTest(resp=resp):
+                recorded.clear()
+                await self._run(t, trans_list, resp)
+                self.assertEqual(recorded, [])
+
+    async def test_actual_text_with_zero_hits_still_warns(self) -> None:
+        # 模型输出了实质内容但 0 命中（如纯解释文字）：格式异常，仍告警
+        t = make_translator(ForJPResidue)
+        recorded = []
+        t._record_round_runtime_error = MethodType(
+            lambda self, *a, **k: recorded.append((a, k)), t
+        )
+        trans_list = [make_tran(1, "残留日文：です", "译1")]
+        await self._run(t, trans_list, "所有句子都无需修复，不需要输出任何内容")
+        self.assertEqual(len(recorded), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

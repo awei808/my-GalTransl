@@ -76,8 +76,8 @@ export function SettingsPage() {
   const [loggingLevel, setLoggingLevel] = createSignal("info");
   const [logLevelLoading, setLogLevelLoading] = createSignal(false);
   const [logLevelError, setLogLevelError] = createSignal("");
-  // api_calls.log：写在后端全局 AppSettings.writeApiCallLog
-  const [writeApiCallLog, setWriteApiCallLog] = createSignal(true);
+  // api_calls.log：写在后端全局 AppSettings.writeApiCallLog（默认不写，与后端一致）
+  const [writeApiCallLog, setWriteApiCallLog] = createSignal(false);
   const [apiLogLoading, setApiLogLoading] = createSignal(false);
   const [apiLogSaving, setApiLogSaving] = createSignal(false);
   const [apiLogError, setApiLogError] = createSignal("");
@@ -102,7 +102,7 @@ export function SettingsPage() {
     // 加载后端全局日志开关（api_calls.log）
     setApiLogLoading(true);
     fetchAppSettings()
-      .then((s) => setWriteApiCallLog(s.writeApiCallLog ?? true))
+      .then((s) => setWriteApiCallLog(s.writeApiCallLog ?? false))
       .catch(() => {})
       .finally(() => setApiLogLoading(false));
   });
@@ -626,7 +626,7 @@ export function SettingsPage() {
           <div class="settings-field">
             <span class="settings-label">
               api_calls.log 写入文件
-              <span class="settings-hint-inline">（后端全局设置，重启翻译任务后生效）</span>
+              <span class="settings-hint-inline">（后端全局设置，保存后立即生效于后续翻译请求；已运行的翻译任务需重启才完全生效）</span>
             </span>
             <label class="settings-toggle">
               <input

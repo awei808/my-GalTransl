@@ -258,6 +258,10 @@ def preprocess_jsonline_response(text: str, merge_code_blocks: bool = True) -> s
     """预处理 LLM 返回的 jsonline 文本：去 think、合并/提取代码块、定位锚点、修引号。
 
     翻译轮与稀疏修复轮都应使用同一入口，避免“取第一个代码块 vs 合并代码块”的差异。
+
+    空代码块（无任何命中内容）统一归一到空串：修复/检测轮以「输出空代码块」表达
+    「本批无命中」，归空后 _warn_on_zero_found 告警不会把正常空块误报为格式异常；
+    翻译轮遇空块本就按空响应报错，仅错误文案统一为「输出为空/被拦截」。
     """
     if not text:
         return ""
@@ -268,7 +272,14 @@ def preprocess_jsonline_response(text: str, merge_code_blocks: bool = True) -> s
         from GalTransl.Utils import extract_code_blocks
         _lang_list, code_list = extract_code_blocks(result)
         if code_list:
-            result = "\n".join(code_list) if merge_code_blocks else code_list[0]
+            merged = "\n".join(code_list) if merge_code_blocks else code_list[0]
+            result = merged if merged.strip() else ""
+        else:
+            # 提取不到代码块时，若去除围栏/语言标签与空白后为空（如 ```jsonline\n```
+            # 等残缺空块），视为空响应，避免残留围栏被当作「有内容但 0 命中」误告警
+            residue = re.sub(r"```[\w]*", "", result).replace("```", "")
+            if not residue.strip():
+                result = ""
     sig_start = re.search(r"\b[a-z0-9]{3}\|\{\"id\"", result)
     if sig_start:
         result = result[sig_start.start():]
