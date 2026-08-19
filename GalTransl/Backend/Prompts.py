@@ -227,6 +227,35 @@ FORGAL_JSON_SEMCHECK_PROMPT = (
     + "</input>\n"
 )
 
+# 语义复核轮（ForSemCheckAgain）：对 ForSemCheck 标记的「疑似错误」命中句逐句二次复核。
+# 与 ForSemCheck 同构（jsonline + 哈希锚点、只判不改），差异是必须对输入每一行
+# 显式给出 keep: true/false 结论：仅保留确认仍为实质错译的标记，撤销可接受译文
+# （合理意译、h 场景委婉化等），用于压低第一轮的误报。
+FORSEMCHECK_AGAIN_SYSTEM = "你是 Galgame 译文质检复核员，负责对已标记为「疑似错误」的句子做二次复核，只判断原标记是否成立，不修改译文、不输出译文、不润色。"
+
+_SEMCHECK_AGAIN_TASK = """<process_requirements>
+### 任务
+以下句子已被第一轮语义检测标记为「疑似错误」。请逐句复核 `src`（日文原文）与 `dst`（当前译文，语言为 [TargetLang]），对**每一句**给出明确结论。若提示开头附有 `<plot_metadata>` 剧情元数据，请结合其中的角色、剧情、氛围信息判断语境（如 H 场景委婉化、符合角色口吻的增译等），避免脱离上下文误判：
+- `keep: true`：确认存在**实质性错译**（意思相反、主客体颠倒、人名/数字错译、关键内容丢失或凭空添加、串行等）；
+- `keep: false`：属于**可接受译文**（合理意译、h 场景委婉化、轻微语序调整、可接受的增译、拟声词差异等），原标记是误报。
+
+### 输出格式
+仅输出一个 ```jsonline 代码块，块外不得有任何内容。**输入每一行都必须对应输出一行**（不得省略、不得合并、不得多输出）。每行：复制输入行的哈希锚点（3字符+|）后接 JSON，键只能是 `id`、`keep` 与可选 `reason`（`keep: true` 时建议给出具体原因，如"人名错译：華恋→华良"）。
+
+输出配方：<hash_anchor>|{"id": int, "keep": true|false, (可选)"reason": "..."}
+</process_requirements>
+"""
+
+# 仅注入任务说明与 input（与 ForSemCheck 同构），不注入术语表/批次元数据/历史结果/翻译规范。
+FORGAL_JSON_SEMCHECK_AGAIN_PROMPT = (
+    _SEMCHECK_AGAIN_TASK
+    + "<input>\n"
+    + "```jsonline\n"
+    + "[Input]\n"
+    + "```\n"
+    + "</input>\n"
+)
+
 
 # 残留日文修复轮：系统角色声明与用户提示词模板。
 # 与 ForBRStation 同构，差异仅在于：任务是修复译文中的残留日文假名，且输入携带原文(src)。

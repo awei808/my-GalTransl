@@ -96,6 +96,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "逐句对照原文与译文，仅将语义极大差异的句子标记为「疑似错误」问题。",
         "en": "Semantic difference detection: AI compares source and translation per sentence, flags only sentences with huge semantic difference (suspected mistranslation/omission/misalignment) as 'suspected error' problems; never modifies translations."
     },
+    "ForSemCheckAgain": {
+        "zh-cn": "对已标记为「疑似错误」的句子逐句复核。",
+        "en": "Second-pass confirmation for 'suspected error' flags: re-checks each flagged sentence and keeps only confirmed mistranslations, dismissing acceptable translations (false positives)."
+    },
     "ForFileMetaData": {
         "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 gt_input/FileMetaData.json。",
         "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes gt_input/FileMetaData.json."
@@ -132,7 +136,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

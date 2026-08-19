@@ -125,6 +125,31 @@ class ResolveOrderTests(unittest.TestCase):
             _resolve_after_translation_order(_make_projectConfig()), []
         )
 
+    def test_semcheck_again_kept_in_order(self):
+        # semcheckagain 已加入白名单，与 semcheck 按配置顺序保留
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after=["semcheck", "semcheckagain"])
+            ),
+            ["semcheck", "semcheckagain"],
+        )
+
+    def test_semcheck_again_alone(self):
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after="semcheckagain")
+            ),
+            ["semcheckagain"],
+        )
+
+    def test_semcheck_again_ignored_bogus_partner(self):
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after="semcheckagain+bogus")
+            ),
+            ["semcheckagain"],
+        )
+
     def test_invalid_value_falls_back_empty(self):
         self.assertEqual(
             _resolve_after_translation_order(_make_projectConfig(after="foobar")), []
@@ -203,6 +228,23 @@ class RunAfterSingleFileTests(unittest.TestCase):
             )
             p_imp.assert_not_called()
             p_br.assert_not_called()
+
+    def test_semcheckagain_instantiates_correct_backend(self):
+        proj = _make_projectConfig(after="semcheckagain")
+        again_inst = self._fake_backend("semcheckagain")
+        with patch(
+            "GalTransl.Backend.ForSemCheckAgain.ForSemCheckAgain",
+            return_value=again_inst,
+        ) as p_again:
+            asyncio.run(
+                _run_after_trans_single_file(
+                    "semcheckagain", "f.json", "f.json", [SimpleNamespace()],
+                    proj, 100,
+                )
+            )
+            p_again.assert_called_once()
+            self.assertEqual(p_again.call_args[0][1], "ForSemCheckAgain")
+            self.assertTrue(again_inst.shutdown.called)
 
     def test_shutdown_called_even_on_batch_error(self):
         proj = _make_projectConfig(after="improve")

@@ -895,7 +895,7 @@ export function TranslateConsole() {
                     <li><b>文件级元数据</b>：AI 分析每个文件的剧情和角色身份，生成文件级提示词。可使用后端ForFileMetaData完成或人工创建</li>
                     <li><b>划分区间</b>：把文件按剧情拆成几个批次并生成批次级提示词。跳过本步将按照项目设置的每次请求句数来进行下步。可使用后端ForBatchMetaData完成或人工创建</li>
                     <li><b>翻译执行</b>：逐文件、逐批次交给 AI 翻译，注入全局、文件级、批次级提示词提高翻译效果（若有）。使用后端ForGalJsonMulitChat完成</li>
-                    <li><b>翻译后处理（修复和改进译文）</b>：完整流水线翻译完成后，按项目设置「翻译后处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行改进轮（给出备选译文）、换行修复（修复异常换行）、残留日文修复、禁用词修复或语义差异检测（semcheck，标记疑似错译/漏译/串行）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck 手动执行。</li>
+                    <li><b>翻译后处理（修复和改进译文）</b>：完整流水线翻译完成后，按项目设置「翻译后处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行改进轮（给出备选译文）、换行修复（修复异常换行）、残留日文修复、禁用词修复、语义差异检测（semcheck，标记疑似错译/漏译/串行）或命中句二次复核（semcheckagain，撤销误报，需先执行 semcheck 产生标记）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck / ForSemCheckAgain 手动执行。</li>
                     <li><b>校对审核</b>：你在界面里逐条检查、修改译文。</li>
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>

@@ -42,6 +42,11 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
     label: "语义差异检测",
     hint: "用 AI 判定疑似错译、漏译、译文串行，标记「疑似错误」问题（不生成备选译文）。",
   },
+  {
+    key: "semcheckagain",
+    label: "命中句二次复核",
+    hint: "对语义差异检测标记的「疑似错误」句子逐句二次复核，撤销可接受译文的误报标记（不生成备选译文）。需先执行语义差异检测（semcheck）产生标记，否则无待复核句。",
+  },
 ];
 
 /** 是否为受支持的后处理后端 key */

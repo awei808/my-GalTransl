@@ -109,6 +109,7 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForJPResidue": "GalTransl.Backend.ForJPResidue",
     "ForBanWordFix": "GalTransl.Backend.ForBanWordFix",
     "ForSemCheck": "GalTransl.Backend.ForSemCheck",
+    "ForSemCheckAgain": "GalTransl.Backend.ForSemCheckAgain",
     "GenDic": "GalTransl.Backend.GenDic",
     "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
     "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",

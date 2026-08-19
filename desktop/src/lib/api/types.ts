@@ -184,7 +184,7 @@ export type CacheEntry = {
   post_zh_preview?: string;
   post_dst_preview?: string;
   alt_dst?: string;
-  suspected_error?: string; // AI 语义检测标记（ForSemCheck 产出，非空即"疑似错误"，随缓存透传）
+  suspected_error?: string; // AI 语义检测标记（ForSemCheck 产出，ForSemCheckAgain 复核确认/撤销，非空即"疑似错误"，随缓存透传）
 };
 
 export type CacheSearchField = "all" | "src" | "dst" | "problem";

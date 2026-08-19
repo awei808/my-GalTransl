@@ -1013,8 +1013,9 @@ async def doLLMTranslate(
             await gptapi.shutdown()
         return True
 
-    # ---- 2.7c 独立引擎：语义差异检测（ForSemCheck）----
-    if eng_type == "ForSemCheck":
+    # ---- 2.7c 独立引擎：语义差异检测（ForSemCheck）/ 命中句二次复核（ForSemCheckAgain）----
+    if eng_type in ("ForSemCheck", "ForSemCheckAgain"):
+        _stage_tag = "语义复核" if eng_type == "ForSemCheckAgain" else "语义检测"
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         # 载入译前字典：主流程的字典初始化位于翻译阶段，独立分支需自行加载，
@@ -1033,9 +1034,9 @@ async def doLLMTranslate(
         worker_count = max(1, projectConfig.get_workers_per_project())
         projectConfig.active_workers = worker_count
         LOGGER.info(
-            f"[语义检测] 开始为 {total} 个文件执行语义差异检测，并发 {worker_count} worker"
+            f"[{_stage_tag}] 开始为 {total} 个文件执行{_stage_tag}，并发 {worker_count} worker"
         )
-        _update_runtime(projectConfig, stage="语义差异检测")
+        _update_runtime(projectConfig, stage=_stage_tag)
         num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
             num_better = int(num_better) if num_better else 100
@@ -1043,7 +1044,7 @@ async def doLLMTranslate(
             num_better = 100
 
         async def _semcheck_single_file(file_path: str, json_list: list) -> None:
-            """处理单个文件的语义检测：重建句子、命中缓存、检测并写回 suspected_error。"""
+            """处理单个文件的语义检测/二次复核：重建句子、命中缓存、执行并写回 suspected_error。"""
             _check_stop_requested(projectConfig)
             file_name = (
                 file_path.replace(input_dir, "")
@@ -1052,7 +1053,7 @@ async def doLLMTranslate(
             )
             cache_file_path = joinpath(cache_dir, file_name)
             if not isPathExists(cache_file_path):
-                LOGGER.warning(f"[语义检测] {file_name} 无缓存译文，跳过")
+                LOGGER.warning(f"[{_stage_tag}] {file_name} 无缓存译文，跳过")
                 return
             from GalTransl.Loader import load_transList
 
@@ -1103,7 +1104,7 @@ async def doLLMTranslate(
                 )
             else:
                 LOGGER.warning(
-                    f"[语义检测] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                    f"[{_stage_tag}] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
                 )
 
         file_queue: asyncio.Queue = asyncio.Queue()
@@ -1115,7 +1116,7 @@ async def doLLMTranslate(
         async def _semcheck_worker_loop(worker_index: int) -> None:
             worker_token = WORKER_ID_CTX.set(str(worker_index))
             LOGGER.debug(
-                f"[语义检测] worker_loop[{worker_index}] 启动, "
+                f"[{_stage_tag}] worker_loop[{worker_index}] 启动, "
                 f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
             )
             try:
@@ -1140,8 +1141,8 @@ async def doLLMTranslate(
                     task.cancel()
             await asyncio.gather(*semcheck_tasks, return_exceptions=True)
             raise
-        LOGGER.info("[语义检测] 语义差异检测完成")
-        _update_runtime(projectConfig, stage="语义差异检测完成")
+        LOGGER.info(f"[{_stage_tag}] {_stage_tag}完成")
+        _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
         if hasattr(gptapi, "shutdown"):
             await gptapi.shutdown()
         return True
@@ -2511,7 +2512,7 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list[str]
     空列表表示不执行。缺省时回退 gpt.enableBetterTranslation（true→[improve]）
     以兼容旧项目配置。
     """
-    allowed = {"improve", "brfix", "jpfix", "banfix", "semcheck"}
+    allowed = {"improve", "brfix", "jpfix", "banfix", "semcheck", "semcheckagain"}
     raw = projectConfig.getKey("gpt.afterTranslation")
 
     def _filter_parts(parts: list[str]) -> list[str]:
@@ -2569,6 +2570,7 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForJPResidue import ForJPResidue
     from GalTransl.Backend.ForBanWordFix import ForBanWordFix
     from GalTransl.Backend.ForSemCheck import ForSemCheck
+    from GalTransl.Backend.ForSemCheckAgain import ForSemCheckAgain
 
     _api = None
     try:
@@ -2604,6 +2606,13 @@ async def _run_after_trans_single_file(
             _api = ForSemCheck(
                 projectConfig,
                 "ForSemCheck",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+        elif mode == "semcheckagain":
+            _api = ForSemCheckAgain(
+                projectConfig,
+                "ForSemCheckAgain",
                 projectConfig.proxyPool,
                 projectConfig.tokenPool,
             )
