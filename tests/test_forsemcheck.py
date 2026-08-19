@@ -384,11 +384,17 @@ class SemcheckEchoDetectTests(unittest.TestCase):
 
     def test_ratio_at_threshold_detected(self) -> None:
         obj = self._make_echo_obj()
-        self.assertTrue(obj._is_echo_response(36, 40))  # 90% 触发
+        self.assertTrue(obj._is_echo_response(24, 40))  # ForSemCheck 阈值 60% 触发
 
     def test_below_threshold_kept(self) -> None:
         obj = self._make_echo_obj()
-        self.assertFalse(obj._is_echo_response(35, 40))  # 87.5% 不触发
+        self.assertFalse(obj._is_echo_response(23, 40))  # 57.5% 不触发
+
+    def test_high_ratio_still_detected(self) -> None:
+        # 90% 命中在 60% 阈值下同样触发（回归：阈值由 0.9 调低后高命中仍判定回显）
+        obj = self._make_echo_obj()
+        self.assertTrue(obj._is_echo_response(36, 40))
+        self.assertTrue(obj._is_echo_response(40, 40))
 
     def test_small_batch_exempt(self) -> None:
         obj = self._make_echo_obj()
@@ -401,7 +407,7 @@ class SemcheckEchoDetectTests(unittest.TestCase):
         self.assertFalse(obj._is_echo_response(10, 40))  # 25% 正常范围
 
     def test_threshold_attribute_effective(self) -> None:
-        # 回归：阈值必须读类属性（子类可覆盖），而非硬编码 0.9
+        # 回归：阈值必须读类属性（子类可覆盖），而非硬编码
         obj = self._make_echo_obj()
         obj._echo_hit_ratio = 1.0
         self.assertTrue(obj._is_echo_response(40, 40))  # 100% 仍触发

@@ -1079,6 +1079,11 @@ async def doLLMTranslate(
                 num_better,
                 gpt_dic=projectConfig.gpt_dic,
             )
+            # 与主翻译路径一致：先做译文后处理（恢复对话符号/译后字典/dst 插件），
+            # 再跑问题检测，避免 post_dst 缺「」导致标点错漏误报「本有引号」。
+            postprocess_trans_list(
+                trans_list, projectConfig, projectConfig.post_dic, projectConfig.tPlugins
+            )
             # 落盘前重跑 find_problems：让 suspected_error 被认领为「疑似错误」problem
             h_ranges = _resolve_file_h_ranges(
                 project_dir, cache_file_path, projectConfig
