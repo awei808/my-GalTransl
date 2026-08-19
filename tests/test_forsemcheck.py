@@ -370,5 +370,91 @@ class SemcheckEmptyBlockTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("boom", obj._recorded_errors[0][2])
 
 
+class SemcheckEchoDetectTests(unittest.TestCase):
+    """_is_echo_batch：整批回显（复制输入全部标错）判定阈值。"""
+
+    def _make_echo_obj(self) -> ForSemCheck:
+        obj = object.__new__(ForSemCheck)
+        obj._log_tag = "[语义检测]"
+        return obj
+
+    def test_full_echo_detected(self) -> None:
+        obj = self._make_echo_obj()
+        self.assertTrue(obj._is_echo_batch(40, 40))
+
+    def test_ratio_at_threshold_detected(self) -> None:
+        obj = self._make_echo_obj()
+        self.assertTrue(obj._is_echo_batch(36, 40))  # 90% 触发
+
+    def test_below_threshold_kept(self) -> None:
+        obj = self._make_echo_obj()
+        self.assertFalse(obj._is_echo_batch(35, 40))  # 87.5% 不触发
+
+    def test_small_batch_exempt(self) -> None:
+        obj = self._make_echo_obj()
+        # 命中数不足 _ECHO_MIN_HITS：小批全命中不判定，避免误杀密集问题句
+        self.assertFalse(obj._is_echo_batch(3, 3))
+        self.assertFalse(obj._is_echo_batch(4, 5))
+
+    def test_low_ratio_kept(self) -> None:
+        obj = self._make_echo_obj()
+        self.assertFalse(obj._is_echo_batch(10, 40))  # 25% 正常范围
+
+
+class SemcheckEchoBatchTests(unittest.IsolatedAsyncioTestCase):
+    """模型整批回显时：丢弃本批全部标记、不计数、记录告警。"""
+
+    def _make_obj(self, llm_resp: str) -> ForSemCheck:
+        obj = object.__new__(ForSemCheck)
+        obj._log_tag = "[语义检测]"
+        obj._disabled_reason = ""
+        obj.pj_config = _FakeBatchConfig({})
+        obj.system_prompt = "system"
+        obj.trans_prompt = FORGAL_JSON_SEMCHECK_PROMPT
+        obj.target_lang = "Simplified_Chinese"
+        obj.eng_type = "ForSemCheck"
+        obj._recorded_errors = []
+
+        def fake_record(filename, idx_tip, message, model):
+            obj._recorded_errors.append((filename, idx_tip, message, model))
+
+        obj._record_round_runtime_error = fake_record
+
+        async def fake_llm(messages, filename, idx_tip, cb):
+            return llm_resp, None
+
+        obj._call_llm = fake_llm
+        return obj
+
+    async def _run(self, llm_resp: str, total: int = 40) -> ForSemCheck:
+        obj = self._make_obj(llm_resp)
+        targets = [_trans(i) for i in range(1, total + 1)]
+        with patch.object(
+            ForSemCheck, "_filter_target_translations", return_value=targets
+        ):
+            await obj.batch_translate("f.json", "c.json", targets, 40)
+        obj._targets = targets
+        return obj
+
+    async def test_full_echo_discards_all_marks_and_warns(self) -> None:
+        # 模型把整批 40 句全部输出为疑似错误（回显）：标记全部丢弃并告警
+        resp = "\n".join(
+            f'x{i:02d}|{{"id": {i}, "reason": "疑似错误"}}' for i in range(1, 41)
+        )
+        obj = await self._run(resp)
+        self.assertTrue(all(t.suspected_error == "" for t in obj._targets))
+        self.assertEqual(len(obj._recorded_errors), 1)
+        self.assertIn("整批回显", obj._recorded_errors[0][2])
+
+    async def test_partial_hits_kept(self) -> None:
+        # 正常批次（少量命中）：标记保留，不告警
+        resp = '\nx01|{"id": 2, "reason": "疑似错误"}\nx02|{"id": 5, "reason": "疑似错误"}'
+        obj = await self._run(resp)
+        self.assertEqual(obj._targets[1].suspected_error, "疑似错误")  # id 2
+        self.assertEqual(obj._targets[4].suspected_error, "疑似错误")  # id 5
+        self.assertEqual(obj._targets[0].suspected_error, "")  # id 1 未命中
+        self.assertEqual(obj._recorded_errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

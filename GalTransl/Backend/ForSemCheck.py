@@ -56,6 +56,10 @@ class ForSemCheck(BaseSparseFixRound):
     # 0 命中（空代码块）是语义检测的常态结果（绝大多数句子无语义差异），
     # 不告警也不计入最近错误；与 BaseImproveRound 对齐
     _warn_on_zero_found = False
+    # 单批命中率 ≥ 该比例时判定为模型整批回显（复制输入）等退化输出，丢弃该批标记
+    _ECHO_HIT_RATIO = 0.9
+    # 参与回显判定所需的最小命中数（小批次不判定，避免误杀密集问题句）
+    _ECHO_MIN_HITS = 5
 
     def __init__(
         self,
@@ -196,7 +200,20 @@ class ForSemCheck(BaseSparseFixRound):
                 continue
             result_text = preprocess_jsonline_response(raw_resp or "")
             batch_hit, _found = self._parse_fix_response(result_text, batch, n_symbol)
-            if self._warn_on_zero_found and result_text.strip() and _found == 0:
+            if self._is_echo_batch(batch_hit, len(batch)):
+                # 模型整批回显（复制输入全部标错）：丢弃本批全部标记，不计数
+                for t in batch:
+                    t.suspected_error = ""
+                _echo_msg = (
+                    f"{self._log_tag}[{filename}:{idx_tip}] 单批命中 "
+                    f"{batch_hit}/{len(batch)} 句（疑似模型整批回显输入），"
+                    f"已丢弃本批全部疑似错误标记"
+                )
+                LOGGER.warning(_echo_msg)
+                self._record_round_runtime_error(filename, idx_tip, _echo_msg, None)
+                batch_hit = 0
+                _found = 0
+            elif self._warn_on_zero_found and result_text.strip() and _found == 0:
                 _warn_msg = (
                     f"{self._log_tag}[{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
                     f"命中（输出格式异常或内容问题），本次 0 句处理"
@@ -262,6 +279,17 @@ class ForSemCheck(BaseSparseFixRound):
                 f"{self._log_tag} 句子 {line_id} 判定疑似错误（reason={tran.suspected_error}）"
             )
         return hit_count, hit_count
+
+    def _is_echo_batch(self, hit_count: int, batch_size: int) -> bool:
+        """整批回显（复制输入全部标错）判定：命中率 ≥ _ECHO_HIT_RATIO 且命中数 ≥ _ECHO_MIN_HITS。
+
+        语义检测正常批次的命中率极低（实测 ≤ 12.5%），整批高命中基本可断定
+        模型退化输出（回显/复制输入）；小批次命中数不足时不判定，避免误杀
+        恰好聚集在一批的真实问题句。
+        """
+        if batch_size <= 0 or hit_count < self._ECHO_MIN_HITS:
+            return False
+        return hit_count * 10 >= batch_size * 9
 
     def _apply_better_result(
         self, tran: CSentense, current_dst: str, normalized: str, line_id: int
