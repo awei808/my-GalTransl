@@ -308,5 +308,110 @@ class BatchTranslateIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(recorded), 1)
 
 
+class EchoRetryIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    """稀疏修复轮（ForJPResidue/ForBRStation/ForBanWordFix/ForImproveTranslation）：
+    模型整批回显时回滚本批、重置会话并追加纠正提示重试一次；仍回显则丢弃并告警。"""
+
+    def _make_tran_list(self, n: int = 40) -> list:
+        return [make_tran(i, "残留日文：です", f"译{i}") for i in range(1, n + 1)]
+
+    @staticmethod
+    def _echo_resp(n: int = 40) -> str:
+        return "\n".join(
+            f'x{i:02d}|{{"id": {i}, "better": "回显better{i}"}}'
+            for i in range(1, n + 1)
+        )
+
+    async def _run_seq(self, t, trans_list, responses, num_per_request=40):
+        calls = []
+        recorded = []
+        t._record_round_runtime_error = MethodType(
+            lambda self, *a, **k: recorded.append((a, k)), t
+        )
+
+        async def fake_call_llm(self, messages, filename, idx_tip, *_a, **_k):
+            calls.append(messages)
+            resp = responses[min(len(calls) - 1, len(responses) - 1)]
+            return resp, SimpleNamespace(model_name="m", domain="x")
+
+        t._call_llm = MethodType(fake_call_llm, t)
+        await t.batch_translate(
+            "f.json", "f.json", trans_list, num_per_request, gpt_dic=None
+        )
+        return calls, recorded
+
+    async def test_echo_then_success_retries_with_hint(self) -> None:
+        t = make_translator(ForJPResidue)
+        trans_list = self._make_tran_list()
+        calls, recorded = await self._run_seq(
+            t,
+            trans_list,
+            [self._echo_resp(), 'x01|{"id": 1, "better": "修复译1"}'],
+        )
+        self.assertEqual(len(calls), 2)  # 首次回显 + 追加纠正提示重试
+        # 回显重试走「重置会话 + 首轮重建」，而非简单追加 hint
+        self.assertTrue(calls[1][-1]["content"].startswith("FIRST_ROUND_CONTENT"))
+        self.assertIn("整批输入全部回显", calls[1][-1]["content"])  # 重试请求带纠正提示
+        self.assertEqual(trans_list[0].alt_dst, "修复译1")  # 重试后正常写入
+        self.assertTrue(all(tr.alt_dst == "" for tr in trans_list[1:]))
+        self.assertEqual(recorded, [])  # 重试成功不告警
+
+    async def test_echo_then_echo_discards_and_warns(self) -> None:
+        t = make_translator(ForJPResidue)
+        trans_list = self._make_tran_list()
+        calls, recorded = await self._run_seq(
+            t, trans_list, [self._echo_resp(), self._echo_resp()]
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(tr.alt_dst == "" for tr in trans_list))  # 全部回滚
+        self.assertEqual(len(recorded), 1)
+        self.assertIn("重试仍疑似整批回显", recorded[0][0][2])
+
+    async def test_echo_rollback_restores_swap_fix(self) -> None:
+        # swapFixToCurrent 开启时，回显覆盖的主译文必须被快照回滚
+        t = make_translator(ForJPResidue)
+        t.pj_config.getKey = (
+            lambda key, default=None: True
+            if key == "gpt.swapFixToCurrent"
+            else default
+        )
+        trans_list = self._make_tran_list()
+        await self._run_seq(
+            t,
+            trans_list,
+            [self._echo_resp(), 'x01|{"id": 1, "better": "修复译1"}'],
+        )
+        self.assertEqual(trans_list[0].pre_dst, "修复译1")  # 重试后修复覆盖主译文
+        self.assertEqual(trans_list[0].alt_dst, "译1")  # 旧译文入 alt_dst
+        for i, tr in enumerate(trans_list[1:], start=2):
+            self.assertEqual(tr.pre_dst, f"译{i}")  # 其余句主译文未被回显污染
+            self.assertEqual(tr.alt_dst, "")
+
+    async def test_small_batch_echo_exempt(self) -> None:
+        # 小批全命中（命中数 < _echo_min_hits）：不触发回显重试，正常保留
+        t = make_translator(ForJPResidue)
+        trans_list = [make_tran(i, "残留日文：です", f"译{i}") for i in range(1, 4)]
+        resp = (
+            'x1|{"id": 1, "better": "b1"}\n'
+            'x2|{"id": 2, "better": "b2"}\n'
+            'x3|{"id": 3, "better": "b3"}'
+        )
+        calls, recorded = await self._run_seq(t, trans_list, [resp], num_per_request=3)
+        self.assertEqual(len(calls), 1)  # 不重试
+        self.assertEqual(recorded, [])
+        self.assertEqual([tr.alt_dst for tr in trans_list], ["b1", "b2", "b3"])
+
+    def test_threshold_attribute_effective(self) -> None:
+        # 回归：阈值必须读类属性（子类可覆盖），而非硬编码 0.9
+        t = make_translator(ForJPResidue)
+        self.assertTrue(t._is_echo_response(36, 40))  # 默认 0.9
+        self.assertFalse(t._is_echo_response(35, 40))
+        t._echo_hit_ratio = 1.0
+        self.assertTrue(t._is_echo_response(40, 40))
+        self.assertFalse(t._is_echo_response(36, 40))
+        t._echo_hit_ratio = 0.5
+        self.assertTrue(t._is_echo_response(20, 40))
+
+
 if __name__ == "__main__":
     unittest.main()

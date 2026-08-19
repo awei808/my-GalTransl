@@ -15,9 +15,8 @@ from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.BaseEngine import register_engine
-from GalTransl.Backend.BaseFixRound import BaseSparseFixRound
+from GalTransl.Backend.BaseFixRound import BaseImproveRound
 from GalTransl.Backend.Prompts import (
-    FAILED_PREFIX,
     FORGAL_JSON_SEMCHECK_PROMPT,
     FORSEMCHECK_SYSTEM,
 )
@@ -32,7 +31,7 @@ class _EmptyTokenPool:
 
 
 @register_engine("ForSemCheck")
-class ForSemCheck(BaseSparseFixRound):
+class ForSemCheck(BaseImproveRound):
     """语义差异检测后端。
 
     向 AI 发送「原文 + 当前译文」（h 场景照常检测），AI 仅输出语义存在极大
@@ -41,25 +40,23 @@ class ForSemCheck(BaseSparseFixRound):
 
     与主翻译 profile 共用令牌池（与其他后处理后端 ForImproveTranslation /
     ForBRStation 等一致）：外部 OpenAI 兼容大模型与本地 llama.cpp 均可直接
-    使用，取决于「后端配置」页所选端点；主池无可用 token 时降级跳过，不发
-    任何请求。
+    使用，取决于「后端配置」页所选端点；本引擎额外支持未传 token_pool 时
+    按主 profile 自建，主池无可用 token 时降级跳过，不发任何请求。
 
     引擎标识：ForSemCheck
     """
 
     # 日志前缀
     _log_tag = "[语义检测]"
-    # 输入携带原文 src（语义差异判定必需）
-    _include_src = True
-    # 不注入 problem（避免模型受规则问题干扰，只看语义）
-    _inject_problem = False
     # 0 命中（空代码块）是语义检测的常态结果（绝大多数句子无语义差异），
     # 不告警也不计入最近错误；与 BaseImproveRound 对齐
     _warn_on_zero_found = False
-    # 单批命中率 ≥ 该比例时判定为模型整批回显（复制输入）等退化输出，丢弃该批标记
-    _ECHO_HIT_RATIO = 0.9
-    # 参与回显判定所需的最小命中数（小批次不判定，避免误杀密集问题句）
-    _ECHO_MIN_HITS = 5
+    # 整批回显（复制输入全部标错）重试时追加的纠正提示（覆盖基类文案）
+    _echo_retry_hint = (
+        "注意：上一轮你的输出疑似把整批输入全部判定为疑似错误（整批回显）。"
+        "请重新逐句对比 src 与 dst，仅输出语义差异极大的句子；"
+        "若均无极大差异，输出空代码块。"
+    )
 
     def __init__(
         self,
@@ -71,9 +68,11 @@ class ForSemCheck(BaseSparseFixRound):
         """
         初始化语义差异检测后端。
 
-        与其他后处理后端一致，直接复用主翻译 profile 的令牌池（token_pool），
-        不维护独立端点：外部 OpenAI 兼容大模型与本地 llama.cpp 均可用，
-        取决于「后端配置」页所选端点。
+        与 ForImproveTranslation 等后处理后端一致，直接复用主翻译 profile 的
+        令牌池（token_pool），不维护独立端点：外部 OpenAI 兼容大模型与本地
+        llama.cpp 均可用，取决于「后端配置」页所选端点。区别于其他后端的是：
+        未传 token_pool（独立调用/测试）时按主 profile 自建，构建失败或主池
+        无可用 token 时降级禁用（跳过检测、不发请求），不中断后处理流程。
 
         Args:
             config: 项目配置对象。
@@ -104,17 +103,6 @@ class ForSemCheck(BaseSparseFixRound):
         self.trans_prompt = FORGAL_JSON_SEMCHECK_PROMPT
         # 覆盖默认值后统一重放 change_prompt 与用户模板 override（基类 __init__ 已应用过一次）
         self._finalize_prompts()
-
-    def _filter_target_translations(self, trans_list: CTransList) -> list:
-        """检测全部已有有效译文的句子（含 h 场景，跳过 skip_check）。"""
-        return [
-            t
-            for t in trans_list
-            if t.post_src != ""
-            and t.pre_dst != ""
-            and FAILED_PREFIX not in t.pre_dst
-            and not getattr(t, "skip_check", False)
-        ]
 
     async def batch_translate(
         self,
@@ -174,57 +162,60 @@ class ForSemCheck(BaseSparseFixRound):
                 include_src=True,
             )
             user_content = self._build_semcheck_user_content(input_src)
-            call_messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_content},
-            ]
             if self.pj_config.active_workers == 1:
                 LOGGER.info(
                     f"-> 语义检测输入[{batch_no}/{total_batches}] | "
                     f"backend={self.eng_type} | sentences={len(batch)}"
                 )
-            try:
-                raw_resp, _token = await self._call_llm(
-                    call_messages, filename, idx_tip, None
+            echo_retried = False
+            while True:
+                call_messages = [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_content},
+                ]
+                try:
+                    raw_resp, _token = await self._call_llm(
+                        call_messages, filename, idx_tip, None
+                    )
+                except JobCancelledError:
+                    raise
+                except Exception as e:
+                    LOGGER.warning(
+                        f"{self._log_tag}[{filename}:{idx_tip}]LLM调用失败："
+                        f"{type(e).__name__}: {e}"
+                    )
+                    self._record_round_runtime_error(
+                        filename, idx_tip, f"{type(e).__name__}: {e}", None
+                    )
+                    break
+                result_text = preprocess_jsonline_response(raw_resp or "")
+                batch_hit, _ = self._parse_fix_response(result_text, batch, n_symbol)
+                if self._is_echo_response(batch_hit, len(batch)):
+                    # 模型整批回显（复制输入全部标错）：丢弃本批标记，重试一次
+                    for t in batch:
+                        t.suspected_error = ""
+                    if not echo_retried:
+                        LOGGER.warning(
+                            f"{self._log_tag}[{filename}:{idx_tip}] 单批命中 "
+                            f"{batch_hit}/{len(batch)} 句（疑似模型整批回显输入），"
+                            f"追加纠正提示后重试一次"
+                        )
+                        user_content = user_content + "\n\n" + self._echo_retry_hint
+                        echo_retried = True
+                        continue
+                    _echo_msg = (
+                        f"{self._log_tag}[{filename}:{idx_tip}] 重试仍疑似整批回显"
+                        f"（命中 {batch_hit}/{len(batch)} 句），已丢弃本批全部疑似错误标记"
+                    )
+                    LOGGER.warning(_echo_msg)
+                    self._record_round_runtime_error(filename, idx_tip, _echo_msg, None)
+                    break
+                hit_count += batch_hit
+                LOGGER.debug(
+                    f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
+                    f"（序号 {idx_tip}）命中 {batch_hit} 句"
                 )
-            except JobCancelledError:
-                raise
-            except Exception as e:
-                LOGGER.warning(
-                    f"{self._log_tag}[{filename}:{idx_tip}]LLM调用失败："
-                    f"{type(e).__name__}: {e}"
-                )
-                self._record_round_runtime_error(
-                    filename, idx_tip, f"{type(e).__name__}: {e}", None
-                )
-                continue
-            result_text = preprocess_jsonline_response(raw_resp or "")
-            batch_hit, _found = self._parse_fix_response(result_text, batch, n_symbol)
-            if self._is_echo_batch(batch_hit, len(batch)):
-                # 模型整批回显（复制输入全部标错）：丢弃本批全部标记，不计数
-                for t in batch:
-                    t.suspected_error = ""
-                _echo_msg = (
-                    f"{self._log_tag}[{filename}:{idx_tip}] 单批命中 "
-                    f"{batch_hit}/{len(batch)} 句（疑似模型整批回显输入），"
-                    f"已丢弃本批全部疑似错误标记"
-                )
-                LOGGER.warning(_echo_msg)
-                self._record_round_runtime_error(filename, idx_tip, _echo_msg, None)
-                batch_hit = 0
-                _found = 0
-            elif self._warn_on_zero_found and result_text.strip() and _found == 0:
-                _warn_msg = (
-                    f"{self._log_tag}[{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
-                    f"命中（输出格式异常或内容问题），本次 0 句处理"
-                )
-                LOGGER.warning(_warn_msg)
-                self._record_round_runtime_error(filename, idx_tip, _warn_msg, None)
-            hit_count += batch_hit
-            LOGGER.debug(
-                f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
-                f"（序号 {idx_tip}）命中 {batch_hit} 句"
-            )
+                break
         if hit_count > 0:
             LOGGER.info(f"{self._log_tag} {filename} 语义检测完成，共命中 {hit_count} 句")
         else:
@@ -269,6 +260,9 @@ class ForSemCheck(BaseSparseFixRound):
             if tran is None:
                 continue
             reason = obj.get("reason")
+            if isinstance(reason, str) and "�" in reason:
+                # 乱码 reason 视为输出异常：降级为默认标记，避免污染 suspected_error
+                reason = ""
             tran.suspected_error = (
                 str(reason).strip()
                 if isinstance(reason, str) and str(reason).strip()
@@ -280,19 +274,9 @@ class ForSemCheck(BaseSparseFixRound):
             )
         return hit_count, hit_count
 
-    def _is_echo_batch(self, hit_count: int, batch_size: int) -> bool:
-        """整批回显（复制输入全部标错）判定：命中率 ≥ _ECHO_HIT_RATIO 且命中数 ≥ _ECHO_MIN_HITS。
-
-        语义检测正常批次的命中率极低（实测 ≤ 12.5%），整批高命中基本可断定
-        模型退化输出（回显/复制输入）；小批次命中数不足时不判定，避免误杀
-        恰好聚集在一批的真实问题句。
-        """
-        if batch_size <= 0 or hit_count < self._ECHO_MIN_HITS:
-            return False
-        return hit_count * 10 >= batch_size * 9
-
     def _apply_better_result(
         self, tran: CSentense, current_dst: str, normalized: str, line_id: int
     ) -> bool:
-        """防御：本引擎只做标记，绝不写 alt_dst / 主译文。"""
+        """防御性死代码：本引擎重写 batch_translate 与 _parse_fix_response，
+        基类调用链不会触达本方法；保留以声明「绝不写 alt_dst / 主译文」的契约。"""
         return False

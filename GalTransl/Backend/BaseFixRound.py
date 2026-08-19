@@ -42,6 +42,15 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
     _include_src = True
     # 响应非空但 0 个 better 时是否告警
     _warn_on_zero_found = True
+    # 单批命中率 ≥ 该比例时判定为模型整批回显（复制输入）等退化输出，丢弃该批并重试一次
+    _echo_hit_ratio = 0.9
+    # 参与回显判定所需的最小命中数（小批次不判定，避免误杀密集问题句）
+    _echo_min_hits = 5
+    # 回显重试时追加的纠正提示（追加在首轮重建的 user 内容末尾）
+    _echo_retry_hint = (
+        "注意：上一轮你的输出疑似把整批输入全部回显（每句都输出了 better）。"
+        "请重新逐句检查，仅输出确有需要修复/改进的句子；若本批无需处理，输出空代码块。"
+    )
 
     def _has_target_problem(self, tran) -> bool:
         """按问题类型白名单 + 译文有效性过滤，统一各修复轮筛选口径。"""
@@ -137,67 +146,103 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
                 problem_types=self._effective_problem_types(),
                 include_src=self._include_src,
             )
-            conv = self._ensure_conversation(filename)
-            is_first_round = len(conv) <= 1
-            if is_first_round:
-                user_content = self._build_first_round_content(
-                    input_src, batch_gptdict, filename
-                )
-            else:
-                user_content = (
-                    batch_gptdict + "\n以下是本批次待处理内容：\n" + input_src
-                    if batch_gptdict
-                    else input_src
-                )
-            call_messages = conv + [{"role": "user", "content": user_content}]
+            # 解析前快照本批译文字段：回显判定后需回滚已写入的 alt_dst / 主译文
+            batch_snapshot = self._snapshot_batch_translations(batch)
+            echo_retried = False
+            while True:
+                conv = self._ensure_conversation(filename)
+                is_first_round = len(conv) <= 1
+                if is_first_round:
+                    user_content = self._build_first_round_content(
+                        input_src, batch_gptdict, filename
+                    )
+                    if echo_retried:
+                        user_content = user_content + "\n\n" + self._echo_retry_hint
+                else:
+                    user_content = (
+                        batch_gptdict + "\n以下是本批次待处理内容：\n" + input_src
+                        if batch_gptdict
+                        else input_src
+                    )
+                call_messages = conv + [{"role": "user", "content": user_content}]
 
-            if self.pj_config.active_workers == 1:
-                _round = "首轮" if is_first_round else "续轮"
-                LOGGER.info(
-                    f"-> 修复输入[{_round}] | backend={self.eng_type} | "
-                    f"sentences={len(batch)}"
-                )
-                LOGGER.info("->输出：")
+                if self.pj_config.active_workers == 1:
+                    _round = "首轮" if is_first_round else "续轮"
+                    _retry = " 回显重试" if echo_retried else ""
+                    LOGGER.info(
+                        f"-> 修复输入[{_round}{_retry}] | backend={self.eng_type} | "
+                        f"sentences={len(batch)}"
+                    )
+                    LOGGER.info("->输出：")
 
-            try:
-                raw_resp, _token = await self._call_llm(
-                    call_messages, filename, idx_tip, None
-                )
-            except JobCancelledError:
-                raise
-            except Exception as e:
-                LOGGER.warning(
-                    f"{self._log_tag}[{filename}:{idx_tip}]LLM调用失败："
-                    f"{type(e).__name__}: {e}"
-                )
-                self._record_round_runtime_error(
-                    filename, idx_tip, f"{type(e).__name__}: {e}", None
-                )
-                self.reset_conversation(filename)
-                continue
+                try:
+                    raw_resp, _token = await self._call_llm(
+                        call_messages, filename, idx_tip, None
+                    )
+                except JobCancelledError:
+                    raise
+                except Exception as e:
+                    LOGGER.warning(
+                        f"{self._log_tag}[{filename}:{idx_tip}]LLM调用失败："
+                        f"{type(e).__name__}: {e}"
+                    )
+                    self._record_round_runtime_error(
+                        filename, idx_tip, f"{type(e).__name__}: {e}", None
+                    )
+                    self.reset_conversation(filename)
+                    break
 
-            result_text = preprocess_jsonline_response(raw_resp or "")
-            success_count, found_count = self._parse_fix_response(
-                result_text, batch, n_symbol
-            )
-
-            if self._warn_on_zero_found and result_text.strip() and found_count == 0:
-                _warn_msg = (
-                    f"{self._log_tag}[{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
-                    f"better（输出格式异常或内容问题），本次 0 句处理"
+                result_text = preprocess_jsonline_response(raw_resp or "")
+                success_count, found_count = self._parse_fix_response(
+                    result_text, batch, n_symbol
                 )
-                LOGGER.warning(_warn_msg)
-                self._record_round_runtime_error(filename, idx_tip, _warn_msg, None)
 
-            # 追加 assistant 回复进对话，保持轮次交替
-            self.conversations[filename] = self._trim_conversation(
-                call_messages + [{"role": "assistant", "content": raw_resp or ""}]
-            )
-            fix_count += success_count
-            LOGGER.debug(
-                f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
-                f"（序号 {idx_tip}）已处理，成功 {success_count} 句"
-            )
+                if self._is_echo_response(found_count, len(batch)):
+                    # 模型整批回显（复制输入全部输出 better）：回滚本批写入，重试一次
+                    self._restore_batch_snapshot(batch, batch_snapshot)
+                    LOGGER.debug(
+                        f"{self._log_tag}[{filename}:{idx_tip}] 已回滚本批 "
+                        f"{len(batch)} 句的 alt_dst/主译文（快照恢复）"
+                    )
+                    if not echo_retried:
+                        LOGGER.warning(
+                            f"{self._log_tag}[{filename}:{idx_tip}] 本批命中 "
+                            f"{found_count}/{len(batch)} 句（疑似模型整批回显输入），"
+                            f"重置上下文并追加纠正提示后重试一次"
+                        )
+                        self.conversations[filename] = [
+                            {"role": "system", "content": self.system_prompt}
+                        ]
+                        echo_retried = True
+                        continue
+                    _echo_msg = (
+                        f"{self._log_tag}[{filename}:{idx_tip}] 重试仍疑似整批回显"
+                        f"（命中 {found_count}/{len(batch)} 句），已丢弃本批全部结果"
+                    )
+                    LOGGER.warning(_echo_msg)
+                    self._record_round_runtime_error(filename, idx_tip, _echo_msg, None)
+                    success_count = 0
+                    found_count = 0
+                    break
+
+                if self._warn_on_zero_found and result_text.strip() and found_count == 0:
+                    _warn_msg = (
+                        f"{self._log_tag}[{filename}:{idx_tip}] 模型响应非空但未解析到任何 "
+                        f"better（输出格式异常或内容问题），本次 0 句处理"
+                    )
+                    LOGGER.warning(_warn_msg)
+                    self._record_round_runtime_error(filename, idx_tip, _warn_msg, None)
+
+                # 追加 assistant 回复进对话，保持轮次交替
+                self.conversations[filename] = self._trim_conversation(
+                    call_messages + [{"role": "assistant", "content": raw_resp or ""}]
+                )
+                fix_count += success_count
+                LOGGER.debug(
+                    f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
+                    f"（序号 {idx_tip}）已处理，成功 {success_count} 句"
+                )
+                break
 
         if fix_count > 0:
             LOGGER.info(f"{self._log_tag} {filename} 共处理 {fix_count} 句")
@@ -291,6 +336,34 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
             if self._apply_better_result(tran, current_dst, normalized, line_id):
                 success_count += 1
         return success_count, found_count
+
+    def _is_echo_response(self, found_count: int, batch_size: int) -> bool:
+        """整批回显（复制输入全部输出 better）判定。
+
+        以解析到的 found_count（模型实际输出的行数）为基准：命中率 ≥
+        self._echo_hit_ratio 且命中数 ≥ self._echo_min_hits 时判定为模型退化
+        输出；两阈值均可经类属性由子类覆盖。修复轮正常输出为稀疏 better
+        （仅少量问题句），整批高命中基本可断定回显。
+
+        注意权衡：若单批中确有 ≥90% 句子需修复/改进（如整段低质量机器
+        翻译），会误判回显并丢弃该批，属可接受的防污染取舍。
+        """
+        if batch_size <= 0 or found_count < self._echo_min_hits:
+            return False
+        return found_count / batch_size >= self._echo_hit_ratio
+
+    @staticmethod
+    def _snapshot_batch_translations(batch: CTransList) -> list:
+        """快照本批 alt_dst / pre_dst / proofread_zh，供回显回滚。"""
+        return [(t, t.alt_dst, t.pre_dst, t.proofread_zh) for t in batch]
+
+    @staticmethod
+    def _restore_batch_snapshot(batch: CTransList, snapshot: list) -> None:
+        """按快照恢复本批译文字段（覆盖 alt_dst / pre_dst / proofread_zh）。"""
+        for t, alt_dst, pre_dst, proofread_zh in snapshot:
+            t.alt_dst = alt_dst
+            t.pre_dst = pre_dst
+            t.proofread_zh = proofread_zh
 
     def _apply_better_result(
         self, tran, current_dst: str, normalized: str, line_id: int
