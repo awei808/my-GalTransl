@@ -24,24 +24,29 @@
 &ensp;&ensp;&ensp;&ensp;The purpose of this refactoring is to **explore how to achieve higher-quality AI localization**, which inevitably brings higher token costs. The main adjustments compared to the original project are:
 
 1. **Fully refactored frontend**: The desktop app is rewritten with Tauri 2 + SolidJS, with a drastically different UI style from the original and re-divided interface.
-2. **Focus on LLMs, drop local small models**: Fully adapted and optimized for cloud LLMs (GPT-4/Claude/Deepseek and other OpenAI-compatible interfaces); local small models retain only the configuration interface and **may not work properly**.
-3. **Galgame localization only**: Focused on the Galgame text translation scenario; the original project's general file features such as epub and subtitles **may not work properly**.
-4. **More pipelines and richer prompts**: More stages are added to the translation pipeline, and more information and rules (e.g. global analysis, file-level metadata, plot route map, batch-level metadata) are injected into the prompts to pursue better translation quality.
-5. **AI post-translation improvement**: After the translation pipeline completes, AI can be called to improve the translation (ForImproveTranslation).
-6. **New problem detection items**: On top of the original problem detection, two new items are added: **long sentence missing line break** and **abnormal line break position**.
+2. **More pipelines and richer prompts**: More stages are added to the translation pipeline, and more information and rules (e.g. global analysis, file-level metadata, plot route map, **all stages can be skipped and cache files manually edited**) are injected into the prompts to pursue better translation quality.
+3. **Multi-turn conversation translation backend**: Instead of the original single-turn conversation style, multi-turn conversations are used to obtain more comprehensive context and produce better translations.
+4. **AI post-translation improvement**: After the translation pipeline completes, multiple post-processing engines can be run in order via the `gpt.afterTranslation` ordered array: translation improvement (improve), line-break fixing (brfix), Japanese-residue fixing (jpfix), forbidden-word fixing (banfix), semantic detection (semcheck), and second-round confirmation of hit sentences (semcheckagain).
+5. **New problem detection items and skip-check**: On top of the original problem detection, new items are added: **long sentence missing line break**, **abnormal line break position**, **attributive/adverbial overlong**, **H-scene inappropriate wording**, **suspected error** (AI semantic detection), etc.; translations can also be marked with a skip-detection flag so they are no longer recorded as problems.
+6. **Different detection thresholds and handling for H/non-H intervals**: H scenes (H intervals marked in the batch metadata) and non-H scenes use differentiated strategies in detection and translation — **long-sentence-missing-line-break** uses an H-scene-specific sentence length threshold (`avgSentenceLengthThresholdH`, default 24, vs 17 for non-H scenes); **inappropriate wording** detection hits the H word-list inside H scenes and the forbidden-word list outside them; the **GPT dictionary is split into H/non-H libraries** and injected into translation prompts by scene, so H vocabulary does not pollute normal plot translation.
 7. **Alternative translation feature**: Let AI evaluate and output improvable translations, or provide AI-fixed alternative translations for specific problem items; users can freely switch between the alternative and current translation on the proofreading page.
-8. **Known unfixed issues**: The project's **global undo/redo mechanism and find-replace feature have obvious bugs and are not yet fixed**.
-9. **Cache structure change**: To adapt to multi-pipeline translation (global analysis → file-level metadata → translation execution and other stages), the translation cache structure has been adjusted as necessary and is incompatible with the original project.
-10. **Other minor changes**: JSON uniformly uses `\n` line breaks (instead of `\r\n`), dictionaries uniformly use PSV format, etc.
-11. **CLI not adapted**: The refactoring mainly revolves around the desktop app; the command-line version (CLI) **has not been adapted and may not work properly**.
+8. **New project wizard with more settings**: In the new-project wizard, you can set the game's external information, plot outline and plot structure type, and toggle whether each pipeline stage runs.
+9. **Auto-save**: Dictionaries, cache metadata files and config files auto-save on focus loss; the translation editing view does not support auto-save due to its complexity and the need for undo.
+10. **Cache structure change**: To adapt to multi-pipeline translation (global analysis → file-level metadata → translation execution and other stages), the translation cache structure has been adjusted as necessary and is incompatible with old translation projects.
+11. **Translation project path**: Newly created translation projects can only be located in the application's own directory; old projects are not subject to this restriction.
+12. **Known unfixed issues**: Some UI issues such as occasional duplicate popups in the translation console and file progress display bugs in individual cases are **not yet fully fixed**; undo/redo (including cross-file) and project-switch state residue issues have been largely resolved.
+13. **Galgame localization only**: Focused on the Galgame text translation scenario; the original project's general file features such as epub and subtitles **cannot work properly**.
+14. **Focus on LLMs, partially compatible with local small models**: Fully adapted and optimized for cloud LLMs (GPT-4/Claude/Deepseek and other OpenAI-compatible interfaces); local small models compatible with the OpenAI format can also be connected and used.
+15. **CLI not adapted**: The refactoring mainly revolves around the desktop app; the command-line version (CLI) **has not been adapted and may not work properly**.
+16. **Other minor changes**: JSON uniformly uses `\n` line breaks (instead of `\r\n`), dictionaries uniformly use PSV format, etc.
 
   * Features:
   1. 🖥️ **Desktop GUI** — Modern desktop app built with Tauri 2 + Rust + **SolidJS**, no command-line needed for the full process: new project, import files, configure backend, translate, proofread, build output
   2. Supports **GPT-4/Claude/Deepseek** and other LLMs, with unified management of multiple OpenAI-compatible backend profiles (local small model interfaces retained but may not work properly)
   3. **GPT Dictionary**, letting the model understand character settings and accurately translate names, pronouns, and new words
-  4. Flexible automated dictionary system via pre-translation, post-translation, and conditional dictionaries, with support for **name replacement tables** (CSV/XLSX)
+  4. Flexible automated dictionary system via pre-translation, post-translation, and conditional dictionaries, with support for **H/non-H dual GPT dictionaries**, forbidden-word dictionary and **name replacement tables** (CSV/XLSX)
   5. Real-time cache saving, automatic breakpoint resume; visual display of prompts, translation concatenation, concurrent progress and speed during translation
-  6. Complete pipeline: input validation → text compression → global game analysis → automatic glossary building → file-level metadata → plot route map → batch division → translation execution, with multi-stage prompt injection for better quality
+  6. Complete pipeline: input validation → text compression → global game analysis → automatic glossary building → file-level metadata → plot route map → batch division → translation execution → (optional) post-translation improvement/fixing/semantic detection, with multi-stage prompt injection for better quality
   7. Built-in **proofreading workbench**: sentence-by-sentence review/edit, problem detection, alternative translation swap, undo/redo, cross-file find-replace
   8. Focused on the Galgame text translation scenario; other general file formats (srt, epub, etc.) may not work properly
   9. Supports **plugin system**: custom file formats and text processing pipelines, highly extensible
@@ -49,7 +54,9 @@
 <b>❗❗When publishing translations made with this tool without full manual proofreading/polishing, please clearly label them as "GPT translation/AI translation patch", not "personal translation" or "AI localization".</b>
 
 ## Recent Updates
-* 2026.8: Personal refactor v0.1.0, using a **desktop GUI** (Tauri 2 + SolidJS + Rust), with visual translation workbench, proofreading, unified backend configuration management, name replacement tables, complete pipeline, etc.
+* 2026.8: Updated v0.3.0, added **semantic detection** (AI flags suspected mistranslation/omission/line-merging, with second-round confirmation of hit sentences), **H/non-H dual GPT dictionaries** and forbidden-word dictionary, Japanese-residue/forbidden-word fix engines, attributive/adverbial-overlong and H-scene wording detection, cross-file undo/redo; backend refactored with BaseEngine split (API client decoupled from translation rounds)
+* 2026.8: Updated v0.2.0, completed the **full pipeline** (input validation → text compression → global analysis → glossary building → file-level metadata → plot route map → batch division → translation execution), per-stage pipeline switches, translation improvement (ForImproveTranslation) and line-break fixing (ForBRStation), alternative translations, long-sentence-missing-linebreak / abnormal-linebreak-position detection
+* 2026.8: Personal refactor v0.1.0, using a **desktop GUI** (Tauri 2 + SolidJS + Rust), with visual translation workbench, proofreading, unified backend configuration management, name replacement tables, etc.
 * 2026.4: Updated v7, added **desktop GUI** (Tauri + React), with dark mode, custom backgrounds, multi-project management, visual translation workbench, etc.
 * 2025.5: Updated v6, added ForGal translation template, GalTransl-14B-v3 model
 * 2024.5: Updated v5, added GalTransl-7B model, multiple file type support
@@ -420,16 +427,23 @@ problemAnalyze:
     - 词频过高 # Repeated more than 20 times
     - 标点错漏 # Punctuation added or missing
     - 残留日文 # Japanese hiragana/katakana remaining
-    - 丢失换行 # Missing line breaks, usually fine
+    - 丢失换行 # Missing line breaks, usually fine; combined with the long-sentence-missing-line-break check to ensure actual reading experience
     - 多加换行 # More line breaks than original, may cause screen overflow
     - 比日文长 # 1.3x longer than Japanese
     - 字典使用 # Not following GPT dictionary requirements
     - 语言不通 # Suspected not translated to target language; when translating to Chinese, checks for non-GBK characters
+    - 缺控制符 # Detects lost ruby or other control characters in translation
+    - 独白男他 # "他" appears in monologue (no name), excluding "其他/他们/他人/他乡/他国/他日/他山"
     #- 引入英文 # Originally no English, translation introduced English
     #- 比日文长严格 # Strict check, cannot be longer than Japanese
+    #- 长句丢失换行 # Average sentence length exceeds the configured threshold, suspected missing line break
+    #- 换行位置异常 # Line break not following a Chinese punctuation mark (comma/period etc.)
+    - 疑似错误 # AI semantic detection: extreme semantic divergence (mistranslation/omission/line-merging), flagged by ForSemCheck via suspected_error
+  avgSentenceLengthThreshold: 17 # Sentence length threshold for "long sentence missing line break", default 17, suggested 15~25
+  avgSentenceLengthThresholdH: 24 # H-scene specific threshold, default 24, suggested 20~30
 ```
 
-Currently supports finding the above problems. Some items are commented out with #, you can uncomment to enable, or add # to disable the corresponding problem search.
+Currently supports finding the above problems. Some items are commented out with #, you can uncomment to enable, or add # to disable the corresponding problem search. There are also **attributive/adverbial overlong** (detects overlong modifiers like "XX的" and "在XX") and **inappropriate wording** (H-scene vs non-H-scene flagged by forbidden-word/word-list hits) checks that can be enabled via configuration.
 
 After finding problems, they are stored in the translation cache. See the Translation Cache section. In the desktop app, you can use the **Problem Detection** sidebar in the "Proofreading" page to batch view all problems, and fix them by modifying the cache.
 
