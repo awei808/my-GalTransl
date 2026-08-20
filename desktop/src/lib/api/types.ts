@@ -210,6 +210,15 @@ export type CacheSearchResponse = {
 
 export type CacheReplaceField = "src" | "dst" | "all";
 
+export type CacheReplaceEntryRequest = {
+  query: string;
+  replacement: string;
+  field: CacheReplaceField;
+  filename: string;
+  index: number;
+  dry_run?: boolean;
+};
+
 export type CacheReplaceFileDetail = {
   filename: string;
   matches: number;

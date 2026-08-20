@@ -6,6 +6,7 @@ import type {
   CacheEntry,
   CacheFileResponse,
   CacheHrangesResponse,
+  CacheReplaceEntryRequest,
   CacheReplaceField,
   CacheReplaceResponse,
   CacheSearchField,
@@ -272,6 +273,18 @@ export async function replaceCache(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, replacement, field, dry_run: dryRun }),
+  });
+}
+
+/** 单条替换（查找替换侧边栏「替换单个」）：仅替换指定文件指定 index 的条目 */
+export async function replaceCacheEntry(
+  projectId: string,
+  req: CacheReplaceEntryRequest,
+) {
+  return apiRequest<CacheReplaceResponse>(`/api/projects/${projectId}/cache/replace-entry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
   });
 }
 

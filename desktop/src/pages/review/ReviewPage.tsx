@@ -305,7 +305,7 @@ function displaySpeakerName(name: string | string[], nameDict: Record<string, st
 }
 
 /* ── 单条 CacheEntry 组件 ── */
-function EntryCard(props: {
+export function EntryCard(props: {
   entry: CacheEntry;
   onSkip: () => void;
   onDelete: () => void;
@@ -338,6 +338,32 @@ function EntryCard(props: {
     if (dstRef && document.activeElement === dstRef) return;
     setDraftDst(() => v);
   });
+
+  // 操作按钮统一入口：mousedown 时先提交译文草稿再执行动作。
+  // 背景：输入中的译文是本地草稿（draftDst），点击按钮会先触发 textarea 失焦提交草稿
+  // （setEntries 更新条目）→ <For> 按对象引用 keyed 重建该条目 DOM → 原按钮被移除 →
+  // mousedown/up 目标不一致导致 click 丢失（表现为"第一次点击只失焦，第二次才生效"）。
+  // 鼠标路径在 mousedown（DOM 尚未重建）执行并置位去重标记；键盘路径（Enter/Space）
+  // 只触发 click，此时 mouseHandled 为空，正常执行动作。
+  let mouseHandled = false;
+  function buttonHandlers(action: () => void) {
+    return {
+      onMouseDown: (ev: MouseEvent) => {
+        ev.preventDefault(); // 阻止默认焦点转移，避免 textarea 二次 blur 提交
+        mouseHandled = true;
+        // 幂等提交草稿：值未变化时 handleFieldChange 跳过 setEntries，不触发重建
+        props.onFieldChange("pre_dst", draftDst());
+        action();
+      },
+      onClick: () => {
+        if (mouseHandled) {
+          mouseHandled = false;
+          return;
+        }
+        action();
+      },
+    };
+  }
 
   return (
     <div class={`entry-card ${hasProblem() ? "has-problem" : ""} ${e().skip_check ? "skip-check" : ""}`}>
@@ -418,7 +444,7 @@ function EntryCard(props: {
             <button
               class="entry-btn entry-btn--swap"
               title="点击交换当前译文与备选译文（AI 改进轮给出的备选译文）"
-              onClick={props.onSwapAlt}
+              {...buttonHandlers(props.onSwapAlt)}
             >
               <svg
                 width="14"
@@ -437,7 +463,7 @@ function EntryCard(props: {
           <button
             class="entry-btn"
             title="展开/收起全部字段"
-            onClick={props.onToggleExpanded}
+            {...buttonHandlers(props.onToggleExpanded)}
           >
             <svg
               width="14"
@@ -454,7 +480,7 @@ function EntryCard(props: {
           <button
             class={`entry-btn ${e().skip_check ? "entry-btn--skip-active" : ""}`}
             title={e().skip_check ? "恢复对该条目的检查" : "跳过该条目的检查"}
-            onClick={props.onSkip}
+            {...buttonHandlers(props.onSkip)}
           >
             <Show
               when={e().skip_check}
@@ -486,7 +512,7 @@ function EntryCard(props: {
             </Show>
             <span class="entry-btn-text">{e().skip_check ? "正常检查" : "跳过检查"}</span>
           </button>
-          <button class="entry-btn entry-btn--danger" title="删除该条目" onClick={props.onDelete}>
+          <button class="entry-btn entry-btn--danger" title="删除该条目" {...buttonHandlers(props.onDelete)}>
             <svg
               width="14"
               height="14"

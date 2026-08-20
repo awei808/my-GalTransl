@@ -3409,70 +3409,60 @@ def build_handler(registry: JobRegistry) -> type:
                     results = []
                     total_matches = 0
                     if os.path.isdir(cache_dir):
-                        for root, _dirs, names in os.walk(cache_dir):
-                            for name in sorted(names):
-                                if not name.endswith(".json"):
-                                    continue
-                                if name in ("GlobalPrompt.json", "PlotRouteMap.json") or name.startswith("_"):
-                                    continue
-                                if name.endswith(".meta.json") or name.endswith(".batch.json"):
-                                    continue
-                                fp = os.path.join(root, name)
-                                if not os.path.isfile(fp):
-                                    continue
-                                rel = os.path.relpath(fp, cache_dir).replace("\\", "/")
-                                try:
-                                    import orjson
-                                    with open(fp, "rb") as f:
-                                        entries = orjson.loads(f.read())
-                                    for e in entries:
-                                        if not isinstance(e, dict):
-                                            continue
-                                        # 可见文本对齐页面渲染：原文行显示 pre_src（post_src 为更底层原文，页面不展示）
-                                        src_text = (
-                                            e.get("pre_src", "")
-                                            or e.get("post_src", "")
-                                            or e.get("post_jp", "")
-                                            or e.get("pre_jp", "")
-                                        )
-                                        dst_text = e.get("pre_dst", "") or e.get("pre_zh", "") or e.get("proofread_dst", "") or e.get("proofread_zh", "")
-                                        problem_text = e.get("problem", "")
-                                        # 说话人徽章（name 可能为字符串或 names 列表）也是页面可见文本
-                                        raw_name = e.get("name", "") or e.get("names", "")
-                                        if isinstance(raw_name, list):
-                                            speaker_text = " ".join(str(x) for x in raw_name)
-                                        else:
-                                            speaker_text = str(raw_name) if raw_name else ""
-                                        match_src = query.lower() in src_text.lower()
-                                        match_dst = query.lower() in dst_text.lower()
-                                        match_problem = query.lower() in problem_text.lower()
-                                        match_speaker = bool(speaker_text) and query.lower() in speaker_text.lower()
-                                        if field == "src" and not match_src:
-                                            continue
-                                        if field == "dst" and not match_dst:
-                                            continue
-                                        if field == "problem" and not match_problem:
-                                            continue
-                                        if field == "all" and not match_src and not match_dst and not match_problem and not match_speaker:
-                                            continue
-                                        total_matches += 1
-                                        if len(results) < max_results:
-                                            results.append({
-                                                "filename": rel,
-                                                "index": e.get("index", 0),
-                                                "speaker": raw_name,
-                                                "post_src": src_text,
-                                                "pre_dst": dst_text,
-                                                "match_src": match_src,
-                                                "match_dst": match_dst,
-                                                "match_problem": match_problem,
-                                                "match_speaker": match_speaker,
-                                                "problem": e.get("problem", ""),
-                                                "trans_by": e.get("trans_by", ""),
-                                            })
-                                except Exception as exc:
-                                    LOGGER.warning(f"cache/search 跳过无法解析的缓存文件 {rel}: {exc}")
-                                    continue
+                        for rel in _collect_cache_files(cache_dir):
+                            fp = os.path.join(cache_dir, rel)
+                            try:
+                                import orjson
+                                with open(fp, "rb") as f:
+                                    entries = orjson.loads(f.read())
+                                for e in entries:
+                                    if not isinstance(e, dict):
+                                        continue
+                                    # 可见文本对齐页面渲染：原文行显示 pre_src（post_src 为更底层原文，页面不展示）
+                                    src_text = (
+                                        e.get("pre_src", "")
+                                        or e.get("post_src", "")
+                                        or e.get("post_jp", "")
+                                        or e.get("pre_jp", "")
+                                    )
+                                    dst_text = e.get("pre_dst", "") or e.get("pre_zh", "") or e.get("proofread_dst", "") or e.get("proofread_zh", "")
+                                    problem_text = e.get("problem", "")
+                                    # 说话人徽章（name 可能为字符串或 names 列表）也是页面可见文本
+                                    raw_name = e.get("name", "") or e.get("names", "")
+                                    if isinstance(raw_name, list):
+                                        speaker_text = " ".join(str(x) for x in raw_name)
+                                    else:
+                                        speaker_text = str(raw_name) if raw_name else ""
+                                    match_src = query.lower() in src_text.lower()
+                                    match_dst = query.lower() in dst_text.lower()
+                                    match_problem = query.lower() in problem_text.lower()
+                                    match_speaker = bool(speaker_text) and query.lower() in speaker_text.lower()
+                                    if field == "src" and not match_src:
+                                        continue
+                                    if field == "dst" and not match_dst:
+                                        continue
+                                    if field == "problem" and not match_problem:
+                                        continue
+                                    if field == "all" and not match_src and not match_dst and not match_problem and not match_speaker:
+                                        continue
+                                    total_matches += 1
+                                    if len(results) < max_results:
+                                        results.append({
+                                            "filename": rel,
+                                            "index": e.get("index", 0),
+                                            "speaker": raw_name,
+                                            "post_src": src_text,
+                                            "pre_dst": dst_text,
+                                            "match_src": match_src,
+                                            "match_dst": match_dst,
+                                            "match_problem": match_problem,
+                                            "match_speaker": match_speaker,
+                                            "problem": e.get("problem", ""),
+                                            "trans_by": e.get("trans_by", ""),
+                                        })
+                            except Exception as exc:
+                                LOGGER.warning(f"cache/search 跳过无法解析的缓存文件 {rel}: {exc}")
+                                continue
                     LOGGER.info(f"cache/search 完成: query={query!r} field={field} 命中 {total_matches} 条")
                     self._send_json({"results": results, "total": total_matches})
                 except json.JSONDecodeError:
@@ -3516,12 +3506,8 @@ def build_handler(registry: JobRegistry) -> type:
                     file_details = []
 
                     if os.path.isdir(cache_dir):
-                        for name in sorted(os.listdir(cache_dir)):
-                            if not name.endswith(".json"):
-                                continue
-                            fp = os.path.join(cache_dir, name)
-                            if not os.path.isfile(fp):
-                                continue
+                        for rel in _collect_cache_files(cache_dir):
+                            fp = os.path.join(cache_dir, rel)
                             try:
                                 with open(fp, "rb") as f:
                                     entries = orjson.loads(f.read())
@@ -3557,7 +3543,7 @@ def build_handler(registry: JobRegistry) -> type:
                             if file_matches > 0:
                                 total_matches += file_matches
                                 total_files += 1
-                                detail: dict = {"filename": name, "matches": file_matches}
+                                detail: dict = {"filename": rel, "matches": file_matches}
                                 # dry_run 与真实替换都返回 entries：dry_run 中条目未被修改（替换前原值），
                                 # 供前端构造撤销栈的 before 快照；真实替换后返回替换后值作 after 快照
                                 if file_changed:
@@ -3577,6 +3563,11 @@ def build_handler(registry: JobRegistry) -> type:
                             f"[cache] 批量替换 {query[:30]!r} -> {replacement[:30]!r} "
                             f"field={field} 命中 {total_matches} 处 / {total_files} 文件",
                         )
+                    if total_matches == 0:
+                        LOGGER.warning(
+                            f"cache/replace 无匹配项: query={query!r} field={field} "
+                            f"dry_run={dry_run} project={project_dir}"
+                        )
                     self._send_json({
                         "success": True,
                         "total_matches": total_matches,
@@ -3588,6 +3579,120 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
                 except Exception as exc:
                     self._send_json({"error": f"failed to replace in cache: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            # POST /api/projects/:id/cache/replace-entry（查找替换侧边栏「替换单个」）
+            if sub_path == "/cache/replace-entry":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                try:
+                    payload = self._read_json_body()
+                    query = str(payload.get("query", "")).strip()
+                    replacement = str(payload.get("replacement", ""))
+                    field = str(payload.get("field", "dst")).strip()  # src | dst | all
+                    filename = str(payload.get("filename", "")).strip()
+                    index = payload.get("index")
+                    dry_run = bool(payload.get("dry_run", False))
+
+                    if not query:
+                        self._send_json({"error": "empty query"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    if not filename:
+                        self._send_json({"error": "empty filename"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    if index is None:
+                        self._send_json({"error": "empty index"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    # 路径穿越防护（与 /cache/:filename 一致）：先用系统分隔符形式检查，再统一正斜杠返回
+                    norm = os.path.normpath(filename.replace("\\", "/"))
+                    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    norm = norm.replace("\\", "/")
+
+                    # 真实替换会写缓存文件：翻译任务运行中与 worker 增量写盘互相覆盖，拒绝执行（与批量替换一致）
+                    if not dry_run:
+                        job = registry.get_project_job(project_dir)
+                        if job is not None and job.status in {"pending", "running"}:
+                            LOGGER.warning(f"[cache] 单条替换被拒绝（翻译任务运行中）：{project_dir}")
+                            self._send_json(
+                                {"success": False, "error": "翻译进行中，请停止翻译后再执行替换"},
+                                status=HTTPStatus.CONFLICT,
+                            )
+                            return
+
+                    import orjson
+                    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                    fp = os.path.join(cache_dir, norm)
+                    if not os.path.isfile(fp):
+                        self._send_json({"error": "cache file not found"}, status=HTTPStatus.NOT_FOUND)
+                        return
+
+                    with open(fp, "rb") as f:
+                        entries = orjson.loads(f.read())
+
+                    file_matches = 0
+                    file_changed = False
+                    for e in entries:
+                        if not isinstance(e, dict):
+                            continue
+                        if str(e.get("index", "")) != str(index):
+                            continue
+                        src_key = "post_src" if "post_src" in e else ("post_jp" if "post_jp" in e else None)
+                        dst_key = "pre_dst" if "pre_dst" in e else ("pre_zh" if "pre_zh" in e else None)
+                        # replace in src
+                        if field in ("src", "all") and src_key and query in e.get(src_key, ""):
+                            if not dry_run:
+                                e[src_key] = e[src_key].replace(query, replacement)
+                            file_matches += 1
+                            file_changed = True
+                        # replace in dst
+                        if field in ("dst", "all") and dst_key and query in e.get(dst_key, ""):
+                            if not dry_run:
+                                e[dst_key] = e[dst_key].replace(query, replacement)
+                            file_matches += 1
+                            file_changed = True
+                        # also replace in proofread_dst / proofread_zh
+                        if field in ("dst", "all"):
+                            pr_key = "proofread_dst" if "proofread_dst" in e else ("proofread_zh" if "proofread_zh" in e else None)
+                            if pr_key and query in e.get(pr_key, ""):
+                                if not dry_run:
+                                    e[pr_key] = e[pr_key].replace(query, replacement)
+                                file_matches += 1
+                                file_changed = True
+
+                    if not dry_run and file_changed:
+                        tmp_path = fp + ".tmp"
+                        with open(tmp_path, "wb") as f:
+                            f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
+                        os.replace(tmp_path, fp)
+
+                    if file_matches > 0:
+                        _append_engine_log(
+                            project_dir,
+                            f"[cache] 单条替换 {query[:30]!r} -> {replacement[:30]!r} "
+                            f"field={field} index={index} 命中 {file_matches} 处（{norm}）",
+                        )
+                    else:
+                        LOGGER.warning(
+                            f"cache/replace-entry 无匹配项: query={query!r} field={field} "
+                            f"index={index} file={norm} project={project_dir}"
+                        )
+                    # 响应结构与批量 replace 一致，前端复用 buildReplaceUndoEntries 构造撤销栈
+                    self._send_json({
+                        "success": True,
+                        "total_matches": file_matches,
+                        "total_files": 1 if file_matches > 0 else 0,
+                        "dry_run": dry_run,
+                        "file_details": [{"filename": norm, "matches": file_matches, "entries": entries}]
+                        if file_changed
+                        else [],
+                    })
+                except json.JSONDecodeError:
+                    self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:
+                    self._send_json({"error": f"failed to replace entry in cache: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
             # GET /api/projects/:id/cache/:filename/h-ranges（须在通用 /cache/ catch-all 之前）

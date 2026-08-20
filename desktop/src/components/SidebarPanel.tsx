@@ -3,7 +3,7 @@ import { appState, setAppState, getActiveConfigFileName } from "../stores/appSto
 import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
-import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
+import { searchCache, replaceCache, replaceCacheEntry, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
 import { buildReplaceUndoEntries } from "../lib/replaceUndo";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
@@ -325,6 +325,8 @@ function FindReplacePanel() {
   const [searched, setSearched] = createSignal(false);
   const [searching, setSearching] = createSignal(false);
   const [replacing, setReplacing] = createSignal(false);
+  // 正在执行「替换单个」的条目 key（`${filename}:${index}`），防止同一条目重复点击并发替换
+  const [replacingKeys, setReplacingKeys] = createSignal<Set<string>>(new Set());
 
   let autoSearchTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -361,14 +363,19 @@ function FindReplacePanel() {
     const pid = appState.activeProjectId;
     const q = query().trim();
     const r = replaceText();
+    const f = field();
     if (!pid || !q) {
       toast.warning("请先输入查找内容");
+      return;
+    }
+    if (f === "problem") {
+      toast.warning("问题字段不支持替换，请切换字段后再试");
       return;
     }
     setReplacing(true);
     try {
       // 先执行 dryRun 确认数量（dry_run 响应携带替换前原值 entries，作为撤销 before 快照）
-      const dryRes = await replaceCache(pid, q, r, "dst", true);
+      const dryRes = await replaceCache(pid, q, r, f, true);
       if (dryRes.total_matches === 0) {
         toast.info("未找到可替换的匹配项");
         setReplacing(false);
@@ -376,7 +383,7 @@ function FindReplacePanel() {
       }
 
       // 执行真实替换（响应携带替换后 entries，作为撤销 after 快照）
-      const res = await replaceCache(pid, q, r, "dst", false);
+      const res = await replaceCache(pid, q, r, f, false);
       toast.success(`已替换 ${res.total_matches} 个匹配项，涉及 ${res.total_files} 个文件`);
 
       // 替换成功后构造撤销栈：before=替换前原值，after=替换后值，仅入栈实际发生变化的条目
@@ -390,6 +397,67 @@ function FindReplacePanel() {
       toast.error(`替换失败: ${getErrorMessage(e)}`);
     } finally {
       setReplacing(false);
+    }
+  }
+
+  /** 替换单个：仅替换当前结果条目（该文件该 index）中的匹配文本 */
+  async function handleReplaceOne(r: CacheSearchResult) {
+    const pid = appState.activeProjectId;
+    const q = query().trim();
+    const rText = replaceText();
+    const f = field();
+    if (!pid || !q) {
+      toast.warning("请先输入查找内容");
+      return;
+    }
+    if (f === "problem") {
+      toast.warning("问题字段不支持替换，请切换字段后再试");
+      return;
+    }
+    const key = `${r.filename}:${r.index}`;
+    if (replacingKeys().has(key)) return;
+    setReplacingKeys((prev) => new Set(prev).add(key));
+    try {
+      // 先 dryRun 确认该条目命中（dry_run 响应携带替换前原值 entries，作为撤销 before 快照）
+      const dryRes = await replaceCacheEntry(pid, {
+        query: q,
+        replacement: rText,
+        field: f,
+        filename: r.filename,
+        index: r.index,
+        dry_run: true,
+      });
+      if (dryRes.total_matches === 0) {
+        toast.info("该条目在所选字段无可替换的匹配项");
+        return;
+      }
+
+      // 执行真实替换（响应携带替换后 entries，作为撤销 after 快照）
+      const res = await replaceCacheEntry(pid, {
+        query: q,
+        replacement: rText,
+        field: f,
+        filename: r.filename,
+        index: r.index,
+        dry_run: false,
+      });
+      toast.success(`已替换该条目 ${res.total_matches} 处`);
+
+      // 与批量替换相同的撤销栈构造逻辑
+      for (const entry of buildReplaceUndoEntries(dryRes, res)) {
+        pushUndo(entry);
+      }
+
+      // 重新搜索，结果列表同步替换后的状态
+      await handleSearch();
+    } catch (e) {
+      toast.error(`替换失败: ${getErrorMessage(e)}`);
+    } finally {
+      setReplacingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   }
 
@@ -478,16 +546,32 @@ function FindReplacePanel() {
                   <div class="find-result-group">
                     <div class="find-result-filename">{filename}</div>
                     <For each={entries}>
-                      {(r) => (
-                        <div class="find-result-item" onClick={() => jumpToResult(r)}>
-                          <span class="find-result-index">#{r.index}</span>
-                          <span class="find-result-preview">
-                            {r.match_src ? r.post_src?.slice(0, 40) : ""}
-                            {r.match_dst ? r.pre_dst?.slice(0, 40) : ""}
-                            {r.match_problem ? r.problem?.slice(0, 40) : ""}
-                          </span>
-                        </div>
-                      )}
+                      {(r) => {
+                        const replacingKey = `${r.filename}:${r.index}`;
+                        const isReplacing = replacingKeys().has(replacingKey);
+                        return (
+                          <div class="find-result-item" onClick={() => jumpToResult(r)}>
+                            <span class="find-result-index">#{r.index}</span>
+                            <span class="find-result-preview">
+                              {r.match_src ? r.post_src?.slice(0, 40) : ""}
+                              {r.match_dst ? r.pre_dst?.slice(0, 40) : ""}
+                              {r.match_problem ? r.problem?.slice(0, 40) : ""}
+                            </span>
+                            <button
+                              class="find-result-replace"
+                              title="替换该条目的匹配文本"
+                              aria-label="替换该条目"
+                              disabled={isReplacing}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleReplaceOne(r);
+                              }}
+                            >
+                              {isReplacing ? "…" : "替换"}
+                            </button>
+                          </div>
+                        );
+                      }}
                     </For>
                   </div>
                 )}
