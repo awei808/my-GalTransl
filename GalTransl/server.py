@@ -253,34 +253,29 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
     return proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words
 
 
-def _run_problem_detection(
+def _rebuild_trans_list_with_postprocess(
     entries: list,
     proj_config: Any,
     pre_dic: Any,
     post_dic: Any,
-    gpt_dic: Any,
     tPlugins: list,
-    h_ranges: list = None,
-    h_check_words: list = None,
-    forbidden_words: list = None,
-) -> Tuple[list, bool]:
-    """重建 CSentense 并全量运行问题检测（只算不落盘）。
+) -> list:
+    """把缓存条目重建为 CSentense 列表，并执行完整的前/后处理（与旧分支构建输出一致）。
+
+    逐条重建 CSentense（pre_src/post_src/pre_dst/proofread_zh 等），链接
+    prev/next 上下文后，依次运行 preprocess_trans_list（插件 before_src →
+    analyse_dialogue 剥引号 → pre_dic 替换）与 postprocess_trans_list
+    （插件 before_dst → recover_dialogue_symbol 补回引号 → post_dic 替换 →
+    插件 after_dst）。返回的 trans_list 中 tran.post_dst 即最终构建输出译文。
 
     Args:
-        entries: 缓存条目列表（dict）。
-        proj_config / pre_dic / post_dic / gpt_dic / tPlugins: _load_rebuild_deps 的产物。
-        h_ranges: H 剧情区间列表 [(lo, hi), ...]（缓存条目 index 口径），默认 None 不检测。
-        h_check_words: H 场景用词不当检测词库（list[str]），默认 None 不检测。
-        forbidden_words: 非 h 场景禁用词库（list[str]），默认 None 不检测（本次未搭建）。
+        entries: 缓存条目列表（dict），字段与缓存文件一致。
+        proj_config / pre_dic / post_dic / tPlugins: _load_rebuild_deps 的产物。
 
     Returns:
-        (results, ok)：results 与 entries 等长，每项为
-        {"index", "problem", "post_dst_preview", "skip_check"}；
-        ok 为 False 表示 find_problems 抛出异常，此时所有 problem 均为空，
-        调用方不得据此覆写已有 problem（避免误删检测结果）。
+        重建并后处理完成的 CSentense 列表（跳过 post_src 为空的条目）。
     """
     from GalTransl.CSentense import CSentense
-    from GalTransl.Problem import find_problems
     from GalTransl.Frontend.LLMTranslate import preprocess_trans_list, postprocess_trans_list
 
     trans_list = []
@@ -318,6 +313,40 @@ def _run_problem_detection(
         preprocess_trans_list(trans_list, proj_config, pre_dic, tPlugins or None)
     if post_dic and proj_config:
         postprocess_trans_list(trans_list, proj_config, post_dic, tPlugins or None)
+    return trans_list
+
+
+def _run_problem_detection(
+    entries: list,
+    proj_config: Any,
+    pre_dic: Any,
+    post_dic: Any,
+    gpt_dic: Any,
+    tPlugins: list,
+    h_ranges: list = None,
+    h_check_words: list = None,
+    forbidden_words: list = None,
+) -> Tuple[list, bool]:
+    """重建 CSentense 并全量运行问题检测（只算不落盘）。
+
+    Args:
+        entries: 缓存条目列表（dict）。
+        proj_config / pre_dic / post_dic / gpt_dic / tPlugins: _load_rebuild_deps 的产物。
+        h_ranges: H 剧情区间列表 [(lo, hi), ...]（缓存条目 index 口径），默认 None 不检测。
+        h_check_words: H 场景用词不当检测词库（list[str]），默认 None 不检测。
+        forbidden_words: 非 h 场景禁用词库（list[str]），默认 None 不检测（本次未搭建）。
+
+    Returns:
+        (results, ok)：results 与 entries 等长，每项为
+        {"index", "problem", "post_dst_preview", "skip_check"}；
+        ok 为 False 表示 find_problems 抛出异常，此时所有 problem 均为空，
+        调用方不得据此覆写已有 problem（避免误删检测结果）。
+    """
+    from GalTransl.Problem import find_problems
+
+    trans_list = _rebuild_trans_list_with_postprocess(
+        entries, proj_config, pre_dic, post_dic, tPlugins
+    )
 
     ok = True
     if trans_list:
@@ -754,6 +783,45 @@ def _collect_cache_files(cache_dir: str) -> list[str]:
     return sorted(files)
 
 
+def _extract_dialogue_symbols(text: str) -> tuple[str, str]:
+    """从原文提取对话引号对（「」/『』，支持嵌套），返回 (左符号, 右符号)。
+
+    与 CSentense.analyse_dialogue 的剥离规则保持一致：仅当首字符属于
+    「『 且尾字符属于 」』 且 ord 差为 1（成对）时逐层剥离。
+    """
+    left, right = "", ""
+    s = text
+    while s and s[:1] in "「『" and s[-1:] in "」』" and ord(s[-1]) - ord(s[:1]) == 1:
+        left = left + s[:1]
+        right = s[-1:] + right
+        s = s[1:-1]
+    return left, right
+
+
+def _pick_output_dst(ce: dict) -> tuple[str, bool]:
+    """从缓存条目挑选构建输出的译文，返回 (译文, 是否需要补对话引号)。
+
+    优先级 proofread_dst > post_dst_preview > pre_dst：
+    - proofread_dst 为用户校对文本（无引号），需要补对话引号；
+    - post_dst_preview 为翻译后处理产物（含引号、后处理字典与插件结果），
+      仅当剥引号后与当前 pre_dst 一致（即用户未在校对页改过译文）时采用，
+      否则视为过期快照丢弃（用户改 pre_dst 后 preview 不会同步更新）；
+    - pre_dst 为初译或用户校对修改后的译文（无引号），需要补对话引号。
+    """
+    if ce.get("proofread_dst"):
+        return ce["proofread_dst"], True
+    preview = ce.get("post_dst_preview") or ""
+    if preview:
+        left_sym, right_sym = _extract_dialogue_symbols(preview)
+        inner = preview[len(left_sym):]
+        if right_sym:
+            inner = inner[:-len(right_sym)]
+        if inner == (ce.get("pre_dst") or ""):
+            # preview 与当前 pre_dst 一致：含引号+后处理，直接采用
+            return preview, False
+    return ce.get("pre_dst") or "", True
+
+
 def _build_project_output(
     project_dir: str,
     *,
@@ -762,7 +830,8 @@ def _build_project_output(
     """从缓存文件构建输出文件（output/gt_output/）。
 
     读取缓存（transl_cache，含 pass3_cache 嵌套）与 input/gt_input 中的原始 JSON，
-    将缓存中的译文（pre_dst / proofread_dst）合并回原始 JSON 后写出到 output/gt_output/。
+    将缓存中的译文（proofread_dst / post_dst_preview / pre_dst）合并回原始 JSON，
+    恢复对话引号（「」/『』）并应用 name 替换表后写出到 output/gt_output/。
     """
     import orjson
 
@@ -777,6 +846,21 @@ def _build_project_output(
 
     # 确定要处理的文件列表（支持相对子路径如 pass3_cache/xx.txt.json，或纯文件名）
     cache_names = _normalize_cache_filenames(filenames) if filenames else _collect_cache_files(cache_dir)
+
+    # 项目级依赖只加载一次（全部文件共用）：配置 + 字典 + 插件，用于重建译文路径；
+    # 失败时降级为缓存直读（不影响构建）。
+    deps_ok = False
+    _proj_config = _pre_dic = _post_dic = None
+    _tPlugins = []
+    try:
+        _deps = _load_rebuild_deps(project_dir, _detect_config_file(project_dir))
+        _proj_config, _pre_dic, _post_dic, _gpt_dic, _tPlugins, _h_words, _forbidden = _deps
+        deps_ok = _proj_config is not None
+    except Exception:
+        LOGGER.warning(f"[build-output] 项目依赖加载失败，降级为缓存直读：{project_dir}")
+
+    # name 替换表（SRC→DST），供全部输出文件 name/names 字段替换
+    name_dict = _load_project_name_dict(project_dir)
 
     built_files: list[str] = []
     errors: list[str] = []
@@ -823,14 +907,40 @@ def _build_project_output(
             if src:
                 cache_map[src] = ce
 
+        # 优先走"重建 CSentense + 前后处理"路径（与旧分支构建输出一致：恢复引号、
+        # 重跑后处理字典、尊重用户校对值）；依赖加载失败时降级为缓存直读。
+        rebuilt_map: dict[str, str] = {}
+        if deps_ok:
+            try:
+                rebuilt_trans = _rebuild_trans_list_with_postprocess(
+                    cache_entries, _proj_config, _pre_dic, _post_dic, _tPlugins
+                )
+                for _t in rebuilt_trans:
+                    if _t.pre_src:
+                        rebuilt_map[_t.pre_src] = _t.post_dst
+            except Exception:
+                LOGGER.warning(f"[build-output] 单文件重建失败，降级为缓存直读：{cache_name}")
+
         # 合并译文回 input JSON
         updated_count = 0
         for item in input_data:
             msg = item.get("message", "")
             if msg in cache_map:
                 ce = cache_map[msg]
-                # 优先用 proofread_dst，其次 pre_dst
-                dst = ce.get("proofread_dst") or ce.get("pre_dst") or ""
+                if deps_ok and msg in rebuilt_map:
+                    # 重建路径：post_dst 已含引号+后处理字典+用户校对值
+                    dst = rebuilt_map[msg]
+                else:
+                    # 降级路径：优先 proofread_dst，其次 post_dst_preview，兜底 pre_dst
+                    dst, needs_quotes = _pick_output_dst(ce)
+                    if dst and needs_quotes:
+                        # 来源无引号（proofread_dst/pre_dst，或 preview 过期回退 pre_dst）时，
+                        # 按原句补回对话引号「」/『』
+                        left_sym, right_sym = _extract_dialogue_symbols(
+                            ce.get("pre_src", msg)
+                        )
+                        if left_sym or right_sym:
+                            dst = left_sym + dst + right_sym
                 if dst:
                     # 将译文换行统一为原 message 的换行符类型（原文无换行则保持原样）
                     n_symbols = get_n_symbol(msg)
@@ -838,6 +948,11 @@ def _build_project_output(
                         dst = dst.replace("\r\n", "\n").replace("\n", n_symbols[0])
                     item["message"] = dst
                     updated_count += 1
+            # name/names 字段按替换表替换（无替换表时原样保留）
+            if "name" in item:
+                item["name"] = _lookup_name(item.get("name", ""), name_dict)
+            if "names" in item and isinstance(item.get("names"), list):
+                item["names"] = _lookup_name(item["names"], name_dict)
 
         # 写出 output（与 input 同名，位于 gt_output 顶层）
         output_path = os.path.join(output_dir, input_base)
