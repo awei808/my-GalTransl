@@ -15,6 +15,7 @@ import {
 import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
+import { replaceInEntries } from "../../lib/replaceEntries";
 import type {
   CacheEntry,
   CacheHRange,
@@ -1452,6 +1453,55 @@ export function ReviewPage() {
     // 元数据文件不通过 loadFile 刷新（错误语义会拉取 metadata 作为缓存解析）
     if (modeInfoOf(file).mode !== "translate") return;
     loadFile(pid, file);
+  });
+
+  // 查找替换侧边栏纯前端替换请求（文件内全部替换 / 替换单个）：只改当前打开文件的内存 entries
+  // 并标脏，不写盘；保存时随文件一起落盘（与手动编辑同语义）
+  createEffect(() => {
+    const req = appState.replaceRequest;
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (!req || !pid || !file) return;
+    // 元数据文件不支持查找替换：清空请求，避免残留到切回翻译文件时意外执行
+    if (reviewMode() !== "translate") {
+      setAppState("replaceRequest", null);
+      return;
+    }
+    if (file !== req.targetFile || loadedFile !== file) {
+      // 请求指向的文件已切走或尚未加载完成：丢弃，避免误替换其他文件
+      setAppState("replaceRequest", null);
+      return;
+    }
+    // 先失焦提交主译文框草稿，避免替换结果被后续 onBlur 覆盖
+    (document.activeElement as HTMLElement | null)?.blur();
+    const { entries: nextEntries, changed } = replaceInEntries(
+      entries(),
+      req.query,
+      req.replacement,
+      req.field,
+      req.onlyIndex !== undefined ? { onlyIndex: req.onlyIndex } : undefined,
+    );
+    if (changed.length === 0) {
+      toast.info("当前文件无可替换的匹配项");
+      setAppState("replaceRequest", null);
+      return;
+    }
+    for (const c of changed) {
+      pushUndo({
+        id: `${file}:${c.index}`,
+        file,
+        index: c.index,
+        before: c.before,
+        after: c.after,
+        description: "查找替换",
+      });
+    }
+    setEntries(nextEntries);
+    // 显式标脏：snapshotKey 不含 post_src，替换原文时 refreshDirtyState 会误判 clean
+    markDirty(file);
+    entriesRev++;
+    setAppState("replaceRequest", null);
+    toast.success(`已替换 ${changed.length} 处（未保存，保存后写入磁盘）`);
   });
 
   // 侧边栏问题列表跳转：文件加载完成后自动滚动到具体条目

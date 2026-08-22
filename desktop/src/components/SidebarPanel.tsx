@@ -3,7 +3,7 @@ import { appState, setAppState, getActiveConfigFileName } from "../stores/appSto
 import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
-import { searchCache, replaceCache, replaceCacheEntry, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
+import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
 import { buildReplaceUndoEntries } from "../lib/replaceUndo";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
@@ -382,12 +382,25 @@ function FindReplacePanel() {
         return;
       }
 
+      // 全部替换直接写磁盘缓存文件：确认弹窗告知用户后再执行
+      const res = await confirm.show({
+        title: "确认全部替换",
+        message: `共命中 ${dryRes.total_matches} 处（${dryRes.total_files} 个文件）。将直接写入磁盘缓存文件，非校对面板临时修改，无法撤回，是否继续？`,
+        tone: "warning",
+        confirmText: "替换并写盘",
+        cancelText: "取消",
+      });
+      if (!res.confirmed) {
+        setReplacing(false);
+        return;
+      }
+
       // 执行真实替换（响应携带替换后 entries，作为撤销 after 快照）
-      const res = await replaceCache(pid, q, r, f, false);
-      toast.success(`已替换 ${res.total_matches} 个匹配项，涉及 ${res.total_files} 个文件`);
+      const real = await replaceCache(pid, q, r, f, false);
+      toast.success(`已替换 ${real.total_matches} 个匹配项，涉及 ${real.total_files} 个文件`);
 
       // 替换成功后构造撤销栈：before=替换前原值，after=替换后值，仅入栈实际发生变化的条目
-      for (const entry of buildReplaceUndoEntries(dryRes, res)) {
+      for (const entry of buildReplaceUndoEntries(dryRes, real)) {
         pushUndo(entry);
       }
 
@@ -400,8 +413,8 @@ function FindReplacePanel() {
     }
   }
 
-  /** 替换单个：仅替换当前结果条目（该文件该 index）中的匹配文本 */
-  async function handleReplaceOne(r: CacheSearchResult) {
+  /** 替换单个：仅替换校对页当前打开文件中该条目的匹配文本（纯前端，不写盘，保存后生效） */
+  function handleReplaceOne(r: CacheSearchResult) {
     const pid = appState.activeProjectId;
     const q = query().trim();
     const rText = replaceText();
@@ -414,44 +427,27 @@ function FindReplacePanel() {
       toast.warning("问题字段不支持替换，请切换字段后再试");
       return;
     }
+    // 纯前端替换只作用于校对页当前打开文件：未打开文件或目标条目属于其他文件时提示
+    if (!appState.activeFilePath) {
+      toast.warning("请先在校对页打开要替换的文件");
+      return;
+    }
+    if (r.filename !== appState.activeFilePath) {
+      toast.warning("该条目属于其他文件，请先在校对页打开该文件后再替换");
+      return;
+    }
     const key = `${r.filename}:${r.index}`;
     if (replacingKeys().has(key)) return;
     setReplacingKeys((prev) => new Set(prev).add(key));
     try {
-      // 先 dryRun 确认该条目命中（dry_run 响应携带替换前原值 entries，作为撤销 before 快照）
-      const dryRes = await replaceCacheEntry(pid, {
+      // 交由 ReviewPage 消费：内存替换 + 标脏 + 入撤销栈，不写盘
+      setAppState("replaceRequest", {
         query: q,
         replacement: rText,
         field: f,
-        filename: r.filename,
-        index: r.index,
-        dry_run: true,
+        targetFile: r.filename,
+        onlyIndex: r.index,
       });
-      if (dryRes.total_matches === 0) {
-        toast.info("该条目在所选字段无可替换的匹配项");
-        return;
-      }
-
-      // 执行真实替换（响应携带替换后 entries，作为撤销 after 快照）
-      const res = await replaceCacheEntry(pid, {
-        query: q,
-        replacement: rText,
-        field: f,
-        filename: r.filename,
-        index: r.index,
-        dry_run: false,
-      });
-      toast.success(`已替换该条目 ${res.total_matches} 处`);
-
-      // 与批量替换相同的撤销栈构造逻辑
-      for (const entry of buildReplaceUndoEntries(dryRes, res)) {
-        pushUndo(entry);
-      }
-
-      // 重新搜索，结果列表同步替换后的状态
-      await handleSearch();
-    } catch (e) {
-      toast.error(`替换失败: ${getErrorMessage(e)}`);
     } finally {
       setReplacingKeys((prev) => {
         const next = new Set(prev);
@@ -459,6 +455,30 @@ function FindReplacePanel() {
         return next;
       });
     }
+  }
+
+  /** 文件内全部替换：仅替换校对页当前打开文件的全部匹配条目（纯前端，不写盘，保存后生效） */
+  function handleReplaceInFile() {
+    const pid = appState.activeProjectId;
+    const q = query().trim();
+    const r = replaceText();
+    const f = field();
+    const file = appState.activeFilePath;
+    if (!pid || !q) {
+      toast.warning("请先输入查找内容");
+      return;
+    }
+    if (f === "problem") {
+      toast.warning("问题字段不支持替换，请切换字段后再试");
+      return;
+    }
+    if (!file || appState.activeView !== "review") {
+      toast.warning("请先在校对审核页打开要替换的文件");
+      return;
+    }
+    // 交由 ReviewPage 消费：内存替换 + 标脏 + 入撤销栈，不写盘
+    setAppState("replaceRequest", { query: q, replacement: r, field: f, targetFile: file });
+    // 替换结果由 ReviewPage 消费后 toast 反馈
   }
 
   // 按文件名分组
@@ -529,8 +549,17 @@ function FindReplacePanel() {
             class="btn btn--sm"
             onClick={handleReplace}
             disabled={replacing() || results().length === 0}
+            title="替换所有文件的全部匹配项，直接写入磁盘缓存，需确认"
           >
             {replacing() ? "替换中…" : "替换全部"}
+          </button>
+          <button
+            class="btn btn--sm"
+            onClick={handleReplaceInFile}
+            disabled={appState.activeView !== "review" || !appState.activeFilePath}
+            title="仅替换校对页当前打开文件的匹配项，不写盘，点「保存并重检」后写入磁盘"
+          >
+            文件内替换全部
           </button>
         </div>
 

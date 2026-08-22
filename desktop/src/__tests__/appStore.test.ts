@@ -144,6 +144,7 @@ describe("openProject 状态重置（M20）", () => {
       cacheVersion: 0,
       problemVersion: 0,
       reviewJumpToIndex: null,
+      replaceRequest: null,
       prevJobStatus: "",
     });
   });
@@ -158,6 +159,7 @@ describe("openProject 状态重置（M20）", () => {
       cacheVersion: 5,
       problemVersion: 3,
       reviewJumpToIndex: 2,
+      replaceRequest: { query: "旧", replacement: "新", field: "dst", targetFile: "old/game.txt.json" },
       prevJobStatus: "running",
     });
 
@@ -170,6 +172,7 @@ describe("openProject 状态重置（M20）", () => {
     expect(appState.cacheVersion).toBe(0);
     expect(appState.problemVersion).toBe(0);
     expect(appState.reviewJumpToIndex).toBeNull();
+    expect(appState.replaceRequest).toBeNull();
     expect(appState.prevJobStatus).toBe("");
   });
 });

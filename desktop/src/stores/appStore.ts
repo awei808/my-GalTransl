@@ -1,9 +1,20 @@
 import { createStore } from "solid-js/store";
 import { fetchProjectConfigName } from "../lib/api/client";
-import type { FileNode, ModelCheckResult } from "../lib/api/types";
+import type { CacheReplaceField, FileNode, ModelCheckResult } from "../lib/api/types";
 
 // 模型可用性检测状态（与 TranslateConsole 共用，全局持久以避免组件重挂后重复检测）
 export type ModelCheckState = "idle" | "checking" | "ok" | "error" | "na";
+
+/** 查找替换侧边栏发起的纯前端替换请求（只改校对页当前打开文件的内存 entries，不写盘） */
+export interface ReplaceRequest {
+  query: string;
+  replacement: string;
+  field: CacheReplaceField;
+  /** 请求发起时的目标文件（校对页 activeFilePath），消费时校验防误替换 */
+  targetFile: string;
+  /** 指定时仅替换该 index 的条目（「替换单个」）；缺省为文件内全部替换 */
+  onlyIndex?: number;
+}
 
 export interface ModelCheckSnapshot {
   state: ModelCheckState;
@@ -65,6 +76,8 @@ export interface AppState {
   prevJobStatus: string;
   /** 侧边栏问题列表请求跳转到的条目索引（ReviewPage 加载文件后执行滚动，完成后自动清空） */
   reviewJumpToIndex: number | null;
+  /** 查找替换侧边栏发起的纯前端替换请求（ReviewPage 消费后自动清空） */
+  replaceRequest: ReplaceRequest | null;
   /** 设置类页面滚动目标标识（ActivityBar 快捷按钮点击后写入，目标页面渲染完成后滚动并自动清空） */
   settingsScrollTarget: string | null;
 
@@ -98,6 +111,7 @@ export const defaultState: AppState = {
   modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   prevJobStatus: "",
   reviewJumpToIndex: null,
+  replaceRequest: null,
   settingsScrollTarget: null,
   globalFindOpen: false,
   globalFindQuery: "",
@@ -147,6 +161,7 @@ export async function openProject(projectId: string, opts?: { configFileName?: s
     cacheVersion: 0,
     problemVersion: 0,
     reviewJumpToIndex: null,
+    replaceRequest: null,
     prevJobStatus: "",
     modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   });
@@ -186,6 +201,7 @@ export function closeProject() {
     sidebarTab: null,
     activeFilePath: null,
     dirtyFiles: [],
+    replaceRequest: null,
     prevJobStatus: "",
     modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   });
