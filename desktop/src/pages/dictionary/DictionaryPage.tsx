@@ -45,6 +45,7 @@ import type {
   ConditionItem,
 } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
+import { AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
 
 const TABS: { key: string; label: string }[] = [
   { key: "pre", label: "预处理" },
@@ -69,13 +70,30 @@ export function DictionaryPage() {
   const [nameDict, setNameDict] = createSignal<Record<string, string>>({});
   const [nameEntries, setNameEntries] = createSignal<NameEntry[]>([]);
   const [generating, setGenerating] = createSignal(false);
+  // 卸载自动保存用：挂载时刻的项目 id 快照（切项目时全局 activeProjectId 会先被
+  // openProject 重置为新项目，onCleanup 若读运行时 pid 会把旧项目字典保存到新项目，
+  // 必须用挂载快照作为保存目标身份，与 ReviewPage 的 mountPid 模式一致）
+  const mountPid = appState.activeProjectId;
+  // 配置名快照：挂载时回退 config.yaml；openProject 的配置名探测完成后
+  //（configNameDetecting 变 false）更新为真实配置名，避免卸载自动保存用错配置名写盘
+  let configNameSnapshot = getActiveConfigFileName();
+  createEffect(() => {
+    if (!appState.configNameDetecting) {
+      configNameSnapshot = getActiveConfigFileName();
+    }
+  });
 
   onCleanup(() => {
-    doAutoSave();
+    doAutoSave(mountPid, configNameSnapshot);
   });
 
   function onDictChange(value: string) {
     setDraftText(value);
+  }
+
+  // 内容比对规范化：忽略 \r（后端 lines 可能保留 CRLF，textarea 已规范化为 LF，避免恒判"有变化"）
+  function normForCompare(s: string): string {
+    return s.replace(/\r/g, "");
   }
 
   async function doAutoSave(targetPid?: string | null, targetConfigName?: string) {
@@ -91,6 +109,14 @@ export function DictionaryPage() {
       const isProjectFile = fileKey.includes(PROJECT_DIR_MARKER);
       // 显式指定 targetPid 时用于项目切换场景保存旧项目；null/undefined 回退当前 pid()
       const pidToUse = targetPid ?? pid();
+      // 与磁盘快照比对：无实际变化时不落盘、不提示（切 tab/切文件/项目切换等重复保存场景静默，
+      // 避免每次切换都发请求与刷 toast）
+      const snapshot = isProjectFile ? data() : commonData();
+      const snapshotEntry = snapshot?.dict_contents?.[fileKey];
+      const unchanged =
+        snapshotEntry !== undefined &&
+        normForCompare(snapshotEntry.lines.join("\n")) === normForCompare(text);
+      if (unchanged) return;
       if (pidToUse && isProjectFile) {
         await saveProjectDictionaryFile(pidToUse, {
           config_file_name: configName,
@@ -103,6 +129,7 @@ export function DictionaryPage() {
           content: text,
         });
       }
+      toast.info(`已自动保存 ${displayFileName(key)}`, AUTOSAVE_TOAST_DURATION);
       // 常规路径（非项目切换保存）才原地更新快照，避免跨项目保存污染新数据
       if (targetPid === undefined) {
         const snapshot = isProjectFile ? data() : commonData();
@@ -119,12 +146,14 @@ export function DictionaryPage() {
     }
   }
 
-  async function doAutoSaveNames() {
+  async function doAutoSaveNames(showToast = true) {
     if (!pid()) return;
     try {
       await saveNameTable(pid()!, nameEntries());
+      if (showToast) toast.info("已自动保存人名表", AUTOSAVE_TOAST_DURATION);
     } catch (e) {
       sendLog(`自动保存人名失败: ${e}`, "error");
+      if (showToast) toast.error(`自动保存人名表失败: ${getErrorMessage(e)}`);
     }
   }
 
@@ -369,7 +398,7 @@ export function DictionaryPage() {
     const next = [...nameEntries()];
     next[index] = { ...next[index], [field]: value };
     setNameEntries(next);
-    doAutoSaveNames();
+    doAutoSaveNames(false); // 键入即静默保存，避免每键 toast 刷屏；失焦时由 onBlur 提示
   }
 
   let _prevPid: string | null = null;
@@ -665,14 +694,14 @@ export function DictionaryPage() {
                           class="name-entry-src name-input"
                           value={entrySignal().src_name}
                           onInput={(e) => onNameEntryChange(i, "src_name", e.currentTarget.value)}
-                          onBlur={doAutoSaveNames}
+                          onBlur={() => doAutoSaveNames()}
                         />
                         <span class="name-entry-arrow">→</span>
                         <input
                           class="name-entry-dst name-input"
                           value={entrySignal().dst_name}
                           onInput={(e) => onNameEntryChange(i, "dst_name", e.currentTarget.value)}
-                          onBlur={doAutoSaveNames}
+                          onBlur={() => doAutoSaveNames()}
                         />
                         <span class="name-col-count-val">{entrySignal().count}</span>
                       </div>

@@ -45,6 +45,9 @@ export type SidebarTab = "explorer" | "find" | "problems" | "alt" | null;
 export interface AppState {
   // 导航
   activeView: ActiveView;
+  /** 待确认的目标视图：从校对审核页切走且存在未保存修改时由 navigateTo 置位，
+      ReviewPage 弹「保存/不保存/取消」确认后消费；确认完成置 null 并切换。 */
+  pendingView: ActiveView | null;
   sidebarOpen: boolean;
   sidebarTab: SidebarTab;
 
@@ -94,6 +97,7 @@ export interface AppState {
 
 export const defaultState: AppState = {
   activeView: "home",
+  pendingView: null,
   sidebarOpen: false,
   sidebarTab: null,
   activeProjectId: null,
@@ -126,6 +130,13 @@ export const [appState, setAppState] = createStore<AppState>(defaultState);
 // ── Actions ──
 
 export function navigateTo(view: ActiveView) {
+  // 从校对审核页切走且存在未保存修改（dirtyFiles 由 ReviewPage 在编辑/保存时维护）：
+  // 不直接切换，置 pendingView 由 ReviewPage 弹「保存/不保存/取消」确认，
+  // 避免未保存修改被静默保存或静默丢弃（与校对页内切换文件的确认语义一致）
+  if (appState.activeView === "review" && view !== "review" && appState.dirtyFiles.length > 0) {
+    setAppState({ pendingView: view });
+    return;
+  }
   setAppState({ activeView: view });
   if (view === "settings" || view === "new-project") {
     setAppState({ sidebarOpen: false, sidebarTab: null });
@@ -153,6 +164,7 @@ export async function openProject(projectId: string, opts?: { configFileName?: s
     activeProjectId: projectId,
     activeConfigFileName: opts?.configFileName ?? null,
     activeView: "translate",
+    pendingView: null,
     sidebarOpen: true,
     sidebarTab: null,
     activeFilePath: null,
@@ -197,6 +209,7 @@ export function closeProject() {
     activeConfigFileName: null,
     configNameDetecting: false,
     activeView: "home",
+    pendingView: null,
     sidebarOpen: false,
     sidebarTab: null,
     activeFilePath: null,

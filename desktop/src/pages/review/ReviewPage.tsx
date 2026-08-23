@@ -1,5 +1,5 @@
-import { createSignal, createEffect, Show, For, onCleanup, onMount, createMemo } from "solid-js";
-import { appState, setAppState, markDirty, markClean, getActiveConfigFileName } from "../../stores/appStore";
+import { createSignal, createEffect, Show, For, onCleanup, onMount, createMemo, untrack } from "solid-js";
+import { appState, setAppState, markDirty, markClean, getActiveConfigFileName, navigateTo } from "../../stores/appStore";
 import { confirm } from "../../stores/confirmStore";
 import { pushUndo, clearUndo, undo, redo, peekUndo, peekRedo } from "../../stores/undoStore";
 import type { UndoEntry } from "../../stores/undoStore";
@@ -15,6 +15,7 @@ import {
 import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
+import { runPageAutosave, AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
 import { replaceInEntries } from "../../lib/replaceEntries";
 import type {
   CacheEntry,
@@ -818,6 +819,18 @@ export function ReviewPage() {
   const [jumpValue, setJumpValue] = createSignal("");
   // 角色名替换表：仅在显示层翻译角色名，不写入缓存数据（缓存 name 保持原始值，保证缓存 key 稳定）
   const [nameDict, setNameDict] = createSignal<Record<string, string>>({});
+  // 卸载自动保存用：挂载时刻的项目 id 快照（卸载瞬间全局状态可能已切换到
+  // 别的项目/已关闭项目，必须用挂载快照作为保存目标身份，参照 ProjectConfigPage 的 pidSnapshot 模式）
+  const mountPid = appState.activeProjectId;
+  // 配置名快照：挂载时回退 config.yaml；openProject 的配置名探测完成后
+  //（configNameDetecting 变 false）更新为真实配置名，避免卸载自动保存用错配置名写盘。
+  // 切项目时探测中（configNameDetecting=true）保持旧值，卸载保存旧项目仍用旧配置名。
+  let configNameSnapshot = getActiveConfigFileName();
+  createEffect(() => {
+    if (!appState.configNameDetecting) {
+      configNameSnapshot = getActiveConfigFileName();
+    }
+  });
 
   // ── 模式由打开文件所在的缓存子目录隐式决定，无需手动切换 ──
   // 缓存目录分工（见 CLAUDE.md / GalTransl.__init__）：
@@ -860,6 +873,9 @@ export function ReviewPage() {
   let metaSavePending = false;
   // 当前元数据文件是否有未保存修改（编辑置 true，保存成功/加载新文件后复位 false）
   let metaDirty = false;
+  // 最近一次保存是否失败（translate 的 saveCurrentFile / metadata 的 saveMeta）：
+  // 失败后若卸载自动保存重试成功则静默（不弹成功 toast），避免"先提示失败、后提示成功"的矛盾体验
+  let lastSaveFailed = false;
   // 元数据切换令牌：每次 effect 触发递增，过期切换闭包（保存/加载响应）直接丢弃
   let metaSwitchToken = 0;
   // 非法 JSON 已提示标志：连续非法输入只提示一次，避免 onInput 逐键 toast 轰炸
@@ -999,6 +1015,80 @@ export function ReviewPage() {
     setAppState("reviewJumpToIndex", null);
     // 取消未完成的高亮定位 rAF，避免卸载后继续查询 DOM
     if (flashRAFId) cancelAnimationFrame(flashRAFId);
+    // ── 卸载自动保存 ──
+    // 先失焦提交聚焦中的主译文/展开字段草稿（onBlur 同步写入 entries），
+    // 兜底程序化切页等未触发 blur 的场景，保证落盘的是最新内容
+    (document.activeElement as HTMLElement | null)?.blur();
+    // 同步快照保存目标与数据：异步落盘期间组件状态可能被清理/全局状态被重置，
+    // 全程使用快照，不读运行时状态（dirty 判定同理，不依赖 appState.dirtyFiles）。
+    // 注意：快照在 waitForReady（等待在途保存）之前固化，若卸载时有在途手动保存，
+    // 可能在途保存落盘后仍判定 dirty 而重复保存一次——内容相同（同一快照），
+    // 后端对比无变化，属幂等兜底，无害。
+    const snap = captureUnmountSnapshot();
+    void runPageAutosave({
+      waitForReady: waitForPendingSave,
+      isDirty: () => snap.dirty,
+      save: () => saveUnmountSnapshot(snap),
+      // 最近一次保存失败后卸载重试成功：静默（不弹成功 toast），避免与失败提示矛盾
+      successMessage: () => (snap.saveFailed ? "" : `已自动保存 ${snap.file}`),
+      failMessage: () => `自动保存 ${snap.file} 失败`,
+    });
+  });
+
+  // ── 切页确认（pendingView） ──
+  // appStore.navigateTo 从校对审核切走且有未保存修改（dirtyFiles 非空）时置 pendingView，
+  // 此处弹「保存/不保存/取消」确认；保存成功或选择不保存后再切换，取消则停留在当前页。
+  // untrack 包裹内部：读取的响应式状态（activeView/reviewMode 等）变化不会重复触发确认。
+  createEffect(() => {
+    const target = appState.pendingView;
+    if (!target) return;
+    untrack(() => {
+      void (async () => {
+        const res = await confirm.show({
+          title: "未保存的修改",
+          message: "当前打开的文件有未保存的修改，是否保存后再切换？",
+          confirmText: "保存",
+          cancelText: "不保存",
+          extraText: "取消",
+          tone: "warning",
+          dismissible: false,
+        });
+        if (appState.pendingView !== target) return; // 期间目标已变化，放弃本次处理
+        if (res.action === "extra") {
+          setAppState("pendingView", null); // 取消：停留在当前页，dirty 保留
+          return;
+        }
+        if (res.confirmed) {
+          // 保存：translate 走 saveCurrentFile（含 problem 合并），metadata 走 saveMeta
+          const ok =
+            reviewMode() === "translate" ? await saveCurrentFile() : await saveMeta();
+          if (!ok) {
+            // 保存失败：停留（dirty 保留，用户可重试），避免切换后未保存修改丢失
+            setAppState("pendingView", null);
+            return;
+          }
+          const name = loadedFile || metaLoadedFullPath.split(/[/\\]/).pop() || "";
+          if (name) toast.success(`已保存 ${name}`);
+        } else {
+          // 不保存：丢弃 → 清 dirty（全局 + 组件内状态），
+          // 防止卸载时 onCleanup 自动保存把用户明确选择丢弃的编辑重新写盘。
+          // 按模式区分：metadata 清完整路径（与 markDirty 同键），译文重置基线使卸载快照判 clean
+          if (metaLoadedFullPath) {
+            markClean(metaLoadedFullPath);
+            metaDirty = false;
+          } else if (loadedFile) {
+            markClean(loadedFile);
+            baselineKey = snapshotKey(entries());
+          }
+        }
+        // 确认完成：先清 pendingView，再走 navigateTo 切换——
+        // 复用 navigateTo 的清理副作用（sidebarOpen/sidebarTab、reviewJumpToIndex、
+        // settingsScrollTarget），避免绕过清理导致残留。此时 dirtyFiles 已清（保存/丢弃均
+        // markClean 过），navigateTo 不会再次拦截。
+        setAppState("pendingView", null);
+        navigateTo(target);
+      })();
+    });
   });
 
   // 按 CacheEntry.index（序号）插入，保持条目按序号有序
@@ -1277,6 +1367,10 @@ export function ReviewPage() {
       loadedFile = file;
       setEntries(all); // 分页模式下全量加载，渲染层按页切片显示
       baselineKey = snapshotKey(entries());                     // 重置编辑基线
+      lastSaveFailed = false; // 新文件为干净状态，重置失败标志
+      // 译文文件加载完成：离开 metadata 模式，重置元数据路径标记，
+      // 否则 captureUnmountSnapshot 的译文分支（依赖 metaLoadedFullPath 为空）会被误跳过
+      metaLoadedFullPath = "";
     } catch {
       // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
       if (myToken === loadToken && appState.activeFilePath === targetFile) {
@@ -1379,12 +1473,16 @@ export function ReviewPage() {
             metaDiskSnapshot = metaEntry();
             clearUndo();
             metaDirty = false;
+            // 清理全局 dirtyFiles（handleMetaContentChange 编辑时 markDirty 过），
+            // 避免残留导致后续 navigateTo 切页拦截误弹「未保存的修改」确认
+            if (metaLoadedFullPath) markClean(metaLoadedFullPath);
           } catch (e) {
             toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
             return; // 失败中止切换，留在 metadata
           }
         } else {
           metaDirty = false; // 不保存 → 丢弃
+          if (metaLoadedFullPath) markClean(metaLoadedFullPath);
         }
       }
       while (true) {
@@ -1636,6 +1734,8 @@ export function ReviewPage() {
             await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry()!);
             if (myToken !== metaSwitchToken) return; // 保存期间又切换
             metaDirty = false;
+            // 清理旧文件的全局 dirtyFiles（编辑时 markDirty 过），避免残留导致切页误弹确认
+            if (metaLoadedFullPath) markClean(metaLoadedFullPath);
             clearUndo(); // 保存即新的撤销起点（与 saveMeta 一致），防旧文件残留记录造成撤销错位
           } catch (e) {
             // 保存失败：中止切换，保住未保存编辑（metaDirty 保持 true）
@@ -1660,6 +1760,7 @@ export function ReviewPage() {
         metaJsonInvalidShown = false; // 新文件加载后重置非法 JSON 提示标志
         // activeFilePath 至此非空（正在加载目标文件）；?? "" 仅作类型收窄，与声明类型一致
         metaLoadedFullPath = appState.activeFilePath ?? ""; // 记录当前文件完整路径，供下次切换保存推导
+        lastSaveFailed = false; // 新文件为干净状态，重置失败标志
       } catch {
         if (myToken !== metaSwitchToken) return;
         setMetaEntry(null);
@@ -1703,10 +1804,19 @@ export function ReviewPage() {
       return { ...parsed, id };
     });
     metaDirty = true; // 有效编辑 → 标记未保存
+    // 同步全局 dirtyFiles（metadata 模式），供 navigateTo 切页拦截（pendingView 确认）检测
+    if (metaLoadedFullPath) markDirty(metaLoadedFullPath);
   }
 
-  async function saveMeta() {
-    if (metaSavePending) return;
+  /** 保存当前元数据文件。showToast=true 时（失焦/卸载自动保存）成功后 info 短时长提示；
+      Ctrl+S/菜单手动保存保持静默，避免误报"自动保存"。 */
+  /** 保存当前元数据文件。showToast=true 时（失焦/卸载自动保存）成功后 info 短时长提示；
+      Ctrl+S/菜单手动保存保持静默，避免误报"自动保存"。返回是否确认落盘成功。
+      无未保存修改（metaDirty=false）时直接跳过：防止确认框保存/卸载兜底后，
+      onCleanup 的 blur() 再触发一次无条件保存（多余请求与重复 toast）。 */
+  async function saveMeta(showToast = false): Promise<boolean> {
+    if (metaSavePending) return false;
+    if (!metaDirty) return false; // 无修改：不落盘（如确认框保存后 onCleanup blur 的重复触发）
     metaSavePending = true;
     const pid = appState.activeProjectId;
     const srcFile = metaSourceFile();
@@ -1723,7 +1833,7 @@ export function ReviewPage() {
         );
       }
       metaSavePending = false;
-      return;
+      return false;
     }
     try {
       await savePerFileMetadata(pid, metaType(), srcFile, entry);
@@ -1733,11 +1843,22 @@ export function ReviewPage() {
       clearUndo(); // 保存即新的撤销起点：清空保存前历史，撤销最多回到最近保存态
       // 按快照重算 dirty：防保存响应返回时 metaEntry 已被撤销改写（竞态）而错误清脏
       metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
+      lastSaveFailed = false;
+      // 同步全局 dirtyFiles：保存成功即清理（与 handleMetaContentChange 的 markDirty 对应）
+      if (metaLoadedFullPath) markClean(metaLoadedFullPath);
+      if (showToast) {
+        // 全局提示词/剧情路线图无源文件，用完整路径的文件名展示
+        const name = srcFile || metaLoadedFullPath.split(/[/\\]/).pop() || srcFile;
+        toast.info(`已自动保存 ${name}`, AUTOSAVE_TOAST_DURATION);
+      }
       if (import.meta.env?.DEV) {
         console.debug(`[ReviewPage] 元数据已保存并重置撤销栈, file=${srcFile}`);
       }
+      return true;
     } catch (e) {
+      lastSaveFailed = true;
       toast.error(`元数据保存失败：${getErrorMessage(e)}`);
+      return false;
     } finally {
       metaSavePending = false;
     }
@@ -1918,6 +2039,7 @@ export function ReviewPage() {
         const resp = await saveCacheFile(pid, myFile, toSave, getActiveConfigFileName());
         // 检查后端返回：保存未确认成功时不 markClean，避免误报"已保存"
         if (resp && resp.success === false) {
+          lastSaveFailed = true;
           toast.error(`保存 ${myFile} 失败：后端未确认成功`);
           return false;
         }
@@ -1927,6 +2049,7 @@ export function ReviewPage() {
       }
       markClean(myFile);
       baselineKey = snapshotKey(entries()); // 保存成功，重置编辑基线
+      lastSaveFailed = false;
       // 按 index 局部合并后端重建的 problem（不要求长度相等，删除后其余条目也能刷新问题），不整表替换避免闪烁。
       // 合并失败不影响保存结果（保存已成功），仅静默跳过，避免误报"保存失败"。
       try {
@@ -1947,6 +2070,7 @@ export function ReviewPage() {
       return true;
     } catch (e) {
       // 保存失败：提示用户（dirty 保持，markClean 未执行）
+      lastSaveFailed = true;
       toast.error(`保存 ${myFile} 失败：${getErrorMessage(e)}`);
       return false;
     } finally {
@@ -1963,8 +2087,100 @@ export function ReviewPage() {
     if (!appState.dirtyFiles.includes(myFile)) return; // 无修改则不落盘、不提示
     const ok = await saveCurrentFile();
     if (ok && appState.activeFilePath === myFile) {
-      toast.success(`已保存 ${myFile}`);
+      toast.info(`已自动保存 ${myFile}`, AUTOSAVE_TOAST_DURATION);
     }
+  }
+
+  // ── 卸载自动保存（切页/切项目离开页面时兜底落盘） ──
+  // 卸载瞬间全局状态可能已被 openProject/closeProject 重置（activeProjectId/dirtyFiles 等），
+  // 故 onCleanup 同步段一次性快照保存目标与数据（loadedFile/entries/metaDirty 等组件内
+  // 状态在卸载时仍持最后值），异步落盘全程使用快照，不读运行时全局状态。
+  type UnmountSnapshot =
+    | {
+        kind: "translate";
+        dirty: boolean;
+        saveFailed: boolean;
+        pid: string;
+        file: string;
+        configName: string;
+        entries: CacheEntry[];
+      }
+    | {
+        kind: "metadata";
+        dirty: true;
+        saveFailed: boolean;
+        pid: string;
+        file: string;
+        metaType: MetadataType;
+        srcFile: string;
+        entry: MetadataEntry;
+      }
+    | { kind: "none"; dirty: false; file: ""; saveFailed: false };
+
+  // 等待在途手动保存/元数据保存完成（各自在 finally 中必定释放），带超时兜底，
+  // 避免卸载瞬间保存被 in-flight 守卫跳过导致磁盘未落盘，也防止并发双写同一文件。
+  // 用函数声明（提升到组件作用域顶部）而非 const 箭头函数：HMR 重载时 onCleanup 回调
+  // 可能在组件函数体重新执行过程中被触发，后置 const 处于 TDZ 会抛 ReferenceError。
+  function waitForPendingSave(): Promise<void> {
+    const deadline = Date.now() + 3000;
+    const wait = async (): Promise<void> => {
+      while ((saveInFlight || metaSavePending) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 30));
+      }
+    };
+    return wait();
+  }
+
+  function captureUnmountSnapshot(): UnmountSnapshot {
+    // translate 分支仅在非 metadata 模式有效：metadata 模式会把 loadedFile 覆盖为
+    // 源文件名（无 pass3_cache 前缀），若误走 translate 分支会用错误文件名调 saveCacheFile
+    // 导致后端 404（cache file not found）与"自动保存失败"误报
+    if (loadedFile && !metaLoadedFullPath) {
+      if (!mountPid) return { kind: "none", dirty: false, file: "", saveFailed: false };
+      return {
+        kind: "translate",
+        // dirty 判定不依赖 appState.dirtyFiles（openProject 卸载前会清空它），
+        // 改用组件内基线比对：snapshotKey(entries())/baselineKey 在卸载时仍持最后值
+        dirty: snapshotKey(entries()) !== baselineKey,
+        saveFailed: lastSaveFailed,
+        pid: mountPid,
+        file: loadedFile,
+        configName: configNameSnapshot,
+        entries: entries(),
+      };
+    }
+    if (metaLoadedFullPath && metaDirty && metaEntry() && !metaSavePending) {
+      if (!mountPid) return { kind: "none", dirty: false, file: "", saveFailed: false };
+      // 用最后加载路径推导 type/sourceFile（不读全局 memo，卸载时可能已指向别处）
+      const info = modeInfoOf(metaLoadedFullPath);
+      return {
+        kind: "metadata",
+        dirty: true,
+        saveFailed: lastSaveFailed,
+        pid: mountPid,
+        // 全局提示词/剧情路线图无源文件，用完整路径的文件名展示
+        file: info.sourceFile || metaLoadedFullPath.split(/[/\\]/).pop() || metaLoadedFullPath,
+        metaType: info.metaType,
+        srcFile: info.sourceFile,
+        entry: metaEntry()!,
+      };
+    }
+    return { kind: "none", dirty: false, file: "", saveFailed: false };
+  }
+
+  /** 卸载落盘：translate 路保存译文缓存全量条目；metadata 路保存单对象元数据。成功返回 true。
+      抛出的异常由 runPageAutosave 捕获并附带错误详情提示。 */
+  async function saveUnmountSnapshot(snap: UnmountSnapshot): Promise<boolean> {
+    if (snap.kind === "none") return true;
+    if (snap.kind === "translate") {
+      const resp = await saveCacheFile(snap.pid, snap.file, snap.entries, snap.configName);
+      if (resp && resp.success === false) return false; // 后端未确认成功（无错误对象，不附加详情）
+      // 清理全局脏标记，避免切回页面时误弹"未保存的修改"确认
+      markClean(snap.file);
+    } else {
+      await savePerFileMetadata(snap.pid, snap.metaType, snap.srcFile, snap.entry);
+    }
+    return true;
   }
 
   // 保存并重检进行中标志：按钮/Ctrl+S/菜单保存三入口共用，重入时静默忽略（首次执行已含保存+重检全部意图）
@@ -2195,14 +2411,14 @@ export function ReviewPage() {
                   entry={metaEntry()!}
                   index={0}
                   onContentChange={(t) => handleMetaContentChange(0, t)}
-                  onBlur={saveMeta}
+                  onBlur={() => void saveMeta(true)}
                 />
               ) : (
                 <MetadataCard
                   entry={metaEntry()!}
                   index={0}
                   onContentChange={(t) => handleMetaContentChange(0, t)}
-                  onBlur={saveMeta}
+                  onBlur={() => void saveMeta(true)}
                 />
               )}
             </Show>

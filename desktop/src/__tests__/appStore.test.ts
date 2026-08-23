@@ -11,6 +11,7 @@ import {
   markDirty as md,
   markClean as mc,
   openProject,
+  navigateTo,
 } from "../stores/appStore";
 
 /** 重置 dirtyFiles 与 activeFilePath 到初始状态 */
@@ -148,7 +149,6 @@ describe("openProject 状态重置（M20）", () => {
       prevJobStatus: "",
     });
   });
-
   it("打开新项目时重置上一项目的状态残留", async () => {
     // 模拟上一项目残留状态
     setAppState({
@@ -174,5 +174,47 @@ describe("openProject 状态重置（M20）", () => {
     expect(appState.reviewJumpToIndex).toBeNull();
     expect(appState.replaceRequest).toBeNull();
     expect(appState.prevJobStatus).toBe("");
+  });
+});
+
+describe("navigateTo 切页确认（pendingView）", () => {
+  beforeEach(() => {
+    // 基准状态：review 页、无未保存修改、无 pending
+    setAppState({
+      activeView: "review",
+      pendingView: null,
+      dirtyFiles: [],
+      sidebarOpen: false,
+      sidebarTab: null,
+      reviewJumpToIndex: null,
+      settingsScrollTarget: null,
+    });
+  });
+
+  it("从 review 切走且有未保存修改 → 置 pendingView 不切换", () => {
+    setAppState("dirtyFiles", ["pass3_cache/t.txt.json"]);
+    navigateTo("settings");
+    expect(appState.activeView).toBe("review"); // 未切换，等待确认
+    expect(appState.pendingView).toBe("settings");
+  });
+
+  it("从 review 切走且无未保存修改 → 直接切换", () => {
+    navigateTo("settings");
+    expect(appState.activeView).toBe("settings");
+    expect(appState.pendingView).toBeNull();
+  });
+
+  it("切到 review 本身不拦截（即使有 dirty）", () => {
+    setAppState("dirtyFiles", ["x.json"]);
+    navigateTo("review");
+    expect(appState.activeView).toBe("review");
+    expect(appState.pendingView).toBeNull();
+  });
+
+  it("从非 review 页面切走不拦截（dirty 存在也不置 pendingView）", () => {
+    setAppState({ activeView: "settings", dirtyFiles: ["x.json"] });
+    navigateTo("home");
+    expect(appState.activeView).toBe("home");
+    expect(appState.pendingView).toBeNull();
   });
 });
