@@ -179,6 +179,24 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
     fixedCards: ["afterTranslation"],
   },
   {
+    title: "翻译后端-术语表（GenDic）",
+    desc: "GPT 字典生成（GenDic 引擎）的参数：terms 词表模式的提取与翻译行为。",
+    subsections: [
+      {
+        title: "",
+        keys: [
+          "internals.gendic.mode",
+          "internals.gendic.batch_size",
+          "internals.gendic.context",
+          "internals.gendic.context_samples",
+          "internals.gendic.max_terms",
+          "internals.gendic.han_allowlist",
+          "internals.gendic.ban_words",
+        ],
+      },
+    ],
+  },
+  {
     title: "翻译后端-剧情路线图",
     desc: "剧情路线图（阶段 4.5）的生成参数：剧情结构类型与用户提供的剧情大纲（纯文本）。",
     subsections: [

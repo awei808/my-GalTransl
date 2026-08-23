@@ -115,6 +115,15 @@ internals:
     inject_guideline: false # 是否将翻译规范注入批次划分提示词。[True/False]
   forfilemeta:
     inject_guideline: false # 是否将翻译规范注入文件元数据生成提示词。[True/False]
+  # GenDic 术语表模式配置（设计文档 gendic_terms_mode_design.md）
+  gendic:
+    mode: terms            # 术语表模式：terms 词表模式（本地提取词表后逐词翻译，推荐）/ segments 旧片段模式 [terms/segments]
+    batch_size: 50         # terms 模式每批请求的词数。[1-200]
+    context: true          # terms 模式是否附每个词首现完整句（多义消歧+防幻觉）。[True/False]
+    context_samples: 3     # terms 模式每个词附带的示例句数量（取含该词的前 N 个完整句，与 context 配合）。[2-10]
+    max_terms: 128         # terms 模式词表/生成字典硬上限：固有名詞优先保底，但总条目不超此值（过多条目影响后续翻译）；0 不截断。[0-20000]
+    han_allowlist: []      # 汉字普通名词收录白名单（如 射精/膣内 等 H 术语需统一译法时逐个添加）；默认空=不收录（既定决策）。[日文词列表]
+    ban_words: []          # 太过平常的词汇黑名单（代词/语气词/口语等，如 キミ/ダメ/ヤダ），提取时不发送 AI；默认空。[日文词列表]
 
 
 

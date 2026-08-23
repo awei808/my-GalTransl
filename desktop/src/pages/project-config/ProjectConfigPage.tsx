@@ -253,6 +253,15 @@ const FIELD_UI: Record<string, FieldUI> = {
 };
 
 /**
+ * 数组型配置键（值缺失时也按数组渲染为只读，避免误判为枚举下拉）：
+ * GenDic 术语表白名单/黑名单为日文词列表，通过直接编辑 config.yaml 维护。
+ */
+const ARRAY_LIST_KEYS = new Set([
+  "internals.gendic.han_allowlist",
+  "internals.gendic.ban_words",
+]);
+
+/**
  * 这些键不进入「通用配置列表」（在展平阶段直接跳过），改为专用卡片、隐藏行或条件板块：
  * - 后端全局管理前缀：交全局后端配置页维护
  * - HIDDEN_CONFIG_KEYS：旧版本残留/由专用卡片接管的键
@@ -683,11 +692,11 @@ export function ProjectConfigPage() {
         } else {
           // 区分值类型以便渲染时选择展示方式
           let dtype = "scalar"; // string | number | boolean
-          if (Array.isArray(v)) {
+          if (Array.isArray(v) || ARRAY_LIST_KEYS.has(key)) {
             dtype =
-              v.length > 0 && typeof v[0] === "object" && v[0] !== null
+              Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && v[0] !== null
                 ? "object-array" // 如 tokens: [{token,endpoint,...}]
-                : "array"; // 如 [1,2,3] 或 ["a","b"]
+                : "array"; // 如 [1,2,3] 或 ["a","b"]（未配置时也按数组展示，避免误判为枚举）
           }
           flatItemByKey.set(key, [key, v, dtype]);
         }
