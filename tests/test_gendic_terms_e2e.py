@@ -20,12 +20,22 @@ CONFIG_YAML = """\
 common:
   language: zh-cn
   workersPerProject: 2
+internals:
+  gendic:
+    mode: terms
 backendSpecific:
   OpenAI-Compatible:
     tokens:
       - token: mock-key
         endpoint: http://127.0.0.1:9
         modelName: mock-model
+"""
+
+CONFIG_YAML_LLM = CONFIG_YAML + """\
+internals:
+  gendic:
+    mode: llm
+    llm_chunk_size: 500
 """
 
 
@@ -144,6 +154,64 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         entries = self._read_dic()
         self.assertEqual(len(entries), first_count)  # 不翻倍累积
         self.assertEqual(len({l.split("\t")[0] for l in entries}), first_count)  # 无重复词条
+
+
+class GenDicLlmE2ETests(unittest.IsolatedAsyncioTestCase):
+    """LLM 全权模式（mode=llm）：压缩文本切块 → AI 提取 → 简单去重直接进词典（不筛选）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        os.chdir(ROOT)
+        cls._opencc_patcher = patch(
+            "GalTransl.Backend.BaseEngine.OpenCC",
+            return_value=MagicMock(convert=lambda s: s),
+        )
+        cls._opencc_patcher.start()
+        GenDic.init_chatbot = lambda self, *a, **k: None
+
+        cls.tmp = _mkdtemp_writable("gendic_llm_e2e_")
+        with open(os.path.join(cls.tmp, "config.yaml"), "w", encoding="utf-8") as f:
+            f.write(CONFIG_YAML_LLM)
+        cls.cfg = CProjectConfig(cls.tmp)
+        cls.dic_path = os.path.join(cls.tmp, "项目GPT字典-生成.txt")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        cls._opencc_patcher.stop()
+
+    def _backend(self, responses) -> GenDic:
+        backend = GenDic(self.cfg, "GenDic", None, None)
+        self.assertEqual(backend.gendic_mode, "llm")
+        self.assertEqual(backend.gendic_llm_chunk_size, 500)
+        backend.ask_chatbot = _FakeTermsLLM(responses)
+        return backend
+
+    def _input(self) -> list:
+        # 足够长触发多块切分；含术语与拟声/人名
+        base = "サキュバスのフィギュアを撮影する。凛音はコスプレイヤーだ。"
+        return [{"name": "凛音", "message": base * 40}]
+
+    def _read_dic(self) -> list:
+        if not os.path.exists(self.dic_path):
+            return []
+        with open(self.dic_path, "r", encoding="utf-8") as f:
+            return [l for l in f.read().splitlines() if l.strip() and not l.startswith("#")]
+
+    async def test_llm_extract_writes_dictionary_unfiltered(self) -> None:
+        # 不筛选词汇（用户决策）：AI 提取的术语（含人名/拟声 note）直接进词典；
+        # 仅「（无法翻译）」在解析层跳过
+        backend = self._backend([
+            "日文原词\t中文翻译\t备注\nサキュバス\t魅魔\t术语\n凛音\t凛音\t人名\nフィギュア\t手办\t物品\nむー\t（无法翻译）\t拟声\n",
+        ])
+        ok = await backend.batch_translate(self._input())
+        self.assertTrue(ok)
+        joined = "\n".join(self._read_dic())
+        self.assertIn("サキュバス\t魅魔", joined)
+        self.assertIn("凛音\t凛音", joined)  # 人名不筛选
+        self.assertIn("フィギュア\t手办", joined)
+        self.assertNotIn("むー", joined)  # （无法翻译）解析层丢弃
+        self.assertGreaterEqual(backend.ask_chatbot.calls, 1)
 
 
 if __name__ == "__main__":

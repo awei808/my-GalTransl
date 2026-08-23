@@ -117,7 +117,8 @@ internals:
     inject_guideline: false # 是否将翻译规范注入文件元数据生成提示词。[True/False]
   # GenDic 术语表模式配置（设计文档 gendic_terms_mode_design.md）
   gendic:
-    mode: terms            # 术语表模式：terms 词表模式（本地提取词表后逐词翻译，推荐）/ segments 旧片段模式 [terms/segments]
+    mode: llm             # 术语表模式：llm 全权模式（压缩文本切块后 AI 直接提取术语，推荐）/ terms 词表模式（本地提取词表后逐词翻译）/ segments 旧片段模式 [llm/terms/segments]
+    llm_chunk_size: 6000   # llm 全权模式：压缩文本每块字符数（AI 从每块提取术语，越小块数越多越细）。[1000-20000]
     batch_size: 50         # terms 模式每批请求的词数。[1-200]
     context: true          # terms 模式是否附每个词首现完整句（多义消歧+防幻觉）。[True/False]
     context_samples: 3     # terms 模式每个词附带的示例句数量（取含该词的前 N 个完整句，与 context 配合）。[2-10]

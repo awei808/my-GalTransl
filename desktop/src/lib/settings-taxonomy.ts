@@ -186,6 +186,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         title: "",
         keys: [
           "internals.gendic.mode",
+          "internals.gendic.llm_chunk_size",
           "internals.gendic.batch_size",
           "internals.gendic.context",
           "internals.gendic.context_samples",

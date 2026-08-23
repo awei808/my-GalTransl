@@ -16,6 +16,7 @@ from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import (
     GENDIC_PROMPT,
     GENDIC_TERMS_PROMPT,
+    GENDIC_LLM_EXTRACT_PROMPT,
     GENDIC_SYSTEM,
     H_WORDS_LIST,
     FAILED_PREFIX,
@@ -298,10 +299,14 @@ class GenDic(BaseEngine):
         self.gendic_max_api_retries = self._coerce_positive_int(raw_retry, 6)
         # terms/segments 模式配置（设计文档第七~九节）：非法值回退默认，0 表示不截断。
         # 键位于 internals 段，展平后带 internals. 前缀（见 ConfigHelper._flatten_dotted_keys）
-        self.gendic_mode = config.getKey("internals.gendic.mode", "terms")
-        if self.gendic_mode not in ("terms", "segments"):
-            LOGGER.warning("gendic.mode 非法值 %s，回退 terms", self.gendic_mode)
-            self.gendic_mode = "terms"
+        self.gendic_mode = config.getKey("internals.gendic.mode", "llm")
+        if self.gendic_mode not in ("terms", "segments", "llm"):
+            LOGGER.warning("gendic.mode 非法值 %s，回退 llm", self.gendic_mode)
+            self.gendic_mode = "llm"
+        # llm 全权模式：压缩文本切块大小（字符数），AI 从每块直接提取术语（含翻译）
+        self.gendic_llm_chunk_size = self._coerce_positive_int(
+            config.getKey("internals.gendic.llm_chunk_size"), 6000
+        )
         self.gendic_batch_size = self._coerce_positive_int(config.getKey("internals.gendic.batch_size"), 50)
         # YAML 的 on/off 会解析为 bool（True/False），兼容字符串与 bool 两种写法
         raw_ctx = config.getKey("internals.gendic.context", "on")
@@ -913,15 +918,138 @@ class GenDic(BaseEngine):
         self._update_runtime(stage="", current_file="", workers_active=0)
         return True
 
+    @staticmethod
+    def _parse_llm_extract_response(rsp: str) -> List[Tuple[str, str, str]]:
+        """解析 LLM 全权提取 TSV 响应：跳过表头/代码围栏/（无法翻译）行，返回 [(src, dst, note)]。"""
+        entries: List[Tuple[str, str, str]] = []
+        for line in rsp.splitlines():
+            line = line.strip()
+            if not line or line.startswith("```") or "日文原词" in line:
+                continue
+            sp = line.split("\t")
+            if len(sp) < 2:
+                continue
+            src, dst = sp[0].strip(), sp[1].strip()
+            if not src or not dst or dst == "（无法翻译）":
+                continue
+            note = sp[2].strip() if len(sp) >= 3 else ""
+            if len(note) > 20:
+                note = ""
+            entries.append((src, dst, note))
+        return entries
+
+    async def _llm_extract_translate(self, json_list: list) -> bool:
+        """llm 全权模式：无损压缩全文 → 切块 → AI 每块提取术语（含翻译）→ 汇总去重 → 过滤截断 → 落盘。"""
+        from GalTransl.Service import JobCancelledError
+        from GalTransl.TextCompressor import TextCompressor
+
+        cancelled_error: Optional[JobCancelledError] = None
+        self._check_stop_requested()
+        try:
+            self._update_runtime(stage="GenDic 文本压缩中", current_file="llm 全权模式")
+            compressor = TextCompressor(max_chars=0)
+            compressed = compressor.compress({"项目输入.json": json_list})
+            chunk_size = min(20000, max(1000, int(getattr(self, "gendic_llm_chunk_size", 6000) or 6000)))
+            chunks = [compressed[i:i + chunk_size] for i in range(0, len(compressed), chunk_size)]
+            LOGGER.info(
+                f"[GenDic][llm] 压缩后 {len(compressed)} 字符，切 {len(chunks)} 块（chunk_size={chunk_size}）"
+            )
+            if not chunks:
+                LOGGER.warning("[GenDic][llm] 压缩文本为空，跳过生成")
+                return True
+
+            self._prepare_runtime_progress(len(chunks))
+            sem = asyncio.Semaphore(self.wokers)
+            results: Dict[str, Tuple[str, str]] = {}
+            completed = 0
+
+            async def process_chunk(chunk: str, task_index: int) -> None:
+                nonlocal completed
+                async with sem:
+                    self._check_stop_requested()
+                    prompt = GENDIC_LLM_EXTRACT_PROMPT.replace("{chunk}", chunk)
+                    try:
+                        rsp, _token = await self.ask_chatbot(
+                            prompt=prompt,
+                            system=GENDIC_SYSTEM,
+                            file_name=self.progress_display_name,
+                            max_retry_count=self.gendic_max_api_retries,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        if isinstance(e, JobCancelledError):
+                            raise
+                        LOGGER.error(f"[GenDic][llm] 块 {task_index} 请求失败: {e}")
+                        return
+                    for src, dst, note in self._parse_llm_extract_response(rsp):
+                        if src not in results:
+                            results[src] = (dst, note)
+                    completed += 1
+                    self._append_runtime_progress(task_index, True)
+                    self._update_runtime(
+                        stage="GenDic LLM 提取中",
+                        current_file=f"已完成 {completed}/{len(chunks)} 块",
+                        workers_active=max(0, self.wokers - completed),
+                    )
+
+            tasks = [asyncio.create_task(process_chunk(c, i)) for i, c in enumerate(chunks)]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+        except JobCancelledError as ex:
+            cancelled_error = ex
+            self._update_runtime(stage="GenDic 停止处理中", current_file="整理当前结果", workers_active=0)
+        finally:
+            self._cleanup_runtime_progress()
+
+        if not results:
+            LOGGER.warning("[GenDic][llm] 全部块未解析到术语，未生成字典")
+            self._update_runtime(stage="", current_file="", workers_active=0)
+            if cancelled_error is not None:
+                raise cancelled_error
+            return True
+
+        # 不筛选词汇（用户决策）：LLM 全权模式结果简单处理后直接进词典，仅去重；
+        # max_terms 仅作词典条数上限（超限取前 N 条）
+        final_list: List[List[str]] = [[src, dst, note] for src, (dst, note) in results.items()]
+        max_terms = int(getattr(self, "gendic_max_terms", 0) or 0)
+        if max_terms > 0 and len(final_list) > max_terms:
+            final_list = final_list[:max_terms]
+        result_path = self._save_generated_dictionary(final_list)
+        added = len(final_list)
+        setattr(self.pj_config, "gendic_added_count", added)
+        setattr(self.pj_config, "gendic_duplicated_count", 0)
+        if cancelled_error is not None:
+            setattr(self.pj_config, "gendic_partial_saved", True)
+            LOGGER.info(f"[GenDic][llm] 已停止，使用当前结果生成字典，新增{added}条，保存到{result_path}")
+            self._update_runtime(stage="", current_file="", workers_active=0)
+            raise cancelled_error
+        LOGGER.info(f"[GenDic][llm] 字典生成完成，新增{added}条，保存到{result_path}")
+        try:
+            self.pj_config.register_gpt_dict_file("项目GPT字典-生成.txt")
+        except Exception as reg_err:
+            LOGGER.warning(f"GenDic 字典登记到配置失败（界面可能看不到）: {reg_err}")
+        self._update_runtime(stage="", current_file="", workers_active=0)
+        return True
+
     async def batch_translate(
         self,
         json_list: list,
     ) -> bool:
         from GalTransl.Service import JobCancelledError
 
-        # terms/segments 双模式分派（设计文档第八节，默认 terms）
-        if getattr(self, "gendic_mode", "terms") == "terms":
+        # terms/segments/llm 多模式分派（默认 terms）
+        mode = getattr(self, "gendic_mode", "terms")
+        if mode == "terms":
             return await self._batch_translate_terms(json_list)
+        if mode == "llm":
+            return await self._llm_extract_translate(json_list)
 
         word_counter: Dict[str, int] = {}
         name_set: Set[str] = set()

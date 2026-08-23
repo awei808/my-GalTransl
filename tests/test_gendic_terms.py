@@ -23,7 +23,6 @@ from GalTransl.Backend.GenDic import (
     _is_term_droppable,
 )
 
-
 def _mkdtemp_writable(prefix: str) -> str:
     """创建可写临时目录：tempfile.mkdtemp 默认 0o700 在受限沙箱下内部文件不可写，
     改用不带 mode 的 os.makedirs（与 tests/test_forsemcheck_e2e.py 同法）。"""
@@ -409,6 +408,39 @@ class TermsAlphaAbbrTests(unittest.TestCase):
         self.assertNotIn("Ｊｒ", [t[0] for t in terms])
 
 
+class TermsLlmExtractTests(unittest.TestCase):
+    """LLM 全权模式（gendic.mode=llm）：AI 从文本块直接提取术语（含翻译）。"""
+
+    def test_parse_llm_extract_response_basic(self) -> None:
+        rsp = (
+            "```tsv\n日文原词\t中文翻译\t备注\n"
+            "サキュバス\t魅魔\t术语\n"
+            "フィギュア\t手办\t物品\n"
+            "```\n"
+        )
+        entries = GenDic._parse_llm_extract_response(rsp)
+        self.assertEqual(
+            entries,
+            [("サキュバス", "魅魔", "术语"), ("フィギュア", "手办", "物品")],
+        )
+
+    def test_parse_llm_extract_response_skips_untranslatable_and_header(self) -> None:
+        rsp = (
+            "日文原词\t中文翻译\t备注\n"
+            "むー\t（无法翻译）\t拟声\n"
+            "凛音\t凛音\t人名，女性\n"
+            "クルト\tクルト\t\n"  # 空 note 回显
+        )
+        entries = GenDic._parse_llm_extract_response(rsp)
+        self.assertEqual(entries, [("凛音", "凛音", "人名，女性"), ("クルト", "クルト", "")])
+
+    def test_parse_llm_extract_response_long_note_truncated(self) -> None:
+        rsp = "オバ★グラ\t欧巴格拉\t" + "很长的备注" * 10 + "\n"
+        entries = GenDic._parse_llm_extract_response(rsp)
+        self.assertEqual(len(entries), 1)
+        self.assertLessEqual(len(entries[0][2]), 20)
+
+
 class TermsParseResponseTests(unittest.TestCase):
     """解析容错：按输入词匹配 + grounding 防幻觉。"""
 
@@ -578,9 +610,27 @@ class TermsConfigTests(unittest.TestCase):
         self.assertFalse(cfg.getKey("internals.gendic.context"))  # off -> False
         self.assertEqual(cfg.getKey("internals.gendic.max_terms"), 0)
 
+    def test_llm_mode_and_chunk_size_config(self) -> None:
+        with patch("GalTransl.Backend.BaseEngine.OpenCC", return_value=MagicMock(convert=lambda s: s)), \
+                patch("GalTransl.Backend.GenDic.GenDic.init_chatbot", lambda self, *a, **k: None):
+            cfg = self._project(
+                "common:\n  language: zh-cn\nbackendSpecific:\n  OpenAI-Compatible:\n    tokens: []\n"
+                "internals:\n  gendic:\n    mode: llm\n    llm_chunk_size: 4000\n"
+            )
+            backend = GenDic(cfg, "GenDic", None, None)
+            self.assertEqual(backend.gendic_mode, "llm")
+            self.assertEqual(backend.gendic_llm_chunk_size, 4000)
+            # 缺省回退默认值（llm + 6000）
+            cfg2 = self._project(
+                "common:\n  language: zh-cn\nbackendSpecific:\n  OpenAI-Compatible:\n    tokens: []\n"
+            )
+            backend2 = GenDic(cfg2, "GenDic", None, None)
+            self.assertEqual(backend2.gendic_mode, "llm")
+            self.assertEqual(backend2.gendic_llm_chunk_size, 6000)
+
     def test_default_template_contains_gendic_section(self) -> None:
         self.assertIn("gendic:", DEFAULT_PROJECT_CONFIG_YAML)
-        self.assertIn("mode: terms", DEFAULT_PROJECT_CONFIG_YAML)
+        self.assertIn("mode: llm", DEFAULT_PROJECT_CONFIG_YAML)
         self.assertIn("max_terms: 128", DEFAULT_PROJECT_CONFIG_YAML)
         self.assertIn("context_samples: 3", DEFAULT_PROJECT_CONFIG_YAML)
 
@@ -611,7 +661,7 @@ class TermsConfigTests(unittest.TestCase):
     def test_missing_gendic_section_falls_back(self) -> None:
         cfg = self._project("common:\n  language: zh-cn\n")
         self.assertIsNone(cfg.getKey("internals.gendic.mode"))
-        # 缺省时由 GenDic 读取端回退默认值（默认 terms），此处仅验证键缺失不抛错
+        # 缺省时由 GenDic 读取端回退默认值（默认 llm），此处仅验证键缺失不抛错
 
     def test_han_allowlist_converted_to_set(self) -> None:
         # YAML 列表 → gendic_han_allowlist 集合；无配置时为空集（H 术语不收录默认）
