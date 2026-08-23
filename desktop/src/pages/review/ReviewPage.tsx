@@ -59,11 +59,35 @@ export function shouldYieldToNative(
   if (!(activeEl instanceof HTMLTextAreaElement)) return false;
   // 元数据框：草稿未提交即让出原生逐字符撤销
   if (activeEl.classList.contains("meta-content-textarea")) return Boolean(metaDraftDirty);
-  if (!activeEl.classList.contains("entry-dst-input")) return false;
+  if (!activeEl.classList.contains("entry-dst-input") && !activeEl.classList.contains("field-value--editable")) {
+    return false;
+  }
   const serial = Number(activeEl.dataset.index);
   if (!Number.isFinite(serial)) return false;
-  const committed = entries.find((e) => e.index === serial)?.pre_dst ?? "";
+  if (activeEl.classList.contains("entry-dst-input")) {
+    const committed = entries.find((e) => e.index === serial)?.pre_dst ?? "";
+    return activeEl.value !== committed;
+  }
+  // 展开字段草稿（pre_dst/proofread_dst/alt_dst）：未提交时让出原生逐字符撤销
+  const key = activeEl.dataset.fieldKey;
+  if (!key) return false;
+  const entry = entries.find((e) => e.index === serial) as Record<string, unknown> | undefined;
+  const committed = String(entry?.[key] ?? "");
   return activeEl.value !== committed;
+}
+
+/**
+ * 撤销/重做/跨文件切换前需要先 blur 提交草稿的输入框判定。
+ * 主译文框、元数据框、展开字段（pre_dst/proofread_dst/alt_dst）均为草稿态，
+ * 若未先提交就改 entries，聚焦中的旧草稿会在失焦时回写，覆盖撤销/重做结果。
+ */
+export function shouldBlurBeforeUndo(el: Element | null): boolean {
+  return (
+    el instanceof HTMLTextAreaElement &&
+    (el.classList.contains("entry-dst-input") ||
+      el.classList.contains("meta-content-textarea") ||
+      el.classList.contains("field-value--editable"))
+  );
 }
 
 // 跨文件撤销/重做的在途恢复状态（在 ReviewPage 闭包内维护，导出类型供测试使用）
@@ -312,7 +336,6 @@ export function EntryCard(props: {
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
   onSwapAlt: () => void;
-  onSave?: () => void;
   // 展开状态受控（父级持有，条目翻页卸载重建后仍能恢复）
   expanded: boolean;
   onToggleExpanded: () => void;
@@ -340,6 +363,45 @@ export function EntryCard(props: {
     setDraftDst(() => v);
   });
 
+  // 展开字段草稿（pre_dst / proofread_dst / alt_dst）：键入只更新本地草稿，失焦或收起时统一提交。
+  // 与主译文框同语义：避免每次按键直写 entries 造成 undo 噪音与脏状态抖动。
+  const [expandedDrafts, setExpandedDrafts] = createSignal<Record<string, string>>({});
+  // 用户实际编辑过的展开字段集合：提交时只回写被编辑的字段，
+  // 避免把展开时初始化的"旧草稿"覆盖主译文框等其他入口刚提交的新值
+  const [touchedExpandedKeys, setTouchedExpandedKeys] = createSignal<ReadonlySet<string>>(new Set());
+  const draftOf = (key: string): string => {
+    const d = expandedDrafts()[key];
+    return d !== undefined ? d : String(e()[key as keyof CacheEntry] ?? "");
+  };
+  // 条目内容变化（提交/refetch）时回填草稿；聚焦中的字段保留输入内容，避免打断编辑
+  createEffect(() => {
+    const ent = e();
+    const active = document.activeElement as HTMLTextAreaElement | null;
+    const focusedKey =
+      active && active.classList.contains("field-value--editable") && active.dataset.index === String(ent.index)
+        ? (active.dataset.fieldKey ?? null)
+        : null;
+    setExpandedDrafts((prev) => {
+      let changed = false;
+      const next: Record<string, string> = {};
+      for (const key of EDITABLE_FIELD_KEYS) {
+        const v =
+          focusedKey === key && prev[key] !== undefined
+            ? prev[key]
+            : String(ent[key as keyof CacheEntry] ?? "");
+        if (prev[key] !== v) changed = true;
+        next[key] = v;
+      }
+      return changed ? next : prev;
+    });
+  });
+  // 把展开字段草稿批量提交到 entries（幂等：值未变化的字段由父级 handleFieldChange 跳过）
+  const commitExpandedDrafts = (): void => {
+    for (const key of touchedExpandedKeys()) {
+      props.onFieldChange(key, draftOf(key));
+    }
+  };
+
   // 操作按钮统一入口：mousedown 时先提交译文草稿再执行动作。
   // 背景：输入中的译文是本地草稿（draftDst），点击按钮会先触发 textarea 失焦提交草稿
   // （setEntries 更新条目）→ <For> 按对象引用 keyed 重建该条目 DOM → 原按钮被移除 →
@@ -354,6 +416,7 @@ export function EntryCard(props: {
         mouseHandled = true;
         // 幂等提交草稿：值未变化时 handleFieldChange 跳过 setEntries，不触发重建
         props.onFieldChange("pre_dst", draftDst());
+        commitExpandedDrafts(); // 展开字段草稿一并提交，避免操作时丢失未失焦的编辑
         action();
       },
       onClick: () => {
@@ -534,12 +597,14 @@ export function EntryCard(props: {
         <div class="entry-expanded">
           {ALL_FIELDS.map((field) => {
             const val = e()[field.key];
-            const isEditable = field.key === "pre_dst" || field.key === "proofread_dst";
+            const isEditable = EDITABLE_FIELD_KEYS.has(field.key);
+            // 只读且字段缺失（JSON 中不存在）时不显示；可读写字段无论空/非空/不存在一律显示
+            if (!isEditable && val == null) return null;
             return (
               <div class="entry-field">
                 <span class="field-label">{field.label}</span>
                 <Show
-                  when={isEditable && val != null}
+                  when={isEditable}
                   fallback={
                     <span class="field-value field-value--readonly">
                       {val != null ? toVisibleNewlines(val) : "—"}
@@ -550,9 +615,13 @@ export function EntryCard(props: {
                     class="field-value field-value--editable"
                     rows="2"
                     data-field-key={field.key}
-                    value={val != null ? String(val) : ""}
-                    onInput={(ev) => props.onFieldChange(field.key, ev.currentTarget.value)}
-                    onBlur={props.onSave}
+                    data-index={e().index}
+                    value={draftOf(field.key)}
+                    onInput={(ev) => {
+                      setExpandedDrafts((prev) => ({ ...prev, [field.key]: ev.currentTarget.value }));
+                      setTouchedExpandedKeys((prev) => new Set(prev).add(field.key));
+                    }}
+                    onBlur={commitExpandedDrafts}
                   />
                 </Show>
               </div>
@@ -639,6 +708,9 @@ function MetadataCard(props: {
     </div>
   );
 }
+
+/* 展开字段中可编辑的译文字段（其余字段只读展示） */
+const EDITABLE_FIELD_KEYS: ReadonlySet<keyof CacheEntry> = new Set(["pre_dst", "proofread_dst", "alt_dst"]);
 
 /* CacheEntry 18 字段的中文标签 */
 const ALL_FIELDS: Array<{ key: keyof CacheEntry; label: string }> = [
@@ -941,10 +1013,8 @@ export function ReviewPage() {
   // 撤销/重做前先失焦提交，否则输入中按 Ctrl+Z 时 undo 栈为空且原生撤销已被快捷键拦截
   function blurDraftInput(): void {
     const ae = document.activeElement;
-    if (
-      ae instanceof HTMLTextAreaElement &&
-      (ae.classList.contains("entry-dst-input") || ae.classList.contains("meta-content-textarea"))
-    ) {
+    // 辅助函数内的判断不会传导类型收窄，这里再校验一次以拿到 HTMLTextAreaElement
+    if (ae instanceof HTMLTextAreaElement && shouldBlurBeforeUndo(ae)) {
       ae.blur();
     }
   }
@@ -1123,12 +1193,15 @@ export function ReviewPage() {
   // 展开状态集合（业务 index）：分页翻页卸载重建后仍能恢复
   const [expandedSerials, setExpandedSerials] = createSignal<ReadonlySet<number>>(new Set());
   const toggleExpanded = (serial: number) => {
+    const wasExpanded = expandedSerials().has(serial);
     setExpandedSerials((prev) => {
       const next = new Set(prev);
       if (next.has(serial)) next.delete(serial);
       else next.add(serial);
       return next;
     });
+    // 收起条目时自动保存（展开字段草稿已由 EntryCard 在触发收起前提交到 entries）
+    if (wasExpanded) void saveOnCollapse();
   };
 
   // 业务序号（entry.index）→ filteredEntries 下标；未命中返回 -1
@@ -1818,16 +1891,17 @@ export function ReviewPage() {
     toast.success(`跳转到 ${fileName} 第 ${val} 条成功`);
   }
 
-  /** 手动保存：把内存中的最新条目落盘（循环到无并发改动为止，确保最终一定写入），再按 index 合并后端重建的 problem */
+  /** 手动保存：把内存中的最新条目落盘（循环到无并发改动为止，确保最终一定写入），再按 index 合并后端重建的 problem。
+      返回是否确认落盘成功（守卫跳过/失败均为 false）。 */
   let saveInFlight = false;
   let entriesRev = 0; // 每次本地修改 entries 自增，用于判断落盘期间是否有新改动
 
-  async function saveCurrentFile(): Promise<void> {
+  async function saveCurrentFile(): Promise<boolean> {
     const pid = appState.activeProjectId;
     const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
-    if (!pid || !myFile || appState.activeFilePath !== myFile) return;
+    if (!pid || !myFile || appState.activeFilePath !== myFile) return false;
     // 已有保存在进行：本次直接返回，由在途保存根据其完成时的 entriesRev 决定是否再存，避免单布尔排队丢失
-    if (saveInFlight) return;
+    if (saveInFlight) return false;
     saveInFlight = true;
 
     try {
@@ -1838,16 +1912,16 @@ export function ReviewPage() {
       while (true) {
         const myRev = entriesRev;
         // entries 已失效（loadFile 失败清空 loadedFile）时中止保存，避免写残缺数据
-        if (loadedFile !== myFile) return;
+        if (loadedFile !== myFile) return false;
         // 分页模式全量加载，直接保存内存中的全部条目
         const toSave = entries();
         const resp = await saveCacheFile(pid, myFile, toSave, getActiveConfigFileName());
         // 检查后端返回：保存未确认成功时不 markClean，避免误报"已保存"
         if (resp && resp.success === false) {
           toast.error(`保存 ${myFile} 失败：后端未确认成功`);
-          return;
+          return false;
         }
-        if (appState.activeFilePath !== myFile) return;
+        if (appState.activeFilePath !== myFile) return false;
         revAfterSave = entriesRev;
         if (entriesRev === myRev) break;
       }
@@ -1857,8 +1931,8 @@ export function ReviewPage() {
       // 合并失败不影响保存结果（保存已成功），仅静默跳过，避免误报"保存失败"。
       try {
         const res = await fetchCacheFile(pid, myFile);
-        if (appState.activeFilePath !== myFile) return;
-        if (entriesRev !== revAfterSave) return; // 期间又有改动：不覆盖，交给下次保存处理
+        if (appState.activeFilePath !== myFile) return true;
+        if (entriesRev !== revAfterSave) return true; // 期间又有改动：不覆盖，交给下次保存处理
         setEntries((prev) => {
           const backend = res.entries ?? [];
           const byIndex = new Map(backend.map((e) => [e.index, e]));
@@ -1870,11 +1944,26 @@ export function ReviewPage() {
       } catch {
         // 合并刷新失败：保存已成功，无需报错
       }
+      return true;
     } catch (e) {
       // 保存失败：提示用户（dirty 保持，markClean 未执行）
       toast.error(`保存 ${myFile} 失败：${getErrorMessage(e)}`);
+      return false;
     } finally {
       saveInFlight = false;
+    }
+  }
+
+  /** 收起展开条目时自动保存：仅在有未保存修改时落盘，成功后 toast 提示。
+      （展开字段草稿已由 EntryCard 在收起前提交到 entries，此处保存整个文件。） */
+  async function saveOnCollapse(): Promise<void> {
+    const pid = appState.activeProjectId;
+    const myFile = loadedFile;
+    if (!pid || !myFile) return;
+    if (!appState.dirtyFiles.includes(myFile)) return; // 无修改则不落盘、不提示
+    const ok = await saveCurrentFile();
+    if (ok && appState.activeFilePath === myFile) {
+      toast.success(`已保存 ${myFile}`);
     }
   }
 

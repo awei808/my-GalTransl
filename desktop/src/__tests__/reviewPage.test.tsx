@@ -30,7 +30,7 @@ import {
   undo,
 } from "../stores/undoStore";
 import type { UndoEntry } from "../stores/undoStore";
-import { decideCrossFileRestore, resolveKeyAction, shouldYieldToNative } from "../pages/review/ReviewPage";
+import { decideCrossFileRestore, resolveKeyAction, shouldBlurBeforeUndo, shouldYieldToNative } from "../pages/review/ReviewPage";
 import type { PendingRestore } from "../pages/review/ReviewPage";
 import type { CacheEntry } from "../lib/api/types";
 
@@ -557,6 +557,58 @@ describe("场景 11：shouldYieldToNative 草稿态让出原生撤销", () => {
 
   it("元数据框：未传 metaDraftDirty → 默认 false，不让出", () => {
     expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(false);
+  });
+
+  it("展开字段：草稿未提交 → 让出原生逐字符撤销", () => {
+    const ta = document.createElement("textarea");
+    ta.className = "field-value field-value--editable";
+    ta.dataset.index = "3";
+    ta.dataset.fieldKey = "alt_dst";
+    ta.value = "未提交备选";
+    expect(shouldYieldToNative(ta, committedEntries)).toBe(true);
+  });
+
+  it("展开字段：草稿与提交值一致 → 不让出", () => {
+    const ta = document.createElement("textarea");
+    ta.className = "field-value field-value--editable";
+    ta.dataset.index = "3";
+    ta.dataset.fieldKey = "pre_dst";
+    ta.value = "已提交译文";
+    expect(shouldYieldToNative(ta, committedEntries)).toBe(false);
+  });
+
+  it("展开字段：缺少 data-field-key → 无法定位字段，不让出", () => {
+    const ta = document.createElement("textarea");
+    ta.className = "field-value field-value--editable";
+    ta.dataset.index = "3";
+    ta.value = "未提交";
+    expect(shouldYieldToNative(ta, committedEntries)).toBe(false);
+  });
+});
+
+describe("shouldBlurBeforeUndo：撤销/重做前需 blur 提交草稿的输入框判定", () => {
+  function makeTextarea(className: string): HTMLTextAreaElement {
+    const ta = document.createElement("textarea");
+    ta.className = className;
+    return ta;
+  }
+
+  it("主译文框 → 需要先 blur 提交草稿", () => {
+    expect(shouldBlurBeforeUndo(makeTextarea("entry-dst-input"))).toBe(true);
+  });
+
+  it("元数据框 → 需要先 blur 提交草稿", () => {
+    expect(shouldBlurBeforeUndo(makeTextarea("meta-content-textarea"))).toBe(true);
+  });
+
+  it("展开字段（field-value--editable）→ 需要先 blur 提交草稿（修复：此前漏掉导致撤销被旧草稿覆盖）", () => {
+    expect(shouldBlurBeforeUndo(makeTextarea("field-value field-value--editable"))).toBe(true);
+  });
+
+  it("普通输入框/其他元素/空 → 不 blur", () => {
+    expect(shouldBlurBeforeUndo(makeTextarea("other-input"))).toBe(false);
+    expect(shouldBlurBeforeUndo(document.createElement("div"))).toBe(false);
+    expect(shouldBlurBeforeUndo(null)).toBe(false);
   });
 });
 
