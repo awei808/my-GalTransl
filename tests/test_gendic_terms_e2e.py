@@ -155,6 +155,26 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(entries), first_count)  # 不翻倍累积
         self.assertEqual(len({l.split("\t")[0] for l in entries}), first_count)  # 无重复词条
 
+    async def test_terms_suspicious_note_commented_in_dictionary(self) -> None:
+        # AI 备注标注「疑似H」→ 落盘原文前加 # 注释（防止解析，手动删 # 启用）；
+        # 词表外行（思い切り掻き混ぜ）被 grounding 丢弃
+        filler = "私はフィギュアの造形が好きで、毎日模型を制作している。" * 100
+        inp = [
+            {"name": "凛音", "message": "淫乱奴隷を買った。淫乱奴隷だ。" + filler},
+            {"name": "凛音", "message": "サキュバスに会う。サキュバスだ。" + filler},
+        ]
+        backend = self._backend([
+            "日文原词\t中文翻译\t备注\nサキュバス\t魅魔\t术语\n淫乱奴隷\t淫乱奴隶\t术语（疑似H）\n思い切り掻き混ぜ\t使劲搅拌\t动词短语（疑似非术语）\n",
+        ])
+        ok = await backend.batch_translate(inp)
+        self.assertTrue(ok)
+        with open(self.dic_path, encoding="utf-8") as f:
+            raw = f.read()  # 不过滤 # 行（# 正是被注释的疑似词）
+        self.assertIn("#淫乱奴隷", raw)          # 疑似H 已注释
+        self.assertIn("サキュバス\t魅魔", raw)     # 正常词不受影响
+        self.assertNotIn("\n淫乱奴隷\t", raw)     # 未注释版本不存在
+        self.assertNotIn("思い切り掻き混ぜ", raw)  # 词表外行被 grounding 丢弃
+
 
 class GenDicLlmE2ETests(unittest.IsolatedAsyncioTestCase):
     """LLM 全权模式（mode=llm）：压缩文本切块 → AI 提取 → 简单去重直接进词典（不筛选）。"""

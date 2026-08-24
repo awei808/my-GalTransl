@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
-from GalTransl.Backend.Prompts import GENDIC_TERMS_PROMPT, H_WORDS_LIST
+from GalTransl.Backend.Prompts import GENDIC_TERMS_PROMPT, GENDIC_LLM_EXTRACT_PROMPT, H_WORDS_LIST
 from GalTransl.Backend.GenDic import (
     GenDic,
     extract_terms_from_tokens,
@@ -21,6 +21,11 @@ from GalTransl.Backend.GenDic import (
     _is_placeholder_name,
     _is_pure_kana,
     _is_term_droppable,
+    _is_suspicious_note,
+    _adjacency_entropy_min,
+    _context_diversity,
+    _classify_compound,
+    _find_digit_alpha_abbrs,
 )
 
 def _mkdtemp_writable(prefix: str) -> str:
@@ -114,6 +119,21 @@ class TermsDropRuleTests(unittest.TestCase):
 
     def test_null_src_dropped(self) -> None:
         self.assertTrue(_is_term_droppable("NULL", "NULL", "NULL"))
+
+    def test_suspicious_note_detected(self) -> None:
+        # AI 标注「疑似H/疑似非术语」→ 落盘时原文前加 # 注释（用户手动删除后启用）
+        self.assertTrue(_is_suspicious_note("术语（疑似H）"))
+        self.assertTrue(_is_suspicious_note("动词短语（疑似非术语）"))
+        self.assertTrue(_is_suspicious_note("疑似H"))
+        self.assertFalse(_is_suspicious_note("术语"))
+        self.assertFalse(_is_suspicious_note("物品"))
+
+    def test_prompts_require_suspicious_marking(self) -> None:
+        # 两个 gendic 提示词均要求 AI 在备注标注疑似 H/非术语
+        self.assertIn("疑似H", GENDIC_TERMS_PROMPT)
+        self.assertIn("疑似非术语", GENDIC_TERMS_PROMPT)
+        self.assertIn("疑似H", GENDIC_LLM_EXTRACT_PROMPT)
+        self.assertIn("疑似非术语", GENDIC_LLM_EXTRACT_PROMPT)
 
     def test_untranslated_echo_with_empty_note_dropped(self) -> None:
         self.assertTrue(_is_term_droppable("マラ", "マラ", ""))
@@ -286,21 +306,29 @@ class TermsCompoundExtractTests(unittest.TestCase):
     """复合词（2-3 token）提取：名詞+名詞 / 名詞+连接记号+名詞。"""
 
     def test_compound_2gram_collected(self) -> None:
-        tokens = _tokens(
-            ("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般"),
-            ("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般"),
+        # 组合重复 20 次（上下文固定→diversity 低） + 高频单名詞撑 max + 大量 filler 撑 N（PMI 真实）
+        tokens = (
+            _tokens(("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般")) * 20
+            + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
+            + _tokens(*[("です", "助動詞")] * 7000)
         )
         terms, stats = _extract(tokens)
-        self.assertIn(("ロールプレイ", 2, "复合词"), terms)
-        self.assertEqual(stats["复合词"], 1)
+        srcs = [t[0] for t in terms]
+        self.assertIn("ロールプレイ", srcs)
+        self.assertGreaterEqual(stats["复合词"], 1)
 
     def test_compound_3gram_mark_collected(self) -> None:
-        tokens = _tokens(
-            ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
-            ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
+        tokens = (
+            _tokens(
+                ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
+            ) * 20
+            + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
+            + _tokens(*[("です", "助動詞")] * 7000)
         )
         terms, stats = _extract(tokens)
-        self.assertIn(("オバ★グラ", 2, "复合词"), terms)
+        srcs = [t[0] for t in terms]
+        self.assertIn("オバ★グラ", srcs)
+        self.assertGreaterEqual(stats["复合词"], 1)
 
     def test_compound_quote_mark_not_collected(self) -> None:
         # 「」引用号不参与 3-gram 组合（华恋「凛音 噪音）
@@ -346,9 +374,12 @@ class TermsCompoundExtractTests(unittest.TestCase):
 
     def test_compound_priority_removes_fragment(self) -> None:
         # 组合优先：オバ/グラ 只作为组合成分出现 → 碎片剔除；独立频次足则保留
-        tokens = _tokens(
-            ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
-            ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
+        tokens = (
+            _tokens(
+                ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
+            ) * 20
+            + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
+            + _tokens(*[("です", "助動詞")] * 7000)
         )
         terms, stats = _extract(tokens)
         srcs = [t[0] for t in terms]
@@ -359,17 +390,17 @@ class TermsCompoundExtractTests(unittest.TestCase):
 
     def test_compound_priority_keeps_independent_word(self) -> None:
         # フィギュア 大量独立出现 + 少量组合 → 独立频次仍足，保留
-        tokens = _tokens(
-            ("フィギュア", "名詞-普通名詞-一般"), ("造り", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
-            ("フィギュア", "名詞-普通名詞-一般"), ("造り", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
-            ("フィギュア", "名詞-普通名詞-一般"), ("造り", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
-            ("フィギュア", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
-            ("フィギュア", "名詞-普通名詞-一般"), ("だ", "助動詞"),
+        tokens = (
+            _tokens(
+                ("フィギュア", "名詞-普通名詞-一般"), ("造り", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
+            ) * 20
+            + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
+            + _tokens(*[("です", "助動詞")] * 7000)
         )
         terms, _ = _extract(tokens)
         srcs = [t[0] for t in terms]
         self.assertIn("フィギュア造り", srcs)
-        self.assertIn("フィギュア", srcs)  # 独立 2 次（5-3）≥2 保留
+        self.assertIn("フィギュア", srcs)  # 独立 50 次保留
         self.assertNotIn("造り", srcs)  # 造り 独立 0，剔除（动词连用碎片）
 
 
@@ -406,6 +437,70 @@ class TermsAlphaAbbrTests(unittest.TestCase):
         )
         terms, _ = _extract(tokens)
         self.assertNotIn("Ｊｒ", [t[0] for t in terms])
+
+    def test_digit_alpha_abbr_found_in_text(self) -> None:
+        # 数字+大写字母组合（分词切碎的 ３ＤＣＧ 类）：文本级正则补收
+        c = _find_digit_alpha_abbrs("３ＤＣＧで作った。３ＤＣＧで作った。3DCG版もある。")
+        self.assertEqual(c["３ＤＣＧ"], 2)
+        self.assertEqual(c["3DCG"], 1)
+        # 纯字母（ＣＦ）或纯数字不命中
+        self.assertNotIn("ＣＦ", c)
+        self.assertNotIn("３", c)
+
+
+class TermsClassifierTests(unittest.TestCase):
+    """四维特征分类器（复合词收录）：Class_A 自动入库 / Class_B 送审 / 低紧密度丢弃。"""
+
+    def test_adjacency_entropy_min(self) -> None:
+        # 固定搭配：左右邻词单一 → 熵低
+        tokens = [("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般"), ("を", "助詞-格助詞")] * 4
+        ent = _adjacency_entropy_min(tokens, ["ロール", "プレイ"])
+        self.assertLessEqual(ent, 0.0 + 1e-9)  # 左右都只有一种邻词 → 熵 0
+
+    def test_context_diversity(self) -> None:
+        # 每处上下文都不同 → 多样性 1.0
+        tokens = [
+            ("A", "名詞-普通名詞-一般"), ("X", "名詞-普通名詞-一般"), ("B", "名詞-普通名詞-一般"),
+            ("C", "名詞-普通名詞-一般"), ("X", "名詞-普通名詞-一般"), ("D", "名詞-普通名詞-一般"),
+        ]
+        div = _context_diversity(tokens, ["X"])
+        self.assertEqual(div, 1.0)
+        # 固定上下文 → 多样性低
+        tokens2 = [("A", "名詞-普通名詞-一般"), ("X", "名詞-普通名詞-一般"), ("B", "名詞-普通名詞-一般")] * 3
+        self.assertLessEqual(_context_diversity(tokens2, ["X"]), 1 / 3 + 1e-9)
+
+    def test_classify_compound_branches(self) -> None:
+        # Class_A：PMI 高 + 语境稳定（多样性低或低频）
+        self.assertEqual(_classify_compound(pmi=10.0, freq=3, diversity=0.5, freq_ratio=0.005, max_freq=1000), "A")
+        # Class_B：项目内高频 + 语境多变（多义）
+        self.assertEqual(_classify_compound(pmi=6.0, freq=30, diversity=0.95, freq_ratio=0.03, max_freq=1000), "B")
+        # 冲突（A 且 B）→ 强制降级 B
+        self.assertEqual(_classify_compound(pmi=9.0, freq=30, diversity=0.92, freq_ratio=0.03, max_freq=1000), "B")
+        # 低紧密度 → 丢弃
+        self.assertEqual(_classify_compound(pmi=3.5, freq=4, diversity=0.75, freq_ratio=0.004, max_freq=1000), "drop")
+        # 三不沾 → keep（现有 freq≥2 兜底）
+        self.assertEqual(_classify_compound(pmi=5.0, freq=4, diversity=0.8, freq_ratio=0.004, max_freq=1000), "keep")
+
+    def test_class_b_review_word_collected_with_low_priority(self) -> None:
+        # Class_B 降级收录（用户决策）：词进词典但 128 截断优先级最低
+        tokens = []
+        for k in range(20):
+            # 每处组合的左右邻词唯一 → 上下文多样性 1.0（多义嫌疑）
+            tokens += [
+                (f"左{k}", "助詞-格助詞"),
+                ("フィギュア", "名詞-普通名詞-一般"), ("製作", "名詞-普通名詞-一般"),
+                (f"右{k}", "助詞-格助詞"),
+            ]
+        tokens += _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
+        tokens += _tokens(*[("です", "助動詞")] * 7000)
+        terms, stats = _extract(tokens)
+        cats = {w: cat for w, _c, cat in terms}
+        # フィギュア製作 高频+语境多变（每处上下文不同）→ Class_B → 收录为 待审
+        self.assertEqual(cats.get("フィギュア製作"), "复合词(待审)")
+        self.assertGreaterEqual(stats["复合词送审"], 1)
+        # 待审词不限量一律收录（不参与截断，仅标记类别）
+        ordered = GenDic._sort_and_truncate_terms(terms, max_terms=40)
+        self.assertIn("フィギュア製作", [t[0] for t in ordered])
 
 
 class TermsLlmExtractTests(unittest.TestCase):
@@ -514,35 +609,31 @@ class TermsSortTruncateTests(unittest.TestCase):
             ("ＣＦ", 44, "字母组合"),
             ("日本", 3, "固有名詞"),
         ]
-        ordered = GenDic._sort_and_truncate_terms(terms, max_terms=3)
-        self.assertEqual([t[0] for t in ordered], ["日本", "ペニス", "ロールプレイ"])
+        ordered = GenDic._sort_and_truncate_terms(terms, max_terms=2)
+        # 仅片假名参与截断：ペニス 是唯一片假名且 top2 内 → 全保留，排序按类别+频次
+        self.assertEqual([t[0] for t in ordered], ["日本", "ペニス", "ロールプレイ", "ＣＦ"])
 
-    def test_truncate_keeps_proper_nouns(self) -> None:
+    def test_truncate_only_katakana_keeps_other_categories(self) -> None:
+        # 用户决策：仅片假名普通名词截断（top N），其余类别不限量一律收录
         terms = [
             ("詞A", 1, "片假名普通名词"),
             ("詞B", 2, "片假名普通名词"),
+            ("詞C", 3, "片假名普通名词"),
             ("专名", 1, "固有名詞"),
+            ("ロールプレイ", 5, "复合词"),
+            ("待審", 4, "复合词(待审)"),
+            ("ＣＦ", 6, "字母组合"),
         ]
-        ordered = GenDic._sort_and_truncate_terms(terms, max_terms=3)
-        names = {t[0] for t in ordered}
+        ordered = GenDic._sort_and_truncate_terms(terms, max_terms=2)
+        self.assertEqual(len(ordered), 6)  # 片假名 top2（詞C/詞B），詞A 被截；其余全收
+        names = [t[0] for t in ordered]
         self.assertIn("专名", names)
-        # 普通术语只留 2 个（budget = 3 - 1 = 2，取频次最高的 詞B 与 詞A）
-        self.assertEqual(len(ordered), 3)
-        self.assertIn("詞A", names)
+        self.assertIn("ロールプレイ", names)
+        self.assertIn("待審", names)
+        self.assertIn("ＣＦ", names)
         self.assertIn("詞B", names)
-
-    def test_truncate_hard_cap_when_proper_nouns_exceed_limit(self) -> None:
-        # 保底类别本身超上限时按类别优先级+频次截断（硬上限：生成字典总条目 ≤ max_terms）
-        terms = [
-            (f"固{i}", 100 - i, "固有名詞") for i in range(5)
-        ] + [
-            (f"詞{i}", 50 - i, "片假名普通名词") for i in range(3)
-        ]
-        ordered = GenDic._sort_and_truncate_terms(terms, max_terms=5)
-        self.assertEqual(len(ordered), 5)
-        # 硬上限：固有名詞 5 个本身超限 → 按频次保留前 5（固0~固4）
-        self.assertEqual([t[0] for t in ordered], ["固0", "固1", "固2", "固3", "固4"])
-        self.assertNotIn("詞0", [t[0] for t in ordered])
+        self.assertIn("詞C", names)
+        self.assertNotIn("詞A", names)
 
     def test_no_truncate_when_zero(self) -> None:
         terms = [("詞A", 1, "片假名普通名词")] * 1
@@ -631,7 +722,7 @@ class TermsConfigTests(unittest.TestCase):
     def test_default_template_contains_gendic_section(self) -> None:
         self.assertIn("gendic:", DEFAULT_PROJECT_CONFIG_YAML)
         self.assertIn("mode: llm", DEFAULT_PROJECT_CONFIG_YAML)
-        self.assertIn("max_terms: 128", DEFAULT_PROJECT_CONFIG_YAML)
+        self.assertIn("max_terms: 40", DEFAULT_PROJECT_CONFIG_YAML)
         self.assertIn("context_samples: 3", DEFAULT_PROJECT_CONFIG_YAML)
 
     def test_context_samples_parsed_and_clamped(self) -> None:

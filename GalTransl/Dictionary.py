@@ -562,6 +562,9 @@ class CGptDict:
         for line in dic_lines:
             if line.startswith("\n"):
                 continue
+            # # 注释行（GenDic 生成的疑似词停用注释、格式说明行等）直接跳过，不解析为死词条
+            if line.lstrip().startswith("#"):
+                continue
 
             # 兼容四个空格和Tab
             line = line.replace("    ", "\t")

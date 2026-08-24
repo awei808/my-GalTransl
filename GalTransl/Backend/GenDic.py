@@ -1,4 +1,5 @@
 import json, time, asyncio, os, traceback, re
+from math import log
 from opencc import OpenCC
 from typing import List, Set, Dict, Optional, Tuple, Any
 from concurrent.futures import ThreadPoolExecutor
@@ -92,6 +93,81 @@ def _is_term_droppable(src: str, dst: str, note: str) -> bool:
     return dst == src and not note.strip()
 
 
+def _is_suspicious_note(note: str) -> bool:
+    """AI 标注的疑似 H 相关组合 / 非术语（提示词要求备注末尾追加「疑似H/疑似非术语」）。"""
+    return bool(re.search(r"疑似\s*[HhＨ]", note)) or "疑似非术语" in note
+
+
+# 四维特征分类器（复合词收录，数据标定自小粥3：PMI 3.2-12.1 中位 8.1 / 邻接熵 0-2.45 /
+# 上下文多样性 0.26-1.0 / 词频比 0.004-0.239）。Class_C（风格锚定）按用户指示未实现。
+# 当前实现接入三维（PMI/上下文多样性/词频比）；邻接熵维度见 _adjacency_entropy_min，待接入。
+_COMPOUND_DROP_PMI = 4.0     # 低紧密度丢弃：PMI 低于此（思い切り気持ち 3.67/膣内射精 3.24 类）
+_COMPOUND_A_PMI = 7.0        # Class_A 凝固度门槛（PMI 高分位）
+_COMPOUND_A_DIV = 0.95       # Class_A 上下文多样性上限（语境稳定=低歧义）
+_COMPOUND_B_RATIO = 0.02     # Class_B 项目内词频比门槛（领域高频）
+_COMPOUND_B_DIV = 0.90       # Class_B 上下文多样性下限（语境多变=多义嫌疑）
+
+
+def _adjacency_entropy_min(tokens: List[Tuple[str, str]], parts: List[str]) -> float:
+    """左右邻接熵取较小者：候选词所有出现位置的左右紧邻 token 频次的信息熵。
+
+    熵高=词边界自由（独立成词）；熵低=常与固定前后缀共现。取 min 保守判定。
+    （待接入：当前 _classify_compound 未使用该维度，供后续四维特征扩展。）
+    """
+    left_c: collections.Counter = collections.Counter()
+    right_c: collections.Counter = collections.Counter()
+    n = len(parts)
+    for i in range(len(tokens) - n + 1):
+        if [tokens[i + j][0] for j in range(n)] == parts:
+            left_c[tokens[i - 1][0] if i > 0 else "<BOS>"] += 1
+            right_c[tokens[i + n][0] if i + n < len(tokens) else "<EOS>"] += 1
+
+    def _h(counter: collections.Counter) -> float:
+        tot = sum(counter.values())
+        if tot <= 1:
+            return 0.0
+        return -sum((f / tot) * log(f / tot) for f in counter.values())
+
+    return min(_h(left_c), _h(right_c))
+
+
+def _context_diversity(tokens: List[Tuple[str, str]], parts: List[str]) -> float:
+    """上下文歧义方差（降级近似）：该词所有出现位置的「左邻词+右邻词」组合去重数 / 出现次数。
+
+    1.0=每处语境都不同（多义/多场景嫌疑）；越低=语境越固定。
+    """
+    pairs: Set[Tuple[str, str]] = set()
+    cnt = 0
+    n = len(parts)
+    for i in range(len(tokens) - n + 1):
+        if [tokens[i + j][0] for j in range(n)] == parts:
+            left = tokens[i - 1][0] if i > 0 else "<BOS>"
+            right = tokens[i + n][0] if i + n < len(tokens) else "<EOS>"
+            pairs.add((left, right))
+            cnt += 1
+    return len(pairs) / cnt if cnt else 1.0
+
+
+def _classify_compound(
+    pmi: float, freq: int, diversity: float, freq_ratio: float, max_freq: int
+) -> str:
+    """三路分流器（Class_C 未实现）：返回 A（自动入库）/ B（送审）/ drop（丢弃）/ keep（保留）。
+
+    冲突（A 且 B）强制降级 B（多义词误入库纠正成本高，人工优先）。
+    """
+    is_a = pmi >= _COMPOUND_A_PMI and (diversity <= _COMPOUND_A_DIV or freq <= 3)
+    is_b = freq_ratio >= _COMPOUND_B_RATIO and diversity >= _COMPOUND_B_DIV
+    if pmi < _COMPOUND_DROP_PMI:
+        return "drop"
+    if is_a and is_b:
+        return "B"
+    if is_a:
+        return "A"
+    if is_b:
+        return "B"
+    return "keep"
+
+
 def _has_katakana(text: str) -> bool:
     """是否含片假名（Unicode 范围，含浊音/半浊音/ー・）。"""
     return any(0x30A0 <= ord(ch) <= 0x30FF or ch in "ー・" for ch in text)
@@ -112,6 +188,19 @@ def _is_alpha_abbr(text: str) -> bool:
     )
 
 
+def _find_digit_alpha_abbrs(full_text: str) -> "collections.Counter":
+    """文本级数字+大写字母组合（分词常切碎为 数詞+字母，如 ３ＤＣＧ → ３+ＤＣＧ）。
+
+    要求同时含数字（全/半角）与字母（全/半角），len≥2。
+    """
+    c: collections.Counter = collections.Counter()
+    for m in re.finditer(r"[0-9０-９A-ZＡ-Ｚ]{2,}", full_text):
+        s = m.group(0)
+        if re.search(r"[0-9０-９]", s) and re.search(r"[A-ZＡ-Ｚ]", s):
+            c[s] += 1
+    return c
+
+
 def extract_terms_from_tokens(
     tokens: List[Tuple[str, str]],
     name_set: Set[str],
@@ -120,7 +209,7 @@ def extract_terms_from_tokens(
     han_allowlist: Optional[Set[str]] = None,
     skip_existing: bool = True,
     ban_words: Optional[Set[str]] = None,
-) -> Tuple[List[Tuple[str, int, str]], Dict[str, int]]:
+) -> Tuple[List[Tuple[str, int, str]], Dict[str, Any]]:
     """
     terms 模式候选提取：单 token（汉字/片假名/大写字母组合）+ 复合词（2-3 token）规则。
 
@@ -135,8 +224,9 @@ def extract_terms_from_tokens(
 
     Returns:
         (final_terms, stats)：final_terms 为 [(src, freq, category), ...]，
-        category ∈ {固有名詞, 片假名普通名词, 汉字词(白名单/字典), 字母组合, 复合词}；
-        stats 含 汉字丢弃/黑名单丢弃/低频假名固有名詞丢弃/组合覆盖剔除/已有字典跳过。
+        category ∈ {固有名詞, 片假名普通名词, 汉字词(白名单/字典), 字母组合, 复合词, 复合词(待审)}；
+        stats 含 汉字丢弃/黑名单丢弃/低频假名固有名詞丢弃/组合覆盖剔除/已有字典跳过/复合词送审/低紧密度丢弃；
+        _compound_review 键为 Class_B 待审清单明细（list，非计数键）。
     """
     existing = existing_dict_map or {}
     allow = han_allowlist or set()
@@ -199,27 +289,56 @@ def extract_terms_from_tokens(
             comp_counter[key] += 1
             comp_parts.setdefault(key, [s1, s2, s3])
 
-    # 组合过滤：freq≥2、非拟声、非黑名单、无 H 词成分；汉字复合词都收（用户决策）
-    comp_final: List[Tuple[str, int]] = []
+    # 组合过滤 + 四维特征分类器：freq≥2、非拟声、非黑名单、无 H 词成分；
+    # Class_A/keep 收录、Class_B 降级收录（待审词不限量，仅日志提示，用户决策）、低紧密度 PMI<4 丢弃
+    comp_final: List[Tuple[str, int, str]] = []
+    comp_review: List[Tuple[str, int, float]] = []  # Class_B 待审清单（已收录，仅日志提示）
+    comp_drop: List[Tuple[str, int, float]] = []    # 低紧密度丢弃
+    _total_tokens = len(tokens)
+    _max_single_freq = max(word_counter.values()) if word_counter else 1
     for comp, freq in comp_counter.items():
         if freq < 2 or _is_onomatopoeia(comp) or comp in ban:
             continue
         if any(p in H_WORDS_LIST for p in comp_parts[comp]):
             continue
-        comp_final.append((comp, freq))
+        parts = comp_parts[comp]
+        # 3-gram 的连接记号为 補助記号（不在 word_counter），只校验名詞成分（首尾）
+        noun_parts = [parts[0], parts[-1]]
+        if any(p not in word_counter for p in noun_parts):
+            continue
+        if len(parts) == 2:
+            x, y = parts
+            pmi = log((freq * _total_tokens) / (word_counter[x] * word_counter[y]))
+        else:
+            x, z = noun_parts
+            pmi = log((freq * _total_tokens * _total_tokens) / (word_counter[x] * word_counter[z]))
+        diversity = _context_diversity(tokens, parts)
+        label = _classify_compound(pmi, freq, diversity, freq / _max_single_freq, _max_single_freq)
+        if label == "A" or label == "keep":
+            comp_final.append((comp, freq, "复合词"))
+        elif label == "B":
+            comp_final.append((comp, freq, "复合词(待审)"))
+            comp_review.append((comp, freq, pmi))
+        else:
+            comp_drop.append((comp, freq, pmi))
 
     # 组合优先：子 token 被组合覆盖后独立频次过低（<2）则剔除（オバ/グラ 类碎片）
     covered: collections.Counter = collections.Counter()
-    for comp, freq in comp_final:
+    for comp, freq, _cat in comp_final:
         for p in comp_parts[comp]:
             covered[p] += freq
 
     final_terms: List[Tuple[str, int, str]] = []
     stats: Dict[str, int] = {
         "固有名詞": 0, "片假名普通名词": 0, "汉字词(白名单/字典)": 0, "字母组合": 0,
-        "复合词": 0, "汉字丢弃": 0, "黑名单丢弃": 0, "低频假名固有名詞丢弃": 0,
-        "组合覆盖剔除": 0, "已有字典跳过": 0,
+        "复合词": 0, "复合词(待审)": 0, "汉字丢弃": 0, "黑名单丢弃": 0,
+        "低频假名固有名詞丢弃": 0, "组合覆盖剔除": 0, "复合词送审": 0,
+        "低紧密度丢弃": 0, "已有字典跳过": 0,
     }
+    stats["复合词送审"] = len(comp_review)
+    stats["低紧密度丢弃"] = len(comp_drop)
+    # Class_B 送审清单明细（非计数键，供调用方日志输出；单测忽略该键）
+    stats["_compound_review"] = comp_review
 
     def _add(w: str, c: int, category: str) -> None:
         final_terms.append((w, c, category))
@@ -248,9 +367,9 @@ def extract_terms_from_tokens(
         else:
             stats["汉字丢弃"] += 1
 
-    # 复合词追加（与单 token 一并参与排序/截断）
-    for comp, freq in comp_final:
-        _add(comp, freq, "复合词")
+    # 复合词追加（与单 token 一并参与排序/截断；Class_B 待审词不限量收录，不参与截断）
+    for comp, freq, cat in comp_final:
+        _add(comp, freq, cat)
 
     # 已有 GPT 字典词跳过：不重复发送 AI 翻译，直接沿用字典（用户决策）
     if skip_existing:
@@ -314,7 +433,7 @@ class GenDic(BaseEngine):
             self.gendic_context = raw_ctx.lower() in ("on", "true", "1", "yes")
         else:
             self.gendic_context = bool(raw_ctx)
-        raw_max = config.getKey("internals.gendic.max_terms", 128)
+        raw_max = config.getKey("internals.gendic.max_terms", 40)
         try:
             self.gendic_max_terms = int(raw_max) if raw_max else 0
         except Exception:
@@ -352,6 +471,30 @@ class GenDic(BaseEngine):
                 if dic.search_word and dic.replace_word and dic.search_word not in existing_terms:
                     existing_terms[dic.search_word] = (dic.replace_word, getattr(dic, "note", "") or "")
         return existing_terms
+
+    def _load_commented_terms_from_generated(self) -> Dict[str, Tuple[str, str]]:
+        """加载生成字典中 # 注释词（疑似H/非术语停用）：返回 {原词: (dst, note)}。
+
+        供 extract 阶段跳过（不重复发送 AI 翻译），落盘时写回 # 行保持停用状态。
+        """
+        result_path = os.path.join(self.pj_config.getProjectDir(), "项目GPT字典-生成.txt")
+        commented: Dict[str, Tuple[str, str]] = {}
+        if not os.path.exists(result_path):
+            return commented
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    # 仅收集程序生成的 # 注释词（# 后直接跟词）；跳过 # 加空格的格式说明行
+                    if not line.startswith("#") or line.startswith("# "):
+                        continue
+                    sp = line.lstrip("#").split("\t")
+                    if len(sp) >= 2 and sp[0].strip() and sp[1].strip():
+                        src = sp[0].strip()
+                        commented[src] = (sp[1].strip(), sp[2].strip() if len(sp) > 2 else "")
+        except Exception:
+            LOGGER.warning("[GenDic][terms] 读取生成字典 # 注释词失败", exc_info=True)
+        return commented
 
     def _update_runtime(self, **kwargs: Any) -> None:
         try:
@@ -643,7 +786,7 @@ class GenDic(BaseEngine):
                 pass
             return None
 
-    def _extract_terms_from_project(self, json_list: list) -> Optional[Tuple[List[Tuple[str, int, str]], Dict[str, int], Set[str]]]:
+    def _extract_terms_from_project(self, json_list: list) -> Optional[Tuple[List[Tuple[str, int, str]], Dict[str, Any], Set[str]]]:
         """terms 模式本地提取：全文分词 + extract_terms_from_tokens（人名不收录，name_set 传空）。
         分词模型加载失败返回 None（调用方按硬失败处理，与 segments 模式一致）。"""
         tokenizer = self._load_tokenizer()
@@ -664,6 +807,15 @@ class GenDic(BaseEngine):
             han_allowlist=getattr(self, "gendic_han_allowlist", None),
             ban_words=getattr(self, "gendic_ban_words", None),
         )
+        # 数字+大写字母组合（分词常切碎为 数詞+字母，如 ３ＤＣＧ → ３+ＤＣＧ）：
+        # 文本级正则补收，作为"字母组合"类别并入
+        existing = getattr(self, "existing_dict_map", None) or {}
+        known = {w for w, _c, _cat in final_terms}
+        abbr_counter = _find_digit_alpha_abbrs(full_text)
+        for s, c in abbr_counter.items():
+            if c >= 2 and s not in known and s not in existing:
+                final_terms.append((s, c, "字母组合"))
+                stats["字母组合"] = stats.get("字母组合", 0) + 1
         return final_terms, stats, set()
 
     @staticmethod
@@ -684,22 +836,25 @@ class GenDic(BaseEngine):
 
     @staticmethod
     def _sort_and_truncate_terms(final_terms: List[Tuple[str, int, str]], max_terms: int = 0) -> List[Tuple[str, int, str]]:
-        """按类别优先级（固有名詞>普通术语[片假名/复合词/字母组合按频次]>汉字词）+ 频次降序排序；
-        max_terms>0 时截断：固有名詞优先保底，但总条目不超过 max_terms（硬上限，
-        防保底类别本身超限导致生成字典过大影响后续翻译）。"""
+        """按类别优先级排序；max_terms>0 时**仅截断「片假名普通名词」**（保留 top N），
+        其余类别（固有名詞/复合词/复合词(待审)/字母组合/汉字词）不限数量一律收录（用户决策）。"""
         cat_rank = {
             "固有名詞": 0,
-            "片假名普通名词": 1, "复合词": 1, "字母组合": 1,
+            "片假名普通名词": 1, "复合词": 1, "字母组合": 1, "复合词(待审)": 1,
             "汉字词(白名单/字典)": 2,
         }
         ordered = sorted(final_terms, key=lambda t: (cat_rank.get(t[2], 9), -t[1]))
-        if max_terms > 0 and len(ordered) > max_terms:
-            protected = [t for t in ordered if t[2] == "固有名詞"]
-            if len(protected) >= max_terms:
-                ordered = protected[:max_terms]
-            else:
-                rest = [t for t in ordered if t[2] != "固有名詞"]
-                ordered = protected + rest[:max_terms - len(protected)]
+        if max_terms > 0:
+            kept: List[Tuple[str, int, str]] = []
+            kata_count = 0
+            for t in ordered:
+                if t[2] == "片假名普通名词":
+                    if kata_count < max_terms:
+                        kept.append(t)
+                        kata_count += 1
+                else:
+                    kept.append(t)
+            ordered = kept
         return ordered
 
     @staticmethod
@@ -787,6 +942,10 @@ class GenDic(BaseEngine):
             self._update_runtime(stage="GenDic 分词处理中", current_file="terms 模式提取")
             existing_dict_map = self._load_existing_gpt_terms()
             self.existing_dict_map = existing_dict_map
+            # 生成字典中 # 注释词（疑似H/非术语停用）并入 existing：extract 跳过，避免每轮重复翻译
+            self._commented_terms = self._load_commented_terms_from_generated()
+            for w, entry in self._commented_terms.items():
+                existing_dict_map.setdefault(w, entry)
 
             final_terms, stats, _name_set = self._extract_terms_from_project(json_list)
             if final_terms is None:
@@ -799,8 +958,15 @@ class GenDic(BaseEngine):
                 f"字母组合 {stats.get('字母组合', 0)} / 汉字词 {stats.get('汉字词(白名单/字典)', 0)} / "
                 f"汉字丢弃 {stats.get('汉字丢弃', 0)} / 已有字典跳过 {stats.get('已有字典跳过', 0)} / "
                 f"黑名单丢弃 {stats.get('黑名单丢弃', 0)} / 低频假名固有名詞丢弃 {stats.get('低频假名固有名詞丢弃', 0)} / "
-                f"组合覆盖剔除 {stats.get('组合覆盖剔除', 0)}，候选 {len(final_terms)} 词"
+                f"组合覆盖剔除 {stats.get('组合覆盖剔除', 0)} / 复合词送审 {stats.get('复合词送审', 0)} / "
+                f"低紧密度丢弃 {stats.get('低紧密度丢弃', 0)}，候选 {len(final_terms)} 词"
             )
+            review = stats.get("_compound_review") or []
+            if review:
+                LOGGER.warning(
+                    f"[GenDic][terms] Class_B 待审词已收录（不限量，仅日志提示）："
+                    f"{', '.join(f'{w}×{c}' for w, c, _ in review[:20])}"
+                )
             ordered = self._sort_and_truncate_terms(
                 final_terms, max_terms=int(getattr(self, "gendic_max_terms", 0) or 0)
             )
@@ -891,16 +1057,32 @@ class GenDic(BaseEngine):
                 raise cancelled_error
             return True
 
-        # 落盘前过滤（真实测试暴露）：拟声 note / H 词表 / NULL / 空 note 的未翻译回显
+        # 落盘前过滤（真实测试暴露）：拟声 note / H 词表 / NULL / 空 note 的未翻译回显；
+        # AI 标注「疑似H/疑似非术语」的词：原文前加 # 注释（防止解析，用户手动删除后启用）
         dropped = 0
+        commented = 0
         final_list: List[List[str]] = []
         for w, (dst, note) in results.items():
             if _is_term_droppable(w, dst, note):
                 dropped += 1
                 continue
+            if _is_suspicious_note(note):
+                w = "#" + w
+                commented += 1
             final_list.append([w, dst, note])
+        # 沿用上轮 # 注释词（extract 已跳过，未进 results）：写回 # 行，保持停用、避免重复翻译
+        commented_terms = getattr(self, "_commented_terms", None) or {}
+        for w, (dst, note) in commented_terms.items():
+            if any(w == item[0].lstrip("#") for item in final_list):
+                continue
+            final_list.append(["#" + w, dst, note])
         if dropped:
             LOGGER.warning(f"[GenDic][terms] 落盘前过滤 {dropped} 条（拟声/H词/NULL/未翻译回显）")
+        if commented or commented_terms:
+            LOGGER.warning(
+                f"[GenDic][terms] {commented} 条本轮疑似H/非术语已注释，"
+                f"沿用 {len(commented_terms)} 条上轮注释（原文前加 #，删除 # 后启用）"
+            )
         result_path = self._save_generated_dictionary(final_list)
         added = len(final_list)
         setattr(self.pj_config, "gendic_added_count", added)
@@ -1016,8 +1198,16 @@ class GenDic(BaseEngine):
             return True
 
         # 不筛选词汇（用户决策）：LLM 全权模式结果简单处理后直接进词典，仅去重；
-        # max_terms 仅作词典条数上限（超限取前 N 条）
-        final_list: List[List[str]] = [[src, dst, note] for src, (dst, note) in results.items()]
+        # AI 标注「疑似H/疑似非术语」的词原文前加 # 注释（用户手动删除后启用）
+        final_list: List[List[str]] = []
+        commented = 0
+        for src, (dst, note) in results.items():
+            if _is_suspicious_note(note):
+                src = "#" + src
+                commented += 1
+            final_list.append([src, dst, note])
+        if commented:
+            LOGGER.warning(f"[GenDic][llm] {commented} 条疑似H/非术语已注释（原文前加 #，删除 # 后启用）")
         max_terms = int(getattr(self, "gendic_max_terms", 0) or 0)
         if max_terms > 0 and len(final_list) > max_terms:
             final_list = final_list[:max_terms]
