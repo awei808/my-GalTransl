@@ -433,7 +433,7 @@ class LongSentenceNewlineTests(_Base):
 
 
 class NewlinePositionTests(_Base):
-    """换行位置异常：换行符未紧跟允许标点（含逗号/顿号）之后才报。"""
+    """换行位置异常：换行符未紧跟允许标点（含逗号/顿号）、空格/Tab、emoji、颜文字之后才报。"""
 
     def _set_problem_config(self, project_dir: str) -> None:
         cfg_path = os.path.join(project_dir, "config.yaml")
@@ -508,6 +508,90 @@ class NewlinePositionTests(_Base):
         self._set_problem_config(init["project_dir"])
         problem = self._check(pid, "第一句。\n第二句，\n第三顿、\n第四句。")
         self.assertNotIn("换行位置异常", problem)
+
+    def test_break_after_heart_emoji_ok(self) -> None:
+        # 爱心 emoji（❤ U+2764 + 变体选择符 U+FE0F）后换行不报
+        _, init = self._init_project("np_heart")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "最喜欢你了\u2764\ufe0f\\n第二句")
+        self.assertNotIn("换行位置异常", problem)
+
+    def test_break_after_music_emoji_ok(self) -> None:
+        # 音符 emoji（🎵 U+1F3B5）与 ♪/♫/♥ 后换行不报
+        _, init = self._init_project("np_music")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        for tail in ("\U0001F3B5", "♪", "♫", "♥"):
+            problem = self._check(pid, "啦啦啦" + tail + "\\n第二句")
+            self.assertNotIn("换行位置异常", problem)
+
+    def test_break_after_space_tab_ok(self) -> None:
+        # 行尾空格/Tab 后换行不报（真实空格、真实 Tab）
+        _, init = self._init_project("np_space")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "第一句 \n第二句")
+        self.assertNotIn("换行位置异常", problem)
+        problem = self._check(pid, "第一句\t\n第二句")
+        self.assertNotIn("换行位置异常", problem)
+
+    def test_break_after_kaomoji_ok(self) -> None:
+        # 颜文字结尾（(ノ´Д`)ノ、(T_T)、>_<、www）后换行不报
+        _, init = self._init_project("np_kaomoji")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        for tail in ("(ノ´Д`)ノ", "(T_T)", ">_<", "www"):
+            problem = self._check(pid, "好开心" + tail + "\\n第二句")
+            self.assertNotIn("换行位置异常", problem)
+
+    def test_break_after_cjk_still_reports(self) -> None:
+        # 回归：词语中间断行（汉字后换行）仍报
+        _, init = self._init_project("np_cjk_reg")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "站了起\\n来")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_break_after_emoji_not_at_line_end_reports(self) -> None:
+        # 回归：emoji 后跟汉字再换行仍报（emoji 未落在行尾）
+        _, init = self._init_project("np_emoji_cjk")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "\u2764\ufe0f好\\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_break_after_lone_halfwidth_paren_reports(self) -> None:
+        # 回归：单个半角右括号结尾仍报（颜文字需 ≥2 个池内字符，保守不放宽）
+        _, init = self._init_project("np_paren")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "(半角括号)\\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_break_after_double_zero_still_reports(self) -> None:
+        # 回归：行尾连续数字（00）不是颜文字，仍报（字母数字不构成颜文字结构）
+        _, init = self._init_project("np_zero")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "第一句00\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_break_after_double_underscore_still_reports(self) -> None:
+        # 回归：行尾连续下划线（__）不是颜文字，仍报
+        _, init = self._init_project("np_under")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "第一句__\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
+
+    def test_break_after_lone_variation_selector_still_reports(self) -> None:
+        # 回归：单独变体选择符（U+FE0F）结尾不是完整 emoji，仍报
+        _, init = self._init_project("np_vs")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "第一句\ufe0f\n第二句")
+        self.assertIn("换行位置异常：第1行", problem)
 
 
 class FrequentNewlineTests(_Base):

@@ -150,7 +150,7 @@ problemAnalyze:
     #- 引入英文 # 本来没有英文，译文引入了英文
     #- 比日文长严格 # 比日文长1倍以上就提醒
     #- 长句丢失换行 # 译文平均分句长度超过 avgSentenceLengthThreshold，疑似丢失应有换行
-    #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）之后
+    #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）、空格、Tab、emoji 或颜文字之后
     - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
   avgSentenceLengthThreshold: 17 # 长句丢失换行的分句长度阈值，默认17，建议范围15~25
   avgSentenceLengthThresholdH: 24 # 长句丢失换行的H场景专用分句长度阈值，默认24，建议范围20~30

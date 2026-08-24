@@ -66,19 +66,19 @@ class ForBRStation(BaseProblemFixRound):
     def _build_br_issue_guide() -> str:
         """动态生成「换行位置异常」说明与解决方法（避免与检测侧定义不同步）。
 
-        允许换行字符集直接复用 Problem._ALLOWED_BREAK_CHARS，确保与检测逻辑一致。
+        允许断行的行尾内容直接复用 Problem.describe_allowed_break_ends()，
+        确保与检测逻辑一致。
         """
         try:
-            from GalTransl.Problem import _ALLOWED_BREAK_CHARS
+            from GalTransl.Problem import describe_allowed_break_ends
 
-            allowed = _ALLOWED_BREAK_CHARS
+            allowed_desc = describe_allowed_break_ends()
         except Exception:
-            allowed = "。！？…—”’」』）】、，"
-        allowed_str = "、".join(list(allowed))
+            allowed_desc = "中文标点、逗号、顿号、空格/Tab、emoji、颜文字"
         lines = [
             "1. 【优先，推荐度最高】调整换行符位置：",
             "   把被拆断在行首/行尾的中文词语或短语合并回上一行，或把换行移动到",
-            f"   合理的中文断句点（仅允许落在以下字符之后：{allowed_str}）。",
+            f"   合理的中文断句点（仅允许落在以下内容之后：{allowed_desc}）。",
             "   例：把「她突然站了起<br>来，跑了出去。」改为「她突然站起来，跑了出去。」"
             "（删除不当换行）。",
             "2. 【次选，推荐度中等】在 `<br>` 前面增加一个中文逗号「，」：",

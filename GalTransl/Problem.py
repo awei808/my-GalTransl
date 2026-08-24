@@ -29,8 +29,63 @@ MONOLOGUE_MALE_HE_EXCLUDES = (
     "他山",
 )
 
-# 允许出现在换行前的字符：中文标点 + 逗号、顿号（顿号后换行不判定异常）
-_ALLOWED_BREAK_CHARS = punctuation_zh + "，、"
+# 允许出现在换行前的字符：中文标点 + 逗号、顿号 + 空格/Tab（这些字符后换行不判定异常）
+_ALLOWED_BREAK_CHARS = punctuation_zh + "，、 \t"
+
+# 行尾 emoji 字符簇：至少一个基 emoji 字符，后接可选的变体选择符/ZWJ/组合键帽等后缀；
+# 避免单独的 \uFE0F/\u200D 等变体选择符被误放行。
+_EMOJI_END_RE = re.compile(
+    "(?:[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2190-\u21FF"
+    "\u2300-\u23FF\u25A0-\u25FF\u00A9\u00AE\u203C\u2049\u2122\u2139\u3030\u303D\u3297\u3299]"
+    "[\uFE0F\u200D\u20E3]*)+$"
+)
+
+# 颜文字字符池（日式颜文字常见组成字符；池内不含中日韩表意字符/假名/谚文）
+_KAOMOJI_POOL = (
+    "()（）<>＞＜[]【】{}｛｝「」『』\"'`´｀^・ωДд∀▽△￣"
+    "~〜～ノヽゝシｼ=＝:：;；_＿!！?？*＊wｗxXoO0Ttヽﾉ"
+    "|｜/／＼+＋-－…···"
+)
+# 颜文字「结构符号」：括号/符号/假名/记号等非字母数字字符。行尾组合须含至少一个
+# 结构符号、或是纯 wｗ 网络笑声，才判定为颜文字，避免「00」「__」等普通双字符误放行。
+_KAOMOJI_STRUCT_CHARS = (
+    "()（）<>＞＜[]【】{}｛｝「」『』\"'`´｀^・ωДд∀▽△￣"
+    "~〜～ノヽゝシｼ=＝:：;；!！?？*＊|｜/／＼+＋-－…···"
+)
+# 行尾颜文字：末尾连续 2-20 个池内字符（如 (ノ´Д`)ノ、(T_T)、>_<、www）
+_KAOMOJI_END_RE = re.compile(r"[" + re.escape(_KAOMOJI_POOL) + r"]{2,20}$")
+
+
+def _is_kaomoji_end(line: str) -> bool:
+    """行尾是否颜文字结尾：连续 ≥2 个池内字符，且含结构符号或为纯 w 网络笑声。"""
+    m = _KAOMOJI_END_RE.search(line)
+    if not m:
+        return False
+    tail = m.group(0)
+    if not tail.strip("wｗ"):
+        return True
+    return any(c in _KAOMOJI_STRUCT_CHARS for c in tail)
+
+
+def _is_break_position_ok(line: str) -> bool:
+    """判断换行前的行尾是否为合规断行位置。
+
+    允许：中文标点/逗号/顿号、空格、Tab、emoji（含 ❤️🎵 等）、颜文字结尾。
+    """
+    if not line:
+        return False
+    if line[-1] in _ALLOWED_BREAK_CHARS:
+        return True
+    return bool(_EMOJI_END_RE.search(line) or _is_kaomoji_end(line))
+
+
+def describe_allowed_break_ends() -> str:
+    """检测侧「换行前允许内容」的人类可读描述，供换行修复提示词复用，避免口径漂移。"""
+    return (
+        "中文标点（句号/问号/叹号/省略号/括号/分号/书名号/方括号/引号「」『』）、"
+        "逗号、顿号、空格、制表符（Tab）、emoji（如 ♥❤️♪🎵😊）、"
+        "颜文字（如 (ノ´Д`)ノ、(T_T)、>_<、www）"
+    )
 
 
 def _newline_count(s: str) -> int:
@@ -191,16 +246,19 @@ def find_problems(
                     problem_list.append("长句丢失换行")
         if CProblemType.换行位置异常 in find_type:
             bad_lines = []
-            # 归一化真实/字面换行为真实 \n 后按段检查换行前字符
+            # 归一化真实/字面换行为真实 \n 后按段检查换行前内容（标点/空格/Tab/emoji/颜文字）
             _norm = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
             _norm = _norm.replace("\r\n", "\n").replace("\r", "\n")
             _segments = _norm.split("\n")
             for _i in range(1, len(_segments)):
-                _prev = _segments[_i - 1][-1] if _segments[_i - 1] else ""
-                if _prev and _prev not in _ALLOWED_BREAK_CHARS:
+                _prev_seg = _segments[_i - 1]
+                if _prev_seg and not _is_break_position_ok(_prev_seg):
                     bad_lines.append(str(_i))
             if bad_lines:
                 problem_list.append("换行位置异常：第" + "、".join(bad_lines) + "行")
+                LOGGER.debug(
+                    f"换行位置异常：index={tran.index}, 异常行={bad_lines}, 译文={post_dst}"
+                )
         if CProblemType.频繁换行 in find_type:
             # 仅检测换行符：译文有效字符少却出现多次换行（真实/字面换行均归一化计入）
             if post_dst:
