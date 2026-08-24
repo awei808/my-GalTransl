@@ -99,13 +99,13 @@ class GenDicSegmentsE2ETests(unittest.IsolatedAsyncioTestCase):
             return [l for l in f.read().splitlines() if l.strip() and not l.startswith("#")]
 
     async def test_segments_mode_uses_legacy_flow_and_writes_dictionary(self) -> None:
-        backend = self._backend("サキュバス\t魅魔\t术语\nフィギュア\t手办\t物品\n")
+        backend = self._backend("サキュバス|魅魔|术语\nフィギュア|手办|物品\n")
         ok = await backend.batch_translate(self._input())
         self.assertTrue(ok)
         self.assertGreater(backend.ask_chatbot.calls, 0)  # 确实走了分段→AI 链路
         joined = "\n".join(self._read_dic())
-        self.assertIn("サキュバス\t魅魔", joined)
-        self.assertIn("フィギュア\t手办", joined)
+        self.assertIn("サキュバス|魅魔", joined)
+        self.assertIn("フィギュア|手办", joined)
         self.assertGreaterEqual(getattr(self.cfg, "gendic_added_count", 0), 2)
 
 

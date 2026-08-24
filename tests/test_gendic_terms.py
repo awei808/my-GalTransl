@@ -308,7 +308,7 @@ class TermsCompoundExtractTests(unittest.TestCase):
     def test_compound_2gram_collected(self) -> None:
         # 组合重复 20 次（上下文固定→diversity 低） + 高频单名詞撑 max + 大量 filler 撑 N（PMI 真实）
         tokens = (
-            _tokens(("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般")) * 20
+            _tokens(("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般"), ("です", "助動詞")) * 20
             + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
             + _tokens(*[("です", "助動詞")] * 7000)
         )
@@ -320,7 +320,7 @@ class TermsCompoundExtractTests(unittest.TestCase):
     def test_compound_3gram_mark_collected(self) -> None:
         tokens = (
             _tokens(
-                ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
+                ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"), ("です", "助動詞"),
             ) * 20
             + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
             + _tokens(*[("です", "助動詞")] * 7000)
@@ -376,7 +376,7 @@ class TermsCompoundExtractTests(unittest.TestCase):
         # 组合优先：オバ/グラ 只作为组合成分出现 → 碎片剔除；独立频次足则保留
         tokens = (
             _tokens(
-                ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"),
+                ("オバ", "名詞-普通名詞-一般"), ("★", "補助記号-一般"), ("グラ", "名詞-普通名詞-一般"), ("です", "助動詞"),
             ) * 20
             + _tokens(("フィギュア", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50
             + _tokens(*[("です", "助動詞")] * 7000)
@@ -502,15 +502,36 @@ class TermsClassifierTests(unittest.TestCase):
         ordered = GenDic._sort_and_truncate_terms(terms, max_terms=40)
         self.assertIn("フィギュア製作", [t[0] for t in ordered])
 
+    def test_shared_token_extracted_and_compounds_downgraded(self) -> None:
+        # 共用 token 聚合（用户决策）：成分 token 出现在 ≥2 个复合词 → 提取为术语；
+        # 共享该 token 的复合词降级为「复合词(待审)」
+        base = [
+            ("コスプレ", "名詞-普通名詞-一般"), ("衣装", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
+            ("コスプレ", "名詞-普通名詞-一般"), ("リゾート", "名詞-普通名詞-一般"), ("を", "助詞-格助詞"),
+        ]
+        tokens = (
+            _tokens(*base) * 20
+            + _tokens(("コスプレ", "名詞-普通名詞-一般"), ("です", "助動詞")) * 50  # 独立出现 → 片假名类
+            + _tokens(*[("です", "助動詞")] * 7000)
+        )
+        terms, stats = _extract(tokens)
+        cats = {w: cat for w, _c, cat in terms}
+        # 共用 token コスプレ 独立频次足 → 片假名普通名词收录（聚合检查已收不重复收）
+        self.assertEqual(cats.get("コスプレ"), "片假名普通名词")
+        # 共享 コスプレ 的复合词降为待审
+        self.assertEqual(cats.get("コスプレ衣装"), "复合词(待审)")
+        self.assertEqual(cats.get("コスプレリゾート"), "复合词(待审)")
+        self.assertGreaterEqual(stats["复合词送审"], 2)
+
 
 class TermsLlmExtractTests(unittest.TestCase):
     """LLM 全权模式（gendic.mode=llm）：AI 从文本块直接提取术语（含翻译）。"""
 
     def test_parse_llm_extract_response_basic(self) -> None:
         rsp = (
-            "```tsv\n日文原词\t中文翻译\t备注\n"
-            "サキュバス\t魅魔\t术语\n"
-            "フィギュア\t手办\t物品\n"
+            "```psv\n日文原词|中文翻译|备注\n"
+            "サキュバス|魅魔|术语\n"
+            "フィギュア|手办|物品\n"
             "```\n"
         )
         entries = GenDic._parse_llm_extract_response(rsp)
@@ -521,19 +542,25 @@ class TermsLlmExtractTests(unittest.TestCase):
 
     def test_parse_llm_extract_response_skips_untranslatable_and_header(self) -> None:
         rsp = (
-            "日文原词\t中文翻译\t备注\n"
-            "むー\t（无法翻译）\t拟声\n"
-            "凛音\t凛音\t人名，女性\n"
-            "クルト\tクルト\t\n"  # 空 note 回显
+            "日文原词|中文翻译|备注\n"
+            "むー|（无法翻译）|拟声\n"
+            "凛音|凛音|人名，女性\n"
+            "クルト|クルト|\n"  # 空 note 回显
         )
         entries = GenDic._parse_llm_extract_response(rsp)
         self.assertEqual(entries, [("凛音", "凛音", "人名，女性"), ("クルト", "クルト", "")])
 
     def test_parse_llm_extract_response_long_note_truncated(self) -> None:
-        rsp = "オバ★グラ\t欧巴格拉\t" + "很长的备注" * 10 + "\n"
+        rsp = "オバ★グラ|欧巴格拉|" + "很长的备注" * 10 + "\n"
         entries = GenDic._parse_llm_extract_response(rsp)
         self.assertEqual(len(entries), 1)
         self.assertLessEqual(len(entries[0][2]), 20)
+
+    def test_parse_llm_extract_response_tab_fallback(self) -> None:
+        # AI 若按旧习惯输出 Tab（未遵守 PSV 提示词）→ 归一为 | 仍能解析
+        rsp = "日文原词\t中文翻译\t备注\nサキュバス\t魅魔\t术语\n"
+        entries = GenDic._parse_llm_extract_response(rsp)
+        self.assertEqual(entries, [("サキュバス", "魅魔", "术语")])
 
 
 class TermsParseResponseTests(unittest.TestCase):
@@ -543,51 +570,57 @@ class TermsParseResponseTests(unittest.TestCase):
         return GenDic._parse_terms_response(rsp, words)
 
     def test_exact_match_all(self) -> None:
-        rsp = "日文原词\t中文翻译\t备注\nフィギュア\t手办\t物品\nサキュバス\t魅魔\t术语\n"
+        rsp = "日文原词|中文翻译|备注\nフィギュア|手办|物品\nサキュバス|魅魔|术语\n"
         matched, extra = self._parse(rsp, ["フィギュア", "サキュバス"])
         self.assertEqual(matched, {"フィギュア": ("手办", "物品"), "サキュバス": ("魅魔", "术语")})
         self.assertEqual(extra, [])
 
     def test_missing_row_collected(self) -> None:
-        rsp = "フィギュア\t手办\t物品\n"
+        rsp = "フィギュア|手办|物品\n"
         matched, _ = self._parse(rsp, ["フィギュア", "サキュバス"])
         self.assertIn("フィギュア", matched)
         self.assertNotIn("サキュバス", matched)
 
     def test_extra_row_outside_terms_dropped(self) -> None:
         # grounding：输出词不在输入词表 → 丢弃
-        rsp = "フィギュア\t手办\t物品\nホテル\t酒店\t术语\n"
+        rsp = "フィギュア|手办|物品\nホテル|酒店|术语\n"
         matched, extra = self._parse(rsp, ["フィギュア"])
         self.assertEqual(matched, {"フィギュア": ("手办", "物品")})
-        self.assertEqual(extra, ["ホテル\t酒店\t术语"])
+        self.assertEqual(extra, ["ホテル|酒店|术语"])
 
     def test_normalized_match_fullwidth_space(self) -> None:
-        rsp = "フィギュア\t手办\t物品\n"
+        rsp = "フィギュア|手办|物品\n"
         matched, _ = self._parse(rsp, ["フィギュア　"])  # 输入带全角空格，输出不带
         self.assertIn("フィギュア　", matched)
 
     def test_merged_row_dropped_when_not_match(self) -> None:
         # AI 合并两词为一行：日文与任一输入词不一致 → 按 grounding 丢弃该行
-        rsp = "フィギュアサキュバス\t手办魅魔\t合并\n"
+        rsp = "フィギュアサキュバス|手办魅魔|合并\n"
         matched, extra = self._parse(rsp, ["フィギュア", "サキュバス"])
         self.assertEqual(matched, {})
         self.assertEqual(len(extra), 1)
 
     def test_untranslatable_marker_skipped(self) -> None:
-        rsp = "フィギュア\t（无法翻译）\t词汇过新\n"
+        rsp = "フィギュア|（无法翻译）|词汇过新\n"
         matched, _ = self._parse(rsp, ["フィギュア"])
         self.assertEqual(matched, {})
 
     def test_code_fence_and_header_skipped(self) -> None:
-        rsp = "```tsv\n日文原词\t中文翻译\t备注\nフィギュア\t手办\t物品\n```\n"
+        rsp = "```psv\n日文原词|中文翻译|备注\nフィギュア|手办|物品\n```\n"
         matched, _ = self._parse(rsp, ["フィギュア"])
         self.assertEqual(matched, {"フィギュア": ("手办", "物品")})
 
     def test_long_note_truncated(self) -> None:
-        rsp = "フィギュア\t手办\t" + "很长的备注" * 10 + "\n"
+        rsp = "フィギュア|手办|" + "很长的备注" * 10 + "\n"
         matched, _ = self._parse(rsp, ["フィギュア"])
         note = matched["フィギュア"][1]
         self.assertLessEqual(len(note), 20)
+
+    def test_tab_fallback(self) -> None:
+        # AI 若按旧习惯输出 Tab（未遵守 PSV 提示词）→ 归一为 | 仍能解析
+        rsp = "日文原词\t中文翻译\t备注\nフィギュア\t手办\t物品\n"
+        matched, _ = self._parse(rsp, ["フィギュア"])
+        self.assertEqual(matched, {"フィギュア": ("手办", "物品")})
 
 
 class TermsSortTruncateTests(unittest.TestCase):

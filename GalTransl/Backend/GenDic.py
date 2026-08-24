@@ -201,6 +201,26 @@ def _find_digit_alpha_abbrs(full_text: str) -> "collections.Counter":
     return c
 
 
+def _is_fictional_proper(text: str) -> bool:
+    """未登录词（分词 POS 为 None）的虚构专名判定：纯片假名（无小写假名，排除拟声）或纯汉字。
+
+    分词词典外的专名（コスタリア/カレティア/ハリガタ/郁良 类）POS 为 None 而被通用通道丢弃；
+    拟声/呻吟多为平假名或含小写片假名（ァィゥェォッャュョ），此类排除。
+    """
+    if len(text) < 2 or "%" in text:
+        return False
+    if any(0x30A0 <= ord(ch) <= 0x30FF for ch in text):
+        # 片假名专名：不含平假名与小写片假名（拟声特征 パシャッ/ハァッ）
+        if any(0x3040 <= ord(ch) <= 0x309F for ch in text):
+            return False
+        if any(ch in "ァィゥェォッャュョ" for ch in text):
+            return False
+        return True
+    if all("\u4e00" <= ch <= "\u9fff" for ch in text):
+        return True  # 纯汉字未登录（郁良 类人名/地名）
+    return False
+
+
 def extract_terms_from_tokens(
     tokens: List[Tuple[str, str]],
     name_set: Set[str],
@@ -234,6 +254,7 @@ def extract_terms_from_tokens(
     word_counter: collections.Counter = collections.Counter()
     word_pos: Dict[str, str] = {}
     word_is_kata: Dict[str, bool] = {}
+    oov_counter: collections.Counter = collections.Counter()  # 未登录虚构专名候选
 
     def _token_ok(surf: str, tag: str) -> bool:
         """单 token 基础过滤（单 token 与复合词成分共用）：POS/长度/构成/拟声/人名排除。"""
@@ -259,6 +280,10 @@ def extract_terms_from_tokens(
         return True
 
     for surf, tag in tokens:
+        if tag is None and _is_fictional_proper(surf):
+            # 未登录虚构专名（分词词典外：コスタリア/郁良 类）单独计数，不走通用通道
+            oov_counter[surf] += 1
+            continue
         if not _token_ok(surf, tag):
             continue
         word_counter[surf] += 1
@@ -331,9 +356,9 @@ def extract_terms_from_tokens(
     final_terms: List[Tuple[str, int, str]] = []
     stats: Dict[str, int] = {
         "固有名詞": 0, "片假名普通名词": 0, "汉字词(白名单/字典)": 0, "字母组合": 0,
-        "复合词": 0, "复合词(待审)": 0, "汉字丢弃": 0, "黑名单丢弃": 0,
-        "低频假名固有名詞丢弃": 0, "组合覆盖剔除": 0, "复合词送审": 0,
-        "低紧密度丢弃": 0, "已有字典跳过": 0,
+        "复合词": 0, "复合词(待审)": 0, "复合词共用token": 0, "汉字丢弃": 0,
+        "黑名单丢弃": 0, "低频假名固有名詞丢弃": 0, "低频字母组合丢弃": 0,
+        "组合覆盖剔除": 0, "复合词送审": 0, "低紧密度丢弃": 0, "已有字典跳过": 0,
     }
     stats["复合词送审"] = len(comp_review)
     stats["低紧密度丢弃"] = len(comp_drop)
@@ -353,6 +378,10 @@ def extract_terms_from_tokens(
         if w in ban:
             stats["黑名单丢弃"] += 1
         elif _is_alpha_abbr(w):
+            if indep < 2:
+                # 字母组合仅出现 1 次：信息量低（如 ＣＧ/ＰＣ 单次），不录入（用户决策）
+                stats["低频字母组合丢弃"] = stats.get("低频字母组合丢弃", 0) + 1
+                continue
             _add(w, indep, "字母组合")
         elif word_pos[w].startswith("名詞-固有名詞"):
             if indep == 1 and _is_pure_kana(w):
@@ -366,6 +395,34 @@ def extract_terms_from_tokens(
             _add(w, indep, "汉字词(白名单/字典)")
         else:
             stats["汉字丢弃"] += 1
+
+    # 共用 token 聚合（用户决策）：成分 token 出现在 ≥2 个复合词 → 提取为术语（未收录时），
+    # 且共享该 token 的复合词降级为「复合词(待审)」（去冗余，共用 token 代表公共词根）。
+    # 必须在复合词追加前执行，降级类别才会随 _add 生效。
+    shared_counter: collections.Counter = collections.Counter()
+    for comp, _freq, _cat in comp_final:
+        for p in comp_parts[comp]:
+            if p in word_counter:  # 只统计名詞成分（连接记号不在 word_counter）
+                shared_counter[p] += 1
+    shared_tokens = {p for p, n in shared_counter.items() if n >= 2}
+    if shared_tokens:
+        downgraded = 0
+        upgraded = []
+        for idx, (comp, freq, cat) in enumerate(comp_final):
+            if cat == "复合词" and any(p in shared_tokens for p in comp_parts[comp]):
+                comp_final[idx] = (comp, freq, "复合词(待审)")
+                stats["复合词送审"] = stats.get("复合词送审", 0) + 1
+                downgraded += 1
+        known = {w for w, _c, _cat in final_terms}
+        for p in sorted(shared_tokens, key=lambda x: -word_counter[x]):
+            if p not in known:
+                _add(p, word_counter[p], "复合词共用token")
+                upgraded.append(p)
+        if downgraded or upgraded:
+            LOGGER.info(
+                f"[GenDic][terms] 共用 token 聚合：提取 {len(upgraded)} 个共用词根"
+                f"（{', '.join(upgraded[:10])}），{downgraded} 个共享复合词降为待审"
+            )
 
     # 复合词追加（与单 token 一并参与排序/截断；Class_B 待审词不限量收录，不参与截断）
     for comp, freq, cat in comp_final:
@@ -485,10 +542,11 @@ class GenDic(BaseEngine):
             with open(result_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
+                    line = line.replace("\t", "|")  # 容错：旧版生成字典为 Tab 分隔，归一并兼容
                     # 仅收集程序生成的 # 注释词（# 后直接跟词）；跳过 # 加空格的格式说明行
                     if not line.startswith("#") or line.startswith("# "):
                         continue
-                    sp = line.lstrip("#").split("\t")
+                    sp = line.lstrip("#").split("|")
                     if len(sp) >= 2 and sp[0].strip() and sp[1].strip():
                         src = sp[0].strip()
                         commented[src] = (sp[1].strip(), sp[2].strip() if len(sp) > 2 else "")
@@ -512,9 +570,10 @@ class GenDic(BaseEngine):
             with open(result_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
+                    line = line.replace("\t", "|")  # 容错：旧版生成字典为 Tab 分隔，归一并兼容
                     if not line or line.startswith("#"):
                         continue
-                    sp = line.split("\t")
+                    sp = line.split("|")
                     if sp:
                         src = sp[0].strip()
                         if src:
@@ -578,13 +637,13 @@ class GenDic(BaseEngine):
         return list(final_set.values()), duplicates
 
     def _save_generated_dictionary(self, final_list: List[List[str]], result_path: Optional[str] = None) -> str:
-        # 覆盖写：每次运行全新生成（避免追加导致词条累积重复、突破 max_terms 上限）；
-        # 历史人工维护请使用「项目GPT字典.txt」。
+        # 覆盖写：每次运行全新生成（避免追加导致词条累积重复）；人工维护请用「项目GPT字典.txt」
+        # 分隔符统一 |（与提示词 PSV 一致；CGptDict 对正常词条行兼容 Tab/四空格）
         path = result_path or os.path.join(self.pj_config.getProjectDir(), "项目GPT字典-生成.txt")
         with open(path, "w", encoding="utf-8") as f:
-            f.write("# 格式为日文[Tab]中文[Tab]解释(可不写)，参考项目wiki\n")
+            f.write("# 格式为日文[|]中文[|]解释(可不写)，参考项目wiki\n")
             for item in final_list:
-                f.write(item[0] + "\t" + item[1] + "\t" + item[2] + "\n")
+                f.write(item[0] + "|" + item[1] + "|" + item[2] + "\n")
         return path
 
     def _prepare_runtime_progress(self, total_tasks: int) -> None:
@@ -716,7 +775,8 @@ class GenDic(BaseEngine):
         valid_entries = []
         for line in lines:
             self._check_stop_requested()
-            sp = line.split("\t")
+            line = line.replace("\t", "|")  # 容错：AI 若按旧习惯输出 Tab，归一并兼容
+            sp = line.split("|")
             if len(sp) < 3:
                 continue
             if "日文" in sp[0]:
@@ -841,6 +901,7 @@ class GenDic(BaseEngine):
         cat_rank = {
             "固有名詞": 0,
             "片假名普通名词": 1, "复合词": 1, "字母组合": 1, "复合词(待审)": 1,
+            "复合词共用token": 1,
             "汉字词(白名单/字典)": 2,
         }
         ordered = sorted(final_terms, key=lambda t: (cat_rank.get(t[2], 9), -t[1]))
@@ -859,7 +920,7 @@ class GenDic(BaseEngine):
 
     @staticmethod
     def _parse_terms_response(rsp: str, input_words: List[str]) -> Tuple[Dict[str, Tuple[str, str]], List[str]]:
-        """解析 terms TSV 响应：按输入词精确匹配，未命中做去空白归一化容错；
+        """解析 terms PSV 响应：按输入词精确匹配，未命中做去空白归一化容错；
         输出行日文不在输入词表则丢弃（grounding 防幻觉）。返回 (matched, extra)。"""
         input_set = set(input_words)
         norm_map: Dict[str, str] = {}
@@ -869,10 +930,11 @@ class GenDic(BaseEngine):
         matched: Dict[str, Tuple[str, str]] = {}
         extra: List[str] = []
         for line in rsp.splitlines():
+            line = line.replace("\t", "|")  # 容错：AI 若按旧习惯输出 Tab，归一并兼容
             line = line.strip()
             if not line or line.startswith("```") or "日文原词" in line:
                 continue
-            sp = line.split("\t")
+            sp = line.split("|")
             if len(sp) < 2:
                 continue
             src = sp[0].strip()
@@ -1102,13 +1164,14 @@ class GenDic(BaseEngine):
 
     @staticmethod
     def _parse_llm_extract_response(rsp: str) -> List[Tuple[str, str, str]]:
-        """解析 LLM 全权提取 TSV 响应：跳过表头/代码围栏/（无法翻译）行，返回 [(src, dst, note)]。"""
+        """解析 LLM 全权提取 PSV 响应：跳过表头/代码围栏/（无法翻译）行，返回 [(src, dst, note)]。"""
         entries: List[Tuple[str, str, str]] = []
         for line in rsp.splitlines():
+            line = line.replace("\t", "|")  # 容错：AI 若按旧习惯输出 Tab，归一并兼容
             line = line.strip()
             if not line or line.startswith("```") or "日文原词" in line:
                 continue
-            sp = line.split("\t")
+            sp = line.split("|")
             if len(sp) < 2:
                 continue
             src, dst = sp[0].strip(), sp[1].strip()

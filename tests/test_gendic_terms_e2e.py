@@ -107,21 +107,37 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         with open(self.dic_path, "r", encoding="utf-8") as f:
             return [l for l in f.read().splitlines() if l.strip() and not l.startswith("#")]
 
+    def test_load_existing_generated_terms_tab_fallback(self) -> None:
+        # 旧版 Tab 分隔的生成字典（升级残留）→ 归一为 | 后按 src 收集，不产生含 Tab 的垃圾条目
+        with open(self.dic_path, "w", encoding="utf-8") as f:
+            f.write("# 格式说明行\nサキュバス\t魅魔\t术语\nフィギュア|手办|物品\n")
+        backend = self._backend([])
+        terms = backend._load_existing_generated_terms(self.dic_path)
+        self.assertEqual(terms, {"サキュバス", "フィギュア"})
+
+    def test_load_commented_terms_tab_fallback(self) -> None:
+        # 旧版 Tab 分隔的 # 注释停用词 → 归一为 | 后仍能恢复停用状态
+        with open(self.dic_path, "w", encoding="utf-8") as f:
+            f.write("# 格式说明行\n#淫乱奴隷\t淫乱奴隶\t术语（疑似H）\n")
+        backend = self._backend([])
+        commented = backend._load_commented_terms_from_generated()
+        self.assertEqual(commented, {"淫乱奴隷": ("淫乱奴隶", "术语（疑似H）")})
+
     async def test_terms_basic_flow_writes_dictionary(self) -> None:
         backend = self._backend([
-            "日文原词\t中文翻译\t备注\n凛音\t凛音\t人名，女性\nサキュバス\t魅魔\t术语\nフィギュア\t手办\t物品\n",
+            "日文原词|中文翻译|备注\n凛音|凛音|人名，女性\nサキュバス|魅魔|术语\nフィギュア|手办|物品\n",
         ])
         ok = await backend.batch_translate(self._input())
         self.assertTrue(ok)
         joined = "\n".join(self._read_dic())
-        self.assertNotIn("凛音\t凛音", joined)  # 人名不收录
-        self.assertIn("サキュバス\t魅魔", joined)
-        self.assertIn("フィギュア\t手办", joined)
+        self.assertNotIn("凛音|凛音", joined)  # 人名不收录
+        self.assertIn("サキュバス|魅魔", joined)
+        self.assertIn("フィギュア|手办", joined)
         self.assertEqual(getattr(self.cfg, "gendic_added_count", 0), 2)
 
     async def test_terms_grounding_drops_out_of_table_rows(self) -> None:
         backend = self._backend([
-            "日文原词\t中文翻译\t备注\n凛音\t凛音\t人名，女性\nホテル\t酒店\t术语\n",
+            "日文原词|中文翻译|备注\n凛音|凛音|人名，女性\nホテル|酒店|术语\n",
         ])
         ok = await backend.batch_translate(self._input())
         self.assertTrue(ok)
@@ -131,20 +147,20 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
 
     async def test_terms_missing_rows_retried_in_second_pass(self) -> None:
         backend = self._backend([
-            "日文原词\t中文翻译\t备注\n凛音\t凛音\t人名，女性\nサキュバス\t魅魔\t术语\n",
-            "日文原词\t中文翻译\t备注\nフィギュア\t手办\t物品\n",
+            "日文原词|中文翻译|备注\n凛音|凛音|人名，女性\nサキュバス|魅魔|术语\n",
+            "日文原词|中文翻译|备注\nフィギュア|手办|物品\n",
         ])
         ok = await backend.batch_translate(self._input())
         self.assertTrue(ok)
         joined = "\n".join(self._read_dic())
-        self.assertIn("フィギュア\t手办", joined)
-        self.assertIn("サキュバス\t魅魔", joined)
+        self.assertIn("フィギュア|手办", joined)
+        self.assertIn("サキュバス|魅魔", joined)
         self.assertGreaterEqual(backend.ask_chatbot.calls, 2)  # 二次补翻确实发生
 
     async def test_terms_rerun_overwrites_not_appends(self) -> None:
         # 重复运行：生成字典覆盖写（不追加累积重复词条，保证条目数 = 本次结果）
         backend = self._backend([
-            "日文原词\t中文翻译\t备注\n凛音\t凛音\t人名，女性\nサキュバス\t魅魔\t术语\nフィギュア\t手办\t物品\n",
+            "日文原词|中文翻译|备注\n凛音|凛音|人名，女性\nサキュバス|魅魔|术语\nフィギュア|手办|物品\n",
         ])
         ok1 = await backend.batch_translate(self._input())
         self.assertTrue(ok1)
@@ -153,7 +169,7 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ok2)
         entries = self._read_dic()
         self.assertEqual(len(entries), first_count)  # 不翻倍累积
-        self.assertEqual(len({l.split("\t")[0] for l in entries}), first_count)  # 无重复词条
+        self.assertEqual(len({l.split("|")[0] for l in entries}), first_count)  # 无重复词条
 
     async def test_terms_suspicious_note_commented_in_dictionary(self) -> None:
         # AI 备注标注「疑似H」→ 落盘原文前加 # 注释（防止解析，手动删 # 启用）；
@@ -164,15 +180,15 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
             {"name": "凛音", "message": "サキュバスに会う。サキュバスだ。" + filler},
         ]
         backend = self._backend([
-            "日文原词\t中文翻译\t备注\nサキュバス\t魅魔\t术语\n淫乱奴隷\t淫乱奴隶\t术语（疑似H）\n思い切り掻き混ぜ\t使劲搅拌\t动词短语（疑似非术语）\n",
+            "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\n淫乱奴隷|淫乱奴隶|术语（疑似H）\n思い切り掻き混ぜ|使劲搅拌|动词短语（疑似非术语）\n",
         ])
         ok = await backend.batch_translate(inp)
         self.assertTrue(ok)
         with open(self.dic_path, encoding="utf-8") as f:
             raw = f.read()  # 不过滤 # 行（# 正是被注释的疑似词）
         self.assertIn("#淫乱奴隷", raw)          # 疑似H 已注释
-        self.assertIn("サキュバス\t魅魔", raw)     # 正常词不受影响
-        self.assertNotIn("\n淫乱奴隷\t", raw)     # 未注释版本不存在
+        self.assertIn("サキュバス|魅魔", raw)     # 正常词不受影响
+        self.assertNotIn("\n淫乱奴隷|", raw)     # 未注释版本不存在
         self.assertNotIn("思い切り掻き混ぜ", raw)  # 词表外行被 grounding 丢弃
 
 
@@ -222,14 +238,14 @@ class GenDicLlmE2ETests(unittest.IsolatedAsyncioTestCase):
         # 不筛选词汇（用户决策）：AI 提取的术语（含人名/拟声 note）直接进词典；
         # 仅「（无法翻译）」在解析层跳过
         backend = self._backend([
-            "日文原词\t中文翻译\t备注\nサキュバス\t魅魔\t术语\n凛音\t凛音\t人名\nフィギュア\t手办\t物品\nむー\t（无法翻译）\t拟声\n",
+            "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\n凛音|凛音|人名\nフィギュア|手办|物品\nむー|（无法翻译）|拟声\n",
         ])
         ok = await backend.batch_translate(self._input())
         self.assertTrue(ok)
         joined = "\n".join(self._read_dic())
-        self.assertIn("サキュバス\t魅魔", joined)
-        self.assertIn("凛音\t凛音", joined)  # 人名不筛选
-        self.assertIn("フィギュア\t手办", joined)
+        self.assertIn("サキュバス|魅魔", joined)
+        self.assertIn("凛音|凛音", joined)  # 人名不筛选
+        self.assertIn("フィギュア|手办", joined)
         self.assertNotIn("むー", joined)  # （无法翻译）解析层丢弃
         self.assertGreaterEqual(backend.ask_chatbot.calls, 1)
 
