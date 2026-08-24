@@ -5308,12 +5308,56 @@ a:hover {
 }
 
 .pc-group-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
   font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--color-border-default);
   background: var(--color-bg-app);
   color: var(--color-text-primary);
+}
+
+/* 可折叠的大分组标题（项目设置页专用；后端配置页标题为静态文本，不受此影响） */
+.pc-group-title--toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.pc-group-title-text {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+/* 大分组标题旁的二级说明（折叠时仍可见，方便识别分区） */
+.pc-group-desc {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-secondary);
+  margin: 2px 0 0;
+}
+
+/* 大分组折叠指示箭头 */
+.pc-group-chevron {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.pc-group-title:hover .pc-group-chevron {
+  color: var(--color-text-primary);
+}
+
+/* 折叠状态：隐藏分区内容（display:none，无过渡） */
+/* 项目设置页专用 */
+.pc-group-body--collapsed {
+  display: none;
 }
 
 /* 项目设置二级子分组（如「翻译处理 → 接口与并发」） */

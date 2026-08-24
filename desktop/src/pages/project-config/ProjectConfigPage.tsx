@@ -466,6 +466,49 @@ export function ProjectConfigPage() {
   // 当前翻译规范值（响应式读取，供固定卡片展示）
   const guidelineCurrent = () => String(getValue(GUIDELINE_KEY) ?? "");
 
+  // ── 大分组折叠状态（localStorage 持久化，版本化 key 便于后续增删分区自动失效） ──
+  const PC_COLLAPSE_STORAGE_KEY = "galtransl.project-config.collapse.v1";
+
+  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set<string>());
+
+  function toggleGroup(title: string) {
+    const next = new Set(collapsedGroups());
+    if (next.has(title)) next.delete(title);
+    else next.add(title);
+    setCollapsedGroups(next);
+    try {
+      localStorage.setItem(PC_COLLAPSE_STORAGE_KEY, JSON.stringify([...next]));
+    } catch {
+      console.warn("[ProjectConfig] 保存折叠状态失败");
+    }
+  }
+
+  function expandGroup(title: string) {
+    if (!collapsedGroups().has(title)) return;
+    const next = new Set(collapsedGroups());
+    next.delete(title);
+    setCollapsedGroups(next);
+    try {
+      localStorage.setItem(PC_COLLAPSE_STORAGE_KEY, JSON.stringify([...next]));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 从 localStorage 加载折叠状态（版本化 key）
+  try {
+    const pcRaw = localStorage.getItem(PC_COLLAPSE_STORAGE_KEY);
+    if (pcRaw) {
+      const pcParsed = JSON.parse(pcRaw);
+      if (Array.isArray(pcParsed)) {
+        const titles = pcParsed.filter((v): v is string => typeof v === "string");
+        setCollapsedGroups(new Set<string>(titles));
+      }
+    }
+  } catch {
+    console.warn("[ProjectConfig] 读取折叠状态失败，重置为全展开");
+  }
+
   // ── 问题检测（problemAnalyze）：已移回项目设置，随「保存配置」按钮统一写回 YAML ──
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   const [enabledProblemTypes, setEnabledProblemTypes] = createSignal<string[]>([]);
@@ -589,8 +632,20 @@ export function ProjectConfigPage() {
     if (loading() || (waitProblemTypes && problemTypesLoading())) return;
     requestAnimationFrame(() => {
       const el = document.getElementById(target);
-      if (el) {
-        // 即时定位（不带动画），避免长页面从顶部平滑滚动的延迟感
+      // 目标元素不存在时也清除 target，避免 settingsScrollTarget 悬挂
+      if (!el) {
+        setAppState("settingsScrollTarget", null);
+        return;
+      }
+      // 目标分组处于折叠时，先展开（SolidJS 响应式更新 DOM 需下一帧），下一帧再滚动
+      const groupTitle = el.dataset.title;
+      if (groupTitle && collapsedGroups().has(groupTitle)) {
+        expandGroup(groupTitle);
+        requestAnimationFrame(() => {
+          el.scrollIntoView({ block: "start" });
+          setAppState("settingsScrollTarget", null);
+        });
+      } else {
         el.scrollIntoView({ block: "start" });
         setAppState("settingsScrollTarget", null);
       }
@@ -1491,56 +1546,85 @@ export function ProjectConfigPage() {
               作为固定卡片由 taxonomy 的「问题检测」section 渲染。 */}
           <div class="pc-field-list">
             <For each={classifiedGroups()}>
-              {(g) => (
-                <div
-                  class="pc-group"
-                  id={g.section.title === "问题检测" ? "pc-group-problem-analyze" : undefined}
-                >
-                  <h3 class="pc-group-title">{g.section.title}</h3>
-                  <Show when={g.section.desc}>
-                    <p class="pc-desc">{g.section.desc}</p>
-                  </Show>
-
-                  {/* 后端专属：OpenAI 兼容接口跳转到全局后端配置 */}
-                  <Show when={g.section.title === "后端专属"}>
-                    <div class="pc-global-banner">
-                      <div class="pc-global-banner__text">
-                        <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「后端配置」统一管理，不再在项目设置中维护。
-                      </div>
-                      <button
-                        class="btn btn--sm btn--primary"
-                        onClick={() => navigateTo("backend-profiles")}
-                      >
-                        去后端配置 →
-                      </button>
-                    </div>
-                  </Show>
-
-                  {/* 固定卡片（游戏外部信息 / 翻译规范文件 / 问题检测），按 taxonomy 顺序渲染 */}
-                  <For each={g.fixedCards}>
-                    {(kind) => renderFixedCard(kind)}
-                  </For>
-
-                  {/* 一级直接字段（无二级时） */}
-                  <For each={g.directItems}>
-                    {(item) => renderFieldRow(item)}
-                  </For>
-
-                  {/* 二级子分组 */}
-                  <For each={g.subsections}>
-                    {(sub) => (
-                      <div class="pc-subsection">
-                        <Show when={sub.subsection.title}>
-                          <h4 class="pc-subsection-title">{sub.subsection.title}</h4>
+              {(g) => {
+                const title = g.section.title;
+                return (
+                  <div
+                    class="pc-group"
+                    id={title === "问题检测" ? "pc-group-problem-analyze" : undefined}
+                    data-title={title}
+                  >
+                    <div
+                      class="pc-group-title pc-group-title--toggle"
+                      role="button"
+                      tabindex="0"
+                      aria-expanded={collapsedGroups().has(title) ? "false" : "true"}
+                      aria-controls={title === "问题检测" ? "pc-group-problem-analyze" : undefined}
+                      onClick={() => toggleGroup(title)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleGroup(title);
+                        }
+                      }}
+                    >
+                      <div>
+                        <h3 class="pc-group-title-text">{title}</h3>
+                        <Show when={g.section.desc}>
+                          <p class="pc-group-desc">{g.section.desc}</p>
                         </Show>
-                        <For each={sub.items}>
-                          {(item) => renderFieldRow(item)}
-                        </For>
                       </div>
-                    )}
-                  </For>
-                </div>
-              )}
+                      <span class="pc-group-chevron" aria-hidden="true">
+                        {collapsedGroups().has(title) ? "▸" : "▾"}
+                      </span>
+                    </div>
+
+                    <div class="pc-group-body" classList={{ "pc-group-body--collapsed": collapsedGroups().has(title) }}>
+                      {/* 后端专属：OpenAI 兼容接口跳转到全局后端配置 */}
+                      <Show when={title === "后端专属"}>
+                        <div class="pc-global-banner">
+                          <div class="pc-global-banner__text">
+                            <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「后端配置」统一管理，不再在项目设置中维护。
+                          </div>
+                          <button
+                            class="btn btn--sm btn--primary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateTo("backend-profiles");
+                            }}
+                          >
+                            去后端配置 →
+                          </button>
+                        </div>
+                      </Show>
+
+                      {/* 固定卡片（游戏外部信息 / 翻译规范文件 / 问题检测），按 taxonomy 顺序渲染 */}
+                      <For each={g.fixedCards}>
+                        {(kind) => renderFixedCard(kind)}
+                      </For>
+
+                      {/* 一级直接字段（无二级时） */}
+                      <For each={g.directItems}>
+                        {(item) => renderFieldRow(item)}
+                      </For>
+
+                      {/* 二级子分组 */}
+                      <For each={g.subsections}>
+                        {(sub) => (
+                          <div class="pc-subsection">
+                            <Show when={sub.subsection.title}>
+                              <h4 class="pc-subsection-title">{sub.subsection.title}</h4>
+                            </Show>
+                            <For each={sub.items}>
+                              {(item) => renderFieldRow(item)}
+                            </For>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Show>
