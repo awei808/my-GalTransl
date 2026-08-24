@@ -22,6 +22,7 @@ from GalTransl.Backend.GenDic import (
     _is_pure_kana,
     _is_term_droppable,
     _is_suspicious_note,
+    _is_fictional_proper,
     _adjacency_entropy_min,
     _context_diversity,
     _classify_compound,
@@ -450,6 +451,52 @@ class TermsAlphaAbbrTests(unittest.TestCase):
 
 class TermsClassifierTests(unittest.TestCase):
     """四维特征分类器（复合词收录）：Class_A 自动入库 / Class_B 送审 / 低紧密度丢弃。"""
+
+    def test_fictional_proper_detection(self) -> None:
+        # 未登录虚构专名：纯片假名（无小写假名）/ 纯汉字
+        self.assertTrue(_is_fictional_proper("コスタリア"))
+        self.assertTrue(_is_fictional_proper("カレティア"))
+        self.assertTrue(_is_fictional_proper("ハリガタ"))
+        self.assertTrue(_is_fictional_proper("郁良"))
+        # 拟声/噪音排除：平假名、小写片假名、控制码、单字、叠音、汉字混合
+        self.assertFalse(_is_fictional_proper("くふぅ"))       # 平假名拟声
+        self.assertFalse(_is_fictional_proper("パシャッ"))      # 小写 ッ 拟声
+        self.assertFalse(_is_fictional_proper("ハァッ"))        # 小写 ァ/ッ
+        self.assertFalse(_is_fictional_proper("%fＭＳ"))        # 控制码
+        self.assertFalse(_is_fictional_proper("創くん"))        # 汉字+平假名
+        self.assertFalse(_is_fictional_proper("ギュルルルル"))   # 叠音拟声
+        self.assertFalse(_is_fictional_proper("ロロロ"))        # 叠音拟声
+        self.assertFalse(_is_fictional_proper("ドキドキ"))      # ABAB 叠音拟声
+        self.assertFalse(_is_fictional_proper("キャッキャッ"))  # ABAB 叠音拟声
+        self.assertFalse(_is_fictional_proper("ノ一"))          # 汉字混合（ノ+一）
+        self.assertFalse(_is_fictional_proper("あ"))
+
+    def test_fictional_proper_collected_from_oov_tokens(self) -> None:
+        # tag None 的虚构专名（分词词典外）→ 收录为「虚构专名」
+        tokens = _tokens(
+            ("コスタリア", None), ("で", "助詞-格助詞"), ("会う", "動詞-一般"),
+            ("コスタリア", None), ("で", "助詞-格助詞"), ("会う", "動詞-一般"),
+            *[("です", "助動詞")] * 300,
+        )
+        terms, stats = _extract(tokens)
+        cats = {w: cat for w, _c, cat in terms}
+        self.assertEqual(cats.get("コスタリア"), "虚构专名")
+        self.assertGreaterEqual(stats["虚构专名"], 1)
+
+    def test_fictional_proper_freq1_not_collected(self) -> None:
+        tokens = _tokens(
+            ("コスタリア", None), ("です", "助動詞"), *[("です", "助動詞")] * 300,
+        )
+        terms, _ = _extract(tokens)
+        self.assertNotIn("コスタリア", [t[0] for t in terms])
+
+    def test_fictional_proper_onomatopoeia_not_collected(self) -> None:
+        # ABAB 叠音拟声（tag None）不被 oov 通道误收为虚构专名
+        tokens = _tokens(
+            ("ドキドキ", None), ("ドキドキ", None), *[("です", "助動詞")] * 300,
+        )
+        terms, _ = _extract(tokens)
+        self.assertNotIn("ドキドキ", [t[0] for t in terms])
 
     def test_adjacency_entropy_min(self) -> None:
         # 固定搭配：左右邻词单一 → 熵低

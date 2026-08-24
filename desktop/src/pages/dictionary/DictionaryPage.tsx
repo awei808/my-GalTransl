@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, For, Index, Show, onCleanup } from "solid-js";
+import { createSignal, createEffect, createMemo, untrack, For, Index, Show, onCleanup } from "solid-js";
 import { sendLog } from "../../lib/api/log";
 import { appState, getActiveConfigFileName } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
@@ -73,6 +73,8 @@ export function DictionaryPage() {
   // 卸载自动保存用：挂载时刻的项目 id 快照（切项目时全局 activeProjectId 会先被
   // openProject 重置为新项目，onCleanup 若读运行时 pid 会把旧项目字典保存到新项目，
   // 必须用挂载快照作为保存目标身份，与 ReviewPage 的 mountPid 模式一致）
+  // 卸载标志：onCleanup 置位后丢弃飞行中的加载/重试链，避免写回已卸载组件
+  let disposed = false;
   const mountPid = appState.activeProjectId;
   // 配置名快照：挂载时回退 config.yaml；openProject 的配置名探测完成后
   //（configNameDetecting 变 false）更新为真实配置名，避免卸载自动保存用错配置名写盘
@@ -84,6 +86,7 @@ export function DictionaryPage() {
   });
 
   onCleanup(() => {
+    disposed = true;
     doAutoSave(mountPid, configNameSnapshot);
   });
 
@@ -288,6 +291,25 @@ export function DictionaryPage() {
     }
   }
 
+  // 后端重启窗口的加载失败自动重试（指数退避，避免 RESET/REFUSED 后字典页停留空态需手动刷新）
+  const LOAD_RETRY_DELAY_MS = [600];
+  // 加载轮次序列号：仅接受最新一轮，切项目/卸载后过期链直接丢弃，避免旧链写回污染新状态
+  let loadSeq = 0;
+  async function loadDataWithRetry(attempt = 0, seq?: number): Promise<void> {
+    if (disposed || (seq !== undefined && seq !== loadSeq)) return;
+    try {
+      await loadData();
+    } catch (e) {
+      if (disposed || (seq !== undefined && seq !== loadSeq)) return;
+      if (attempt < LOAD_RETRY_DELAY_MS.length) {
+        await new Promise((r) => setTimeout(r, LOAD_RETRY_DELAY_MS[attempt]));
+        await loadDataWithRetry(attempt + 1, seq);
+      } else {
+        toast.error(`加载字典失败: ${getErrorMessage(e)}`);
+      }
+    }
+  }
+
   async function loadData() {
     await doAutoSave();
     setLoading(true);
@@ -320,9 +342,8 @@ export function DictionaryPage() {
         setSelectedFile(firstKey);
         selectFile(firstKey);
       }
-    } catch (e) {
-      toast.error(`加载字典失败: ${getErrorMessage(e)}`);
     } finally {
+      // 异常上抛给 loadDataWithRetry 重试
       setLoading(false);
     }
   }
@@ -410,20 +431,27 @@ export function DictionaryPage() {
     const pidChanged = p !== oldPid;
     _prevPid = p;
     _prevConfigName = getActiveConfigFileName();
-    if (pidChanged) {
-      // 项目切换：先用旧项目身份与旧配置名保存未落盘编辑（fire-and-forget，不阻塞切换），
-      // 再清空选中文件与草稿，避免残留旧项目状态污染新项目加载
-      doAutoSave(oldPid, oldConfigName);
-      setSelectedFile(null);
-      setDraftText("");
-    }
-    // 无项目：直接加载公共字典
-    if (!p) {
-      loadData();
-      return;
-    }
-    // 有项目：等真实配置名探测完成再加载，避免用回退名 config.yaml 请求 404
-    if (!appState.configNameDetecting) loadData();
+    // 在 untrack 外读取，保留本意依赖的追踪：pid / configName / configNameDetecting 变化才驱动重载
+    const detecting = appState.configNameDetecting;
+    // 用 untrack 包裹全部副作用：loadData 内部经 doAutoSave 同步读取 data()/commonData()/
+    // selectedFile()/draftText()，若被 effect 依赖收集，则 loadData 完成写回 setData/setCommonData
+    // 时会反触发本 effect，形成每秒上百次的重载自激循环（commit 93a3296 引入）。untrack 切断此反向依赖。
+    untrack(() => {
+      if (pidChanged) {
+        // 项目切换：先用旧项目身份与旧配置名保存未落盘编辑（fire-and-forget，不阻塞切换），
+        // 再清空选中文件与草稿，避免残留旧项目状态污染新项目加载
+        doAutoSave(oldPid, oldConfigName);
+        setSelectedFile(null);
+        setDraftText("");
+      }
+      // 无项目：直接加载公共字典
+      if (!p) {
+        loadDataWithRetry(0, ++loadSeq);
+        return;
+      }
+      // 有项目：等真实配置名探测完成再加载，避免用回退名 config.yaml 请求 404
+      if (!detecting) loadDataWithRetry(0, ++loadSeq);
+    });
   });
 
   function selectFile(fileKey: string) {
@@ -510,7 +538,7 @@ export function DictionaryPage() {
         });
         setNewFilename("");
         toast.success("项目字典文件已创建");
-        await loadData();
+        await loadDataWithRetry(0, ++loadSeq);
         selectFile(res.file_key);
       } else {
         const res = await createCommonDictionaryFile({
@@ -519,7 +547,7 @@ export function DictionaryPage() {
         });
         setNewFilename("");
         toast.success("公共字典文件已创建");
-        await loadData();
+        await loadDataWithRetry(0, ++loadSeq);
         const key = `${activeTab()}_dict:${res.filename}`;
         selectFile(key);
       }
@@ -560,7 +588,7 @@ export function DictionaryPage() {
       toast.success("文件已删除");
       setSelectedFile(null);
       setDraftText("");
-      await loadData();
+      await loadDataWithRetry(0, ++loadSeq);
     } catch (e) {
       toast.error(`删除失败: ${getErrorMessage(e)}`);
     }

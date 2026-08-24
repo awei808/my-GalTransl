@@ -176,7 +176,7 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         # 词表外行（思い切り掻き混ぜ）被 grounding 丢弃
         filler = "私はフィギュアの造形が好きで、毎日模型を制作している。" * 100
         inp = [
-            {"name": "凛音", "message": "淫乱奴隷を買った。淫乱奴隷だ。" + filler},
+            {"name": "凛音", "message": "淫乱奴隷を買った。淫乱奴隷だ。淫乱奴隷だ。" + filler},
             {"name": "凛音", "message": "サキュバスに会う。サキュバスだ。" + filler},
         ]
         backend = self._backend([
