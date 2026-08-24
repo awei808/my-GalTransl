@@ -205,16 +205,15 @@ def _is_fictional_proper(text: str) -> bool:
     """未登录词（分词 POS 为 None）的虚构专名判定：纯片假名或纯汉字。
 
     分词词典外的专名（コスタリア/カレティア/ハリガタ/郁良 类）POS 为 None 而被通用通道丢弃；
-    排除：平假名拟声（くふぅ）、汉字混合（ノ一）、叠音拟声（ギュルルルル/ロロロ/ドキドキ）、
-    短小写假名拟声（パシャッ/びゅるる，但 カレティア 的 ティ 音节保留）。
+    须为纯片假名（可含 ー・）或纯汉字，混入汉字/数字/字母/符号（ノ一/ノ2/％コス 类）直接排除；
+    排除：叠音拟声（ギュルルルル/ロロロ/ドキドキ）、短小写假名拟声（パシャッ/びゅるる，
+    但 カレティア 的 ティ 音节保留）。
     """
     if len(text) < 2 or "%" in text:
         return False
     if any(0x30A0 <= ord(ch) <= 0x30FF for ch in text):
-        if any(0x3040 <= ord(ch) <= 0x309F for ch in text):
-            return False  # 平假名混合（拟声）
-        if any("\u4e00" <= ch <= "\u9fff" for ch in text):
-            return False  # 汉字混合（ノ一 类噪音）
+        if not all((0x30A0 <= ord(ch) <= 0x30FF) or ch in "ー・" for ch in text):
+            return False  # 非纯片假名（平假名/汉字/数字/字母/符号混入）
         if len(text) <= 4 and any(ch in "ァィゥェォッャュョ" for ch in text):
             return False  # 短小写假名拟声（パシャッ/びゅるる）
         if re.search(r"(.)\1{2,}", text):
@@ -250,7 +249,8 @@ def extract_terms_from_tokens(
 
     Returns:
         (final_terms, stats)：final_terms 为 [(src, freq, category), ...]，
-        category ∈ {固有名詞, 片假名普通名词, 汉字词(白名单/字典), 字母组合, 复合词, 复合词(待审)}；
+        category ∈ {固有名詞, 虚构专名, 片假名普通名词, 汉字词(白名单/字典), 字母组合,
+        复合词, 复合词(待审), 复合词共用token}；
         stats 含 汉字丢弃/黑名单丢弃/低频假名固有名詞丢弃/组合覆盖剔除/已有字典跳过/复合词送审/低紧密度丢弃；
         _compound_review 键为 Class_B 待审清单明细（list，非计数键）。
     """
@@ -320,7 +320,7 @@ def extract_terms_from_tokens(
             comp_counter[key] += 1
             comp_parts.setdefault(key, [s1, s2, s3])
 
-    # 组合过滤 + 四维特征分类器：freq≥2、非拟声、非黑名单、无 H 词成分；
+    # 组合过滤 + 四维特征分类器：freq≥3、非拟声、非黑名单、无 H 词成分；
     # Class_A/keep 收录、Class_B 降级收录（待审词不限量，仅日志提示，用户决策）、低紧密度 PMI<4 丢弃
     comp_final: List[Tuple[str, int, str]] = []
     comp_review: List[Tuple[str, int, float]] = []  # Class_B 待审清单（已收录，仅日志提示）
@@ -404,12 +404,17 @@ def extract_terms_from_tokens(
             stats["汉字丢弃"] += 1
 
     # 未登录虚构专名通道（tag None）：分词词典外的专名（コスタリア/郁良 类）收录；
-    # 片假名 freq≥2；纯汉字门槛 freq≥3（多次元/別名義 类常用词 freq2 置信度低，滤）
+    # 片假名 freq≥2；纯汉字门槛 freq≥3（多次元/別名義 类常用词 freq2 置信度低，滤；
+    # 注意纯汉字高频常用词若分词意外 tag None 仍可能误收，属既定权衡）
     for w, c in oov_counter.items():
         min_freq = 3 if all("\u4e00" <= ch <= "\u9fff" for ch in w) else 2
         if c < min_freq or w in ban or w in H_WORDS_LIST:
             continue
         _add(w, c, "虚构专名")
+    if oov_counter:
+        LOGGER.debug(
+            f"[GenDic][terms] 未登录虚构专名通道：候选 {len(oov_counter)} 个，收录 {stats['虚构专名']} 个"
+        )
 
     # 共用 token 聚合（用户决策）：成分 token 出现在 ≥2 个复合词 → 提取为术语（未收录时），
     # 且共享该 token 的复合词降级为「复合词(待审)」（去冗余，共用 token 代表公共词根）。

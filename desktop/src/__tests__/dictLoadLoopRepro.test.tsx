@@ -25,6 +25,12 @@ vi.mock("../lib/api/general", () => ({
   fetchJob: vi.fn(),
 }));
 
+// 字典解析走后端 parse 接口，测试中替换为本地桩，避免真实网络请求
+vi.mock("../components/dict/dictUtils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/dict/dictUtils")>();
+  return { ...actual, parseDictContent: vi.fn().mockResolvedValue([]) };
+});
+
 import {
   fetchProjectDictionaryManager,
   fetchCommonDictionaryManager,
@@ -87,7 +93,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  // 仅清调用记录，不清模块 mock 实现（restoreAllMocks 会清掉 dictUtils 桩的 mockResolvedValue）
+  vi.clearAllMocks();
   setAppState("activeProjectId", null);
 });
 
@@ -97,8 +104,8 @@ describe("加载循环检测", () => {
     await new Promise((r) => setTimeout(r, 500));
     const n1 = vi.mocked(fetchProjectDictionaryManager).mock.calls.length;
     const n2 = vi.mocked(fetchCommonDictionaryManager).mock.calls.length;
-    console.log(`[COUNT] 500ms 内 project 加载调用: ${n1}, common 加载调用: ${n2}`);
-    // 正常情况：初始加载 1 次；循环 bug 会达到几十上百次
-    expect(n1).toBeLessThan(5);
+    // 正常情况：初始加载各 1 次；untrack 修复前循环 bug 会达到几十上百次
+    expect(n1).toBe(1);
+    expect(n2).toBe(1);
   });
 });

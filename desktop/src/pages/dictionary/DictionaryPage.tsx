@@ -291,7 +291,7 @@ export function DictionaryPage() {
     }
   }
 
-  // 后端重启窗口的加载失败自动重试（指数退避，避免 RESET/REFUSED 后字典页停留空态需手动刷新）
+  // 后端重启窗口的加载失败自动重试（单次固定延时 600ms，避免 RESET/REFUSED 后字典页停留空态需手动刷新）
   const LOAD_RETRY_DELAY_MS = [600];
   // 加载轮次序列号：仅接受最新一轮，切项目/卸载后过期链直接丢弃，避免旧链写回污染新状态
   let loadSeq = 0;
@@ -311,11 +311,15 @@ export function DictionaryPage() {
   }
 
   async function loadData() {
+    // 捕获发起轮次：写回前校验 disposed/mySeq，丢弃切项目/卸载后的陈旧加载，避免污染新状态
+    const mySeq = loadSeq;
     await doAutoSave();
     setLoading(true);
     try {
+      if (disposed || mySeq !== loadSeq) return;
       if (!pid()) {
         const res = await fetchCommonDictionaryManager();
+        if (disposed || mySeq !== loadSeq) return;
         setData(null);
         setCommonData(res);
         return;
@@ -331,6 +335,7 @@ export function DictionaryPage() {
         fetchProjectDictionaryManager(pid()!, getActiveConfigFileName()),
         fetchCommonDictionaryManager().catch(() => null),
       ]);
+      if (disposed || mySeq !== loadSeq) return;
       setData(projRes);
       setCommonData(commRes);
       // 自动选择第一个文件
@@ -339,6 +344,7 @@ export function DictionaryPage() {
       if ((files.length > 0 || commFiles.length > 0) && !selectedFile()) {
         const first = files.length > 0 ? files[0] : commFiles[0];
         const firstKey = `${activeTab()}_dict:${first}`;
+        if (disposed || mySeq !== loadSeq) return;
         setSelectedFile(firstKey);
         selectFile(firstKey);
       }

@@ -498,6 +498,25 @@ class TermsClassifierTests(unittest.TestCase):
         terms, _ = _extract(tokens)
         self.assertNotIn("ドキドキ", [t[0] for t in terms])
 
+    def test_fictional_proper_mixed_ascii_rejected(self) -> None:
+        # 混入数字/全角符号/字母的伪专名（ノ2/％コス/AVコス 类）不作为虚构专名
+        self.assertFalse(_is_fictional_proper("ノ2"))
+        self.assertFalse(_is_fictional_proper("％コス"))
+        self.assertFalse(_is_fictional_proper("AVコス"))
+
+    def test_fictional_proper_han_oov_freq_gate(self) -> None:
+        # 纯汉字未登录：freq2 不收录、freq3 收录（多次元/別名義 类常用词 freq2 置信度低）
+        tokens2 = _tokens(
+            ("郁良", None), ("郁良", None), *[("です", "助動詞")] * 300,
+        )
+        terms2, _ = _extract(tokens2)
+        self.assertNotIn("郁良", [t[0] for t in terms2])
+        tokens3 = _tokens(
+            ("郁良", None), ("郁良", None), ("郁良", None), *[("です", "助動詞")] * 300,
+        )
+        terms3, _ = _extract(tokens3)
+        self.assertIn("郁良", [t[0] for t in terms3])
+
     def test_adjacency_entropy_min(self) -> None:
         # 固定搭配：左右邻词单一 → 熵低
         tokens = [("ロール", "名詞-普通名詞-一般"), ("プレイ", "名詞-普通名詞-一般"), ("を", "助詞-格助詞")] * 4
