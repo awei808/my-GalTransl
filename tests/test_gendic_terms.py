@@ -776,6 +776,17 @@ class TermsContextTests(unittest.TestCase):
             ["「ようこそ。", "ここは俺の部屋だ。」", "では続ける", "…そして"],
         )
 
+    def test_split_sentences_uses_n_symbol_literal_escaped_newlines(self) -> None:
+        # n_symbol 复用：字面转义串（galgame 脚本常见）也作为断句边界
+        self.assertEqual(
+            _split_sentences("第一句。\\n第二句。\\n第三句。"),
+            ["第一句。", "第二句。", "第三句。"],
+        )
+        self.assertEqual(
+            _split_sentences("第一句。\\r\\n第二句。\\r\\n第三句。"),
+            ["第一句。", "第二句。", "第三句。"],
+        )
+
     def test_find_contexts_returns_full_sentence_from_multisentence_message(self) -> None:
         # 缺陷 B：多句 message 应切出含词的完整句，而非整段 80 字截断
         json_list = [{"message": "「ようこそ。ここは俺の部屋だ。」"}]
@@ -785,6 +796,9 @@ class TermsContextTests(unittest.TestCase):
         # 缺陷 C（顺带）：裸 \n 换行归一，不污染示例句
         json_list = [{"message": "第一句。\n第二句。\r\n第三句。"}]
         self.assertEqual(GenDic._find_contexts("第二", json_list, max_samples=1), ["第二句。"])
+        # n_symbol 复用：字面转义串换行同样归一
+        json_list2 = [{"message": "第一句。\\r\\n第二句。\\r\\n第三句。"}]
+        self.assertEqual(GenDic._find_contexts("第二", json_list2, max_samples=1), ["第二句。"])
 
     def test_find_contexts_truncates_overlong_sentence_keeping_word(self) -> None:
         # 超长句（>max_len）：从词后最近的顿号处截断，词必须保留

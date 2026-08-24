@@ -12,7 +12,7 @@ from GalTransl.i18n import get_text, GT_LANG
 from sys import exit
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Dictionary import CGptDict
-from GalTransl.Utils import contains_katakana, is_all_chinese, decompress_file_lzma
+from GalTransl.Utils import contains_katakana, is_all_chinese, decompress_file_lzma, get_n_symbol
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import (
     GENDIC_PROMPT,
@@ -106,11 +106,15 @@ _SENT_END_RE = re.compile(r"(?<=[。！？!?」』）】])(?!」|』|）|】)")
 def _split_sentences(text: str) -> List[str]:
     """按换行与句末标点将文本切分为句子列表（空白句丢弃）。
 
+    换行识别复用 get_n_symbol（字面转义串 \\r\\n/\\n 与真实换行均覆盖，不手写换行规则）；
     权衡：闭引号后紧跟非闭引号字符时切分（如「こんにちは。」と言った。→ 引语完整 + と言った。），
     保证引语内术语的示例句完整；引语助词部分几乎不含术语，影响可忽略。
     """
     out: List[str] = []
-    for line in re.split(r"[\r\n]+", text):
+    normalized = text
+    for ns in get_n_symbol(text):
+        normalized = normalized.replace(ns, "\n")
+    for line in normalized.split("\n"):
         line = line.strip()
         if not line:
             continue
