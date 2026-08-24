@@ -98,6 +98,54 @@ def _is_suspicious_note(note: str) -> bool:
     return bool(re.search(r"疑似\s*[HhＨ]", note)) or "疑似非术语" in note
 
 
+# 句子切分：按换行/句末标点断句；「。」后紧跟闭引号（。」等）不切，保持引号归属。
+# 省略号不切，避免切断「そ…そんな」类句中省略。
+_SENT_END_RE = re.compile(r"(?<=[。！？!?」』）】])(?!」|』|）|】)")
+
+
+def _split_sentences(text: str) -> List[str]:
+    """按换行与句末标点将文本切分为句子列表（空白句丢弃）。
+
+    权衡：闭引号后紧跟非闭引号字符时切分（如「こんにちは。」と言った。→ 引语完整 + と言った。），
+    保证引语内术语的示例句完整；引语助词部分几乎不含术语，影响可忽略。
+    """
+    out: List[str] = []
+    for line in re.split(r"[\r\n]+", text):
+        line = line.strip()
+        if not line:
+            continue
+        for s in _SENT_END_RE.split(line):
+            s = s.strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _anchor_positions(word: str, sentences: List[str], max_spans: int = 3) -> List[str]:
+    """为每条例句追加词出现位置标注 `[a-b,c-d,…]`（0 起、不含末位，至多 max_spans 处），供 AI 消歧与 grounding 锚定。
+
+    位置为相对传入句子文本（可能已被 _find_contexts 截断）的字符区间，非原文全局位置（已知折衷）；
+    标注后缀不计入 _find_contexts 的 max_len（该参数仅约束句子本体）。
+    """
+    out: List[str] = []
+    for s in sentences:
+        spans: List[str] = []
+        start = 0
+        while len(spans) < max_spans:
+            pos = s.find(word, start)
+            if pos < 0:
+                break
+            spans.append(f"{pos}-{pos + len(word)}")
+            start = pos + len(word)
+        if spans:
+            if s.find(word, start) >= 0:
+                spans.append("…")
+            out.append(f"{s}[{','.join(spans)}]")
+        else:
+            out.append(s)
+    return out
+
+
 # 四维特征分类器（复合词收录，数据标定自小粥3：PMI 3.2-12.1 中位 8.1 / 邻接熵 0-2.45 /
 # 上下文多样性 0.26-1.0 / 词频比 0.004-0.239）。Class_C（风格锚定）按用户指示未实现。
 # 当前实现接入三维（PMI/上下文多样性/词频比）；邻接熵维度见 _adjacency_entropy_min，待接入。
@@ -899,19 +947,40 @@ class GenDic(BaseEngine):
         return final_terms, stats, set()
 
     @staticmethod
-    def _find_contexts(word: str, json_list: list, max_samples: int = 3) -> List[str]:
-        """返回含词的前 max_samples 个完整句（≤80 字/句，去重），无则空列表。"""
+    def _find_contexts(word: str, json_list: list, max_samples: int = 3, max_len: int = 150) -> List[str]:
+        """返回含词的前 max_samples 个完整句（按句末标点/换行切分，去重），无则空列表。
+
+        Args:
+            max_len: 完整句超过该字符数时，从词后最近的「、/，」处截断；词落在截断窗外则跳过该句。
+            仅约束句子本体，锚点标注后缀不计入。
+
+        说明：仅扫 message 字段（设计）——name 为说话人字段，terms 模式人名不收录，
+        词若只出现在 name 中本就无收录价值，不提供例句上下文。
+        """
         seen: Set[str] = set()
         out: List[str] = []
         for item in json_list:
             text = item.get("message", "")
-            if word in text:
-                s = text.replace("\r\n", " ").strip()[:80]
-                if s not in seen:
+            if word not in text:
+                continue
+            for s in _split_sentences(text):
+                if word not in s:
+                    continue
+                if len(s) > max_len:
+                    pos = s.find(word)
+                    if pos + len(word) > max_len:
+                        continue
+                    cut = s.find("、", pos + len(word))
+                    if cut < 0:
+                        cut = s.find("，", pos + len(word))
+                    if cut < 0 or cut >= max_len:
+                        cut = max_len
+                    s = s[:cut].strip()
+                if s and s not in seen:
                     seen.add(s)
                     out.append(s)
                 if len(out) >= max_samples:
-                    break
+                    return out
         return out
 
     @staticmethod
@@ -1068,14 +1137,20 @@ class GenDic(BaseEngine):
             if getattr(self, "gendic_context", True):
                 for w, _, _ in ordered:
                     ctx_cache[w] = self._find_contexts(w, json_list, samples)
+                with_ctx = sum(1 for v in ctx_cache.values() if v)
+                LOGGER.debug(f"[GenDic][terms] 上下文例句收集：{with_ctx}/{len(ordered)} 词找到例句")
 
             def _ctx_hint(batch: list) -> str:
                 if not getattr(self, "gendic_context", True):
                     return ""
-                return "\n".join(
-                    f"{i}. {w}：{'｜'.join(ctx_cache.get(w, []))}" if ctx_cache.get(w) else f"{i}. {w}"
-                    for i, (w, _, _) in enumerate(batch, 1)
-                )
+                lines = []
+                for i, (w, _, _) in enumerate(batch, 1):
+                    samples = ctx_cache.get(w) or []
+                    if not samples:
+                        lines.append(f"{i}. {w}")
+                    else:
+                        lines.append(f"{i}. {w}：{'｜'.join(_anchor_positions(w, samples))}")
+                return "\n".join(lines)
 
             sem = asyncio.Semaphore(self.wokers)
             results: Dict[str, Tuple[str, str]] = {}

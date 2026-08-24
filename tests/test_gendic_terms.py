@@ -6,6 +6,7 @@ gendic 配置读取（internals 段展平）与默认模板。
 """
 
 import os
+import re
 import tempfile
 import unittest
 import uuid
@@ -27,6 +28,8 @@ from GalTransl.Backend.GenDic import (
     _context_diversity,
     _classify_compound,
     _find_digit_alpha_abbrs,
+    _split_sentences,
+    _anchor_positions,
 )
 
 def _mkdtemp_writable(prefix: str) -> str:
@@ -766,6 +769,57 @@ class TermsContextTests(unittest.TestCase):
         json_list = [{"message": f"語{i}。"} for i in range(12)]
         self.assertEqual(len(GenDic._find_contexts("語", json_list, max_samples=10)), 10)
 
+    def test_split_sentences_by_end_markers_and_newlines(self) -> None:
+        # 句末标点断句；换行归一（\r\n 与 \n）；省略号不切
+        self.assertEqual(
+            _split_sentences("「ようこそ。ここは俺の部屋だ。」\r\nでは続ける\n…そして"),
+            ["「ようこそ。", "ここは俺の部屋だ。」", "では続ける", "…そして"],
+        )
+
+    def test_find_contexts_returns_full_sentence_from_multisentence_message(self) -> None:
+        # 缺陷 B：多句 message 应切出含词的完整句，而非整段 80 字截断
+        json_list = [{"message": "「ようこそ。ここは俺の部屋だ。」"}]
+        self.assertEqual(GenDic._find_contexts("部屋", json_list, max_samples=1), ["ここは俺の部屋だ。」"])
+
+    def test_find_contexts_normalizes_newlines(self) -> None:
+        # 缺陷 C（顺带）：裸 \n 换行归一，不污染示例句
+        json_list = [{"message": "第一句。\n第二句。\r\n第三句。"}]
+        self.assertEqual(GenDic._find_contexts("第二", json_list, max_samples=1), ["第二句。"])
+
+    def test_find_contexts_truncates_overlong_sentence_keeping_word(self) -> None:
+        # 超长句（>max_len）：从词后最近的顿号处截断，词必须保留
+        long_text = "あ" * 80 + "、用語、" + "い" * 90 + "。"
+        ctx = GenDic._find_contexts("用語", [{"message": long_text}], max_samples=1)
+        self.assertEqual(len(ctx), 1)
+        self.assertIn("用語", ctx[0])
+        self.assertLessEqual(len(ctx[0]), 150)
+
+    def test_find_contexts_skips_overlong_sentence_when_word_outside_window(self) -> None:
+        # 超长句且词落在截断窗口（150 字）之外 → 该句跳过
+        long_text = "あ" * 80 + "、" + "い" * 90 + "、用語。"
+        self.assertEqual(GenDic._find_contexts("用語", [{"message": long_text}], max_samples=1), [])
+
+    def test_anchor_positions_appends_word_span(self) -> None:
+        # 缺陷 D：例句尾标注词首现起止位置 [start-end]（0 起、不含 end）
+        self.assertEqual(
+            _anchor_positions("サキュバス", ["サキュバスが現れた。", "彼はサキュバスを避けた。"]),
+            ["サキュバスが現れた。[0-5]", "彼はサキュバスを避けた。[2-7]"],
+        )
+
+    def test_anchor_positions_falls_back_when_word_absent(self) -> None:
+        self.assertEqual(_anchor_positions("無い語", ["別の文。"]), ["別の文。"])
+
+    def test_anchor_positions_lists_all_spans_with_cap(self) -> None:
+        # 多处出现全标注；超过 max_spans 处以 … 收尾
+        self.assertEqual(
+            _anchor_positions("サキュバス", ["サキュバスとサキュバスが現れた。"]),
+            ["サキュバスとサキュバスが現れた。[0-5,6-11]"],
+        )
+        self.assertEqual(
+            _anchor_positions("語", ["語。語。語。語。語。"], max_spans=3),
+            ["語。語。語。語。語。[0-1,2-3,4-5,…]"],
+        )
+
 
 class TermsPromptFormatTests(unittest.TestCase):
     def test_prompt_placeholders_replaceable(self) -> None:
@@ -777,6 +831,18 @@ class TermsPromptFormatTests(unittest.TestCase):
         self.assertNotIn("{context_hint}", prompt)
         self.assertIn("1. フィギュア", prompt)
         self.assertIn("彼女のフィギュアを撮影する。", prompt)
+
+    def test_prompt_documents_position_anchor(self) -> None:
+        # 缺陷 D：上下文块说明带位置锚定格式（可多段，至多 3 处）
+        self.assertIn("[a-b,c-d,…]", GENDIC_TERMS_PROMPT)
+        self.assertIn("出现位置", GENDIC_TERMS_PROMPT)
+
+    def test_prompt_context_block_removable_when_disabled(self) -> None:
+        # context 关闭时：llm_translate_terms_batch 用正则整段移除上下文块（标题行含锚定说明也必须匹配）
+        prompt = re.sub(r"## 上下文提示[^\n]*\n\{context_hint\}\n\n", "", GENDIC_TERMS_PROMPT)
+        self.assertNotIn("{context_hint}", prompt)
+        self.assertNotIn("## 上下文提示", prompt)
+        self.assertIn("## 待翻译术语", prompt)
 
 
 class TermsConfigTests(unittest.TestCase):
