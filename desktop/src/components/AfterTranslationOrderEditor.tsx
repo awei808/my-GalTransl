@@ -1,11 +1,10 @@
-import { createSignal, onMount } from "solid-js";
+import { createEffect, createSignal, For, onMount } from "solid-js";
 import { toast } from "../stores/toastStore";
 import {
   AFTER_TRANSLATION_BACKENDS,
   AfterTranslationEntry,
   FIX_MODE_OPTIONS,
   FixConfig,
-  FixEntry,
   createFixEntry,
   isFixEntry,
 } from "../lib/afterTranslation";
@@ -46,6 +45,24 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
 
   onMount(loadProblemTypes);
 
+  // 滚动位置兜底：父组件 config signal 每次 setValue 都会重渲染，内联 .map 会整体
+  // 替换 stage-item 节点导致 .after-trans-list 的 scrollTop 复位。onScroll 记录用户
+  // 实际滚动位置，value 变化后（DOM 已更新）用 rAF 恢复，避免勾选/输入时滚动条跳顶。
+  let listRef: HTMLDivElement | undefined;
+  let lastScrollTop = 0;
+
+  createEffect(() => {
+    props.value;
+    if (listRef) {
+      const top = lastScrollTop;
+      requestAnimationFrame(() => {
+        if (listRef && listRef.scrollTop === 0 && top > 0) {
+          listRef.scrollTop = top;
+        }
+      });
+    }
+  });
+
   const entryKey = (entry: AfterTranslationEntry): string =>
     typeof entry === "string" ? entry : "fix";
 
@@ -78,23 +95,22 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
     props.onChange(next);
   }
 
-  function updateFixEntry(
-    target: FixEntry,
-    mutate: (cfg: FixConfig) => FixConfig,
-  ) {
+  // fix 条目唯一：直接命中 isFixEntry 即可。父组件每次重渲染会用 parseAfterTranslation
+  // 重建数组与 fix 对象引用，故不能用 entry === target 引用比较（必然为 false 导致改动丢失）。
+  function updateFixEntry(mutate: (cfg: FixConfig) => FixConfig) {
     props.onChange(
       props.value.map((entry) =>
-        isFixEntry(entry) && entry === target ? { fix: mutate(entry.fix) } : entry,
+        isFixEntry(entry) ? { fix: mutate(entry.fix) } : entry,
       ),
     );
   }
 
-  function handleModeChange(entry: FixEntry, mode: FixConfig["mode"]) {
-    updateFixEntry(entry, (cfg) => ({ ...cfg, mode }));
+  function handleModeChange(mode: FixConfig["mode"]) {
+    updateFixEntry((cfg) => ({ ...cfg, mode }));
   }
 
-  function handleTypeToggle(entry: FixEntry, name: string, checked: boolean) {
-    updateFixEntry(entry, (cfg) => {
+  function handleTypeToggle(name: string, checked: boolean) {
+    updateFixEntry((cfg) => {
       const types = checked
         ? [...cfg.types, name]
         : cfg.types.filter((t) => t !== name);
@@ -106,11 +122,18 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
   }
 
   return (
-    <div class="pipeline-stage-list after-trans-list">
-      {AFTER_TRANSLATION_BACKENDS.map((b) => {
-        const idx = orderIndex(b.key);
-        const entry = idx >= 0 ? props.value[idx] : undefined;
-        const fixEntry = entry !== undefined && isFixEntry(entry) ? entry : undefined;
+    <div
+      class="pipeline-stage-list after-trans-list"
+      ref={listRef}
+      onScroll={(e) => {
+        lastScrollTop = e.currentTarget.scrollTop;
+      }}
+    >
+      <For each={AFTER_TRANSLATION_BACKENDS}>
+        {(b) => {
+          const idx = orderIndex(b.key);
+          const entry = idx >= 0 ? props.value[idx] : undefined;
+          const fixEntry = entry !== undefined && isFixEntry(entry) ? entry : undefined;
         return (
           <div>
             <div class="pipeline-stage-item after-trans-item">
@@ -141,7 +164,7 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
                         type="radio"
                         name={`fix-mode-${idx}`}
                         checked={fixEntry.fix.mode === m.value}
-                        onChange={() => handleModeChange(fixEntry, m.value)}
+                        onChange={() => handleModeChange(m.value)}
                       />
                       {m.label}
                     </label>
@@ -168,7 +191,7 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
                           type="checkbox"
                           checked={fixEntry.fix.types.includes(name)}
                           onChange={(e) =>
-                            handleTypeToggle(fixEntry, name, e.currentTarget.checked)
+                            handleTypeToggle(name, e.currentTarget.checked)
                           }
                         />
                         {name}
@@ -180,7 +203,8 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
             )}
           </div>
         );
-      })}
+        }}
+      </For>
     </div>
   );
 }
