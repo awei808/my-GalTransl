@@ -157,6 +157,13 @@ def build_br_issue_guide() -> str:
     )
 
 
+class _EmptyTokenPool:
+    """空令牌池占位：主 profile 不可用时保证基类 init_chatbot 不崩溃（不发任何请求）。"""
+
+    def get_available_token(self) -> list:
+        return []
+
+
 @register_engine("ForFixRound")
 class ForProblemFixRound(BaseProblemFixRound):
     """统一问题修复后端：按实例参数组合修复任意问题类型。
@@ -188,8 +195,25 @@ class ForProblemFixRound(BaseProblemFixRound):
             config: 项目配置对象。
             eng_type: 引擎标识（ForFixRound）。
             proxy_pool: 代理池对象，为 None 时不使用代理。
-            token_pool: API Token 池。
+            token_pool: API Token 池；为 None 时复用主翻译 profile 的 OpenAI 兼容端点。
         """
+        self._disabled_reason = ""
+        if token_pool is None:
+            # 直接实例化（测试/独立调用）未传池：按主 profile 自建，与其他调用路径一致
+            try:
+                token_pool = COpenAITokenPool(config, eng_type)
+            except Exception as e:
+                # 老项目缺 OpenAI-Compatible 段或 tokens 畸形等极端场景：降级禁用，不中断后处理
+                LOGGER.warning(
+                    f"{self._log_tag} 主翻译令牌池构建失败：{type(e).__name__}: {e}"
+                )
+                self._disabled_reason = "主翻译令牌池构建失败"
+                token_pool = _EmptyTokenPool()
+        if not getattr(token_pool, "get_available_token", lambda: [])():
+            # 空令牌池（无配置端点）与构建失败同口径：禁用并跳过请求，避免回退到本地端口默认值
+            if not self._disabled_reason:
+                self._disabled_reason = "未配置 OpenAI 兼容后端（请在「后端配置」页配置）"
+            LOGGER.warning(f"[{eng_type}] {self._disabled_reason}，将跳过问题修复请求")
         super().__init__(config, eng_type, proxy_pool, token_pool)
         # 不在 __init__ 回退 problemList：afterTranslation 调度路径总会先 set_fix_params，
         # 此时实例化白名单为空属正常过程，避免打印误导日志或误置 _disabled；
@@ -298,9 +322,10 @@ class ForProblemFixRound(BaseProblemFixRound):
         translist_hit: Optional[list] = None,
         translist_unhit: Optional[list] = None,
     ):
-        """修复轮入口：修复类型未配置（含手动执行未指定）时跳过，否则走基类稀疏修复流程。"""
-        if getattr(self, "_disabled", False) or not self._ensure_problem_types_configured():
-            LOGGER.warning(f"{self._log_tag} 修复类型未配置，跳过 {filename}")
+        """修复轮入口：修复类型未配置（含手动执行未指定）或后端未配置时跳过，否则走基类稀疏修复流程。"""
+        if self._disabled_reason or getattr(self, "_disabled", False) or not self._ensure_problem_types_configured():
+            reason = self._disabled_reason or "修复类型未配置"
+            LOGGER.warning(f"{self._log_tag} 跳过 {filename}：{reason}")
             return trans_list
         return await super().batch_translate(
             filename,

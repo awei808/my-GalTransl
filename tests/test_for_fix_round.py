@@ -10,6 +10,7 @@
   - __init__ 白名单回退：未指定类型时回退 problemAnalyze.problemList 全部类型
   - 模式 B 不注入术语表：_build_batch_gptdict 返回空串
 """
+import asyncio
 import os
 import sys
 import tempfile
@@ -342,6 +343,61 @@ class LazyFallbackTests(unittest.TestCase):
         t.set_fix_params([])
         self.assertTrue(t._ensure_problem_types_configured())
         self.assertFalse(t._include_src)
+
+
+class TokenPoolFallbackTests(unittest.TestCase):
+    """验证 ForFixRound 复用主翻译 profile 令牌池、不回退本地端口默认值。"""
+
+    def test_token_pool_none_without_endpoint_disables(self) -> None:
+        # 无 OpenAI 兼容端点配置时，token_pool=None 兜底构建出空池，应置 _disabled_reason
+        config = _make_config(tempfile.mkdtemp(prefix="fixr_"))
+        backend = ForProblemFixRound(config, "ForFixRound", None, None)
+        self.assertTrue(
+            backend._disabled_reason,
+            "无可用端点时应在 __init__ 置 _disabled_reason，而非回退本地端口",
+        )
+
+    def test_token_pool_none_with_endpoint_stays_enabled(self) -> None:
+        # 传入有效令牌池时，不应置 _disabled_reason
+        config = _make_config(tempfile.mkdtemp(prefix="fixr_"))
+        fake_pool = SimpleNamespace(
+            get_available_token=lambda: [
+                SimpleNamespace(token="x", domain="https://api.openai.com", maskToken=lambda: "***")
+            ]
+        )
+        backend = ForProblemFixRound(config, "ForFixRound", None, fake_pool)
+        self.assertEqual(backend._disabled_reason, "")
+
+    def test_batch_translate_skips_when_no_endpoint(self) -> None:
+        # 无端点（_disabled_reason 已置）时 batch_translate 直接跳过，不发请求
+        config = _make_config(tempfile.mkdtemp(prefix="fixr_"))
+        backend = ForProblemFixRound(config, "ForFixRound", None, None)
+        backend.set_fix_params([CProblemType.残留日文])
+        called = {"llm": False}
+
+        async def _fake_call_llm(*a, **k):
+            called["llm"] = True
+            return "", None
+
+        backend._call_llm = _fake_call_llm
+        trans_list = [make_tran(1, "残留日文：です", "译1")]
+
+        result = asyncio.run(
+            backend.batch_translate("f.json", "c.json", trans_list, 1)
+        )
+        self.assertFalse(called["llm"])
+        self.assertIs(result, trans_list)
+
+    def test_token_pool_build_failure_falls_back_to_empty(self) -> None:
+        # COpenAITokenPool 构建抛异常（缺段或 tokens 畸形）时，应进入 _EmptyTokenPool
+        # 兜底：__init__ 不崩（for token in [] 可迭代），且置 _disabled_reason 跳过
+        config = _make_config(tempfile.mkdtemp(prefix="fixr_"))
+        with patch(
+            "GalTransl.Backend.ForFixRound.COpenAITokenPool",
+            side_effect=KeyError("token 键缺失"),
+        ):
+            backend = ForProblemFixRound(config, "ForFixRound", None, None)
+        self.assertEqual(backend._disabled_reason, "主翻译令牌池构建失败")
 
 
 if __name__ == "__main__":
