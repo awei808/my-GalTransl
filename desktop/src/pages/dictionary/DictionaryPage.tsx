@@ -29,6 +29,7 @@ import {
   parseDictContent,
   getFieldLabels,
   stripProjectDirMarker,
+  stripTabPrefix,
   condSemanticOf,
   applyCondSemantic,
   parseSearchPrefix,
@@ -45,7 +46,7 @@ import type {
   ConditionItem,
 } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
-import { AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
+import { runPageAutosave, AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
 
 const TABS: { key: string; label: string }[] = [
   { key: "pre", label: "预处理" },
@@ -77,7 +78,9 @@ export function DictionaryPage() {
   let disposed = false;
   const mountPid = appState.activeProjectId;
   // 配置名快照：挂载时回退 config.yaml；openProject 的配置名探测完成后
-  //（configNameDetecting 变 false）更新为真实配置名，避免卸载自动保存用错配置名写盘
+  //（configNameDetecting 变 false）更新为真实配置名，避免卸载自动保存用错配置名写盘。
+  // 边界：探测中（configNameDetecting 仍为 true）卸载会以回退的 config.yaml 落盘，
+  // config.inc.yaml 项目此时会写错配置；该窗口仅探测请求数毫秒，接受并靠后续手动保存兜底
   let configNameSnapshot = getActiveConfigFileName();
   createEffect(() => {
     if (!appState.configNameDetecting) {
@@ -85,9 +88,134 @@ export function DictionaryPage() {
     }
   });
 
+  // 人名表是否含未落盘编辑（每键不再落盘，切换/卸载时统一保存）
+  let namesDirty = false;
+
+  // 保存序列化：同一页面所有落盘操作排队串行，避免并发双写同一文件
+  let pendingSaves = 0;
+  let saveChain: Promise<unknown> = Promise.resolve();
+
+  function enqueueSave(task: () => Promise<unknown>): Promise<unknown> {
+    // 入队时同步递增在途计数：waitForPendingSave 在入队后立即调用时也能看到在途任务，
+    // 避免递增延迟到微任务导致漏检并发双写
+    pendingSaves++;
+    const run = saveChain.then(async () => {
+      try {
+        return await task();
+      } finally {
+        pendingSaves--;
+      }
+    });
+    saveChain = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
+  /** 等待在途保存全部完成（卸载/切换前调用，带超时兜底，避免双写或漏写） */
+  async function waitForPendingSave(): Promise<void> {
+    const deadline = Date.now() + 3000;
+    while (pendingSaves > 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  }
+
+  // 卸载自动保存：切页/切项目离开时兜底落盘（对齐全书 runPageAutosave 统一骨架）。
+  // 同步段一次性快照保存目标与数据，异步落盘全程用快照，不读运行时全局状态。
+  type UnmountSnapshot = {
+    dirtyDict: boolean;
+    dirtyNames: boolean;
+    fileKey: string | null;
+    text: string;
+    isProjectFile: boolean;
+    pid: string | null;
+    configName: string;
+    nameEntries: NameEntry[];
+  };
+
+  function captureUnmountSnapshot(): UnmountSnapshot {
+    const key = selectedFile();
+    let dirtyDict = false;
+    let text = "";
+    let isProjectFile = false;
+    if (key) {
+      text = draftText();
+      const fileKey = stripTabPrefix(key);
+      isProjectFile = fileKey.includes(PROJECT_DIR_MARKER);
+      const snapshot = isProjectFile ? data() : commonData();
+      const snapshotEntry = snapshot?.dict_contents?.[fileKey];
+      dirtyDict = !(
+        snapshotEntry !== undefined &&
+        normForCompare(snapshotEntry.lines.join("\n")) === normForCompare(text)
+      );
+    }
+    return {
+      dirtyDict,
+      dirtyNames: namesDirty && nameEntries().length > 0,
+      fileKey: key,
+      text,
+      isProjectFile,
+      pid: mountPid,
+      configName: configNameSnapshot,
+      nameEntries: nameEntries(),
+    };
+  }
+
+  /** 卸载落盘：按快照保存字典文件与人名表，任一步失败返回 false（由骨架提示）。 */
+  function saveUnmountSnapshot(snap: UnmountSnapshot): Promise<boolean> {
+    // 入队串行：即使 waitForPendingSave 超时返回，本保存也排在在途任务之后，避免并发双写
+    return enqueueSave(() => saveUnmountSnapshotInner(snap)).then(
+      (ok) => ok as boolean,
+      () => false,
+    );
+  }
+
+  async function saveUnmountSnapshotInner(snap: UnmountSnapshot): Promise<boolean> {
+    let ok = true;
+    if (snap.dirtyDict && snap.fileKey) {
+      const fileKey = stripTabPrefix(snap.fileKey);
+      try {
+        if (snap.pid && snap.isProjectFile) {
+          await saveProjectDictionaryFile(snap.pid, {
+            config_file_name: snap.configName,
+            file_key: fileKey,
+            content: snap.text,
+          });
+        } else {
+          await saveCommonDictionaryFile({ filename: fileKey, content: snap.text });
+        }
+      } catch (e) {
+        sendLog(`自动保存失败: ${e}`, "error");
+        ok = false;
+      }
+    }
+    if (snap.dirtyNames && snap.pid) {
+      try {
+        await saveNameTable(snap.pid, snap.nameEntries);
+      } catch (e) {
+        sendLog(`自动保存人名失败: ${e}`, "error");
+        ok = false;
+      }
+    }
+    return ok;
+  }
+
   onCleanup(() => {
     disposed = true;
-    doAutoSave(mountPid, configNameSnapshot);
+    const snap = captureUnmountSnapshot();
+    void runPageAutosave({
+      waitForReady: waitForPendingSave,
+      isDirty: () => snap.dirtyDict || snap.dirtyNames,
+      save: () => saveUnmountSnapshot(snap),
+      successMessage: () => {
+        const parts: string[] = [];
+        if (snap.dirtyDict && snap.fileKey) parts.push(displayFileName(snap.fileKey));
+        if (snap.dirtyNames) parts.push("人名表");
+        return parts.length > 0 ? `已自动保存 ${parts.join("、")}` : "";
+      },
+      failMessage: () => "自动保存失败",
+    });
   });
 
   function onDictChange(value: string) {
@@ -99,16 +227,27 @@ export function DictionaryPage() {
     return s.replace(/\r/g, "");
   }
 
-  async function doAutoSave(targetPid?: string | null, targetConfigName?: string) {
-    // 入口快照 key/text/config：全程使用快照，避免 await 让出后读到切换文件/项目后的新状态
+  /** 主动保存当前字典文件（切 tab/切文件/加载前等切换场景调用，串行执行防并发双写） */
+  function doAutoSave(targetPid?: string | null, targetConfigName?: string): Promise<void> {
+    // 调用时同步捕获保存目标快照：切项目 effect 随后会清空 selectedFile/draftText，
+    // 若延迟到队列执行再读取会读到已清空的状态导致漏保存
     const key = selectedFile();
-    if (!key) return;
     const text = draftText();
     const configName = targetConfigName ?? getActiveConfigFileName();
+    return enqueueSave(() => doAutoSaveInner(key, text, configName, targetPid)).then(() => {});
+  }
+
+  async function doAutoSaveInner(
+    key: string,
+    text: string,
+    configName: string,
+    targetPid?: string | null,
+  ) {
+    if (!key) return;
     try {
       // 剥离 "{tab}_dict:" 前缀: "gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"
       // 公共字典: "gpt_dict:文件名.txt" → "文件名.txt"
-      const fileKey = key.includes(":") ? key.split(":")[1] : key;
+      const fileKey = stripTabPrefix(key);
       const isProjectFile = fileKey.includes(PROJECT_DIR_MARKER);
       // 显式指定 targetPid 时用于项目切换场景保存旧项目；null/undefined 回退当前 pid()
       const pidToUse = targetPid ?? pid();
@@ -145,18 +284,43 @@ export function DictionaryPage() {
         }
       }
     } catch (e) {
+      sendLog(`自动保存失败: ${e}`, "error");
       toast.error(`自动保存失败: ${getErrorMessage(e)}`);
     }
   }
 
-  async function doAutoSaveNames(showToast = true) {
-    if (!pid()) return;
+  /** 保存人名表；targetPid 显式指定时用于切项目/卸载保存旧项目（此时不清 namesDirty）。 */
+  function doAutoSaveNames(targetPid?: string | null, showToast = true): Promise<void> {
+    // 调用时同步捕获发送快照：入队延迟执行期间用户可能继续编辑，须以发送时数据落盘
+    const sentNames = nameEntries();
+    return enqueueSave(() => doAutoSaveNamesInner(sentNames, targetPid, showToast)).then(() => {});
+  }
+
+  async function doAutoSaveNamesInner(
+    sentNames: NameEntry[],
+    targetPid?: string | null,
+    showToast = true,
+  ) {
+    const pidToUse = targetPid ?? pid();
+    if (!pidToUse) return;
     try {
-      await saveNameTable(pid()!, nameEntries());
+      await saveNameTable(pidToUse, sentNames);
+      // 仅在保存期间无新编辑时才清 dirty：比对发送快照与当前数组引用（setNameEntries 恒创建新数组），
+      // 保存在途期间继续输入时保留 dirty，避免新编辑被误判为已落盘
+      if (targetPid === undefined && sentNames === nameEntries()) namesDirty = false;
       if (showToast) toast.info("已自动保存人名表", AUTOSAVE_TOAST_DURATION);
     } catch (e) {
       sendLog(`自动保存人名失败: ${e}`, "error");
       if (showToast) toast.error(`自动保存人名表失败: ${getErrorMessage(e)}`);
+    }
+  }
+
+  /** 切换 tab 前保存当前编辑：字典文件始终保存；从人名 tab 切出时额外保存人名表 */
+  async function saveBeforeSwitch() {
+    if (activeTab() === "names") {
+      if (namesDirty) await doAutoSaveNames();
+    } else {
+      await doAutoSave();
     }
   }
 
@@ -313,6 +477,8 @@ export function DictionaryPage() {
   async function loadData() {
     // 捕获发起轮次：写回前校验 disposed/mySeq，丢弃切项目/卸载后的陈旧加载，避免污染新状态
     const mySeq = loadSeq;
+    // 组件已卸载时直接放弃：避免用运行时（可能已切换）的 pid 把旧项目草稿保存到新项目
+    if (disposed || mySeq !== loadSeq) return;
     await doAutoSave();
     setLoading(true);
     try {
@@ -387,6 +553,8 @@ export function DictionaryPage() {
       let finalStatus: string | null = null;
 
       while (true) {
+        // 切项目/卸载后放弃轮询，避免完成后用运行时（可能已切换）的 pid 把结果写到新项目
+        if (disposed) return;
         if (Date.now() - start > TIMEOUT_MS) {
           toast.error("人名提取超时");
           return;
@@ -394,6 +562,7 @@ export function DictionaryPage() {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL));
         try {
           const s = await fetchJob(jobId);
+          if (disposed) return;
           if (s.status === "completed" || s.status === "failed" || s.status === "cancelled") {
             finalStatus = s.status;
             break;
@@ -409,6 +578,7 @@ export function DictionaryPage() {
       }
 
       // 3. 从 name-table 接口读取实际结果
+      if (disposed) return;
       const tableRes = await fetchNameTable(pid()!);
       const names = tableRes.names ?? [];
       setNameEntries(names);
@@ -425,7 +595,7 @@ export function DictionaryPage() {
     const next = [...nameEntries()];
     next[index] = { ...next[index], [field]: value };
     setNameEntries(next);
-    doAutoSaveNames(false); // 键入即静默保存，避免每键 toast 刷屏；失焦时由 onBlur 提示
+    namesDirty = true; // 仅标记脏，切换 tab/切项目/卸载时统一保存
   }
 
   let _prevPid: string | null = null;
@@ -445,8 +615,12 @@ export function DictionaryPage() {
     untrack(() => {
       if (pidChanged) {
         // 项目切换：先用旧项目身份与旧配置名保存未落盘编辑（fire-and-forget，不阻塞切换），
-        // 再清空选中文件与草稿，避免残留旧项目状态污染新项目加载
-        doAutoSave(oldPid, oldConfigName);
+        // 再清空选中文件与草稿，避免残留旧项目状态污染新项目加载。
+        // 组件已卸载（onCleanup 的 runPageAutosave 已按挂载快照保存）时跳过，避免重复请求/toast
+        if (!disposed) {
+          doAutoSave(oldPid, oldConfigName);
+          if (namesDirty) doAutoSaveNames(oldPid, true);
+        }
         setSelectedFile(null);
         setDraftText("");
       }
@@ -463,7 +637,7 @@ export function DictionaryPage() {
   function selectFile(fileKey: string) {
     setSelectedFile(fileKey);
     // dict_contents 的 key 不带 "{tab}_dict:" 前缀，查表前剥离
-    const lookupKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+    const lookupKey = stripTabPrefix(fileKey);
     const content = data()?.dict_contents?.[lookupKey]
       ?? commonData()?.dict_contents?.[lookupKey];
     const text = content ? content.lines.join("\n") : "";
@@ -566,8 +740,7 @@ export function DictionaryPage() {
 
   function displayFileName(fileKey: string): string {
     // fileKey 格式: "gpt_dict:(project_dir)文件名.txt" 或 "gpt_dict:文件名.txt"
-    const fileName = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
-    return stripProjectDirMarker(fileName);
+    return stripProjectDirMarker(stripTabPrefix(fileKey));
   }
 
   async function handleDelete(fileKey: string) {
@@ -579,7 +752,7 @@ export function DictionaryPage() {
     });
     if (!result.confirmed) return;
     try {
-      const bareKey = fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+      const bareKey = stripTabPrefix(fileKey);
       const isProjectFile = bareKey.includes(PROJECT_DIR_MARKER);
       if (pid() && isProjectFile) {
         await deleteProjectDictionaryFile(pid()!, {
@@ -637,7 +810,7 @@ export function DictionaryPage() {
 
   /** 按 fileKey（`{tab}_dict:{name}`）取文件条目数 */
   const fileCountOf = (key: string): number => {
-    const lookupKey = key.split(":")[1] ?? key;
+    const lookupKey = stripTabPrefix(key);
     return (
       data()?.dict_contents?.[lookupKey]?.count ??
       commonData()?.dict_contents?.[lookupKey]?.count ??
@@ -661,7 +834,7 @@ export function DictionaryPage() {
           {(t) => (
             <button
               class={`dict-tab ${activeTab() === t.key ? "active" : ""}`}
-              onClick={async () => { await doAutoSave(); setActiveTab(t.key); }}
+              onClick={async () => { await saveBeforeSwitch(); setActiveTab(t.key); }}
             >
               <span class="dict-tab-label">{t.label}</span>
               <span class="dict-tab-count">{tabCounts()[t.key] ?? 0}</span>
@@ -728,14 +901,12 @@ export function DictionaryPage() {
                           class="name-entry-src name-input"
                           value={entrySignal().src_name}
                           onInput={(e) => onNameEntryChange(i, "src_name", e.currentTarget.value)}
-                          onBlur={() => doAutoSaveNames()}
                         />
                         <span class="name-entry-arrow">→</span>
                         <input
                           class="name-entry-dst name-input"
                           value={entrySignal().dst_name}
                           onInput={(e) => onNameEntryChange(i, "dst_name", e.currentTarget.value)}
-                          onBlur={() => doAutoSaveNames()}
                         />
                         <span class="name-col-count-val">{entrySignal().count}</span>
                       </div>
@@ -1146,7 +1317,6 @@ export function DictionaryPage() {
                       ta.selectionStart = ta.selectionEnd = pos + 1;
                     });
                   }}
-                  onBlur={() => doAutoSave()}
                   spellcheck={false}
                 />
               </Show>

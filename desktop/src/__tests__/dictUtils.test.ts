@@ -19,8 +19,28 @@ import {
   getFieldLabels,
   getTypeLabel,
   dictFileScene,
+  stripTabPrefix,
+  stripProjectDirMarker,
 } from "../components/dict/dictUtils";
 import type { DictRow, ConditionItem } from "../components/dict/dictUtils";
+
+describe("stripTabPrefix", () => {
+  it("剥离 {tab}_dict: 前缀，保留项目标记", () => {
+    expect(stripTabPrefix("gpt_dict:(project_dir)GPT字典.txt")).toBe("(project_dir)GPT字典.txt");
+  });
+  it("公共字典剥离前缀", () => {
+    expect(stripTabPrefix("pre_dict:00通用字典_译前.txt")).toBe("00通用字典_译前.txt");
+  });
+  it("无前缀时原样返回", () => {
+    expect(stripTabPrefix("(project_dir)GPT字典.txt")).toBe("(project_dir)GPT字典.txt");
+    expect(stripTabPrefix("")).toBe("");
+  });
+  it("与 stripProjectDirMarker 组合为展示名", () => {
+    expect(stripProjectDirMarker(stripTabPrefix("gpt_dict:(project_dir)GPT字典.txt"))).toBe(
+      "GPT字典.txt",
+    );
+  });
+});
 
 describe("dictFileScene", () => {
   it("文件名含 _h 归 h，_非h 或未带后缀归非 h", () => {

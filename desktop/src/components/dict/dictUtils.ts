@@ -69,6 +69,14 @@ export function stripProjectDirMarker(name: string): string {
   return name.replace(PROJECT_DIR_MARKER, "").trim();
 }
 
+/**
+ * 剥离 "{tab}_dict:" 前缀："gpt_dict:(project_dir)xxx.txt" → "(project_dir)xxx.txt"、
+ * "gpt_dict:文件名.txt" → "文件名.txt"；无前缀时原样返回。
+ */
+export function stripTabPrefix(fileKey: string): string {
+  return fileKey.includes(":") ? fileKey.split(":")[1] : fileKey;
+}
+
 export function getFilesByTab(
   data: {
     dict_contents: Record<string, DictFileContent>;
