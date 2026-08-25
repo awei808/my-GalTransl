@@ -21,6 +21,8 @@ import {
   fetchWorkspaceRoot,
 } from "../../lib/api/project";
 import { ensureDesktopBackendReady, ApiError } from "../../lib/api/client";
+import { validateAfterTranslation } from "../../lib/afterTranslation";
+import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
 import type { PluginInfo, Job } from "../../lib/api/types";
 import { StepProjectInfo } from "./StepProjectInfo";
@@ -116,8 +118,8 @@ export function NewProjectWizard() {
   // 剧情路线图：结构类型（默认树）与用户大纲（纯文本）
   const [plotStructureType, setPlotStructureType] = createSignal("树");
   const [plotOutline, setPlotOutline] = createSignal("");
-  // 修复和改进译文（阶段 7）后处理顺序：有序后端 key 数组（空数组 = 不执行）
-  const [afterTranslationOrder, setAfterTranslationOrder] = createSignal<string[]>([]);
+  // 修复和改进译文（阶段 7）后处理顺序：有序后端条目数组（空数组 = 不执行）
+  const [afterTranslationOrder, setAfterTranslationOrder] = createSignal<AfterTranslationEntry[]>([]);
 
   // Step 6
   const [nameJobStatus, setNameJobStatus] = createSignal<
@@ -329,6 +331,9 @@ export function NewProjectWizard() {
         // 修复和改进译文（阶段 7）后处理顺序：有序数组（空数组 = 不执行）
         "gpt.afterTranslation": afterTranslationOrder(),
       };
+      // 校验统一问题修复（fix）条目：问题类型为空时告警（运行时会跳过且不执行）
+      const afterWarnings = validateAfterTranslation(afterTranslationOrder());
+      for (const w of afterWarnings) toast.warning(w);
       // 翻译规范文件：写入 common 段扁平键 gpt.translation_guideline（后端 CProjectConfig.getKey
       // 只读该位置，见 GalTransl/ConfigHelper.py；不要写顶层 gpt 段，否则选择会被后端忽略）。
       if (translationGuideline()) {

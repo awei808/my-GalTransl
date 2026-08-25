@@ -387,7 +387,7 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
 
 
 class BaseProblemFixRound(BaseSparseFixRound):
-    """按问题类型修复译文的基类：ForJPResidue / ForBanWordFix / ForBRStation。"""
+    """按问题类型修复译文的基类：统一修复后端 ForProblemFixRound 及旧引擎薄包装子类的公共基类。"""
 
     _inject_problem = True
     _include_src = True

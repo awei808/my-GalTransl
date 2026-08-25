@@ -349,6 +349,48 @@ _BANFIX_TASK = """<process_requirements>
 
 FORGAL_JSON_BANFIX_PROMPT = _build_json_round_prompt(_BANFIX_TASK, with_info=False, with_batch_metadata=True)
 
+# 统一问题修复轮（ForFixRound）：系统角色声明与用户提示词模板。
+# 修复指令段 [fix_instructions] 由后端按问题类型白名单动态装配（ForFixRound._FIX_SPECS），
+# [br_issue_guide] 仅当白名单含「换行位置异常」时由后端运行时注入。
+FORFIXROUND_SYSTEM = "你是 Galgame 译文问题修复专家，按输入 `problem` 字段标注的问题逐句修复对应译文（`problem` 为输入提供时才有，未提供时对照 `src`/`dst` 自行判断），只输出确有问题的句子的修复译文，非必要不改动译文字面含义、措辞与系统符号。"
+
+_FIXROUND_TASK_TEMPLATE = """<process_requirements>
+### 任务
+这是整个文件翻译完成后的【译文问题修复】。输入行中的 `dst` 为当前 [TargetLang] 译文，`src` 为对应原文（输入提供时才有），`problem` 为该句被问题检测标注的译文问题（`problem` 输入提供时才有，未提供时请对照 `src`/`dst` 自行判断应修复的问题）。请逐句对照 `src`、`dst` 与 `problem`，仅修复 `problem` 中标注的、属于下列修复指令的问题类型，输出修复后的译文。
+
+### 修复指令（按问题类型逐条执行；只处理指令列出的类型，未列出的其它问题不处理）
+[fix_instructions]
+
+**只输出确有本轮标注问题且需要修改的句子；无需修改的句子一律不输出。**
+
+### 输入格式
+输入为视觉小说脚本的 key-value jsonline 片段。每行以哈希锚点（3字符 + |）开头，后接一个含 `id` 及其他字段的 JSON 对象。其中 `src` 为原文（输入提供时才有），`dst` 为当前译文，`problem` 为该句被检测出的译文问题（`problem` 输入提供时才有，未提供时基于 `src`/`dst` 自行判断）。切勿臆造内容。
+
+### 输出格式
+严格遵循以下约束：
+1. **只能输出一个 jsonline 代码块**（以 ```jsonline 开头），且**代码块之外不得有任何内容**——不得输出任何解释、思考过程、备注或与结果无关的文字。
+2. 每行格式：直接复制输入行的哈希锚点（3字符 + |），后接 JSON 对象。
+3. JSON 对象中：`id` 直接复制输入值；**唯一译文键为 `better`**（可保留可选的 `name`），填入修复后的 [TargetLang] 译文。
+4. **禁止出现 `src`、`dst`、`problem` 等任何其它键**——只输出 `id`、可选 `name`、`better` 三个键。
+5. 只输出需要修复的句子，行数可少于输入行数；若整批无需修复，输出空代码块即可。
+6. 译文中的换行一律用 `<br>` 表示，不得输出真实换行符。
+
+输出配方：<hash_anchor>|{"id": int, (可选)"name": string, "better": string}
+
+### 质量标准（逐条对照检查）
+1. 准确性：仅处理被标注的问题，非必要不改动译文字面含义、措辞与增删文字。
+2. 一致性：修复后的译文与原文 `src` 中的专有名词、术语保持口径一致。
+3. 符号与结构：原样保留 dst 中的系统符号、控制码、句子结构。
+</process_requirements>
+"""
+
+
+def build_fix_round_prompt(instructions: str) -> str:
+    """构建统一问题修复轮 user 模板（instructions 为按问题类型装配的修复指令段）。"""
+    task = _FIXROUND_TASK_TEMPLATE.replace("[fix_instructions]", instructions or "")
+    return _build_json_round_prompt(task, with_info=False, with_batch_metadata=True)
+
+
 # 敏感词检测用的禁用词库
 
 H_WORDS = 'M1AKQVblpbPlhKoKR+OCueODneODg+ODiApOVFIKU0VYClNNClNPRApU44OQ44OD44KvCuOBhOOChOOCieOBl+OBhArjgYjjgaPjgaEK44GK44Gh44KT44Gh44KTCuOBiuOBo8+ACuOBiuOBo+OBseOBhArjgYrjgarjgavjg7wK44GK44Gt44K344On44K/CuOBiuOBvOOBkwrjgYrjgb7jgpPjgZMK44GK44KB44GTCuOBiuaOg+mZpOODleOCp+ODqQrjgY3jgpPjgZ/jgb4K44GV44GL44GV5qSL6bOlCuOBm+OBo+OBj+OBmQrjgYrjhJjjgpPjhJjjgpMK44Gb44GN44KM44GE5pys5omLCuOBm+OBo+OBj+OBmQrjgaDjgYTjgZfjgoXjgY3jg5vjg7zjg6vjg4kK44Gh44KT44GTCuOBiuOBoeOCk+OBoeOCkwrjgYrjhJjjgpPjhJjjgpMK44Gy44Go44KK44GI44Gj44GhCuOBsuOBqOOCiuOBiOOBo+OEjgrjgbLjgajjgorjgYjjgaPjhJgK44Ki44Kv44OhCuOCouOCr+OEqArjgqLjg4Djg6vjg4jjg5Pjg4fjgqoK44Ki44OA44Sm44OI44OT44OH44KqCuOCouODiuODqwrjgqLjg4rjg6vjgrvjg4Pjgq/jgrkK44Ki44OK44Or44OT44O844K6CuOCouODiuODq+ODl+ODqeOCsArjgqLjg4rjg6vmi6HlvLUK44Ki44OK44Or6ZaL55m6CuOCouODiuODq++8s++8pe+8uArjgqLjg4rjhKYK44Ki44OK44Sm44K744OD44Kv44K5CuOCouODiuOEpuODk+ODvOOCugrjgqLjg4rjhKbjg5fjg6njgrAK44Ki44OK44Sm5ouh5by1CuOCouODiuOEpumWi+eZugrjgqLjg4rjhKbvvLPvvKXvvLgK44Kk44Oh44Kv44OpCuOCpOODoeODvOOCuOODk+ODh+OCqgrjgqTjhKjjgq/jg6kK44Kk44So44O844K444OT44OH44KqCuOCqOOCr+OCueOCv+OCt+ODvArjgqjjg4Pjg4EK44Ko44OtCuOCqOODreOBhArjgqjjg63lkIzkuroK44Ko44Ot5ZCM5Lq66KqMCuOCqOODreacrArjgqrjg4rjg5vjg7zjg6sK44Kq44OK44Ob44O844SmCuOCquODvOOCrOOCuuODoArjgqrjg7zjgqzjgrrjhIoK44Kq44O844Ks44K644SZCuOCq+OCpuODkeODvArjgqvjg7Pjg4jjg7PljIXojI4K44Ku44Oj44Kw44Oc44O844OrCuOCruODo+OCsOODnOODvOOEpgrjgrPjg7Pjg4njg7zjg6AK44Kz44Oz44OJ44O844SKCuOCs+ODs+ODieODvOOEmQrjgrbjg7zjg6Hjg7MK44K244O844So44OzCuOCueOCq+ODiOODrQrjgrnjg5rjg6vjg54K44K544Oa44Sm44OeCuOCueOEjOODiOODrQrjg4Djg5bjg6vjg5Tjg7zjgrkK44OA44OW44Sm44OU44O844K5CuODh+OCo+ODq+ODiQrjg4fjgqPjhKbjg4kK44OH44Kr44OB44OzCuODh+ODquODkOODquODvOODmOODq+OCuQrjg4fjg6rjg5Djg6rjg7zjg5jjhKbjgrkK44OH44Oq44OY44OrCuODh+ODquODmOOEpgrjg4fjhIzjg4Hjg7MK44OP44Oh5pKu44KKCuODj+ODvOODrOODoArjg4/jg7zjg6zjhIoK44OP44O844Os44SZCuODj+OEqOaSruOCigrjg5Djgq3jg6Xjg7zjg6Djg5Xjgqfjg6kK44OQ44Kt44Ol44O844SK44OV44Kn44OpCuODkOOCreODpeODvOOEmeODleOCp+ODqQrjg5bjg6vjgrvjg6kK44OW44Sm44K744OpCuODneODq+ODgeOCqgrjg53jhKbjg4HjgqoK44Og44Op44Og44OpCuODqeODluODieODvOODqwrjg6njg5bjg4njg7zjhKYK44Op44OW44Ob44OG44OrCuODqeODluODm+ODhuOEpgrjhIrjg6njhIrjg6kK44SM44Km44OR44O8CuOEjOODs+ODiOODs+WMheiMjgrjhI7jgpPjgZMK44SO44KT44G9CuOEjuOCk+OEjuOCkwrjhJLjg5Djg4Pjgq8K44SY44KT44GTCuOEmOOCk+OBvQrjhJjjgpPjhJjjgpMK44SZ44Op44SZ44OpCuOEm+OBi+OEm+aki+mzpQrjhJzjgYvjhJzmpIvps6UK44Sd44GN44KM44GE5pys5omLCuOEneOBo+OBj+OBmQrjhJ3jgaPjhJHjgZkK44al44GN44KM44GE5pys5omLCuOGpeOBo+OBj+OBmQrjhqXjgaPjhJHjgZkK44ay44Kv44K544K/44K344O8CuOGsuODg+ODgQrjhrLjg60K44ay44Ot44GECuOGsuODreWQjOS6ugrjhrLjg63lkIzkurroqowK44ay44Ot5pysCuWFnOWQiOOCj+OBmwrlhZzlkIjjgo/jhJ0K5YWc5ZCI44KP44alCuWtleOBvuOBmwrlrZXjgb7jhJ0K5a2V44G+44alCuW/q+alveWgleOBoQrlv6vmpb3loJXjhI4K5b+r5qW95aCV44SYCuacneWLg+OBoQrmnJ3li4PjhI4K5pyd5YuD44SYCuacnei1t+OBoQrmnJ3otbfjhI4K5pyd6LW344SYCueUn+ODj+ODoQrnlJ/jg4/jhKgK56uL44Gh44KT44G8Cueri+OEjuOCk+OBvArnq4vjhJjjgpPjgbwK562G44GK44KN44GXCuethuOBiuOEi+OBlwrosp3lkIjjgo/jgZsK6LKd5ZCI44KP44SdCuiyneWQiOOCj+OGpQrpgIbjgqLjg4rjg6sK6YCG44Ki44OK44SmCum7kuOCruODo+ODqwrpu5Ljgq7jg6PjhKYK6IajCua3qwrlsLsK6IKh6ZaTCuaAp+WZqArnsr7mtrIK57K+5a2QCuiCm+mWgArjgYLjgYIK44GB44GBCuOBieOBiQrjgYLjgYEK44GB44GCCuOBguOAgeOBguOAgQrjgYLjgaPjgIHjgYLjgaMK44KT44CB44KTCuOCk+OBo+OAgeOCkwrjgYLjgYLjgIHjgYLjgYIK44GC4oCm4oCm44GCCuOBgeKApuKApuOBgQrjgYXjgYUK44KL44KL44KLCuOBmOOCheOCiwrjgaHjgoXjgosK44KT44KTCuOBiuOBiuOBigrjg7Pjg7Pjg7MK44Ki44Ki44KiCuOCoeOCoeOCoQrjgYbjgYbjgYYK4oCm44Gh44KFCuKApuOBr+OBguKApgrjgarjgaoK44GC44CB44GCCuOBr+OBgeKApgrjgqTjgq/jgqTjgq8K44G644KN44CBCuOBuuOCjeOCjQrjgpPjgbXjgYEK44Gv44GB44CBCuOBr+OBgeOAgeOBr+OBgeOAgQrjga/jgYHjgIHjgpMK44GY44KF44G9CuOCjOOCi+KApgrjgozjgo3jgIHjgozjgo0K44O044Kh44Ku44OKCuOCquODnuODs+OCswrjgqrjg4Hjg7Pjg50K5oiR5oWi5rGBCuOCquODgeODs+ODgeODswrjg4Hjg7Pjg4Hjg7MK44GK44Gh44KT44GTCuOBiuOBoeOCk+OBvQrjgYrjg4Hjg7Pjg50K6ZuE44OB44Oz44OdCuOBoeOCk+OBkwrjgaHjgpPjgb0K44GK44Gh44KT44G9CuOCquODnuODs+OCswrjg57jg7PjgrMK44Ki44OM44K5CuOCouODiuODqwrjgrbjg7zjg6Hjg7M='

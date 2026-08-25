@@ -1,4 +1,5 @@
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
+import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 
 interface PipelineStageItem {
   key: string;
@@ -97,14 +98,14 @@ interface StepPipelineSettingsProps {
   /** 剧情路线图：结构类型与用户大纲（纯文本） */
   plotStructureType: string;
   plotOutline: string;
-  /** 修复和改进译文（阶段 7）后处理顺序：有序后端 key 数组 */
-  afterTranslationOrder: string[];
+  /** 修复和改进译文（阶段 7）后处理顺序：有序后端条目数组（字符串 key 或 fix 对象条目） */
+  afterTranslationOrder: AfterTranslationEntry[];
   onGameInfoChange: (v: string) => void;
   onStageToggle: (key: string, enabled: boolean) => void;
   onSampleToggle: (key: string, checked: boolean) => void;
   onPlotStructureTypeChange: (v: string) => void;
   onPlotOutlineChange: (v: string) => void;
-  onAfterTranslationOrderChange: (order: string[]) => void;
+  onAfterTranslationOrderChange: (order: AfterTranslationEntry[]) => void;
 }
 
 /**

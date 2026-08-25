@@ -31,10 +31,9 @@ from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
 from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
 from GalTransl.Backend.ForJPResidue import ForJPResidue
 from GalTransl.Backend.ForBRStation import ForBRStation
-from GalTransl.Backend.Prompts import (
-    FORGAL_JSON_JPREPAIR_PROMPT,
-    FORGAL_JSON_BRSTATION_PROMPT,
-)
+from GalTransl.ConfigHelper import CProblemType
+from GalTransl.Backend.Prompts import build_fix_round_prompt
+from GalTransl.Backend.ForFixRound import build_fix_instructions
 
 
 class _FakeLLM:
@@ -172,7 +171,12 @@ class ChangePromptFixRoundTests(unittest.TestCase):
         self.assertTrue(
             t.trans_prompt.startswith("# Additional Requirements: 补充要求内容\n")
         )
-        self.assertIn(FORGAL_JSON_JPREPAIR_PROMPT, t.trans_prompt)
+        self.assertIn(
+            build_fix_round_prompt(
+                build_fix_instructions([CProblemType.残留日文])
+            ),
+            t.trans_prompt,
+        )
 
     def test_jpresidue_overwrite_prompt(self) -> None:
         t = self._make("OverwritePrompt", "完全替换内容")
@@ -180,14 +184,24 @@ class ChangePromptFixRoundTests(unittest.TestCase):
 
     def test_jpresidue_no_change_prompt_keeps_template(self) -> None:
         t = self._make("no", "")
-        self.assertEqual(t.trans_prompt, FORGAL_JSON_JPREPAIR_PROMPT)
+        self.assertEqual(
+            t.trans_prompt,
+            build_fix_round_prompt(
+                build_fix_instructions([CProblemType.残留日文])
+            ),
+        )
 
     def test_brstation_change_prompt_applies(self) -> None:
         t = self._make("AdditionalPrompt", "换行补充要求", cls=ForBRStation)
         self.assertTrue(
             t.trans_prompt.startswith("# Additional Requirements: 换行补充要求\n")
         )
-        self.assertIn(FORGAL_JSON_BRSTATION_PROMPT, t.trans_prompt)
+        self.assertIn(
+            build_fix_round_prompt(
+                build_fix_instructions([CProblemType.换行位置异常])
+            ),
+            t.trans_prompt,
+        )
 
     def test_brstation_hook_replaces_br_issue_guide(self) -> None:
         """合并后的 _build_first_round_content 必须经由钩子注入 [br_issue_guide]。"""

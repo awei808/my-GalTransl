@@ -2428,9 +2428,10 @@ async def postprocess_results(
                 _num_better = 100
             # 按配置数组顺序依次执行（数组顺序即执行顺序）
             for _m in _after_order:
-                _update_runtime(projectConfig, stage=f"后处理-{_m}")
+                _display = _m if isinstance(_m, str) else "fix"
+                _update_runtime(projectConfig, stage=f"后处理-{_display}")
                 LOGGER.info(
-                    f"[后处理] 开始：{_m}，文件={_orig_name}"
+                    f"[后处理] 开始：{_display}，文件={_orig_name}"
                 )
                 try:
                     await _run_after_trans_single_file(
@@ -2441,14 +2442,14 @@ async def postprocess_results(
                         projectConfig,
                         _num_better,
                     )
-                    LOGGER.info(f"[后处理] 完成：{_m}，文件={_orig_name}")
+                    LOGGER.info(f"[后处理] 完成：{_display}，文件={_orig_name}")
                 except Exception as e:
                     from GalTransl.Service import JobCancelledError
 
                     if isinstance(e, JobCancelledError):
                         raise
                     LOGGER.warning(
-                        f"[后处理/{_m}] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
+                        f"[后处理/{_display}] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
                     )
                     # 上报到控制台"最近错误"
                     try:
@@ -2504,32 +2505,46 @@ async def postprocess_results(
         LOGGER.info(f"+++ 结果保存 (project_dir){output_file_path.replace(proj_dir,'')}")
 
 
-def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list[str]:
-    """解析流水线翻译后处理后端配置，返回有序后端列表（数组顺序即执行顺序）。
+def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
+    """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 
-    读取 gpt.afterTranslation：接受有序数组（如 [improve, brfix]）或旧字符串
-    （none / improve+brfix 组合），统一解析为白名单内的有序 key 列表；
-    空列表表示不执行。缺省时回退 gpt.enableBetterTranslation（true→[improve]）
-    以兼容旧项目配置。
+    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain）或
+    统一修复后端对象条目 {"fix": {"types": [...], "mode": "src+dst"}}；
+    同 key 条目去重保序（fix 条目仅保留第一个）。旧字符串格式
+    （none / improve+brfix 组合）仍兼容读取。空列表表示不执行；缺省回退
+    gpt.enableBetterTranslation（true→[improve]）以兼容旧项目配置。
     """
-    allowed = {"improve", "brfix", "jpfix", "banfix", "semcheck", "semcheckagain"}
+    allowed = {
+        "improve", "brfix", "jpfix", "banfix",
+        "semcheck", "semcheckagain", "fix",
+    }
     raw = projectConfig.getKey("gpt.afterTranslation")
 
-    def _filter_parts(parts: list[str]) -> list[str]:
+    def _normalize_entry(entry) -> Optional[object]:
+        if isinstance(entry, str):
+            p = entry.strip().lower()
+            return p if p in allowed else None
+        if isinstance(entry, dict):
+            fix_cfg = entry.get("fix")
+            return {"fix": fix_cfg} if isinstance(fix_cfg, dict) else None
+        return None
+
+    def _filter_parts(parts: list) -> list:
         seen = set()
-        result: list[str] = []
+        result: list = []
         for part in parts:
-            p = part.strip().lower()
-            if p == "none":
+            entry = _normalize_entry(part)
+            if entry is None:
                 continue
-            if p in allowed and p not in seen:
-                seen.add(p)
-                result.append(p)
+            key = entry if isinstance(entry, str) else "fix"
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(entry)
         return result
 
     if isinstance(raw, list):
-        parts = [str(item) for item in raw if isinstance(item, str)]
-        return _filter_parts(parts)
+        return _filter_parts(raw)
     if isinstance(raw, str):
         mode = raw.strip().lower()
         if not mode or mode == "none":
@@ -2548,15 +2563,16 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list[str]
 
 
 async def _run_after_trans_single_file(
-    mode: str,
+    mode: Optional[Union[str, dict]],
     orig_name: str,
     file_path: str,
     merged_trans: list,
     projectConfig: CProjectConfig,
     num_better: int,
 ) -> None:
-    """对单个文件执行一种后处理后端（improve 改进轮 / brfix 换行修复）。
+    """对单个文件执行一种后处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复）。
 
+    mode 可为字符串 key 或统一修复后端对象条目 {"fix": {"types": [...], "mode": "..."}}。
     直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/tokenPool/
     pre_dic/post_dic/gpt_dic/file_metadata，不重新 initDictList、不调
     ensure_model_available、不碰 select_translator）。用完 shutdown 释放连接。
@@ -2571,10 +2587,35 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForBanWordFix import ForBanWordFix
     from GalTransl.Backend.ForSemCheck import ForSemCheck
     from GalTransl.Backend.ForSemCheckAgain import ForSemCheckAgain
+    from GalTransl.Backend.ForFixRound import ForProblemFixRound
 
     _api = None
     try:
-        if mode == "improve":
+        if isinstance(mode, dict):
+            # 统一修复后端参数化条目：{"fix": {"types": [...], "mode": "..."}}
+            fix_cfg = (mode or {}).get("fix") or {}
+            types = fix_cfg.get("types") or []
+            fix_mode = fix_cfg.get("mode") or "src+dst"
+            inject_problem = fix_cfg.get("injectProblem", True)
+            coerced_types = ForProblemFixRound._coerce_problem_type_list(types)
+            if not coerced_types:
+                # types 为空：直接告警并跳过，不实例化、不发任何请求
+                LOGGER.warning(
+                    f"[后处理/fix] 修复问题类型列表为空（types={types}），跳过该后端"
+                )
+                return
+            _api = ForProblemFixRound(
+                projectConfig,
+                "ForFixRound",
+                projectConfig.proxyPool,
+                projectConfig.tokenPool,
+            )
+            _api.set_fix_params(coerced_types, mode=fix_mode, inject_problem=inject_problem)
+            LOGGER.info(
+                f"[后处理/fix] 组合修复：types={[t.name for t in coerced_types]}，"
+                f"mode={fix_mode}"
+            )
+        elif mode == "improve":
             _api = ForImproveTranslation(
                 projectConfig,
                 "ForImproveTranslation",
@@ -2582,6 +2623,8 @@ async def _run_after_trans_single_file(
                 projectConfig.tokenPool,
             )
         elif mode == "brfix":
+            # 旧字符串格式兼容入口：实例化薄包装子类（单类型语义与旧版一致），
+            # 新配置建议迁移到 fix 对象条目（type:'fix', fix:{types, mode, injectProblem}）
             _api = ForBRStation(
                 projectConfig,
                 "ForBRStation",

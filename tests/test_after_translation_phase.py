@@ -162,11 +162,56 @@ class ResolveOrderTests(unittest.TestCase):
             ["improve"],
         )
 
+    def test_array_fix_object_entry_kept(self):
+        # 统一修复后端对象条目：{"fix": {"types": [...], "mode": "..."}} 原样保留
+        entry = {"fix": {"types": ["残留日文", "用词不当"], "mode": "dst-only"}}
+        self.assertEqual(
+            _resolve_after_translation_order(_make_projectConfig(after=[entry])),
+            [entry],
+        )
+
+    def test_array_mixed_string_and_fix_object(self):
+        entry = {"fix": {"types": ["残留日文"]}}
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after=["improve", entry])
+            ),
+            ["improve", entry],
+        )
+
+    def test_array_fix_duplicated_keeps_first(self):
+        first = {"fix": {"types": ["残留日文"]}}
+        second = {"fix": {"types": ["用词不当"]}}
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after=[first, second])
+            ),
+            [first],
+        )
+
+    def test_array_fix_entry_with_empty_types_kept_for_runtime_check(self):
+        # 解析层保留条目（去重），types 为空由执行层告警跳过
+        entry = {"fix": {"types": []}}
+        self.assertEqual(
+            _resolve_after_translation_order(_make_projectConfig(after=[entry])),
+            [entry],
+        )
+
+    def test_array_ignores_bad_fix_object(self):
+        # fix 值为非 dict（如字符串）→ 条目丢弃
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after=[{"fix": "bogus"}])
+            ),
+            [],
+        )
+
 
 class RunAfterSingleFileTests(unittest.TestCase):
     def _fake_backend(self, mode):
         inst = MagicMock()
         inst.set_file_metadata = MagicMock()
+        inst.set_fix_params = MagicMock()
         inst.batch_translate = AsyncMock()
         inst.shutdown = AsyncMock()
         return inst
@@ -267,6 +312,66 @@ class RunAfterSingleFileTests(unittest.TestCase):
                     )
                 )
             self.assertTrue(inst.shutdown.called)
+
+    def test_fix_entry_instantiates_and_applies_params(self):
+        proj = _make_projectConfig()
+        fix_inst = self._fake_backend("fix")
+        from GalTransl.ConfigHelper import CProblemType
+
+        with patch(
+            "GalTransl.Backend.ForFixRound.ForProblemFixRound",
+            return_value=fix_inst,
+        ) as p_fix:
+            p_fix._coerce_problem_type_list.return_value = [
+                CProblemType.残留日文, CProblemType.用词不当,
+            ]
+            asyncio.run(
+                _run_after_trans_single_file(
+                    {"fix": {"types": ["残留日文", "用词不当"], "mode": "dst-only"}},
+                    "f.json", "f.json", [SimpleNamespace()], proj, 100,
+                )
+            )
+            p_fix.assert_called_once()
+            self.assertEqual(p_fix.call_args[0][1], "ForFixRound")
+            fix_inst.set_fix_params.assert_called_once()
+            args, kwargs = fix_inst.set_fix_params.call_args
+            self.assertEqual(
+                [p.name for p in args[0]], ["残留日文", "用词不当"]
+            )
+            self.assertEqual(kwargs.get("mode"), "dst-only")
+            self.assertTrue(fix_inst.batch_translate.called)
+            self.assertTrue(fix_inst.shutdown.called)
+
+    def test_fix_entry_empty_types_skips_without_instantiate(self):
+        proj = _make_projectConfig()
+
+        with patch(
+            "GalTransl.Backend.ForFixRound.ForProblemFixRound",
+        ) as p_fix:
+            p_fix._coerce_problem_type_list.return_value = []
+            asyncio.run(
+                _run_after_trans_single_file(
+                    {"fix": {"types": []}},
+                    "f.json", "f.json", [SimpleNamespace()], proj, 100,
+                )
+            )
+            p_fix.assert_not_called()
+
+    def test_fix_entry_unknown_types_skips(self):
+        # 全部类型名非法 → coerce 结果为空 → 跳过，不实例化
+        proj = _make_projectConfig()
+
+        with patch(
+            "GalTransl.Backend.ForFixRound.ForProblemFixRound",
+        ) as p_fix:
+            p_fix._coerce_problem_type_list.return_value = []
+            asyncio.run(
+                _run_after_trans_single_file(
+                    {"fix": {"types": ["不存在类型"]}},
+                    "f.json", "f.json", [SimpleNamespace()], proj, 100,
+                )
+            )
+            p_fix.assert_not_called()
 
 
 if __name__ == "__main__":

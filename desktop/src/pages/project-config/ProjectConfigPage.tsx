@@ -7,7 +7,7 @@ import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../
 import type { ProblemTypeInfo } from "../../lib/api/types";
 import { classifyKeys } from "../../lib/settings-taxonomy";
 import type { FixedCardKind } from "../../lib/settings-taxonomy";
-import { parseAfterTranslation } from "../../lib/afterTranslation";
+import { parseAfterTranslation, validateAfterTranslation } from "../../lib/afterTranslation";
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
@@ -1489,6 +1489,16 @@ export function ProjectConfigPage() {
       const cleaned = migrateBetterTranslationKey(
         migrateGuidelineKey({ ...config() } as Record<string, ConfigValue>),
       );
+      // 保存前校验统一问题修复（fix）条目：问题类型为空时告警（运行时会跳过且不执行）
+      const commonCfg = cleaned.common;
+      const afterRaw =
+        commonCfg &&
+        typeof commonCfg === "object" &&
+        "gpt.afterTranslation" in commonCfg
+          ? (commonCfg as Record<string, ConfigValue>)["gpt.afterTranslation"]
+          : undefined;
+      const afterWarnings = validateAfterTranslation(parseAfterTranslation(afterRaw));
+      for (const w of afterWarnings) toast.warning(w);
       await updateProjectConfig(savePid, {
         config: cleaned,
         config_file_name: saveConfigFileName,

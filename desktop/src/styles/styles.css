@@ -3375,6 +3375,76 @@ a:hover {
   flex: 1;
 }
 
+/* 统一问题修复（fix）条目子配置面板 */
+.after-trans-fix-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 10px 52px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, transparent);
+}
+
+.after-trans-fix-config__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.after-trans-fix-config__label {
+  flex-shrink: 0;
+  width: 56px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-sm);
+  line-height: 24px;
+}
+
+.after-trans-fix-config__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.after-trans-fix-config__types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.after-trans-fix-config__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.after-trans-fix-config__empty {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+}
+
+.after-trans-fix-config__retry {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.after-trans-fix-config__retry:hover {
+  border-color: var(--color-border-hover);
+}
+
 /* ── 向导：剧情路线图设置 ── */
 .plotroute-config {
   display: flex;

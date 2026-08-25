@@ -52,6 +52,8 @@ from GalTransl.Backend.Prompts import (
     FORBAN_SYSTEM,
     FORTRANS_SYSTEM,
     FORGAL_JSON_BANFIX_PROMPT,
+    FORFIXROUND_SYSTEM,
+    build_fix_round_prompt,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
 )
@@ -1752,6 +1754,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForBanWordFix": {
         "system_prompt": FORBAN_SYSTEM,
         "user_prompt": FORGAL_JSON_BANFIX_PROMPT,
+    },
+    "ForFixRound": {
+        "system_prompt": FORFIXROUND_SYSTEM,
+        "user_prompt": build_fix_round_prompt(""),
     },
     "ForPlotRouteMap": {
         "system_prompt": FORPLOTROUTE_SYSTEM,

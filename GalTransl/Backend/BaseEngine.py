@@ -108,6 +108,7 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForBRStation": "GalTransl.Backend.ForBRStation",
     "ForJPResidue": "GalTransl.Backend.ForJPResidue",
     "ForBanWordFix": "GalTransl.Backend.ForBanWordFix",
+    "ForFixRound": "GalTransl.Backend.ForFixRound",
     "ForSemCheck": "GalTransl.Backend.ForSemCheck",
     "ForSemCheckAgain": "GalTransl.Backend.ForSemCheckAgain",
     "GenDic": "GalTransl.Backend.GenDic",
