@@ -1,6 +1,6 @@
 """统一问题修复后端：按参数组合修复任意问题类型。
 
-继承 BaseProblemFixRound（复用筛选/分桶/稀疏解析/回显回滚/错误上报），把旧引擎的
+继承 BaseProblemFixRound（复用筛选/分桶/稀疏解析/错误上报），把旧引擎的
 类属性升级为实例参数（set_fix_params），实现问题类型任意组合修复；支持两种输入模式：
 模式 A「译文+原文」（_include_src=True）/ 模式 B「仅译文」（_include_src=False）。
 提示词由 _FIX_SPECS 按白名单动态装配。旧引擎 ForJPResidue / ForBRStation /
@@ -323,8 +323,9 @@ class ForProblemFixRound(BaseProblemFixRound):
         translist_unhit: Optional[list] = None,
     ):
         """修复轮入口：修复类型未配置（含手动执行未指定）或后端未配置时跳过，否则走基类稀疏修复流程。"""
-        if self._disabled_reason or getattr(self, "_disabled", False) or not self._ensure_problem_types_configured():
-            reason = self._disabled_reason or "修复类型未配置"
+        disabled_reason = getattr(self, "_disabled_reason", "")
+        if disabled_reason or getattr(self, "_disabled", False) or not self._ensure_problem_types_configured():
+            reason = disabled_reason or "修复类型未配置"
             LOGGER.warning(f"{self._log_tag} 跳过 {filename}：{reason}")
             return trans_list
         return await super().batch_translate(

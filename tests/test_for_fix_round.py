@@ -400,5 +400,44 @@ class TokenPoolFallbackTests(unittest.TestCase):
         self.assertEqual(backend._disabled_reason, "主翻译令牌池构建失败")
 
 
+class ParseFixResponseTests(unittest.TestCase):
+    """验证 _parse_fix_response 对退化输出的过滤（原文回显 / 当前译文相同 / 空 better）。"""
+
+    def _backend(self):
+        return make_translator()
+
+    def test_source_echo_is_skipped(self) -> None:
+        # better 等于原文(post_src) 时视为原文回显，在 found_count 前过滤，
+        # 应跳过且不写入 alt_dst，found 不计入回显句
+        t = self._backend()
+        t1 = make_tran(1, "残留日文：です", "译1", post_src="原文AAA")
+        t2 = make_tran(2, "残留日文：ます", "译2", post_src="原文BBB")
+        resp = '{"id":1,"better":"原文AAA"}\n{"id":2,"better":"新译文Y2"}'
+        success, found = t._parse_fix_response(resp, [t1, t2], "")
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 1)
+        self.assertEqual(t1.alt_dst, "")
+        self.assertEqual(t2.alt_dst, "新译文Y2")
+
+    def test_same_as_current_dst_is_skipped(self) -> None:
+        # better 等于当前译文时跳过（既有逻辑，防止回归）
+        t = self._backend()
+        t1 = make_tran(1, "残留日文：です", "译1", post_src="原文AAA")
+        resp = '{"id":1,"better":"译1"}'
+        success, found = t._parse_fix_response(resp, [t1], "")
+        self.assertEqual(success, 0)
+        self.assertEqual(t1.alt_dst, "")
+
+    def test_empty_better_is_skipped(self) -> None:
+        # better 为空时跳过（既有逻辑，防止回归）
+        t = self._backend()
+        t1 = make_tran(1, "残留日文：です", "译1", post_src="原文AAA")
+        resp = '{"id":1,"better":""}'
+        success, found = t._parse_fix_response(resp, [t1], "")
+        self.assertEqual(found, 0)
+        self.assertEqual(success, 0)
+        self.assertEqual(t1.alt_dst, "")
+
+
 if __name__ == "__main__":
     unittest.main()
