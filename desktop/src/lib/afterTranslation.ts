@@ -3,8 +3,9 @@
  *
  * gpt.afterTranslation 配置形态：有序数组（[improve, brfix]），数组顺序即执行顺序；
  * 空数组 = 不执行。旧字符串格式（none / improve+brfix）仍兼容读取，统一解析为数组。
- * 统一问题修复后端（ForFixRound）使用对象条目：{"fix": {"types": [...], "mode": "..."}}，
- * types 为空时后端运行直接跳过且不执行（见 LLMTranslate._run_after_trans_single_file）。
+ * 统一问题修复后端（ForFixRound）使用对象条目：{"fix": {"types": [...], "injectProblem": true}}，
+ * 输入模式由所选问题类型自动推导（见 ForProblemFixRound.set_fix_params），types 为空时
+ * 后端运行直接跳过且不执行（见 LLMTranslate._run_after_trans_single_file）。
  * 前后端解析口径一致（后端见 GalTransl/Frontend/LLMTranslate.py 的
  * _resolve_after_translation_order），避免显示与执行不一致。
  */
@@ -56,15 +57,10 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
   },
 ];
 
-/** 统一修复后端输入模式：译文+原文 / 仅译文 */
-export type FixMode = "src+dst" | "dst-only";
-
 /** 统一修复后端参数（对应后端 ForFixRound） */
 export interface FixConfig {
   /** 组合修复的问题类型白名单（problemAnalyze.problemList 同款类型名）；空数组 = 运行跳过 */
   types: string[];
-  /** 输入模式：src+dst（译文+原文）/ dst-only（仅译文） */
-  mode: FixMode;
   /** 是否把 problem 注入输入 JSONL（默认 true） */
   injectProblem: boolean;
 }
@@ -75,11 +71,6 @@ export interface FixEntry {
 }
 
 export type AfterTranslationEntry = string | FixEntry;
-
-export const FIX_MODE_OPTIONS: { value: FixMode; label: string }[] = [
-  { value: "src+dst", label: "译文+原文" },
-  { value: "dst-only", label: "仅译文" },
-];
 
 /** 是否为受支持的后处理后端 key */
 export function isAfterTranslationBackend(key: string): boolean {
@@ -98,17 +89,16 @@ export function isFixEntry(entry: unknown): entry is FixEntry {
 
 /** 新建默认 fix 条目 */
 export function createFixEntry(): FixEntry {
-  return { fix: { types: [], mode: "src+dst", injectProblem: true } };
+  return { fix: { types: [], injectProblem: true } };
 }
 
-/** 归一化 fix 条目（防御外部配置字段缺省/类型异常） */
+/** 归一化 fix 条目（防御外部配置字段缺省/类型异常；残留 mode 字段直接忽略） */
 export function normalizeFixEntry(fix: unknown): FixConfig {
   const cfg = (typeof fix === "object" && fix !== null ? fix : {}) as Record<string, unknown>;
   return {
     types: Array.isArray(cfg.types)
       ? cfg.types.filter((t): t is string => typeof t === "string")
       : [],
-    mode: cfg.mode === "dst-only" ? "dst-only" : "src+dst",
     injectProblem: cfg.injectProblem !== false,
   };
 }

@@ -3,7 +3,6 @@ import { toast } from "../stores/toastStore";
 import {
   AFTER_TRANSLATION_BACKENDS,
   AfterTranslationEntry,
-  FIX_MODE_OPTIONS,
   FixConfig,
   createFixEntry,
   isFixEntry,
@@ -25,8 +24,8 @@ interface AfterTranslationOrderEditorProps {
  *   故追加即分配当前最小的可用序号）。
  * - 手动输入数字：把该后端移到对应执行位（越界自动夹取到首/尾）。
  * - 清空 / 输入非法值：移除该后端，其余自动紧凑重排（序号始终连续 1..N）。
- * - 统一问题修复（fix）为对象条目，入选后可展开编辑问题类型组合与输入模式；
- *   问题类型为空时 toast 告警（运行时会跳过且不执行）。
+ * - 统一问题修复（fix）为对象条目，入选后可展开编辑问题类型组合
+ *   （输入模式由所选问题类型自动推导）；问题类型为空时 toast 告警（运行时会跳过且不执行）。
  */
 export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorProps) {
   const [problemTypes, setProblemTypes] = createSignal<string[]>([]);
@@ -52,7 +51,8 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
   let lastScrollTop = 0;
 
   createEffect(() => {
-    props.value;
+    // 读取 props.value 以建立响应式依赖：value 变化后恢复滚动位置
+    void props.value;
     if (listRef) {
       const top = lastScrollTop;
       requestAnimationFrame(() => {
@@ -85,7 +85,7 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
       props.onChange(props.value.filter((entry) => entryKey(entry) !== key));
       return;
     }
-    // 移动前先取出该后端现有条目：fix 条目需复用其配置（类型组合/模式），
+    // 移动前先取出该后端现有条目：fix 条目需复用其已勾选的问题类型组合，
     // 否则重插 createFixEntry() 会静默清空用户已勾选的问题类型
     const existing = props.value.find((entry) => entryKey(entry) === key);
     const rest = props.value.filter((entry) => entryKey(entry) !== key);
@@ -103,10 +103,6 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
         isFixEntry(entry) ? { fix: mutate(entry.fix) } : entry,
       ),
     );
-  }
-
-  function handleModeChange(mode: FixConfig["mode"]) {
-    updateFixEntry((cfg) => ({ ...cfg, mode }));
   }
 
   function handleTypeToggle(name: string, checked: boolean) {
@@ -156,20 +152,6 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
             </div>
             {fixEntry !== undefined && (
               <div class="after-trans-fix-config">
-                <div class="after-trans-fix-config__row">
-                  <span class="after-trans-fix-config__label">输入模式</span>
-                  {FIX_MODE_OPTIONS.map((m) => (
-                    <label class="after-trans-fix-config__radio">
-                      <input
-                        type="radio"
-                        name={`fix-mode-${idx}`}
-                        checked={fixEntry.fix.mode === m.value}
-                        onChange={() => handleModeChange(m.value)}
-                      />
-                      {m.label}
-                    </label>
-                  ))}
-                </div>
                 <div class="after-trans-fix-config__row">
                   <span class="after-trans-fix-config__label">问题类型</span>
                   <div class="after-trans-fix-config__types">

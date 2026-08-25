@@ -2509,8 +2509,9 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 
     条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain）或
-    统一修复后端对象条目 {"fix": {"types": [...], "mode": "src+dst"}}；
-    同 key 条目去重保序（fix 条目仅保留第一个）。旧字符串格式
+    统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}；
+    输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文），
+    配置中残留的 mode 字段直接忽略。同 key 条目去重保序（fix 条目仅保留第一个）。旧字符串格式
     （none / improve+brfix 组合）仍兼容读取。空列表表示不执行；缺省回退
     gpt.enableBetterTranslation（true→[improve]）以兼容旧项目配置。
     """
@@ -2572,7 +2573,7 @@ async def _run_after_trans_single_file(
 ) -> None:
     """对单个文件执行一种后处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复）。
 
-    mode 可为字符串 key 或统一修复后端对象条目 {"fix": {"types": [...], "mode": "..."}}。
+    mode 可为字符串 key 或统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}。
     直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/tokenPool/
     pre_dic/post_dic/gpt_dic/file_metadata，不重新 initDictList、不调
     ensure_model_available、不碰 select_translator）。用完 shutdown 释放连接。
@@ -2592,10 +2593,11 @@ async def _run_after_trans_single_file(
     _api = None
     try:
         if isinstance(mode, dict):
-            # 统一修复后端参数化条目：{"fix": {"types": [...], "mode": "..."}}
+            # 统一修复后端参数化条目：{"fix": {"types": [...], "injectProblem": ...}}
+            # 输入模式由所选问题类型自动推导（见 ForProblemFixRound.set_fix_params），
+            # 配置中残留的 mode 字段直接忽略
             fix_cfg = (mode or {}).get("fix") or {}
             types = fix_cfg.get("types") or []
-            fix_mode = fix_cfg.get("mode") or "src+dst"
             inject_problem = fix_cfg.get("injectProblem", True)
             coerced_types = ForProblemFixRound._coerce_problem_type_list(types)
             if not coerced_types:
@@ -2610,10 +2612,10 @@ async def _run_after_trans_single_file(
                 projectConfig.proxyPool,
                 projectConfig.tokenPool,
             )
-            _api.set_fix_params(coerced_types, mode=fix_mode, inject_problem=inject_problem)
+            include_src = _api.set_fix_params(coerced_types, inject_problem=inject_problem)
             LOGGER.info(
                 f"[后处理/fix] 组合修复：types={[t.name for t in coerced_types]}，"
-                f"mode={fix_mode}"
+                f"模式={'译文+原文' if include_src else '仅译文'}（自动推导）"
             )
         elif mode == "improve":
             _api = ForImproveTranslation(
@@ -2624,7 +2626,8 @@ async def _run_after_trans_single_file(
             )
         elif mode == "brfix":
             # 旧字符串格式兼容入口：实例化薄包装子类（单类型语义与旧版一致），
-            # 新配置建议迁移到 fix 对象条目（type:'fix', fix:{types, mode, injectProblem}）
+            # 新配置建议迁移到 fix 对象条目（type:'fix', fix:{types, injectProblem}），
+            # 输入模式由所选问题类型自动推导，配置中无需 mode 字段
             _api = ForBRStation(
                 projectConfig,
                 "ForBRStation",

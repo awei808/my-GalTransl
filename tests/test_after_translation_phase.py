@@ -338,7 +338,8 @@ class RunAfterSingleFileTests(unittest.TestCase):
             self.assertEqual(
                 [p.name for p in args[0]], ["残留日文", "用词不当"]
             )
-            self.assertEqual(kwargs.get("mode"), "dst-only")
+            # mode 字段已废弃并忽略，不再传递给 set_fix_params（输入模式由问题类型推导）
+            self.assertNotIn("mode", kwargs)
             self.assertTrue(fix_inst.batch_translate.called)
             self.assertTrue(fix_inst.shutdown.called)
 

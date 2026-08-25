@@ -25,8 +25,6 @@ from GalTransl.CSentense import CSentense
 from GalTransl.ConfigHelper import CProblemType, CProjectConfig
 from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.Backend.ForFixRound import (
-    MODE_DST_ONLY,
-    MODE_SRC_DST,
     ForProblemFixRound,
     build_br_issue_guide,
     build_fix_instructions,
@@ -218,46 +216,46 @@ class SetFixParamsTests(unittest.TestCase):
         t._finalize_prompts = lambda: None
         return t
 
-    def test_injects_combined_types_and_mode(self) -> None:
+    def test_injects_combined_types(self) -> None:
         t = self._backend()
-        t.set_fix_params(
-            [CProblemType.残留日文, CProblemType.用词不当],
-            mode=MODE_SRC_DST,
-        )
+        t.set_fix_params([CProblemType.残留日文, CProblemType.用词不当])
         self.assertEqual(t._problem_types, [CProblemType.残留日文, CProblemType.用词不当])
+        # 组合含需原文类型 → 译文+原文（自动推导）
         self.assertTrue(t._include_src)
         self.assertTrue(t._inject_problem)
         self.assertIn("残留日文", t.trans_prompt)
         self.assertIn("用词不当", t.trans_prompt)
         self.assertNotIn("换行位置异常", t.trans_prompt)
 
-    def test_dst_only_mode_sets_include_src_false(self) -> None:
+    def test_pure_dst_only_combination_omits_src(self) -> None:
         t = self._backend()
-        t.set_fix_params([CProblemType.换行位置异常], mode=MODE_DST_ONLY)
+        t.set_fix_params([CProblemType.换行位置异常, CProblemType.频繁换行])
         self.assertFalse(t._include_src)
         self.assertIn("换行位置异常", t.trans_prompt)
         self.assertIn("[br_issue_guide]", t.trans_prompt)
 
+    def test_long_line_missing_newline_is_dst_only(self) -> None:
+        t = self._backend()
+        t.set_fix_params([CProblemType.长句丢失换行])
+        self.assertFalse(t._include_src)
+
+    def test_mixed_combination_with_src_required_type_includes_src(self) -> None:
+        t = self._backend()
+        t.set_fix_params([CProblemType.残留日文, CProblemType.换行位置异常])
+        self.assertTrue(t._include_src)
+
+    def test_attr_and_adverb_long_use_src(self) -> None:
+        # 定语过长/状语过长按设计需对照原文 → 译文+原文
+        t = self._backend()
+        t.set_fix_params([CProblemType.定语过长, CProblemType.状语过长])
+        self.assertTrue(t._include_src)
+
     def test_empty_types_disables_backend(self) -> None:
         t = self._backend()
-        t.set_fix_params([], mode=MODE_SRC_DST)
+        t.set_fix_params([])
         self.assertTrue(t._disabled)
         self.assertEqual(t._problem_types, [])
         self.assertIn("未配置具体修复指令", t.trans_prompt)
-
-    def test_invalid_mode_falls_back_to_src_dst(self) -> None:
-        t = self._backend()
-        t.set_fix_params([CProblemType.残留日文], mode="foo")
-        self.assertTrue(t._include_src)
-        self.assertEqual(t._problem_types, [CProblemType.残留日文])
-        self.assertFalse(t._disabled)
-
-    def test_dst_only_with_src_required_type_still_effective(self) -> None:
-        # 需原文的类型配 dst-only：模式仍生效（warning 由日志输出），不抛异常
-        t = self._backend()
-        t.set_fix_params([CProblemType.残留日文], mode=MODE_DST_ONLY)
-        self.assertFalse(t._include_src)
-        self.assertFalse(t._disabled)
 
 
 class BrGuideHookTests(unittest.TestCase):
@@ -322,6 +320,28 @@ class LazyFallbackTests(unittest.TestCase):
         t = self._backend(None)
         self.assertFalse(t._ensure_problem_types_configured())
         self.assertEqual(t._problem_types, [])
+
+    def test_fallback_to_problem_list_derives_include_src(self) -> None:
+        # 手动执行（set_fix_params([]) 置 _disabled）；batch_translate 惰性回退
+        # problemList 含需原文类型时，_ensure_problem_types_configured 填充后
+        # _include_src 应推导为 True（译文+原文）
+        t = self._backend(["残留日文", "换行位置异常"])
+        t.set_fix_params([])  # 模拟手动执行：空 types -> _disabled
+        self.assertTrue(t._disabled)
+        self.assertTrue(t._ensure_problem_types_configured())
+        self.assertFalse(t._disabled)  # 回退后恢复可执行
+        self.assertEqual(
+            [p.name for p in t._problem_types], ["残留日文", "换行位置异常"]
+        )
+        # 组合含「残留日文」(src+dst) → 整体推导为译文+原文
+        self.assertTrue(t._include_src)
+
+    def test_fallback_to_all_dst_only_problem_list_omits_src(self) -> None:
+        # problemList 仅含 dst-only 类型时，回退后推导为仅译文
+        t = self._backend(["换行位置异常", "频繁换行"])
+        t.set_fix_params([])
+        self.assertTrue(t._ensure_problem_types_configured())
+        self.assertFalse(t._include_src)
 
 
 if __name__ == "__main__":

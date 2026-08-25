@@ -3401,16 +3401,6 @@ a:hover {
   line-height: 24px;
 }
 
-.after-trans-fix-config__radio {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 12px;
-  color: var(--color-text-primary);
-  font-size: var(--font-sm);
-  cursor: pointer;
-}
-
 .after-trans-fix-config__types {
   display: flex;
   flex-wrap: wrap;

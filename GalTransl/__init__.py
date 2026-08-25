@@ -101,8 +101,8 @@ TRANSLATOR_SUPPORTED = {
         "en": "Second-pass confirmation for 'suspected error' flags: re-checks each flagged sentence and keeps only confirmed mistranslations, dismissing acceptable translations (false positives)."
     },
     "ForFixRound": {
-        "zh-cn": "统一问题修复：按所选问题类型组合修复译文（多类可并行处理），每类按对应修复指令生成备选译文；输入模式可选译文+原文或仅译文。",
-        "en": "Unified problem fix: repairs translations by a configurable combination of problem types, each with its own fix instruction, generating alternative translations (alt_dst); input mode src+dst or dst-only."
+        "zh-cn": "统一问题修复：按所选问题类型组合修复译文（多类可并行处理），每类按对应修复指令生成备选译文；输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文）。",
+        "en": "Unified problem fix: repairs translations by a configurable combination of problem types, each with its own fix instruction, generating alternative translations (alt_dst); input mode auto-derived from selected types (src+dst if any type needs source, else dst-only)."
     },
     "ForFileMetaData": {
         "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 gt_input/FileMetaData.json。",

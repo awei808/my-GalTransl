@@ -58,7 +58,7 @@ _FIX_SPECS: dict = {
         instruction="对照 src 换行数，删除 dst 多余的 <br>，使换行数量与原文一致。",
     ),
     CProblemType.长句丢失换行: FixSpec(
-        mode=MODE_SRC_DST,
+        mode=MODE_DST_ONLY,
         instruction="对长句在语义断点（标点、逗号后）补 <br>，使每行长度合理、可读。",
     ),
     CProblemType.频繁换行: FixSpec(
@@ -104,11 +104,11 @@ _FIX_SPECS: dict = {
         "等；其他/他们/他人/他国等除外）。",
     ),
     CProblemType.定语过长: FixSpec(
-        mode=MODE_DST_ONLY,
+        mode=MODE_SRC_DST,
         instruction="拆分「是……的」结构的超长定语，使句式自然。",
     ),
     CProblemType.状语过长: FixSpec(
-        mode=MODE_DST_ONLY,
+        mode=MODE_SRC_DST,
         instruction="拆分「在……中/里」「……地」结构的超长状语，使句式自然。",
     ),
     CProblemType.疑似错误: FixSpec(
@@ -168,9 +168,9 @@ class ForProblemFixRound(BaseProblemFixRound):
 
     # 日志前缀
     _log_tag = "[问题修复]"
-    # 组合修复白名单；空列表时 __init__ 回退 problemAnalyze.problemList 全部类型
+    # 组合修复白名单；空列表时由 batch_translate 惰性回退 problemAnalyze.problemList 全部类型
     _problem_types: List[CProblemType] = []
-    # 模式：True=译文+原文（模式 A）；False=仅译文（模式 B）
+    # 输入模式：True=译文+原文（模式 A）；False=仅译文（模式 B），由问题类型推导
     _include_src = True
     # 是否把过滤后的 problem 注入输入 JSONL
     _inject_problem = True
@@ -199,15 +199,17 @@ class ForProblemFixRound(BaseProblemFixRound):
     def set_fix_params(
         self,
         types: List[CProblemType],
-        mode: str = MODE_SRC_DST,
         inject_problem: bool = True,
-    ) -> None:
+    ) -> bool:
         """注入组合修复参数（afterTranslation 的 fix 对象条目）。
 
         Args:
             types: 组合修复白名单（CProblemType 列表）；空列表 = 禁用本后端。
-            mode: "src+dst"（模式 A）/ "dst-only"（模式 B），非法值回退 src+dst 并告警。
             inject_problem: 是否把过滤后的 problem 注入输入 JSONL。
+
+        Returns:
+            推导出的输入模式：True=译文+原文（含需对照原文的类型），False=仅译文。
+            调用方可用返回值打日志，无需访问内部 _include_src 私有成员。
         """
         coerced = list(types or [])
         if not coerced:
@@ -215,29 +217,22 @@ class ForProblemFixRound(BaseProblemFixRound):
             self._disabled = True
         else:
             self._disabled = False
-        if mode not in (MODE_SRC_DST, MODE_DST_ONLY):
-            LOGGER.warning(f"{self._log_tag} 非法 mode='{mode}'，回退 {MODE_SRC_DST}")
-            mode = MODE_SRC_DST
+        # 输入模式由问题类型自动推导：任一类型需对照原文 → 译文+原文，否则仅译文
+        include_src = any(
+            _FIX_SPECS.get(pt) is not None
+            and _FIX_SPECS[pt].mode == MODE_SRC_DST
+            for pt in coerced
+        )
+        self._include_src = include_src
         self._problem_types = coerced
-        self._include_src = mode != MODE_DST_ONLY
         self._inject_problem = inject_problem
         self._setup_dynamic_prompts()
-        if mode == MODE_DST_ONLY:
-            need_src = [
-                pt.name
-                for pt in coerced
-                if _FIX_SPECS.get(pt) is not None
-                and _FIX_SPECS[pt].mode == MODE_SRC_DST
-            ]
-            if need_src:
-                LOGGER.warning(
-                    f"{self._log_tag} mode=dst-only 但以下类型需对照原文判断，"
-                    f"修复质量可能下降：{need_src}"
-                )
         LOGGER.debug(
             f"{self._log_tag} 参数注入：types={[t.name for t in self._problem_types]}，"
-            f"mode={mode}，inject_problem={inject_problem}"
+            f"include_src={include_src}（由问题类型推导），"
+            f"inject_problem={inject_problem}"
         )
+        return include_src
 
     def _setup_dynamic_prompts(self) -> None:
         """装配统一修复提示词并重放 change_prompt 与用户模板 override。"""

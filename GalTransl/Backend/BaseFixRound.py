@@ -448,5 +448,9 @@ class BaseImproveRound(BaseSparseFixRound):
             try:
                 result.append(CProblemType[name])
             except KeyError:
+                LOGGER.warning(
+                    f"{name} 不是已知问题类型，已忽略（若需修复请检查 _FIX_SPECS "
+                    f"是否已注册该类型，未注册类型将按仅译文模式处理）"
+                )
                 continue
         return result
