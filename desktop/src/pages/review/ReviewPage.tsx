@@ -1809,12 +1809,11 @@ export function ReviewPage() {
   }
 
   /** 保存当前元数据文件。showToast=true 时（失焦/卸载自动保存）成功后 info 短时长提示；
-      Ctrl+S/菜单手动保存保持静默，避免误报"自动保存"。 */
-  /** 保存当前元数据文件。showToast=true 时（失焦/卸载自动保存）成功后 info 短时长提示；
+      successMessage 可覆盖成功文案（显式保存按钮传「已保存 xxx」）。
       Ctrl+S/菜单手动保存保持静默，避免误报"自动保存"。返回是否确认落盘成功。
       无未保存修改（metaDirty=false）时直接跳过：防止确认框保存/卸载兜底后，
       onCleanup 的 blur() 再触发一次无条件保存（多余请求与重复 toast）。 */
-  async function saveMeta(showToast = false): Promise<boolean> {
+  async function saveMeta(showToast = false, successMessage?: string): Promise<boolean> {
     if (metaSavePending) return false;
     if (!metaDirty) return false; // 无修改：不落盘（如确认框保存后 onCleanup blur 的重复触发）
     metaSavePending = true;
@@ -1849,7 +1848,7 @@ export function ReviewPage() {
       if (showToast) {
         // 全局提示词/剧情路线图无源文件，用完整路径的文件名展示
         const name = srcFile || metaLoadedFullPath.split(/[/\\]/).pop() || srcFile;
-        toast.info(`已自动保存 ${name}`, AUTOSAVE_TOAST_DURATION);
+        toast.info(successMessage ?? `已自动保存 ${name}`, AUTOSAVE_TOAST_DURATION);
       }
       if (import.meta.env?.DEV) {
         console.debug(`[ReviewPage] 元数据已保存并重置撤销栈, file=${srcFile}`);
@@ -1861,6 +1860,25 @@ export function ReviewPage() {
       return false;
     } finally {
       metaSavePending = false;
+    }
+  }
+
+  // 元数据显式保存进行中标志（用于保存按钮禁用与文案）
+  const [metaSaving, setMetaSaving] = createSignal(false);
+
+  /** 显式保存当前元数据文件（工具栏「保存」按钮）：无修改时提示，在途保存时忽略。 */
+  async function handleMetaManualSave(): Promise<void> {
+    if (metaSavePending) return;
+    if (!metaDirty) {
+      toast.info("没有需要保存的修改");
+      return;
+    }
+    setMetaSaving(true);
+    try {
+      const name = metaSourceFile() || metaLoadedFullPath.split(/[/\\]/).pop() || "元数据";
+      await saveMeta(true, `已保存 ${name}`);
+    } finally {
+      setMetaSaving(false);
     }
   }
 
@@ -2387,6 +2405,14 @@ export function ReviewPage() {
           </Show>
           <Show when={metaEntry()}>
             <span class="review-count">1 条</span>
+            <button
+              class="btn btn--sm"
+              title="保存当前元数据文件的修改"
+              onClick={() => void handleMetaManualSave()}
+              disabled={metaSaving() || metaSavePending}
+            >
+              {metaSaving() ? "保存中…" : "保存"}
+            </button>
           </Show>
         </Show>
       </div>

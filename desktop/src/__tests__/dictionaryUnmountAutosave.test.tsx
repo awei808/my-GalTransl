@@ -42,6 +42,7 @@ import {
   fetchProjectDictionaryManager,
   fetchCommonDictionaryManager,
   saveProjectDictionaryFile,
+  createProjectDictionaryFile,
   fetchNameDict,
   fetchNameTable,
   generateNameTable,
@@ -346,5 +347,105 @@ describe("DictionaryPage 竞态与边界（P1/P3/B/C/D）", () => {
       PID,
       expect.objectContaining({ config_file_name: "config.inc.yaml" }),
     );
+  });
+});
+
+describe("DictionaryPage 显式保存按钮", () => {
+  function editorSaveButton(): HTMLButtonElement {
+    const btn = document.querySelector<HTMLButtonElement>(
+      'button[title="保存当前字典文件的修改"]',
+    );
+    expect(btn, "找不到字典保存按钮").toBeTruthy();
+    return btn!;
+  }
+
+  it("编辑字典后点击保存按钮 → 落盘并提示「已保存」", async () => {
+    const infoSpy = vi.spyOn(toast, "info").mockImplementation(() => "t");
+    const { unmount } = await renderLoaded();
+    editDraft("新行");
+    fireEvent.click(editorSaveButton());
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveProjectDictionaryFile)).toHaveBeenCalledWith(
+        PID,
+        expect.objectContaining({
+          file_key: DICT_KEY,
+          content: "新行",
+          config_file_name: "config.yaml",
+        }),
+      );
+    });
+    expect(infoSpy).toHaveBeenCalledWith("已保存 GPT字典.txt", 3000);
+    unmount();
+  });
+
+  it("创建项目字典文件后 → 列表选中新文件（selectFile 补全 tab 前缀）", async () => {
+    const { unmount } = await renderLoaded();
+    const newKey = "(project_dir)新字典.txt";
+    vi.mocked(createProjectDictionaryFile).mockResolvedValue({
+      success: true,
+      file_key: newKey,
+      path: "",
+    } as never);
+    // 创建成功后 loadDataWithRetry 重新拉取：返回含新文件的列表
+    vi.mocked(fetchProjectDictionaryManager).mockResolvedValue({
+      project_dir: PID,
+      config_file_name: "config.yaml",
+      pre_dict_files: [],
+      gpt_dict_files: [DICT_KEY, newKey],
+      gpt_dict_files_h: [],
+      gpt_dict_files_nh: [],
+      post_dict_files: [],
+      h_dict_files: [],
+      forbidden_dict_files_h: [],
+      forbidden_dict_files_nh: [],
+      dict_contents: {
+        [DICT_KEY]: { path: DICT_KEY, lines: ["旧行"], count: 1, mtime: 1 },
+        [newKey]: { path: newKey, lines: [], count: 0, mtime: 1 },
+      },
+    });
+    const input = document.querySelector<HTMLInputElement>('input[placeholder="新文件名"]')!;
+    fireEvent.input(input, { target: { value: "新字典.txt" } });
+    const createBtn = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "创建",
+    )!;
+    fireEvent.click(createBtn);
+    await vi.waitFor(() => {
+      expect(vi.mocked(createProjectDictionaryFile)).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      const selected = document.querySelector(".dict-file-item.selected");
+      expect(selected?.textContent).toContain("新字典.txt");
+    });
+    unmount();
+  });
+
+  it("无编辑点击保存按钮 → 提示无修改且不落盘", async () => {
+    const infoSpy = vi.spyOn(toast, "info").mockImplementation(() => "t");
+    const { unmount } = await renderLoaded();
+    fireEvent.click(editorSaveButton());
+    await vi.waitFor(() => {
+      expect(infoSpy).toHaveBeenCalledWith("没有需要保存的修改");
+    });
+    expect(vi.mocked(saveProjectDictionaryFile)).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("人名 tab 编辑后点击保存按钮 → 保存人名表并提示「已保存人名表」", async () => {
+    const infoSpy = vi.spyOn(toast, "info").mockImplementation(() => "t");
+    const { unmount } = await renderLoaded();
+    await gotoNamesTab();
+    const inputs = document.querySelectorAll(".name-input");
+    fireEvent.input(inputs[0], { target: { value: "新源" } });
+    const btn = document.querySelector<HTMLButtonElement>('button[title="保存人名表修改"]');
+    expect(btn, "找不到人名表保存按钮").toBeTruthy();
+    fireEvent.click(btn!);
+    await vi.waitFor(() => {
+      expect(vi.mocked(saveNameTable)).toHaveBeenCalledWith(
+        PID,
+        expect.arrayContaining([expect.objectContaining({ src_name: "新源" })]),
+      );
+    });
+    expect(infoSpy).toHaveBeenCalledWith("已保存人名表", 3000);
+    unmount();
   });
 });

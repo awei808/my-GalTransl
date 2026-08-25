@@ -227,14 +227,21 @@ export function DictionaryPage() {
     return s.replace(/\r/g, "");
   }
 
-  /** 主动保存当前字典文件（切 tab/切文件/加载前等切换场景调用，串行执行防并发双写） */
-  function doAutoSave(targetPid?: string | null, targetConfigName?: string): Promise<void> {
+  /** 主动保存当前字典文件（切 tab/切文件/加载前/显式保存按钮调用，串行执行防并发双写）；
+      successMessage 可覆盖成功文案（显式保存按钮传「已保存 xxx」）。 */
+  function doAutoSave(
+    targetPid?: string | null,
+    targetConfigName?: string,
+    successMessage?: string,
+  ): Promise<void> {
     // 调用时同步捕获保存目标快照：切项目 effect 随后会清空 selectedFile/draftText，
     // 若延迟到队列执行再读取会读到已清空的状态导致漏保存
     const key = selectedFile();
     const text = draftText();
     const configName = targetConfigName ?? getActiveConfigFileName();
-    return enqueueSave(() => doAutoSaveInner(key, text, configName, targetPid)).then(() => {});
+    return enqueueSave(() =>
+      doAutoSaveInner(key, text, configName, targetPid, successMessage),
+    ).then(() => {});
   }
 
   async function doAutoSaveInner(
@@ -242,6 +249,7 @@ export function DictionaryPage() {
     text: string,
     configName: string,
     targetPid?: string | null,
+    successMessage?: string,
   ) {
     if (!key) return;
     try {
@@ -271,7 +279,7 @@ export function DictionaryPage() {
           content: text,
         });
       }
-      toast.info(`已自动保存 ${displayFileName(key)}`, AUTOSAVE_TOAST_DURATION);
+      toast.info(successMessage ?? `已自动保存 ${displayFileName(key)}`, AUTOSAVE_TOAST_DURATION);
       // 常规路径（非项目切换保存）才原地更新快照，避免跨项目保存污染新数据
       if (targetPid === undefined) {
         const snapshot = isProjectFile ? data() : commonData();
@@ -289,17 +297,23 @@ export function DictionaryPage() {
     }
   }
 
-  /** 保存人名表；targetPid 显式指定时用于切项目/卸载保存旧项目（此时不清 namesDirty）。 */
-  function doAutoSaveNames(targetPid?: string | null, showToast = true): Promise<void> {
+  /** 保存人名表；targetPid 显式指定时用于切项目/卸载保存旧项目（此时不清 namesDirty）。
+      showToast 为字符串时用作成功文案（显式保存按钮传「已保存人名表」）。 */
+  function doAutoSaveNames(
+    targetPid?: string | null,
+    showToast: boolean | string = true,
+  ): Promise<void> {
     // 调用时同步捕获发送快照：入队延迟执行期间用户可能继续编辑，须以发送时数据落盘
     const sentNames = nameEntries();
-    return enqueueSave(() => doAutoSaveNamesInner(sentNames, targetPid, showToast)).then(() => {});
+    return enqueueSave(() =>
+      doAutoSaveNamesInner(sentNames, targetPid, showToast),
+    ).then(() => {});
   }
 
   async function doAutoSaveNamesInner(
     sentNames: NameEntry[],
     targetPid?: string | null,
-    showToast = true,
+    showToast: boolean | string = true,
   ) {
     const pidToUse = targetPid ?? pid();
     if (!pidToUse) return;
@@ -308,10 +322,52 @@ export function DictionaryPage() {
       // 仅在保存期间无新编辑时才清 dirty：比对发送快照与当前数组引用（setNameEntries 恒创建新数组），
       // 保存在途期间继续输入时保留 dirty，避免新编辑被误判为已落盘
       if (targetPid === undefined && sentNames === nameEntries()) namesDirty = false;
-      if (showToast) toast.info("已自动保存人名表", AUTOSAVE_TOAST_DURATION);
+      if (showToast)
+        toast.info(
+          typeof showToast === "string" ? showToast : "已自动保存人名表",
+          AUTOSAVE_TOAST_DURATION,
+        );
     } catch (e) {
       sendLog(`自动保存人名失败: ${e}`, "error");
       if (showToast) toast.error(`自动保存人名表失败: ${getErrorMessage(e)}`);
+    }
+  }
+
+  // 显式保存进行中标志（用于保存按钮禁用与文案）
+  const [manualSaving, setManualSaving] = createSignal(false);
+
+  /** 显式保存当前编辑内容（工具栏「保存」按钮）：非人名 tab 保存字典文件，人名 tab 保存人名表 */
+  async function handleManualSave(): Promise<void> {
+    if (manualSaving()) return;
+    if (activeTab() === "names") {
+      // 与卸载快照口径一致：无条目时不视为有可保存修改
+      if (!namesDirty || nameEntries().length === 0) {
+        toast.info("没有需要保存的修改");
+        return;
+      }
+      setManualSaving(true);
+      try {
+        await doAutoSaveNames(undefined, "已保存人名表");
+      } finally {
+        setManualSaving(false);
+      }
+      return;
+    }
+    if (!selectedFile()) {
+      toast.info("请先选择一个字典文件");
+      return;
+    }
+    const snap = captureUnmountSnapshot();
+    if (!snap.dirtyDict) {
+      toast.info("没有需要保存的修改");
+      return;
+    }
+    setManualSaving(true);
+    try {
+      const displayName = snap.fileKey ? displayFileName(snap.fileKey) : "字典文件";
+      await doAutoSave(undefined, undefined, `已保存 ${displayName}`);
+    } finally {
+      setManualSaving(false);
     }
   }
 
@@ -719,7 +775,8 @@ export function DictionaryPage() {
         setNewFilename("");
         toast.success("项目字典文件已创建");
         await loadDataWithRetry(0, ++loadSeq);
-        selectFile(res.file_key);
+        // 后端返回的 file_key 不带 "{tab}_dict:" 前缀，补全以匹配列表选中高亮
+        selectFile(`${activeTab()}_dict:${res.file_key}`);
       } else {
         const res = await createCommonDictionaryFile({
           category: resolveCreateCategory(activeTab(), name),
@@ -860,6 +917,14 @@ export function DictionaryPage() {
                 <div class="dict-name-actions">
                   <button class="btn btn--sm" onClick={handleGenerateNames} disabled={generating()}>
                     {generating() ? "提取中…" : "提取人名"}
+                  </button>
+                  <button
+                    class="btn btn--sm"
+                    title="保存人名表修改"
+                    onClick={() => void handleManualSave()}
+                    disabled={manualSaving()}
+                  >
+                    {manualSaving() ? "保存中…" : "保存"}
                   </button>
                 </div>
               </div>
@@ -1013,6 +1078,14 @@ export function DictionaryPage() {
                   </span>
                 </div>
                 <div class="dict-editor-actions">
+                  <button
+                    class="btn btn--sm"
+                    title="保存当前字典文件的修改"
+                    onClick={() => void handleManualSave()}
+                    disabled={manualSaving()}
+                  >
+                    {manualSaving() ? "保存中…" : "保存"}
+                  </button>
                   <div class="dict-view-seg">
                     <button
                       class={`dict-view-btn ${viewMode() === "text" ? "active" : ""}`}
@@ -1305,7 +1378,8 @@ export function DictionaryPage() {
                   value={draftText()}
                   onInput={(e) => onDictChange(e.currentTarget.value)}
                   onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
+                    // isComposing：输入法组合中按 Enter 是确认候选词，不触发换行插入
+                    if (e.key !== "Enter" || e.isComposing) return;
                     e.preventDefault();
                     const ta = e.currentTarget as HTMLTextAreaElement;
                     const pos = ta.selectionStart;

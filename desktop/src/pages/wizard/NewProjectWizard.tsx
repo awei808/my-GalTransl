@@ -367,18 +367,17 @@ export function NewProjectWizard() {
         else config.externals = ext;
       }
 
-      // 流水线阶段开关写入 config 的 internals.pipeline 段
+      // 流水线阶段开关写入 config 的 internals.pipeline 段：
+      // 显式写全量阶段键，覆盖历史上已写入的 enableXxx=false，
+      // 避免用户重新勾选全部阶段后旧禁用配置残留导致阶段仍被跳过
       const stages = stageEnabled();
-      const stagesDisabled = Object.entries(stages)
-        .filter(([, enabled]) => !enabled)
-        .map(([k]) => k);
-      if (stagesDisabled.length > 0) {
-        const internals = (config.internals as Record<string, unknown>) || {};
-        const pipeline = (internals.pipeline as Record<string, unknown>) || {};
-        for (const k of stagesDisabled) pipeline[k] = false;
-        internals.pipeline = pipeline;
-        config.internals = internals;
+      const internals = (config.internals as Record<string, unknown>) || {};
+      const pipeline = (internals.pipeline as Record<string, unknown>) || {};
+      for (const k of Object.keys(DEFAULT_STAGE_ENABLED)) {
+        pipeline[k] = stages[k] ?? true;
       }
+      internals.pipeline = pipeline;
+      config.internals = internals;
 
       // 剧情路线图配置：结构类型 + 用户大纲（纯文本），写入 internals.plotroute
       config.internals = {
@@ -496,13 +495,15 @@ export function NewProjectWizard() {
   }
 
   async function handleNext() {
-    // 从第4步（常用设置）离开时自动保存
+    // 从第4步（常用设置）离开时自动保存；失败时阻断前进，避免误以为设置已保存
     if (currentStep() === 3) {
-      await handleSaveSettings();
+      const ok = await handleSaveSettings();
+      if (!ok) return;
     }
     // 从第5步（流水线与全局设置）离开时保存外部信息与阶段开关
     if (currentStep() === 4) {
-      await handleSaveSettings();
+      const ok = await handleSaveSettings();
+      if (!ok) return;
     }
     setCurrentStep((s) => Math.min(STEPS.length - 1, s + 1));
   }
@@ -635,6 +636,17 @@ export function NewProjectWizard() {
         <button class="btn" onClick={handleBack} disabled={currentStep() === 0 || finishing()}>
           上一步
         </button>
+        {/* 第 4/5 步（设置步骤）提供显式保存，避免依赖下一步/卸载时的自动保存 */}
+        <Show when={currentStep() >= 3}>
+          <button
+            class="btn"
+            onClick={() => void handleSaveSettings()}
+            disabled={finishing()}
+            title="保存当前设置步骤的修改"
+          >
+            保存设置
+          </button>
+        </Show>
         {currentStep() < 5 ? (
           <button
             class="btn btn--primary"

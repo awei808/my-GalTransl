@@ -358,3 +358,73 @@ describe("ReviewPage 卸载自动保存（metadata → translate 切换回归）
     );
   });
 });
+
+describe("ReviewPage 元数据显式保存按钮", () => {
+  beforeEach(() => {
+    setAppState({ activeFilePath: META_FILE });
+    vi.mocked(fetchPerFileMetadata).mockResolvedValue({
+      exists: true,
+      type: "filemeta",
+      filename: META_SRC,
+      entry: { id: "filemeta", name: "t01.txt.json", content: "旧内容" },
+    });
+    vi.mocked(savePerFileMetadata).mockResolvedValue({
+      success: true,
+      type: "filemeta",
+      filename: META_SRC,
+      path: "",
+    });
+  });
+
+  /** 渲染 metadata 模式并等待元数据加载完成 */
+  async function renderMetaLoaded() {
+    const result = render(() => <ReviewPage />);
+    await vi.waitFor(() => {
+      expect(vi.mocked(fetchPerFileMetadata)).toHaveBeenCalledWith(PID, "filemeta", META_SRC);
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelector(".meta-content-textarea")).not.toBeNull();
+    });
+    return result;
+  }
+
+  function saveButton(): HTMLButtonElement {
+    const btn = document.querySelector<HTMLButtonElement>(
+      'button[title="保存当前元数据文件的修改"]',
+    );
+    expect(btn, "找不到元数据保存按钮").toBeTruthy();
+    return btn!;
+  }
+
+  it("编辑后点击保存按钮 → 落盘并提示「已保存 文件名」", async () => {
+    const infoSpy = vi.spyOn(toast, "info").mockImplementation(() => "t");
+    const { unmount } = await renderMetaLoaded();
+    const ta = document.querySelector(".meta-content-textarea") as HTMLTextAreaElement;
+    ta.focus();
+    fireEvent.input(ta, {
+      target: { value: '{"id":"filemeta","content":"新内容"}' },
+    });
+    fireEvent.click(saveButton());
+    await vi.waitFor(() => {
+      expect(vi.mocked(savePerFileMetadata)).toHaveBeenCalledWith(
+        PID,
+        "filemeta",
+        META_SRC,
+        expect.objectContaining({ content: "新内容" }),
+      );
+    });
+    expect(infoSpy).toHaveBeenCalledWith(`已保存 ${META_SRC}`, 3000);
+    unmount();
+  });
+
+  it("无修改点击保存按钮 → 提示无修改且不落盘", async () => {
+    const infoSpy = vi.spyOn(toast, "info").mockImplementation(() => "t");
+    const { unmount } = await renderMetaLoaded();
+    fireEvent.click(saveButton());
+    await vi.waitFor(() => {
+      expect(infoSpy).toHaveBeenCalledWith("没有需要保存的修改");
+    });
+    expect(vi.mocked(savePerFileMetadata)).not.toHaveBeenCalled();
+    unmount();
+  });
+});
