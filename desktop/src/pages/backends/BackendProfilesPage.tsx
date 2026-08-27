@@ -24,9 +24,15 @@ interface OpenAICompatConfig {
   thinking_mode?: string;
   reasoning_effort?: string;
   extra_body?: string;
+  apiMaxErrorRate?: number;
+  apiMinIntervalSec?: number;
+  apiMaxRequests?: number;
 }
 interface SakuraConfig {
   endpoints?: string[];
+  apiMaxErrorRate?: number;
+  apiMinIntervalSec?: number;
+  apiMaxRequests?: number;
 }
 interface ProfileEntry {
   name: string;
@@ -123,6 +129,17 @@ export function BackendProfilesPage() {
       const cur = (prev["OpenAI-Compatible"] as OpenAICompatConfig) ?? {};
       const next: Record<string, unknown> = { ...prev };
       next["OpenAI-Compatible"] = { ...cur, ...patch };
+      return next;
+    });
+  }
+  function getSakura(): SakuraConfig {
+    return (editConfig()["SakuraLLM"] as SakuraConfig) ?? {};
+  }
+  function setSakuraField(patch: Partial<SakuraConfig>) {
+    setEditConfig((prev) => {
+      const cur = (prev["SakuraLLM"] as SakuraConfig) ?? {};
+      const next: Record<string, unknown> = { ...prev };
+      next["SakuraLLM"] = { ...cur, ...patch };
       return next;
     });
   }
@@ -505,6 +522,61 @@ export function BackendProfilesPage() {
                       />
                     </span>
                   </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">错误率上限 (apiMaxErrorRate)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-num"
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="1"
+                        value={getOpenAI().apiMaxErrorRate ?? ""}
+                        onInput={(e) =>
+                          setOpenAIField({
+                            apiMaxErrorRate: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
+                          })
+                        }
+                        placeholder="0=不限制"
+                      />
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">请求最小间隔秒 (apiMinIntervalSec)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-num"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={getOpenAI().apiMinIntervalSec ?? ""}
+                        onInput={(e) =>
+                          setOpenAIField({
+                            apiMinIntervalSec: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
+                          })
+                        }
+                        placeholder="0=不限制"
+                      />
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">请求次数上限 (apiMaxRequests)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-num"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={getOpenAI().apiMaxRequests ?? ""}
+                        onInput={(e) =>
+                          setOpenAIField({
+                            apiMaxRequests: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
+                          })
+                        }
+                        placeholder="0=不限制"
+                      />
+                    </span>
+                  </div>
                 </div>
               </div>
             </Show>
@@ -541,6 +613,66 @@ export function BackendProfilesPage() {
               <button class="btn btn--sm bp-add-btn" onClick={addEndpoint}>
                 + 添加地址
               </button>
+              <div class="pc-group">
+                <div class="pc-group-title">API 调用限制（可选，留空=不限制）</div>
+                <div class="pc-field-list">
+                  <div class="pc-row">
+                    <span class="pc-row-label">错误率上限 (apiMaxErrorRate)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-num"
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="1"
+                        value={getSakura().apiMaxErrorRate ?? ""}
+                        onInput={(e) =>
+                          setSakuraField({
+                            apiMaxErrorRate: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
+                          })
+                        }
+                        placeholder="0=不限制"
+                      />
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">请求最小间隔秒 (apiMinIntervalSec)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-num"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={getSakura().apiMinIntervalSec ?? ""}
+                        onInput={(e) =>
+                          setSakuraField({
+                            apiMinIntervalSec: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
+                          })
+                        }
+                        placeholder="0=不限制"
+                      />
+                    </span>
+                  </div>
+                  <div class="pc-row">
+                    <span class="pc-row-label">请求次数上限 (apiMaxRequests)</span>
+                    <span class="pc-row-control">
+                      <input
+                        class="field__input pc-num"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={getSakura().apiMaxRequests ?? ""}
+                        onInput={(e) =>
+                          setSakuraField({
+                            apiMaxRequests: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
+                          })
+                        }
+                        placeholder="0=不限制"
+                      />
+                    </span>
+                  </div>
+                </div>
+              </div>
             </Show>
 
             <details class="bp-raw">

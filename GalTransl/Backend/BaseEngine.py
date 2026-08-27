@@ -285,6 +285,35 @@ class BaseEngine:
             result = default
         return max(1, result)
 
+    @staticmethod
+    def _coerce_optional_int(value: Any, default: int) -> int:
+        # 请求次数上限：0 或负数表示不限制；非法值回退默认。
+        try:
+            result = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(0, result)
+
+    @staticmethod
+    def _coerce_ratio(value: Any, default: float) -> float:
+        # 错误率上限：[0.0, 1.0]，<=0 表示不限制；非法值回退默认。
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        if result <= 0 or result > 1:
+            return 0.0
+        return result
+
+    @staticmethod
+    def _coerce_nonneg_float(value: Any, default: float) -> float:
+        # 最小请求间隔(秒)：>=0，0 表示不限制；非法值回退默认。
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(0.0, result)
+
     def _apply_internal_prompt_template_overrides(self) -> None:
         """Apply runtime prompt-template overrides passed from backend service layer."""
         system_prompt_override = self.pj_config.getKey(
@@ -312,9 +341,25 @@ class BaseEngine:
         self.init_chatbot(eng_type, config)
 
     def init_chatbot(self, eng_type: str, config: CProjectConfig) -> None:
-        section_name = "OpenAI-Compatible"
+        # 后端配置段按 eng_type 隔离：Sakura 系列读 SakuraLLM 段，其余读 OpenAI-Compatible 段。
+        # 各后端在 config.inc.yaml 的 backendSpecific 下独立配置，互不影响。
+        section_name = "SakuraLLM" if "sakura" in (eng_type or "").lower() else "OpenAI-Compatible"
+        backend_cfg = config.getBackendConfigSection(section_name)
 
-        self.api_timeout = config.getBackendConfigSection(section_name).get(
+        # API 调用限制（后端级、可独立配置）：错误率上限 / 最小请求间隔 / 请求次数上限。
+        # 默认值为 0 表示「不限制」，需用户在 config.inc.yaml 的 backendSpecific 段显式配置才启用，
+        # 避免内置默认配置（无这三个字段）的用户被悄悄开启限流与终止。
+        # 0 或不合法均表示不限制；非法值回退为 0。
+        self.api_max_error_rate = self._coerce_ratio(backend_cfg.get("apiMaxErrorRate", 0), 0)
+        self.api_min_interval_sec = self._coerce_nonneg_float(backend_cfg.get("apiMinIntervalSec", 0), 0)
+        self.api_max_requests = self._coerce_optional_int(backend_cfg.get("apiMaxRequests", 0), 0)
+        self._request_count = 0
+        self._last_request_ts = 0.0
+        self._total_requests = 0
+        self._failed_requests = 0
+        self._rate_lock = Lock()
+
+        self.api_timeout = backend_cfg.get(
             "apiTimeout", 300
         )
         self.apiErrorWait = config.getBackendConfigSection(section_name).get(
@@ -722,6 +767,58 @@ class BaseEngine:
         thinking_on = mode == "on"
         return extra, eff, thinking_on
 
+    def _check_request_count_quota(self) -> None:
+        # 累计 API 请求次数达到上限则终止整个翻译流程（api_max_requests<=0 不限制）。
+        if self.api_max_requests <= 0:
+            return
+        # 并发计数需加锁，避免多协程同时自增导致阈值判断不准确。
+        with self._rate_lock:
+            self._request_count += 1
+            count = self._request_count
+        if count > self.api_max_requests:
+            from GalTransl.Service import JobCancelledError
+            LOGGER.error(
+                f"[{self.eng_type}] API 请求次数已达上限 {self.api_max_requests}，终止翻译流程"
+            )
+            raise JobCancelledError()
+
+    async def _throttle_request_rate(self) -> None:
+        # 两次 API 请求之间的最小间隔节流（api_min_interval_sec<=0 不限制）。
+        interval = self.api_min_interval_sec
+        if interval <= 0:
+            return
+        now = time.monotonic()
+        with self._rate_lock:
+            wait = max(0.0, interval - (now - self._last_request_ts))
+        if wait > 0:
+            LOGGER.debug(f"[{self.eng_type}] API 请求节流，等待 {wait:.2f}s")
+            await asyncio.sleep(wait)
+        with self._rate_lock:
+            self._last_request_ts = time.monotonic()
+
+    # 错误率统计的最小样本量：样本过小（如仅 1~2 次请求）时错误率无统计意义，
+    # 偶发网络抖动会导致早期误杀整个任务，故低于门槛时不判断。
+    MIN_ERROR_RATE_SAMPLES = 20
+
+    def _check_error_rate_quota(self) -> None:
+        # 累计错误率（失败请求/总请求）超过上限则终止整个翻译流程（api_max_error_rate<=0 不限制）。
+        # 与 RequestHealthMetrics 的限流统计(rate_limited)解耦：此处统计「API 调用抛异常」的失败（不含 429 限流）。
+        if self.api_max_error_rate <= 0:
+            return
+        with self._rate_lock:
+            total = self._total_requests
+            failed = self._failed_requests
+        if total < self.MIN_ERROR_RATE_SAMPLES:
+            return
+        error_rate = failed / total
+        if error_rate >= self.api_max_error_rate:
+            from GalTransl.Service import JobCancelledError
+            LOGGER.error(
+                f"[{self.eng_type}] API 错误率 {error_rate:.1%} 已超过上限 "
+                f"{self.api_max_error_rate:.1%}（失败 {failed}/{total}），终止翻译流程"
+            )
+            raise JobCancelledError()
+
     async def ask_chatbot(
         self,
         prompt: str = "",
@@ -818,6 +915,10 @@ class BaseEngine:
                     )
 
                 await self._wait_for_global_rpm_slot()
+
+                # 后端级调用限制：先检查次数上限，再做最小间隔节流。
+                self._check_request_count_quota()
+                await self._throttle_request_rate()
 
                 # Create the API call as a task so we can cancel it if
                 # the user requests a stop while the request is in-flight.
@@ -944,6 +1045,11 @@ class BaseEngine:
                     time.monotonic() - request_started,
                     is_rate_limited=False,
                 )
+                # 先累加总请求数，再判断错误率（与失败路径口径一致）
+                with self._rate_lock:
+                    self._total_requests += 1
+                # 错误率超阈值时终止整个翻译流程
+                self._check_error_rate_quota()
                 # ── API 调用日志：成功 ──
                 if _call_trace:
                     _lat = (time.monotonic() - request_started) * 1000
@@ -964,15 +1070,11 @@ class BaseEngine:
                     )
                 return result, token
             except Exception as e:
-                is_rate_limited = isinstance(e, RateLimitError)
-                self._record_request_health(
-                    time.monotonic() - request_started,
-                    is_rate_limited=is_rate_limited,
-                )
-
+                # 配额终止信号（次数/错误率超限）直接穿透，避免被当作失败重复记账。
+                # 该信号来自 try 内的 _check_request_count_quota/_check_error_rate_quota，
+                # 冒泡到此处被捕获为 e，需立即重抛，不计入错误率统计。
                 from GalTransl.Service import JobCancelledError
                 if isinstance(e, JobCancelledError):
-                    # ── API 调用日志：取消 ──
                     if _call_trace:
                         _lat = (time.monotonic() - request_started) * 1000
                         api_logger.record(
@@ -980,6 +1082,18 @@ class BaseEngine:
                             retry_count=api_try_count, error=str(e),
                         )
                     raise
+                is_rate_limited = isinstance(e, RateLimitError)
+                self._record_request_health(
+                    time.monotonic() - request_started,
+                    is_rate_limited=is_rate_limited,
+                )
+                with self._rate_lock:
+                    self._total_requests += 1
+                    # 429 限流(is_rate_limited)属于正常速率约束，不计入错误率失败统计
+                    if not is_rate_limited:
+                        self._failed_requests += 1
+                # 错误率超阈值时终止整个翻译流程
+                self._check_error_rate_quota()
 
                 api_try_count += 1
                 if max_retry_count is not None and api_try_count >= max_retry_count:

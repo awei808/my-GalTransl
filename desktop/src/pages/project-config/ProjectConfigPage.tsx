@@ -138,9 +138,33 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "API 错误重试等待",
     hint: "可选 auto（自动适应频率），或填写固定等待秒数 0–120。",
   },
+  "backendSpecific.OpenAI-Compatible.apiMaxErrorRate": {
+    label: "错误率上限（终止阈值）",
+    hint: "累计失败请求占比超过该值即终止整个翻译流程。0 或不填表示不限制。",
+  },
+  "backendSpecific.OpenAI-Compatible.apiMinIntervalSec": {
+    label: "请求最小间隔（秒）",
+    hint: "两次 API 请求之间的最小间隔，用于节流。0 或不填表示不限制。",
+  },
+  "backendSpecific.OpenAI-Compatible.apiMaxRequests": {
+    label: "请求次数上限",
+    hint: "累计 API 请求次数（含重试）达到上限即终止整个翻译流程。0 或不填表示不限制。",
+  },
   "backendSpecific.SakuraLLM.rewriteModelName": {
     label: "自定义模型名（Sakura）",
     hint: "使用 ollama 等本地模型时需修改。仅 Sakura 引擎。",
+  },
+  "backendSpecific.SakuraLLM.apiMaxErrorRate": {
+    label: "错误率上限（终止阈值）",
+    hint: "累计失败请求占比超过该值即终止整个翻译流程。0 或不填表示不限制。",
+  },
+  "backendSpecific.SakuraLLM.apiMinIntervalSec": {
+    label: "请求最小间隔（秒）",
+    hint: "两次 API 请求之间的最小间隔，用于节流。0 或不填表示不限制。",
+  },
+  "backendSpecific.SakuraLLM.apiMaxRequests": {
+    label: "请求次数上限",
+    hint: "累计 API 请求次数（含重试）达到上限即终止整个翻译流程。0 或不填表示不限制。",
   },
   "plugin.filePlugin": {
     label: "文件格式插件",

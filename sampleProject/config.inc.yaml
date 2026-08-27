@@ -14,12 +14,20 @@ backendSpecific:
     stream: true # 流式请求，一般不用修改除非接口不支持流式[True/False]
     apiTimeout: 300 # 请求超时时间，单位秒
     apiErrorWait: auto # 发生API Error时的等待时间，包括频率限制。auto将自动适应[auto/0-120]
+    apiMaxErrorRate: 0.3 # 累计错误率上限(失败请求/总请求)，超过则终止翻译流程。0表示不限制。[0.0-1.0]
+    apiMinIntervalSec: 2.0 # 两次API请求最小间隔(秒)，用于节流。0表示不限制。[0-60]
+    apiMaxRequests: 1000 # 累计API请求次数上限(含重试)，超过则终止翻译流程。0表示不限制。[0-1000000]
+    # 以上三项未配置时默认为0(不限制)；需主动设置才启用对应限制。
 
   SakuraLLM: # (Sakura/Galtransl)
     endpoints:
       - http://127.0.0.1:8080
       #- https://sakura-share.one/ # 可以使用sakura-share的免费sakura-v1.0模型
     rewriteModelName: "" # 设置自定义的模型名称，在使用ollama时要修改
+    apiMaxErrorRate: 0.3 # 累计错误率上限(失败请求/总请求)，超过则终止翻译流程。0表示不限制。[0.0-1.0]
+    apiMinIntervalSec: 2.0 # 两次API请求最小间隔(秒)，用于节流。0表示不限制。[0-60]
+    apiMaxRequests: 1000 # 累计API请求次数上限(含重试)，超过则终止翻译流程。0表示不限制。[0-1000000]
+    # 以上三项未配置时默认为0(不限制)；需主动设置才启用对应限制。
 
 # 插件，插件列表可在启动程序后选择show-plugs查看，或在plugins目录内查看
 plugin:
