@@ -70,6 +70,33 @@ class CacheHrangesTests(unittest.TestCase):
         self.assertFalse(result["has_h"])
         self.assertEqual(result["h_ranges"], [])
 
+    def test_h_below_threshold_not_h_range(self) -> None:
+        # 兼容口径：h < 0.5（如 0.4）不算 H 区间
+        self._cache("story.txt.json")
+        self._batch(
+            "story.txt.json",
+            [{"区间": [1, 10], "h": 0.4}, {"区间": [11, 20], "h": 0.2}],
+        )
+        result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json")
+        self.assertTrue(result["batch_exists"])
+        self.assertFalse(result["has_h"])
+        self.assertEqual(result["h_ranges"], [])
+
+    def test_h_at_or_above_threshold_counts(self) -> None:
+        # h = 0.5（>=0.5）视为 H 区间；0.6 与 0.8 相邻合并取峰值 0.8
+        self._cache("story.txt.json")
+        self._batch(
+            "story.txt.json",
+            [
+                {"区间": [1, 5], "h": 0.5},
+                {"区间": [6, 10], "h": 0.6},
+                {"区间": [11, 15], "h": 0.8},
+            ],
+        )
+        result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json")
+        self.assertTrue(result["has_h"])
+        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 15, "h": 0.8}])
+
     def test_single_h_range(self) -> None:
         self._cache("story.txt.json")
         self._batch(
@@ -79,7 +106,7 @@ class CacheHrangesTests(unittest.TestCase):
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json")
         self.assertTrue(result["batch_exists"])
         self.assertTrue(result["has_h"])
-        self.assertEqual(result["h_ranges"], [{"lo": 17, "hi": 40}])
+        self.assertEqual(result["h_ranges"], [{"lo": 17, "hi": 40, "h": 1.0}])
 
     def test_adjacent_h_ranges_merged(self) -> None:
         self._cache("story.txt.json")
@@ -93,7 +120,7 @@ class CacheHrangesTests(unittest.TestCase):
             ],
         )
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json")
-        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 40}])
+        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 40, "h": 1.0}])
 
     def test_separated_h_ranges_stay_multiple(self) -> None:
         self._cache("story.txt.json")
@@ -109,7 +136,7 @@ class CacheHrangesTests(unittest.TestCase):
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json")
         self.assertEqual(
             result["h_ranges"],
-            [{"lo": 11, "hi": 20}, {"lo": 31, "hi": 50}],
+            [{"lo": 11, "hi": 20, "h": 1.0}, {"lo": 31, "hi": 50, "h": 1.0}],
         )
 
     def test_split_suffix_resolves_batch(self) -> None:
@@ -122,7 +149,7 @@ class CacheHrangesTests(unittest.TestCase):
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_0.json")
         self.assertTrue(result["batch_exists"])
         self.assertTrue(result["has_h"])
-        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 20}])
+        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 20, "h": 1.0}])
 
     def test_split_offset_applied(self) -> None:
         """无 index + splitFile=Num：chunk 1 的条目 index 需加 10（1*10-0）偏移。"""
@@ -137,7 +164,7 @@ class CacheHrangesTests(unittest.TestCase):
             {"common": {"splitFile": "Num", "splitFileNum": 10, "splitFileCrossNum": 0}},
         )
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_1.json")
-        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 5}])
+        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 5, "h": 1.0}])
 
     def test_original_with_index_no_offset(self) -> None:
         """原文件带 index 时，分片缓存条目 index 即全局行号，偏移为 0。"""
@@ -151,7 +178,7 @@ class CacheHrangesTests(unittest.TestCase):
         )
         self._cache("story.txt.json_1.json")
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_1.json")
-        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 15}])
+        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 15, "h": 1.0}])
 
     def test_cross_split_partial_h_lo_clamped(self) -> None:
         """H 区间跨分片边界：offset=10 时 H 段 [8,12] 在当前分片只剩 [1,2]，lo 须 clamp 到 1。"""
@@ -166,7 +193,7 @@ class CacheHrangesTests(unittest.TestCase):
             {"common": {"splitFile": "Num", "splitFileNum": 10, "splitFileCrossNum": 0}},
         )
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_1.json")
-        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 2}])
+        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 2, "h": 1.0}])
 
     def test_string_numeric_index_no_offset(self) -> None:
         """Bug1 回归：原文件 index 为数字字符串时，offset 应恒为 0（与 CSplitter 口径一致）。"""
@@ -184,7 +211,7 @@ class CacheHrangesTests(unittest.TestCase):
             {"common": {"splitFile": "Num", "splitFileNum": 10, "splitFileCrossNum": 0}},
         )
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_1.json")
-        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 15}])
+        self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 15, "h": 1.0}])
 
     def test_corrupted_batch_marks_batch_exists(self) -> None:
         """Bug3 回归：batch 文件存在但 JSON 损坏时 batch_exists 应为 true（且 has_h=false）。"""

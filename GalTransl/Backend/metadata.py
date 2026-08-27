@@ -313,9 +313,10 @@ class BatchMetadata:
     属性：
         id       标识：对应 gt_input 中一个待翻译文件名
         batches  批次数组：每项为 dict
-                 ``{"区间":[lo,hi], "视角":str, "氛围":str, "h":bool, "用词色彩":str}``
+                 ``{"区间":[lo,hi], "视角":str, "氛围":str, "h":float, "用词色彩":str}``
                  其中 ``区间`` 为文件内**全局行号**闭区间（从 1 起，与句子的
-                 runtime_index 对应）。
+                 runtime_index 对应）；``h`` 为 0-1 浮点 H 强度（兼容旧布尔）。
+                 h >= 0.5 视为 H 场景（is_h_value 判定）。
     """
 
     def __init__(self, id: object = "", batches: object = None) -> None:

@@ -295,23 +295,24 @@ class TestForBatchMetaData(unittest.TestCase):
         self.assertEqual(len(out["批次"]), 0)
 
     def test_normalize_meta_h_field_flexible(self):
-        """h 字段应接受多种格式。"""
+        """h 字段应接受多种格式并归一为 0-1 浮点。"""
         def _norm(h_val):
             raw = {"批次": [{"区间": [1, 5], "视角": "A", "氛围": "x",
                              "h": h_val, "用词色彩": "y"}]}
             out = self.backend._normalize_meta(raw, "f.json", max_index=10)
             return out["批次"][0]["h"]
 
-        self.assertTrue(_norm(True))
-        self.assertTrue(_norm("true"))
-        self.assertTrue(_norm("是"))
-        self.assertTrue(_norm("yes"))
-        self.assertTrue(_norm(1))
-        self.assertFalse(_norm(False))
-        self.assertFalse(_norm("false"))
-        self.assertFalse(_norm("no"))
-        self.assertFalse(_norm(0))
-        self.assertFalse(_norm(""))
+        self.assertEqual(_norm(True), 1.0)
+        self.assertEqual(_norm("true"), 1.0)
+        self.assertEqual(_norm("是"), 1.0)
+        self.assertEqual(_norm("yes"), 1.0)
+        self.assertEqual(_norm(1), 1.0)
+        self.assertEqual(_norm(0.6), 0.6)
+        self.assertEqual(_norm(False), 0.0)
+        self.assertEqual(_norm("false"), 0.0)
+        self.assertEqual(_norm("no"), 0.0)
+        self.assertEqual(_norm(0), 0.0)
+        self.assertEqual(_norm(""), 0.0)
 
     def test_normalize_meta_english_keys(self):
         """接受英文键名（perspective/atmosphere/H/tone/interval）。"""

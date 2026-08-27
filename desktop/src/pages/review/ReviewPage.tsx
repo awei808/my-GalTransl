@@ -2362,9 +2362,9 @@ export function ReviewPage() {
         <Show when={hBatchExists() && hRanges().length > 0}>
           <span
             class="review-h-ranges"
-            title="该文件含 H 剧情区间（来自 pass2 批次元数据，数字为缓存条目序号范围）"
+            title="该文件含 H 剧情区间（来自 pass2 批次元数据，数字为缓存条目序号范围，H 为强度 0-1）"
           >
-            H 区间：{hRanges().map((r) => `#${r.lo}~#${r.hi}`).join(" · ")}
+            H 区间：{hRanges().map((r) => `#${r.lo}~#${r.hi}${typeof r.h === "number" ? ` H${r.h.toFixed(1)}` : ""}`).join(" · ")}
           </span>
         </Show>
         <Show when={appState.dirtyFiles.includes(appState.activeFilePath ?? "")}>

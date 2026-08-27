@@ -5,8 +5,10 @@ import unittest
 
 from GalTransl.Backend.utils import (
     coerce_bool,
+    coerce_h_value,
     decode_json_line_part,
     extract_json_object,
+    is_h_value,
     preprocess_jsonline_response,
 )
 
@@ -137,6 +139,45 @@ class DecodeJsonLinePartTests(unittest.TestCase):
     def test_invalid_returns_none(self) -> None:
         self.assertIsNone(decode_json_line_part("no json here"))
         self.assertIsNone(decode_json_line_part(""))
+
+
+class CoerceHValueTests(unittest.TestCase):
+    def test_bool_maps_to_extremes(self) -> None:
+        self.assertEqual(coerce_h_value(True), 1.0)
+        self.assertEqual(coerce_h_value(False), 0.0)
+
+    def test_number_clamped_to_unit(self) -> None:
+        self.assertEqual(coerce_h_value(0.3), 0.3)
+        self.assertEqual(coerce_h_value(0.6), 0.6)
+        self.assertEqual(coerce_h_value(-1), 0.0)
+        self.assertEqual(coerce_h_value(2.0), 1.0)
+
+    def test_string_forms(self) -> None:
+        self.assertEqual(coerce_h_value("true"), 1.0)
+        self.assertEqual(coerce_h_value("false"), 0.0)
+        self.assertEqual(coerce_h_value("是"), 1.0)
+        self.assertEqual(coerce_h_value("否"), 0.0)
+        self.assertEqual(coerce_h_value("0.75"), 0.75)
+        self.assertEqual(coerce_h_value("0.5"), 0.5)
+
+    def test_string_overrange_clamped(self) -> None:
+        self.assertEqual(coerce_h_value("1.5"), 1.0)
+        self.assertEqual(coerce_h_value("-0.2"), 0.0)
+
+    def test_unknown_uses_default(self) -> None:
+        self.assertEqual(coerce_h_value(None), 0.0)
+        self.assertEqual(coerce_h_value([], default=0.3), 0.3)
+        self.assertEqual(coerce_h_value("垃圾", default=0.2), 0.2)
+
+    def test_is_h_value_threshold(self) -> None:
+        # 兼容口径：h >= 0.5 视为 H 场景
+        self.assertTrue(is_h_value(0.5))
+        self.assertTrue(is_h_value(0.75))
+        self.assertTrue(is_h_value(True))
+        self.assertFalse(is_h_value(0.25))
+        self.assertFalse(is_h_value(0.0))
+        self.assertFalse(is_h_value(False))
+        self.assertFalse(is_h_value(None))
 
 
 if __name__ == "__main__":

@@ -178,16 +178,45 @@ def parse_interval(raw: object) -> Optional[Tuple[int, int]]:
     return lo, hi
 
 
-def _to_bool_meta(v: object) -> bool:
-    """把多种表示的布尔字段规整为 bool（与批次元数据生成保持一致）。"""
-    return coerce_bool(v, default=False)
+# h 值语义档位（左闭右开，兼容口径：h >= 0.5 视为 h 区间）：
+#   [0, 0.25) 标准非h；[0.25, 0.5) 少量h氛围对话/描述；
+#   [0.5, 0.75) h氛围浓厚但无性行为；[0.75, 1] h氛围浓厚且伴性行为
+_H_THRESHOLD = 0.5
+
+
+def coerce_h_value(value: object, default: float = 0.0) -> float:
+    """把 LLM 返回的 h 值规整为 0-1 浮点（区间 h 强度）。
+
+    兼容布尔/数字/字符串等表示，越界值 clamp 到 [0,1]；无法解析返回 default。
+    与旧布尔 h 缓存兼容：True→1.0，False→0.0。
+    """
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1", "yes", "on", "是", "y"):
+            return 1.0
+        if s in ("false", "0", "no", "off", "否", "n", ""):
+            return 0.0
+        try:
+            return max(0.0, min(1.0, float(s)))
+        except ValueError:
+            return default
+    return default
+
+
+def is_h_value(value: object) -> bool:
+    """判断区间 h 值是否应视为 h 场景（兼容口径：h >= 0.5）。"""
+    return coerce_h_value(value) >= _H_THRESHOLD
 
 
 
 def coerce_bool(value: object, default: bool = False) -> bool:
     """统一把多种配置写法转成 bool。
 
-    与旧 BaseEngine._coerce_bool / utils._to_bool_meta 兼容，并补充常见中英文开关：
+    与旧 BaseEngine._coerce_bool 兼容，并补充常见中英文开关：
     true/false、1/0、yes/no、on/off、是/否、y/n。
     """
     if isinstance(value, bool):
@@ -333,7 +362,8 @@ def normalize_batch_intervals(
 
     把 ForBatchMetaData._normalize_meta 的区间处理逻辑收口为共享函数，供批次级
     元数据生成与多轮翻译分组复用，确保对脏数据/边界的处理行为一致。返回
-    ``[{"区间":[lo,hi], "视角":str, "氛围":str, "h":bool, "用词色彩":str}, ...]``。
+    ``[{"区间":[lo,hi], "视角":str, "氛围":str, "h":float, "用词色彩":str}, ...]``，
+    其中 ``h`` 为 0-1 浮点 h 强度（兼容旧布尔，True→1.0/False→0.0）。
     """
     if not isinstance(raw_batches, list):
         raw_batches = []
@@ -357,7 +387,7 @@ def normalize_batch_intervals(
                 "区间": [lo, hi],
                 "视角": str(b.get("视角", b.get("perspective", "")) or ""),
                 "氛围": str(b.get("氛围", b.get("atmosphere", "")) or ""),
-                "h": _to_bool_meta(b.get("h", b.get("H", False))),
+                "h": coerce_h_value(b.get("h", b.get("H", False))),
                 "用词色彩": str(b.get("用词色彩", b.get("tone", "")) or ""),
             }
         )

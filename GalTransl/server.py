@@ -57,6 +57,7 @@ from GalTransl.Backend.Prompts import (
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
 )
+from GalTransl.Backend.utils import coerce_h_value, is_h_value
 
 
 from GalTransl.server_runtime import (
@@ -1081,16 +1082,18 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
     """计算给定翻译缓存文件中的 H 剧情区间（换算为缓存条目 index 口径）。
 
     数据源：transl_cache/pass2_cache/{输入名}.batch.json 的「批次」数组中
-    h=true 的区间。相邻 h 批次（下一区间 lo <= 上一区间 hi + 1）合并为一条，
-    故多个分散 H 段各自成区间。区间的 lo/hi 已换算为该缓存文件条目 index
-    的口径（splitFile 分片时含偏移），前端可直接按条目 index 匹配画线。
+    h >= 0.5（is_h_value）的区间。相邻 h 批次（下一区间 lo <= 上一区间 hi + 1）
+    合并为一条，故多个分散 H 段各自成区间。区间的 lo/hi 已换算为该缓存文件
+    条目 index 的口径（splitFile 分片时含偏移），前端可直接按条目 index 匹配画线。
+    每个区间额外带 h（合并段内的峰值强度），供前端展示 H 强度分级。
 
     Args:
         project_dir: 项目根目录。
         cache_name: 缓存文件相对路径或纯文件名（如 pass3_cache/xx.txt.json）。
 
     Returns:
-        {"batch_exists": bool, "has_h": bool, "h_ranges": [{"lo": int, "hi": int}, ...]}
+        {"batch_exists": bool, "has_h": bool,
+         "h_ranges": [{"lo": int, "hi": int, "h": float}, ...]}
     """
     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
     norm = os.path.normpath(cache_name.replace("\\", "/"))
@@ -1128,9 +1131,13 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
         return {"batch_exists": True, "has_h": False, "h_ranges": []}
 
     batches = batch_data.get("批次", []) if isinstance(batch_data, dict) else []
-    h_global: list[list[int]] = []
+    # h_global 每项为 [lo, hi, h_value]（h 值经 coerce_h_value 归一，旧布尔兼容）
+    h_global: list[list] = []
     for b in batches:
-        if not isinstance(b, dict) or not b.get("h", False):
+        if not isinstance(b, dict):
+            continue
+        h_val = coerce_h_value(b.get("h", b.get("H", False)))
+        if not is_h_value(h_val):
             continue
         seg = b.get("区间")
         if not isinstance(seg, list) or len(seg) < 2:
@@ -1140,28 +1147,30 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
         except (TypeError, ValueError):
             continue
         if lo <= hi:
-            h_global.append([lo, hi])
+            h_global.append([lo, hi, h_val])
     if not h_global:
         return {"batch_exists": True, "has_h": False, "h_ranges": []}
-    h_global.sort()
+    h_global.sort(key=lambda x: (x[0], x[1]))
 
-    # 合并相邻 h 批次为多条连续区间
-    merged: list[list[int]] = [list(h_global[0])]
-    for lo, hi in h_global[1:]:
+    # 合并相邻 h 批次为多条连续区间；合并段 h 值取峰值强度（前端展示该合并段的最高
+    # 强度。仅作概要标签；问题检测/字典分流只看 lo/hi，不受峰值影响）
+    merged: list[list] = [list(h_global[0])]
+    for lo, hi, h_val in h_global[1:]:
         if lo <= merged[-1][1] + 1:
             merged[-1][1] = max(merged[-1][1], hi)
+            merged[-1][2] = max(merged[-1][2], h_val)
         else:
-            merged.append([lo, hi])
+            merged.append([lo, hi, h_val])
 
     offset = _resolve_cache_row_offset(project_dir, base, input_base)
     h_ranges = []
-    for lo, hi in merged:
+    for lo, hi, h_val in merged:
         # 半段跨分片边界时 lo 可能落在 offset 之前，clamp 到 1 避免负 index；
         # 整段都在 offset 之前（hi 也小于 1）则丢弃
         lo_shifted = max(1, lo - offset)
         hi_shifted = hi - offset
         if hi_shifted >= 1:
-            h_ranges.append({"lo": lo_shifted, "hi": hi_shifted})
+            h_ranges.append({"lo": lo_shifted, "hi": hi_shifted, "h": round(h_val, 3)})
     return {"batch_exists": True, "has_h": bool(h_ranges), "h_ranges": h_ranges}
 
 

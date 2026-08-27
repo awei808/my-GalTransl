@@ -31,7 +31,9 @@ from GalTransl.Backend.metadata import (
     load_batch_metadata_map,
 )
 from GalTransl.Backend.utils import (
+    coerce_h_value,
     detect_batch_line_break_symbol,
+    is_h_value,
     parse_interval,
     preprocess_jsonline_response,
     strip_chunk_suffix,
@@ -986,7 +988,7 @@ class ForGalJsonMulitChat(BaseTranslate):
     ) -> str:
         """把与本批行号区间 [lo, hi] 相交的批次级元数据格式化为提示词附加段落。
 
-        按 h 值分组渲染：H 区间段与非 H 区间段分别给出差异化翻译指导；
+        按 h 值分组渲染：H 区间段（h >= 0.5）与非 H 区间段分别给出差异化翻译指导；
         H 段额外注入项目 hCheckDict 禁用词表（词数 ≤ 20 全量，超出截断）。
         仅注入相关区间，避免整份区间表膨胀提示词。无相交区间时返回空串。
         """
@@ -1004,11 +1006,12 @@ class ForGalJsonMulitChat(BaseTranslate):
             view = str(b.get("视角", "") or "").strip() or "未标注"
             atmos = str(b.get("氛围", "") or "").strip() or "未标注"
             tone = str(b.get("用词色彩", "") or "").strip() or "未标注"
+            h_val = coerce_h_value(b.get("h", b.get("H", False)))
             line = (
                 f"- 区间[{b_lo}-{b_hi}] 视角:{view} 氛围:{atmos} "
-                f"H:{'是' if b.get('h') else '否'} 用词色彩:{tone}"
+                f"H:{h_val:.1f} 用词色彩:{tone}"
             )
-            if b.get("h"):
+            if is_h_value(h_val):
                 h_lines.append(line)
             else:
                 normal_lines.append(line)
@@ -1047,7 +1050,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         lo, hi = self._trans_global_range(group)
         if hi < lo:
             return False
-        return any(bool(b.get("h")) for b in bm.segments_in_range(lo, hi))
+        return any(is_h_value(b.get("h", b.get("H", False))) for b in bm.segments_in_range(lo, hi))
 
     def _format_h_forbidden_words(self) -> str:
         """把项目 hCheckDict 词库格式化为 H 区间禁用词提示段。

@@ -291,6 +291,36 @@ class ForbiddenWordProblemTests(unittest.TestCase):
         )
         self.assertIn("用词不当", trans_list[0].problem)
 
+    def test_h_ranges_contract_lo_hi_tuples_boundary(self) -> None:
+        # 守护 find_problems 的 h_ranges 契约：必须是 (lo,hi) 闭区间元组列表，
+        # 且 index 恰在区间边界 lo/hi 处判为 h 场景、区间外判为非 h 场景。
+        # 用 h_check_words 命中与否来区分场景（h 场景才检查 h 词库）。
+        from GalTransl.Problem import find_problems
+
+        # index=1 恰在区间 [1,3] 的左边界 lo 处 → h 场景，命中 h 词库
+        in_lo = [self._tran(1, "这台设备很好。")]
+        find_problems(
+            in_lo, self._FakeProblemConfig(), None, h_ranges=[(1, 3)],
+            h_check_words=["设备"], forbidden_words=[],
+        )
+        self.assertIn("用词不当", in_lo[0].problem)
+
+        # index=3 恰在区间右边界 hi 处 → h 场景
+        in_hi = [self._tran(3, "这台设备很好。")]
+        find_problems(
+            in_hi, self._FakeProblemConfig(), None, h_ranges=[(1, 3)],
+            h_check_words=["设备"], forbidden_words=[],
+        )
+        self.assertIn("用词不当", in_hi[0].problem)
+
+        # index=4 在区间外 → 非 h 场景，h 词库不生效，不标记
+        out = [self._tran(4, "这台设备很好。")]
+        find_problems(
+            out, self._FakeProblemConfig(), None, h_ranges=[(1, 3)],
+            h_check_words=["设备"], forbidden_words=[],
+        )
+        self.assertEqual(out[0].problem, "")
+
     def test_h_range_merges_both_word_lists(self) -> None:
         # h 场景内 h 词库与非 h 禁用词库命中都标记，且不重复
         from GalTransl.Problem import find_problems

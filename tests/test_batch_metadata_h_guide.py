@@ -49,7 +49,7 @@ class BatchMetadataHGuideTests(unittest.TestCase):
         bm = make_batch_metadata([{"区间": [1, 5], "h": True, "视角": "主视角", "氛围": "紧张", "用词色彩": "直白"}])
         out = format_block(self.t, bm, 1, 5)
         self.assertIn(H_BATCH_GUIDE, out)
-        self.assertIn("H:是", out)
+        self.assertIn("H:1.0", out)  # 旧布尔 True 归一为 1.0
         self.assertIn("攀上顶峰", out)  # 词库全量注入
         self.assertNotIn(NORMAL_BATCH_GUIDE, out)
 
@@ -57,6 +57,23 @@ class BatchMetadataHGuideTests(unittest.TestCase):
         bm = make_batch_metadata([{"区间": [1, 5], "h": False, "视角": "主视角", "氛围": "日常", "用词色彩": "平淡"}])
         out = format_block(self.t, bm, 1, 5)
         self.assertIn(NORMAL_BATCH_GUIDE, out)
+        self.assertIn("H:0.0", out)
+        self.assertNotIn(H_BATCH_GUIDE, out)
+
+    def test_h_value_ge_half_renders_h_guide(self) -> None:
+        # 浮点 h：0.6（>=0.5）应归入 H 段
+        bm = make_batch_metadata([{"区间": [1, 5], "h": 0.6, "视角": "主视角", "氛围": "情欲", "用词色彩": "露骨"}])
+        out = format_block(self.t, bm, 1, 5)
+        self.assertIn(H_BATCH_GUIDE, out)
+        self.assertIn("H:0.6", out)
+        self.assertNotIn(NORMAL_BATCH_GUIDE, out)
+
+    def test_h_value_below_half_renders_normal_guide(self) -> None:
+        # 浮点 h：0.3（<0.5）应归入非 H 段
+        bm = make_batch_metadata([{"区间": [1, 5], "h": 0.3, "视角": "主视角", "氛围": "暧昧", "用词色彩": "克制"}])
+        out = format_block(self.t, bm, 1, 5)
+        self.assertIn(NORMAL_BATCH_GUIDE, out)
+        self.assertIn("H:0.3", out)
         self.assertNotIn(H_BATCH_GUIDE, out)
 
     def test_no_intersection_returns_empty(self) -> None:

@@ -145,7 +145,8 @@ export type CacheFileResponse = {
 };
 
 /* H 剧情区间（来自 pass2 批次元数据，换算为缓存条目 index 口径） */
-export type CacheHRange = { lo: number; hi: number };
+/* h 为 0-1 浮点 H 强度（可选，兼容旧接口；>=0.5 视为 H 区间） */
+export type CacheHRange = { lo: number; hi: number; h?: number };
 export type CacheHrangesResponse = {
   batch_exists: boolean;
   has_h: boolean;
