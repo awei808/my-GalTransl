@@ -63,11 +63,21 @@ class ParseDictLineTests(unittest.TestCase):
             {"type", "values", "raw", "target", "cond_items", "spl_word", "note"},
         )
 
-    def test_comment_with_pipe_treated_as_rule(self) -> None:
-        # 含 | 的 // 行引擎按规则加载，编辑器须一致，不得误判为注释
+    def test_comment_with_pipe_treated_as_comment(self) -> None:
+        # 以 // 前缀开头（即使含 |）视为整行注释，与引擎各 load_dic 统一
         r = parse_dict_line("// 猫|狗 备注", "pre")
-        self.assertEqual(r.type, "normal")
-        self.assertEqual(r.values[0], "// 猫")
+        self.assertEqual(r.type, "comment")
+        self.assertEqual(r.values, ["// 猫|狗 备注"])
+
+    def test_comment_with_leading_space_and_pipe(self) -> None:
+        # 前导空格 + // 前缀 + 含 | 仍判注释（lstrip 后判定）
+        r = parse_dict_line("  // 猫|狗 备注", "post")
+        self.assertEqual(r.type, "comment")
+
+    def test_comment_with_hash_and_pipe(self) -> None:
+        # # 前缀 + 含 | 判注释
+        r = parse_dict_line("# 词|备注说明", "gpt")
+        self.assertEqual(r.type, "comment")
 
     def test_escape_handling_applied(self) -> None:
         # 与引擎一致：每字段做转义处理（\n -> 真实换行）

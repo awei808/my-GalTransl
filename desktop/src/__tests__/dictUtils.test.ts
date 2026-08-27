@@ -17,6 +17,8 @@ import {
   normalizeDictRow,
   getFilesByTab,
   getFieldLabels,
+  getTableColumns,
+  DICT_TABLE_COLUMNS,
   getTypeLabel,
   dictFileScene,
   stripTabPrefix,
@@ -329,5 +331,63 @@ describe("rowsToText（禁用词类型行序列化）", () => {
       { type: "forbidden", values: ["快乐沉沦", "非 H 场景禁用词示例"], raw: "快乐沉沦|非 H 场景禁用词示例" },
     ];
     expect(rowsToText(rows)).toBe("快乐沉沦|非 H 场景禁用词示例");
+  });
+});
+
+describe("DICT_TABLE_COLUMNS / getTableColumns（表格表头列定义）", () => {
+  it("gpt 表头为「原文|译文|解释(可空)」，编辑列依次绑定 valueIndex 0/1/2", () => {
+    const cols = DICT_TABLE_COLUMNS.gpt;
+    expect(cols.map((c) => c.label)).toEqual(["原文", "译文", "解释(可空)"]);
+    expect(cols.map((c) => c.valueIndex)).toEqual([0, 1, 2]);
+    expect(cols.map((c) => c.editor)).toEqual(["plain", "plain", "noteOrPlain"]);
+  });
+
+  it("forbidden 表头为「词|备注」", () => {
+    const cols = DICT_TABLE_COLUMNS.forbidden;
+    expect(cols.map((c) => c.label)).toEqual(["词", "备注"]);
+    expect(cols.map((c) => c.editor)).toEqual(["plain", "noteOrPlain"]);
+  });
+
+  it("conditional 表头为「目标|条件|搜索|替换|备注」，编辑器逐列映射结构化控件", () => {
+    const cols = DICT_TABLE_COLUMNS.conditional;
+    expect(cols.map((c) => c.label)).toEqual(["目标", "条件", "搜索", "替换", "备注"]);
+    expect(cols.map((c) => c.editor)).toEqual([
+      "target",
+      "condItems",
+      "search",
+      "replace",
+      "note",
+    ]);
+  });
+
+  it("situation 表头为「场景|搜索|替换」", () => {
+    expect(DICT_TABLE_COLUMNS.situation.map((c) => c.label)).toEqual(["场景", "搜索", "替换"]);
+  });
+
+  it("normal 按 tab 分流：h/forbidden 为「词|备注」，其余为「搜索|替换|备注」", () => {
+    expect(getTableColumns("normal" as never, "h" as never).map((c) => c.label)).toEqual([
+      "词",
+      "备注",
+    ]);
+    expect(getTableColumns("normal" as never, "forbidden" as never).map((c) => c.label)).toEqual([
+      "词",
+      "备注",
+    ]);
+    expect(getTableColumns("normal" as never, "gpt" as never).map((c) => c.label)).toEqual([
+      "搜索",
+      "替换",
+      "备注",
+    ]);
+  });
+
+  it("getFieldLabels 与列定义表头一致（兼容旧测试）", () => {
+    expect(getFieldLabels("conditional" as never, "post" as never)).toEqual([
+      "目标",
+      "条件",
+      "搜索",
+      "替换",
+      "备注",
+    ]);
+    expect(getFieldLabels("gpt" as never, "gpt" as never)).toEqual(["原文", "译文", "解释(可空)"]);
   });
 });

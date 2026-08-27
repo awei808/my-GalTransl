@@ -4491,54 +4491,78 @@ a:hover {
   gap: 4px;
 }
 
-.dict-card-list {
+/* ── 字典表格模式（Markdown 式表头 + 内容） ── */
+.dict-table-wrap {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
   padding: var(--space-2);
 }
 
-.dict-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 6px 10px;
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  margin-bottom: 6px;
-  background: var(--color-bg-panel);
-  transition: box-shadow var(--duration-fast), border-color var(--duration-fast);
+.dict-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--font-sm);
 }
 
-.dict-card:hover {
-  border-color: var(--color-border-hover);
-  box-shadow: var(--shadow-sm);
-}
-
-/* ── 卡片表头（原文/译文/解释等列说明） ── */
-.dict-card-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 10px;
-  margin-bottom: 2px;
+.dict-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
   font-size: 11px;
   font-weight: var(--weight-semibold);
   color: var(--color-text-tertiary);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-default);
+  padding: 4px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.dict-card-header-col {
-  flex: 1;
-  min-width: 0;
+.dict-table tbody td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border-default);
+  vertical-align: middle;
 }
 
-.dict-card-header-arrow {
+.dict-table tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+.dict-row--conditional td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-brand-primary);
+}
+
+.dict-cell-comment {
+  font-size: var(--font-sm);
   color: var(--color-text-tertiary);
-  flex-shrink: 0;
-  font-size: 12px;
+  font-style: italic;
+  font-family: var(--font-mono);
 }
 
-.dict-card-input {
-  flex: 1;
+.dict-cell-note {
+  display: inline-block;
+  max-width: 100%;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.dict-cell-empty {
+  display: inline-block;
+  min-height: 20px;
+}
+
+.dict-cell-input {
+  width: 100%;
+  box-sizing: border-box;
   border: none;
   background: transparent;
   outline: none;
@@ -4548,183 +4572,71 @@ a:hover {
   padding: 2px 4px;
 }
 
-.dict-card-input:focus {
+.dict-cell-input:focus {
   background: var(--color-bg-input);
   border-radius: var(--radius-sm);
 }
 
-.dict-card-arrow {
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-  font-size: 12px;
-}
-
-.dict-card-add {
-  margin-top: var(--space-1);
-  width: 100%;
-  border-style: dashed;
-}
-
-.dict-card-comment {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  font-style: italic;
-  padding: 2px 4px;
-  font-family: var(--font-mono);
-}
-
-/* ── 字典结构化卡片：目标/条件 chip 与注释行 ── */
-.dict-card-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-  font-family: var(--font-mono);
-  background: var(--color-bg-input);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-default);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.dict-card-pill--target {
-  background: var(--color-bg-selected);
-  color: var(--color-brand-primary);
-  border-color: var(--color-brand-primary);
-  font-weight: var(--weight-semibold);
-}
-
-.dict-card-pill--cond {
-  background: var(--color-bg-panel);
-}
-
-.dict-card-flag--negate {
-  color: var(--color-status-error);
-  font-weight: var(--weight-semibold);
-}
-
-.dict-card-pill--placeholder {
-  background: transparent;
-  border-style: dashed;
-  color: var(--color-text-tertiary);
-  font-style: italic;
-}
-
-.dict-card-conds {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex-wrap: wrap;
-}
-
-.dict-card-cond-op {
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  padding: 0 2px;
-  flex-shrink: 0;
-}
-
-.dict-card-flag {
-  font-family: var(--font-mono);
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-}
-
-.dict-card-input--inline {
+.dict-cell-input--cond {
   width: auto;
-  min-width: 60px;
-  max-width: 200px;
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-family: var(--font-mono);
-  font-size: var(--font-sm);
-  color: var(--color-text-primary);
-  padding: 0;
-}
-
-.dict-card-note {
-  width: 100%;
-  font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
-  font-style: italic;
-  font-family: var(--font-mono);
-  padding: 2px 0 0;
-  border-top: 1px dashed var(--color-border-default);
-  margin-top: 2px;
-}
-
-.dict-card-note--inline {
-  width: auto;
-  border-top: none;
-  margin: 0;
-  padding: 2px 6px;
-  background: var(--color-bg-input);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-sm);
-}
-
-/* ── 条件字典单句填空卡片 ── */
-.dict-card--conditional {
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.dict-card-fill-text {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.dict-card-fill-input,
-.dict-card-fill-select {
-  font-size: var(--font-sm);
-  font-family: var(--font-mono);
-  color: var(--color-text-primary);
-  background: var(--color-bg-input);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-sm);
-  padding: 2px 6px;
-  min-height: 22px;
-  flex: 0 1 auto;
-  min-width: 32px;
+  min-width: 48px;
   max-width: 120px;
-  outline: none;
+  flex: 0 1 auto;
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
 }
 
-.dict-card-fill-input:focus,
-.dict-card-fill-select:focus {
+.dict-cell-input--cond:focus {
   border-color: var(--color-brand-primary);
 }
 
-.dict-card-fill-select {
-  flex: 0 0 auto;
+.dict-cell-select {
+  font-size: var(--font-sm);
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
   min-width: 48px;
   max-width: 100px;
   cursor: pointer;
   padding-right: 14px;
 }
 
-.dict-card-fill-select--connector {
+.dict-cell-select--connector {
   min-width: 40px;
   max-width: 56px;
 }
 
-.dict-card-fill-fixed {
+.dict-cell-select:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.dict-cell-conds,
+.dict-cell-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.dict-cell-fixed {
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
   font-style: italic;
   white-space: nowrap;
   flex-shrink: 0;
   padding: 0 2px;
+}
+
+.dict-table-add {
+  margin-top: var(--space-1);
+  width: 100%;
+  border-style: dashed;
 }
 
 .name-entry-arrow {

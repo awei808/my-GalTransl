@@ -201,21 +201,84 @@ export function rowToText(row: DictRow): string {
   return `${target}|${condText}|${search}|${replace}${noteSuffix}`;
 }
 
-export function getFieldLabels(type: DictRowType, tab: DictTab): string[] {
-  if (type === "gpt") return ["原文", "译文", "解释(可空)"];
-  if (type === "forbidden") return ["词", "备注"];
+export type DictColumnEditor =
+  | "plain"       // 按 valueIndex 渲染可编辑输入框
+  | "noteOrPlain" // 行有行内注释时渲染只读注释，否则按 valueIndex 渲染输入框
+  | "target"      // 条件行：目标字段（行首 key）
+  | "condItems"   // 条件行：条件列（词 + 语义 + 连接符）
+  | "search"      // 条件行：搜索模式 + 搜索词
+  | "replace"     // 条件行：替换词列
+  | "note";       // 只读行内注释
+
+/** 表格列定义：label 为表头文字，editor 决定单元格渲染与字段绑定 */
+export type DictColumnDef = {
+  key: string;
+  label: string;
+  editor: DictColumnEditor;
+  valueIndex?: number;
+};
+
+/**
+ * 每种行格式的表头列定义（表格模式单一事实源）。
+ * normal 因 tab 差异存在两种子格式：h/forbidden 词库为「词|备注」，其余为「搜索|替换|备注」。
+ */
+export const DICT_TABLE_COLUMNS: Record<
+  "gpt" | "wordNormal" | "replaceNormal" | "forbidden" | "conditional" | "situation" | "comment",
+  DictColumnDef[]
+> = {
+  gpt: [
+    { key: "src", label: "原文", editor: "plain", valueIndex: 0 },
+    { key: "dst", label: "译文", editor: "plain", valueIndex: 1 },
+    { key: "exp", label: "解释(可空)", editor: "noteOrPlain", valueIndex: 2 },
+  ],
+  wordNormal: [
+    { key: "word", label: "词", editor: "plain", valueIndex: 0 },
+    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 1 },
+  ],
+  replaceNormal: [
+    { key: "search", label: "搜索", editor: "plain", valueIndex: 0 },
+    { key: "replace", label: "替换", editor: "plain", valueIndex: 1 },
+    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 2 },
+  ],
+  forbidden: [
+    { key: "word", label: "词", editor: "plain", valueIndex: 0 },
+    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 1 },
+  ],
+  conditional: [
+    { key: "target", label: "目标", editor: "target" },
+    { key: "conds", label: "条件", editor: "condItems" },
+    { key: "search", label: "搜索", editor: "search" },
+    { key: "replace", label: "替换", editor: "replace" },
+    { key: "note", label: "备注", editor: "note" },
+  ],
+  situation: [
+    { key: "scene", label: "场景", editor: "plain", valueIndex: 0 },
+    { key: "search", label: "搜索", editor: "plain", valueIndex: 1 },
+    { key: "replace", label: "替换", editor: "noteOrPlain", valueIndex: 2 },
+  ],
+  comment: [{ key: "content", label: "内容", editor: "plain", valueIndex: 0 }],
+};
+
+/** 按行类型 + tab 返回表格列定义（normal 词库/替换两套格式由 tab 分流） */
+export function getTableColumns(type: DictRowType, tab: DictTab): DictColumnDef[] {
+  if (type === "gpt") return DICT_TABLE_COLUMNS.gpt;
+  if (type === "forbidden") return DICT_TABLE_COLUMNS.forbidden;
   if (type === "normal") {
-    // h 词库与禁用词字典均为「词|备注」格式
-    if (tab === "h" || tab === "forbidden") return ["词", "备注"];
-    return ["搜索", "替换", "备注"];
+    return tab === "h" || tab === "forbidden"
+      ? DICT_TABLE_COLUMNS.wordNormal
+      : DICT_TABLE_COLUMNS.replaceNormal;
   }
-  if (type === "conditional") return ["目标", "条件", "搜索", "替换", "备注"];
-  if (type === "situation") return ["场景", "搜索", "替换"];
-  if (type === "comment") return ["内容"];
+  if (type === "conditional") return DICT_TABLE_COLUMNS.conditional;
+  if (type === "situation") return DICT_TABLE_COLUMNS.situation;
+  if (type === "comment") return DICT_TABLE_COLUMNS.comment;
   return [];
 }
 
-// ---------- 单句填空卡片：搜索词前缀 & 条件语义 ----------
+export function getFieldLabels(type: DictRowType, tab: DictTab): string[] {
+  return getTableColumns(type, tab).map((c) => c.label);
+}
+
+// 条件字典搜索词/条件语义辅助：解析、序列化与映射
 
 export type SearchMode = "all" | "first" | "startswith";
 

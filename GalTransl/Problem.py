@@ -17,7 +17,7 @@ from GalTransl.Utils import (
     is_all_gbk,
     extract_control_substrings
 )
-from GalTransl.Dictionary import CGptDict
+from GalTransl.Dictionary import CGptDict, _COMMENT_PREFIXES
 
 MONOLOGUE_MALE_HE_EXCLUDES = (
     "其他",
@@ -106,8 +106,7 @@ def load_h_check_words(dict_paths: list) -> list:
     """加载 H 场景用词不当检测词库（格式与 GPT 字典一致：词|备注）。
 
     逐行解析，取每行第一列作为检测词；解析语义与 parse_dict_line 对齐：
-    Tab/四空格先归一化为 |，仅当行内不含 | 时才把 // # \\ 前缀视作注释
-    （含 | 的此类行编辑器会按规则加载，后端需保持一致）；另跳过纯符号分隔线。
+    以 // # \\ 前缀开头（即使含 |）即视为整行注释跳过；另跳过纯符号分隔线。
     取词后再防御一次：首列以 // # \\ 开头的行一律视为注释丢弃，避免模板注释
     （如「// 格式：词|备注」含 | 被当作词条）注入提示词。
     文件缺失或解析为空时返回空列表（检测自动降级为不触发）。
@@ -124,7 +123,7 @@ def load_h_check_words(dict_paths: list) -> list:
                 stripped = line.strip()
                 if not stripped:
                     continue
-                if "|" not in stripped and stripped.startswith(("//", "#", "\\")):
+                if stripped.startswith(_COMMENT_PREFIXES):
                     continue
                 if re.fullmatch(r"[=\-~_*]{3,}", stripped):
                     continue
@@ -132,7 +131,7 @@ def load_h_check_words(dict_paths: list) -> list:
                 norm = stripped.replace("    ", "\t").replace("\t", "|")
                 word = norm.split("|", 1)[0].strip()
                 # 首列带注释前缀（即使整行含 |，如模板说明）一律丢弃，防注入提示词
-                if word.lstrip().startswith(("//", "#", "\\")):
+                if word.lstrip().startswith(_COMMENT_PREFIXES):
                     LOGGER.debug(f"禁用词字典跳过注释行：{stripped}")
                     continue
                 if not word:

@@ -25,7 +25,7 @@ from datetime import datetime
 from yaml import safe_load, safe_dump
 
 from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, AUTHOR, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
-from GalTransl.Dictionary import parse_dict_line, DictRow
+from GalTransl.Dictionary import parse_dict_line, DictRow, _COMMENT_PREFIXES
 from GalTransl.Utils import get_n_symbol
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.AppSettings import load_app_settings, save_app_settings
@@ -1411,7 +1411,7 @@ def _read_dict_file_payload(file_path: str) -> dict[str, Any]:
             "count": len([
                 line_item
                 for line_item in lines
-                if line_item.strip() and not line_item.startswith("\\\\") and not line_item.startswith("//")
+                if line_item.strip() and not line_item.lstrip().startswith(_COMMENT_PREFIXES)
             ]),
             "mtime": mtime,
         }

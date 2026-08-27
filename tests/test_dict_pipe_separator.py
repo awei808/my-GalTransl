@@ -114,6 +114,14 @@ class CGptDictPipeTests(unittest.TestCase):
         os.unlink(path)
         self.assertEqual(len(gd._dic_list), 0)
 
+    def test_comment_with_pipe_skipped(self) -> None:
+        """含 | 的注释行（以 // # 前缀开头）跳过，不解析为词条"""
+        path = _temp_file("// 词|备注说明\n# 模板|说明\nsrc|dst\n")
+        gd = CGptDict([path])
+        os.unlink(path)
+        self.assertEqual(len(gd._dic_list), 1)
+        self.assertEqual(gd._dic_list[0].search_word, "src")
+
     def test_blank_lines_skipped(self) -> None:
         """空行跳过"""
         path = _temp_file("\n\nvalid|replacement\n\n\n")
@@ -300,6 +308,14 @@ class CNormalDicPipeTests(unittest.TestCase):
         nd = CNormalDic([path])
         os.unlink(path)
         self.assertEqual(len(nd.dic_list), 1)
+
+    def test_comment_with_pipe_skipped(self) -> None:
+        """含 | 的注释行（以 // # 前缀开头）跳过，不解析为普通词条"""
+        path = _temp_file("// 词|备注说明\n# 词|备注说明\nvalid|ok\n")
+        nd = CNormalDic([path])
+        os.unlink(path)
+        self.assertEqual(len(nd.dic_list), 1)
+        self.assertEqual(nd.dic_list[0].search_word, "valid")
 
     def test_nonexistent_file(self) -> None:
         """不存在的文件不崩溃"""

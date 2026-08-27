@@ -164,9 +164,9 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     raw_line = line
     if not line.strip():
         return DictRow("blank", [], raw_line)
-    # 注释判定：仅当行内不含 | 时，// # \\ 前缀才视作注释。
-    # 含 | 的 // 行会被引擎当作有效规则加载，编辑器需保持一致，避免误判为注释。
-    if "|" not in line and any(line.startswith(p) for p in _COMMENT_PREFIXES):
+    # 注释判定：以 // # \\ 前缀开头（即使含 |）即为整行注释。
+    # 与引擎各 load_dic / server 计数 / H 词库加载统一，避免含 | 的注释被当作普通词条加载。
+    if line.lstrip().startswith(_COMMENT_PREFIXES):
         return DictRow("comment", [line], raw_line)
     # 与引擎 load_dic 一致：Tab / 四空格转 | 后再分割（兼容旧版 Tab 分隔字典文件）
     line = line.replace("    ", "\t").replace("\t", "|")
@@ -362,8 +362,9 @@ class CNormalDic:
         for line in dic_lines:
             if line.startswith("\n"):
                 continue
-            # elif line.startswith("\\\\") or line.startswith("//"):  # 注释行跳过
-            #     continue
+            # 整行注释（// # \ 前缀，即使含 |）跳过，与 parse_dict_line 统一
+            if line.lstrip().startswith(_COMMENT_PREFIXES):
+                continue
 
             # 四个空格和Tab兼容为|分隔符
             line = line.replace("    ", "\t")
@@ -562,8 +563,9 @@ class CGptDict:
         for line in dic_lines:
             if line.startswith("\n"):
                 continue
-            # # 注释行（GenDic 生成的疑似词停用注释、格式说明行等）直接跳过，不解析为死词条
-            if line.lstrip().startswith("#"):
+            # 整行注释（// # \ 前缀，即使含 |）跳过，与 parse_dict_line 统一；
+            # 原仅跳 # 开头，现扩展到 //、\ 前缀，避免模板说明被解析为死词条
+            if line.lstrip().startswith(_COMMENT_PREFIXES):
                 continue
 
             # 兼容四个空格和Tab
