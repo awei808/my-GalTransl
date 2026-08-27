@@ -1,11 +1,11 @@
-"""端点级负例测试：路径穿越防护、pass3 存在性、# 注释解析一致性。
+"""端点级负例测试：路径穿越防护、pass3 存在性、注释符号一致性。
 
 针对性补充 test_project_init_import / test_dictionary_parse 未覆盖的端点：
 - 路径穿越：/api/dictionaries/common/{create,save,delete} 与 /api/projects/:id/cache/save
   （init / import 的穿越已在 test_project_init_import 覆盖，此处不重复）
 - pass3 存在性：init 端点必须产出 pass3_cache 目录与示例缓存文件；PASS3_CACHE_DIR 变量须定义
-- # 注释一致性：parse_dict_line 与 /api/dictionaries/parse 对 #、//、\\ 三前缀处理一致，
-  且含 | 时不再误判为注释（与引擎对齐，详见 R2）
+- 注释一致性：注释符号统一为 //，仅行首 // 是注释，#、\\ 不再作为注释，
+  行内 // 作为备注列保留（与引擎对齐）
 """
 import importlib
 import json
@@ -160,31 +160,32 @@ class Pass3ExistenceTests(_Base):
         )
 
 
-class HashCommentConsistencyTests(_Base):
-    """# 注释符号与 //、\\ 解析逻辑一致（纯函数 + 端点双层）。"""
+class CommentSymbolConsistencyTests(_Base):
+    """注释符号统一为 //：仅行首 // 是注释，# 与 \\ 不再作为注释（纯函数 + 端点双层）。"""
 
-    def test_three_prefixes_all_comment(self) -> None:
-        for prefix in ("#", "//", "\\\\"):
-            with self.subTest(prefix=prefix):
-                row = _dict_mod.parse_dict_line(f"{prefix} 注释", "pre")
-                self.assertEqual(row.type, "comment")
+    def test_only_double_slash_is_comment(self) -> None:
+        # // 仍是注释
+        self.assertEqual(_dict_mod.parse_dict_line("// 注释", "pre").type, "comment")
+        # # 与反斜杠不再是注释，作为普通词条解析
+        self.assertEqual(_dict_mod.parse_dict_line("# 注释", "pre").type, "normal")
+        self.assertEqual(_dict_mod.parse_dict_line("\\注释", "pre").type, "normal")
 
-    def test_hash_with_pipe_not_comment(self) -> None:
-        # 含 | 的 # 行引擎按规则加载，编辑器须与 // 一致地不误判为注释
-        self.assertEqual(_dict_mod.parse_dict_line("# 猫|狗", "pre").type, "normal")
-        self.assertEqual(_dict_mod.parse_dict_line("// 猫|狗", "pre").type, "normal")
+    def test_double_slash_only_at_line_start(self) -> None:
+        # // 仅行首起效；内容/字段中的 // 不是注释
+        self.assertEqual(_dict_mod.parse_dict_line("// 猫|狗", "pre").type, "comment")
+        self.assertEqual(_dict_mod.parse_dict_line("词|//备注", "pre").type, "normal")
 
-    def test_parse_endpoint_hash_comment_consistent(self) -> None:
-        content = "# 注释一\n// 注释二\n\\\\注释三\n# 含管道|不是注释\n搜索|替换\n"
+    def test_parse_endpoint_comment_consistent(self) -> None:
+        content = "# 注释一\n// 注释二\n\\注释三\n词|替换|//备注\n搜索|替换\n"
         status, body = self._req(
             "POST", "/api/dictionaries/parse", body={"content": content, "category": "pre"}
         )
         self.assertEqual(status, 200)
         types = [r["type"] for r in body["rows"]]
-        # 末尾换行产生的空行解析为 blank，与 parse_dict_line("") 一致
+        # #、\ 开头按普通词条；// 行首是注释；行内 // 是备注列
         self.assertEqual(
             types,
-            ["comment", "comment", "comment", "normal", "normal", "blank"],
+            ["normal", "comment", "normal", "normal", "normal", "blank"],
         )
 
 
@@ -253,22 +254,22 @@ class CrLfParseConsistencyTests(_Base):
                 self.assertNotIn("\r", value, "CRLF 回车符泄漏进解析值")
 
     def test_crlf_comment_prefix_detected(self) -> None:
-        # CRLF 下 # // \\ 仍应判为注释
+        # CRLF 下仅 // 判为注释
         content = "# 注释\r\n// 注释二\r\n\\注释三\r\n"
         status, body = self._req(
             "POST", "/api/dictionaries/parse", body={"content": content, "category": "pre"}
         )
         self.assertEqual(status, 200)
         self.assertEqual(
-            [r["type"] for r in body["rows"][:3]], ["comment", "comment", "comment"]
+            [r["type"] for r in body["rows"][:3]], ["normal", "comment", "normal"]
         )
 
 
 class CommentPrefixSingleSourceTests(unittest.TestCase):
-    """_COMMENT_PREFIXES 应为单一事实源，且含反斜杠（F2/F3）。"""
+    """_COMMENT_PREFIXES 应为单一事实源，且仅含 //（注释符号统一）。"""
 
-    def test_constant_includes_backslash(self) -> None:
-        self.assertEqual(_dict_mod._COMMENT_PREFIXES, ("//", "#", "\\"))
+    def test_constant_only_double_slash(self) -> None:
+        self.assertEqual(_dict_mod._COMMENT_PREFIXES, ("//",))
 
     def test_parse_dict_line_uses_prefixes(self) -> None:
         for prefix in _dict_mod._COMMENT_PREFIXES:

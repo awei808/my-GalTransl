@@ -25,7 +25,7 @@ from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.Cache import get_transCache_from_json
 from GalTransl.ConfigHelper import initDictList, CProjectConfig
 from GalTransl.CSentense import CTransList
-from GalTransl.Dictionary import CGptDict, CNormalDic
+from GalTransl.Dictionary import CGptDict, CNormalDic, _COMMENT_PREFIXES
 from GalTransl.Problem import find_problems
 from GalTransl.Cache import save_transCache_to_json
 from GalTransl.server_runtime import WORKER_ID_CTX, record_runtime_notice
@@ -1457,7 +1457,7 @@ def _has_nonempty_gpt_dict(projectConfig: CProjectConfig) -> bool:
             with open(p, encoding="utf-8") as f:
                 for line in f:
                     s = line.strip()
-                    if s and not s.startswith("#"):
+                    if s and not s.lstrip().startswith(_COMMENT_PREFIXES):
                         return True
         except Exception:
             continue

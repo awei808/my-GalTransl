@@ -441,8 +441,8 @@ export function DictionaryPage() {
     if (field === "target") {
       next = { ...row, target: value, values: row.values.map((v, i) => (i === 0 ? value : v)) };
     } else if (field === "note") {
-      const rest = value ? `//${value}` : "";
-      next = { ...row, note: value, values: [...row.values.slice(0, 4), rest] };
+      // 备注列原样保存（不再自动加 // 前缀）
+      next = { ...row, note: value, values: [...row.values.slice(0, 4), value] };
     } else if (typeof field === "object" && field.kind === "condItem") {
       const condItems = (row.condItems ?? []).map((c, i) =>
         i === field.index ? { ...c, word: value } : c,
@@ -499,12 +499,8 @@ export function DictionaryPage() {
 
   /** 表格单元格渲染：按列定义的编辑器类型分发（含条件行结构化控件，保留原卡片编辑能力） */
   function dictCell(ri: number, col: DictColumnDef, row: DictRow): JSX.Element {
-    // 常规/词库/场景等可编辑值列：有行内注释时该列渲染只读注释，否则渲染输入框
+    // 常规/词库/场景/备注等可编辑值列：始终渲染输入框，显示对应列原始值
     if (col.editor === "noteOrPlain" || col.editor === "plain") {
-      const isNoteLike = col.editor === "noteOrPlain";
-      if (isNoteLike && row.note) {
-        return <span class="dict-cell-note" title="行内注释">{`// ${row.note}`}</span>;
-      }
       return (
         <input
           class="dict-cell-input"
@@ -656,7 +652,7 @@ export function DictionaryPage() {
     }
     if (col.editor === "note") {
       return row.note ? (
-        <span class="dict-cell-note" title="行内注释">{`// ${row.note}`}</span>
+        <span class="dict-cell-note" title="备注">{row.note}</span>
       ) : (
         <span class="dict-cell-empty" />
       );

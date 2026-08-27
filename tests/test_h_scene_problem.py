@@ -388,7 +388,8 @@ class LoadHCheckWordsTests(unittest.TestCase):
 
         fp = os.path.join(self.tmp, "words.txt")
         with open(fp, "w", encoding="utf-8") as f:
-            f.write("// 注释行\n\n# 注释\n攀上顶峰|H场景中不应使用\n攀上了顶峰\n=====\n普通词|备注\n")
+            # 仅 // 是注释；# 不再是注释符号，作为普通词条加载（此处用 // 注释行）
+            f.write("// 注释行\n\n// 注释二\n攀上顶峰|H场景中不应使用\n攀上了顶峰\n=====\n普通词|备注\n")
         words = load_h_check_words([fp])
         self.assertEqual(words, ["攀上顶峰", "攀上了顶峰", "普通词"])
 

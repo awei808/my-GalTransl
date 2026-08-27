@@ -69,14 +69,14 @@ class CGptDictPipeTests(unittest.TestCase):
         self.assertEqual(gd._dic_list[0].note, "note")
 
     def test_old_arrow_format(self) -> None:
-        """旧 -> 格式兼容（-> 后空格导致 replace_word 尾随空格，是原有行为）"""
+        """旧 -> 格式兼容；# 已不再是 note 分隔符，整体并入 replace（原有尾随空格保留）"""
         path = _temp_file("src->dst #备注\n")
         gd = CGptDict([path])
         os.unlink(path)
         self.assertEqual(len(gd._dic_list), 1)
         self.assertEqual(gd._dic_list[0].search_word, "src")
-        self.assertEqual(gd._dic_list[0].replace_word, "dst ")
-        self.assertEqual(gd._dic_list[0].note, "备注")
+        self.assertEqual(gd._dic_list[0].replace_word, "dst #备注")
+        self.assertEqual(gd._dic_list[0].note, "")
 
     def test_space_to_pipe_compat(self) -> None:
         """4 空格 → Tab → Pipe 兼容链"""
@@ -89,14 +89,14 @@ class CGptDictPipeTests(unittest.TestCase):
         self.assertEqual(gd._dic_list[0].note, "note")
 
     def test_arrow_with_pipe_content(self) -> None:
-        """-> 格式中含额外注释文本（尾随空格是原有行为）"""
+        """-> 格式中含 # 文本：# 不再作为 note 分隔符，整体并入 replace"""
         path = _temp_file("keyword->translation #this is a note\n")
         gd = CGptDict([path])
         os.unlink(path)
         self.assertEqual(len(gd._dic_list), 1)
         self.assertEqual(gd._dic_list[0].search_word, "keyword")
-        self.assertEqual(gd._dic_list[0].replace_word, "translation ")
-        self.assertEqual(gd._dic_list[0].note, "this is a note")
+        self.assertEqual(gd._dic_list[0].replace_word, "translation #this is a note")
+        self.assertEqual(gd._dic_list[0].note, "")
 
     # ── 非法 / 边界 ──
 
@@ -115,12 +115,15 @@ class CGptDictPipeTests(unittest.TestCase):
         self.assertEqual(len(gd._dic_list), 0)
 
     def test_comment_with_pipe_skipped(self) -> None:
-        """含 | 的注释行（以 // # 前缀开头）跳过，不解析为词条"""
+        """含 | 的 // 注释行跳过；# 不再作为注释，按普通词条解析"""
         path = _temp_file("// 词|备注说明\n# 模板|说明\nsrc|dst\n")
         gd = CGptDict([path])
         os.unlink(path)
-        self.assertEqual(len(gd._dic_list), 1)
-        self.assertEqual(gd._dic_list[0].search_word, "src")
+        # // 注释跳过，# 行作为词条加载
+        self.assertEqual(len(gd._dic_list), 2)
+        self.assertEqual(gd._dic_list[0].search_word, "# 模板")
+        self.assertEqual(gd._dic_list[0].replace_word, "说明")
+        self.assertEqual(gd._dic_list[1].search_word, "src")
 
     def test_blank_lines_skipped(self) -> None:
         """空行跳过"""
@@ -310,12 +313,13 @@ class CNormalDicPipeTests(unittest.TestCase):
         self.assertEqual(len(nd.dic_list), 1)
 
     def test_comment_with_pipe_skipped(self) -> None:
-        """含 | 的注释行（以 // # 前缀开头）跳过，不解析为普通词条"""
+        """含 | 的 // 注释行跳过；# 不再作为注释，按普通词条解析"""
         path = _temp_file("// 词|备注说明\n# 词|备注说明\nvalid|ok\n")
         nd = CNormalDic([path])
         os.unlink(path)
-        self.assertEqual(len(nd.dic_list), 1)
-        self.assertEqual(nd.dic_list[0].search_word, "valid")
+        self.assertEqual(len(nd.dic_list), 2)
+        self.assertEqual(nd.dic_list[0].search_word, "# 词")
+        self.assertEqual(nd.dic_list[1].search_word, "valid")
 
     def test_nonexistent_file(self) -> None:
         """不存在的文件不崩溃"""
@@ -350,7 +354,10 @@ class CBasicDicElementLoadLineTests(unittest.TestCase):
         elem = CBasicDicElement()
         result = elem.load_line("// this is a comment\n")
         self.assertIsNone(result)
+        # # 与反斜杠不再是注释符号：单列词条因无替换词返回 None（非注释语义）
         result = elem.load_line("\\\\ another comment\n")
+        self.assertIsNone(result)
+        result = elem.load_line("# another comment\n")
         self.assertIsNone(result)
 
 

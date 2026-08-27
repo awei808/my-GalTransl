@@ -125,7 +125,7 @@ class NonEmptyGptDictTests(unittest.TestCase):
     def test_only_comments_and_blank_returns_false(self) -> None:
         from GalTransl.Frontend.LLMTranslate import _has_nonempty_gpt_dict
 
-        self._write("项目GPT字典-生成.txt", "# 注释行\n\n  \n")
+        self._write("项目GPT字典-生成.txt", "// 注释行\n\n  \n")
         self.assertFalse(_has_nonempty_gpt_dict(self.cfg))
 
     def test_manual_dict_nonempty_returns_true(self) -> None:

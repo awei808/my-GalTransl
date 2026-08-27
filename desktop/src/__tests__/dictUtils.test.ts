@@ -161,7 +161,7 @@ describe("rowToText 结构化往返", () => {
     expect(rowToText(row)).toBe('post_jp|「[and]!"|1^"|「');
   });
 
-  it("[or] + 注释", () => {
+  it("[or] + 备注列原样序列化", () => {
     const row: DictRow = {
       type: "conditional",
       values: ['pre_jp', '人妻[or]ひとづま', '有夫之妇', '人妻', '//条件字典例子'],
@@ -172,7 +172,8 @@ describe("rowToText 结构化往返", () => {
         { word: "人妻", op: "", negate: false, startswith: false, endswith: false, placeholder: false },
         { word: "ひとづま", op: "or", negate: false, startswith: false, endswith: false, placeholder: false },
       ],
-      note: "条件字典例子",
+      // 后端 note 保留备注列原始内容（含 //），序列化原样输出，不再补 // 前缀
+      note: "//条件字典例子",
     };
     expect(rowToText(row)).toBe('pre_jp|人妻[or]ひとづま|有夫之妇|人妻|//条件字典例子');
   });
@@ -360,8 +361,13 @@ describe("DICT_TABLE_COLUMNS / getTableColumns（表格表头列定义）", () =
     ]);
   });
 
-  it("situation 表头为「场景|搜索|替换」", () => {
-    expect(DICT_TABLE_COLUMNS.situation.map((c) => c.label)).toEqual(["场景", "搜索", "替换"]);
+  it("situation 表头为「场景|搜索|替换|备注」，备注列为只读展示", () => {
+    const cols = DICT_TABLE_COLUMNS.situation;
+    expect(cols.map((c) => c.label)).toEqual(["场景", "搜索", "替换", "备注"]);
+    expect(cols[0].editor).toBe("plain");
+    expect(cols[1].editor).toBe("plain");
+    expect(cols[2].editor).toBe("plain");
+    expect(cols[3].editor).toBe("note");
   });
 
   it("normal 按 tab 分流：h/forbidden 为「词|备注」，其余为「搜索|替换|备注」", () => {

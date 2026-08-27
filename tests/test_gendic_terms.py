@@ -125,7 +125,7 @@ class TermsDropRuleTests(unittest.TestCase):
         self.assertTrue(_is_term_droppable("NULL", "NULL", "NULL"))
 
     def test_suspicious_note_detected(self) -> None:
-        # AI 标注「疑似H/疑似非术语」→ 落盘时原文前加 # 注释（用户手动删除后启用）
+        # AI 标注「疑似H/疑似非术语」→ 落盘时原文前加 // 注释（用户手动删除后启用）
         self.assertTrue(_is_suspicious_note("术语（疑似H）"))
         self.assertTrue(_is_suspicious_note("动词短语（疑似非术语）"))
         self.assertTrue(_is_suspicious_note("疑似H"))

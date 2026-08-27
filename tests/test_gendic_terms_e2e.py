@@ -105,20 +105,20 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         if not os.path.exists(self.dic_path):
             return []
         with open(self.dic_path, "r", encoding="utf-8") as f:
-            return [l for l in f.read().splitlines() if l.strip() and not l.startswith("#")]
+            return [l for l in f.read().splitlines() if l.strip() and not l.startswith("//")]
 
     def test_load_existing_generated_terms_tab_fallback(self) -> None:
         # 旧版 Tab 分隔的生成字典（升级残留）→ 归一为 | 后按 src 收集，不产生含 Tab 的垃圾条目
         with open(self.dic_path, "w", encoding="utf-8") as f:
-            f.write("# 格式说明行\nサキュバス\t魅魔\t术语\nフィギュア|手办|物品\n")
+            f.write("// 格式说明行\nサキュバス\t魅魔\t术语\nフィギュア|手办|物品\n")
         backend = self._backend([])
         terms = backend._load_existing_generated_terms(self.dic_path)
         self.assertEqual(terms, {"サキュバス", "フィギュア"})
 
     def test_load_commented_terms_tab_fallback(self) -> None:
-        # 旧版 Tab 分隔的 # 注释停用词 → 归一为 | 后仍能恢复停用状态
+        # 旧版 Tab 分隔的 // 注释停用词 → 归一为 | 后仍能恢复停用状态
         with open(self.dic_path, "w", encoding="utf-8") as f:
-            f.write("# 格式说明行\n#淫乱奴隷\t淫乱奴隶\t术语（疑似H）\n")
+            f.write("// 格式说明行\n//淫乱奴隷\t淫乱奴隶\t术语（疑似H）\n")
         backend = self._backend([])
         commented = backend._load_commented_terms_from_generated()
         self.assertEqual(commented, {"淫乱奴隷": ("淫乱奴隶", "术语（疑似H）")})
@@ -172,7 +172,7 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len({l.split("|")[0] for l in entries}), first_count)  # 无重复词条
 
     async def test_terms_suspicious_note_commented_in_dictionary(self) -> None:
-        # AI 备注标注「疑似H」→ 落盘原文前加 # 注释（防止解析，手动删 # 启用）；
+        # AI 备注标注「疑似H」→ 落盘原文前加 // 注释（防止解析，手动删 // 启用）；
         # 词表外行（思い切り掻き混ぜ）被 grounding 丢弃
         filler = "私はフィギュアの造形が好きで、毎日模型を制作している。" * 100
         inp = [
@@ -185,8 +185,8 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         ok = await backend.batch_translate(inp)
         self.assertTrue(ok)
         with open(self.dic_path, encoding="utf-8") as f:
-            raw = f.read()  # 不过滤 # 行（# 正是被注释的疑似词）
-        self.assertIn("#淫乱奴隷", raw)          # 疑似H 已注释
+            raw = f.read()  # 不过滤 // 行（// 正是被注释的疑似词）
+        self.assertIn("//淫乱奴隷", raw)          # 疑似H 已注释
         self.assertIn("サキュバス|魅魔", raw)     # 正常词不受影响
         self.assertNotIn("\n淫乱奴隷|", raw)     # 未注释版本不存在
         self.assertNotIn("思い切り掻き混ぜ", raw)  # 词表外行被 grounding 丢弃
@@ -232,7 +232,7 @@ class GenDicLlmE2ETests(unittest.IsolatedAsyncioTestCase):
         if not os.path.exists(self.dic_path):
             return []
         with open(self.dic_path, "r", encoding="utf-8") as f:
-            return [l for l in f.read().splitlines() if l.strip() and not l.startswith("#")]
+            return [l for l in f.read().splitlines() if l.strip() and not l.startswith("//")]
 
     async def test_llm_extract_writes_dictionary_unfiltered(self) -> None:
         # 不筛选词汇（用户决策）：AI 提取的术语（含人名/拟声 note）直接进词典；

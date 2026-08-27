@@ -192,9 +192,9 @@ export function rowToText(row: DictRow): string {
       : row.values[1] ?? "";
   const search = row.values[2] ?? "";
   const replace = row.values[3] ?? "";
-  // note 为空但原 rest（values[4]）非空时回退原值，避免非注释的尾随字段被丢弃
+  // 备注列原样输出（不再自动加 // 前缀）；note 为空但原 rest（values[4]）非空时回退原值
   const noteSuffix = row.note
-    ? `|//${row.note}`
+    ? `|${row.note}`
     : row.values[4] && row.values[4].length > 0
       ? `|${row.values[4]}`
       : "";
@@ -203,12 +203,12 @@ export function rowToText(row: DictRow): string {
 
 export type DictColumnEditor =
   | "plain"       // 按 valueIndex 渲染可编辑输入框
-  | "noteOrPlain" // 行有行内注释时渲染只读注释，否则按 valueIndex 渲染输入框
+  | "noteOrPlain" // 备注/解释等列：按 valueIndex 渲染可编辑输入框（显示原始值）
   | "target"      // 条件行：目标字段（行首 key）
   | "condItems"   // 条件行：条件列（词 + 语义 + 连接符）
   | "search"      // 条件行：搜索模式 + 搜索词
   | "replace"     // 条件行：替换词列
-  | "note";       // 只读行内注释
+  | "note";       // 条件行：只读备注
 
 /** 表格列定义：label 为表头文字，editor 决定单元格渲染与字段绑定 */
 export type DictColumnDef = {
@@ -254,7 +254,9 @@ export const DICT_TABLE_COLUMNS: Record<
   situation: [
     { key: "scene", label: "场景", editor: "plain", valueIndex: 0 },
     { key: "search", label: "搜索", editor: "plain", valueIndex: 1 },
-    { key: "replace", label: "替换", editor: "noteOrPlain", valueIndex: 2 },
+    { key: "replace", label: "替换", editor: "plain", valueIndex: 2 },
+    // 第4+列引擎不加载，仅作展示（与 conditional 的只读备注列观感对齐），编辑不写回
+    { key: "note", label: "备注", editor: "note" },
   ],
   comment: [{ key: "content", label: "内容", editor: "plain", valueIndex: 0 }],
 };

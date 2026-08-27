@@ -602,9 +602,9 @@ class GenDic(BaseEngine):
         return existing_terms
 
     def _load_commented_terms_from_generated(self) -> Dict[str, Tuple[str, str]]:
-        """加载生成字典中 # 注释词（疑似H/非术语停用）：返回 {原词: (dst, note)}。
+        """加载生成字典中 // 注释词（疑似H/非术语停用）：返回 {原词: (dst, note)}。
 
-        供 extract 阶段跳过（不重复发送 AI 翻译），落盘时写回 # 行保持停用状态。
+        供 extract 阶段跳过（不重复发送 AI 翻译），落盘时写回 // 行保持停用状态。
         """
         result_path = os.path.join(self.pj_config.getProjectDir(), "项目GPT字典-生成.txt")
         commented: Dict[str, Tuple[str, str]] = {}
@@ -615,15 +615,15 @@ class GenDic(BaseEngine):
                 for line in f:
                     line = line.strip()
                     line = line.replace("\t", "|")  # 容错：旧版生成字典为 Tab 分隔，归一并兼容
-                    # 仅收集程序生成的 # 注释词（# 后直接跟词）；跳过 # 加空格的格式说明行
-                    if not line.startswith("#") or line.startswith("# "):
+                    # 仅收集程序生成的 // 注释词（// 后直接跟词）；跳过 // 加空格的格式说明行
+                    if not line.startswith("//") or line.startswith("// "):
                         continue
-                    sp = line.lstrip("#").split("|")
+                    sp = line[2:].split("|")
                     if len(sp) >= 2 and sp[0].strip() and sp[1].strip():
                         src = sp[0].strip()
                         commented[src] = (sp[1].strip(), sp[2].strip() if len(sp) > 2 else "")
         except Exception:
-            LOGGER.warning("[GenDic][terms] 读取生成字典 # 注释词失败", exc_info=True)
+            LOGGER.warning("[GenDic][terms] 读取生成字典 // 注释词失败", exc_info=True)
         return commented
 
     def _update_runtime(self, **kwargs: Any) -> None:
@@ -643,7 +643,7 @@ class GenDic(BaseEngine):
                 for line in f:
                     line = line.strip()
                     line = line.replace("\t", "|")  # 容错：旧版生成字典为 Tab 分隔，归一并兼容
-                    if not line or line.startswith("#"):
+                    if not line or line.startswith("//"):
                         continue
                     sp = line.split("|")
                     if sp:
@@ -1097,7 +1097,7 @@ class GenDic(BaseEngine):
             self._update_runtime(stage="GenDic 分词处理中", current_file="terms 模式提取")
             existing_dict_map = self._load_existing_gpt_terms()
             self.existing_dict_map = existing_dict_map
-            # 生成字典中 # 注释词（疑似H/非术语停用）并入 existing：extract 跳过，避免每轮重复翻译
+            # 生成字典中 // 注释词（疑似H/非术语停用）并入 existing：extract 跳过，避免每轮重复翻译
             self._commented_terms = self._load_commented_terms_from_generated()
             for w, entry in self._commented_terms.items():
                 existing_dict_map.setdefault(w, entry)
@@ -1219,7 +1219,7 @@ class GenDic(BaseEngine):
             return True
 
         # 落盘前过滤（真实测试暴露）：拟声 note / H 词表 / NULL / 空 note 的未翻译回显；
-        # AI 标注「疑似H/疑似非术语」的词：原文前加 # 注释（防止解析，用户手动删除后启用）
+        # AI 标注「疑似H/疑似非术语」的词：原文前加 // 注释（防止解析，用户手动删除后启用）
         dropped = 0
         commented = 0
         final_list: List[List[str]] = []
@@ -1228,21 +1228,21 @@ class GenDic(BaseEngine):
                 dropped += 1
                 continue
             if _is_suspicious_note(note):
-                w = "#" + w
+                w = "//" + w
                 commented += 1
             final_list.append([w, dst, note])
-        # 沿用上轮 # 注释词（extract 已跳过，未进 results）：写回 # 行，保持停用、避免重复翻译
+        # 沿用上轮 // 注释词（extract 已跳过，未进 results）：写回 // 行，保持停用、避免重复翻译
         commented_terms = getattr(self, "_commented_terms", None) or {}
         for w, (dst, note) in commented_terms.items():
-            if any(w == item[0].lstrip("#") for item in final_list):
+            if any(w == item[0].lstrip("//") for item in final_list):
                 continue
-            final_list.append(["#" + w, dst, note])
+            final_list.append(["//" + w, dst, note])
         if dropped:
             LOGGER.warning(f"[GenDic][terms] 落盘前过滤 {dropped} 条（拟声/H词/NULL/未翻译回显）")
         if commented or commented_terms:
             LOGGER.warning(
                 f"[GenDic][terms] {commented} 条本轮疑似H/非术语已注释，"
-                f"沿用 {len(commented_terms)} 条上轮注释（原文前加 #，删除 # 后启用）"
+                f"沿用 {len(commented_terms)} 条上轮注释（原文前加 //，删除 // 后启用）"
             )
         result_path = self._save_generated_dictionary(final_list)
         added = len(final_list)
@@ -1360,16 +1360,16 @@ class GenDic(BaseEngine):
             return True
 
         # 不筛选词汇（用户决策）：LLM 全权模式结果简单处理后直接进词典，仅去重；
-        # AI 标注「疑似H/疑似非术语」的词原文前加 # 注释（用户手动删除后启用）
+        # AI 标注「疑似H/疑似非术语」的词原文前加 // 注释（用户手动删除后启用）
         final_list: List[List[str]] = []
         commented = 0
         for src, (dst, note) in results.items():
             if _is_suspicious_note(note):
-                src = "#" + src
+                src = "//" + src
                 commented += 1
             final_list.append([src, dst, note])
         if commented:
-            LOGGER.warning(f"[GenDic][llm] {commented} 条疑似H/非术语已注释（原文前加 #，删除 # 后启用）")
+            LOGGER.warning(f"[GenDic][llm] {commented} 条疑似H/非术语已注释（原文前加 //，删除 // 后启用）")
         max_terms = int(getattr(self, "gendic_max_terms", 0) or 0)
         if max_terms > 0 and len(final_list) > max_terms:
             final_list = final_list[:max_terms]

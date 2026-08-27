@@ -59,8 +59,8 @@ class DictRow:
     note: str = ""  # 行内 // 注释内容（已剥离 // 前缀）
 
 
-# 解析用的注释前缀集合（与前端 dictUtils.parseRows 对齐），单一事实源
-_COMMENT_PREFIXES = ("//", "#", "\\")
+# 解析用的注释前缀：仅 //，且只在整行行首起效（与引擎各 load_dic 对齐）
+_COMMENT_PREFIXES = ("//",)
 _CONDITIONAL_KEYS = [
     "pre_src", "post_src", "pre_dst", "post_dst",
     "pre_jp", "post_jp", "pre_zh", "post_zh",
@@ -78,17 +78,6 @@ def _safe_escape(text: str) -> str:
         return process_escape(text)
     except (ValueError, UnicodeDecodeError):
         return text
-
-
-def _split_note(rest: str) -> str:
-    """从行尾 rest 字段中提取 // / # / \\ 前缀的注释内容（不含前缀）。"""
-    if not rest:
-        return ""
-    stripped = rest.lstrip()
-    for p in _COMMENT_PREFIXES:
-        if stripped.startswith(p):
-            return stripped[len(p):].lstrip()
-    return ""
 
 
 def _parse_cond_items(cond: str) -> tuple[List[ConditionItem], str]:
@@ -151,8 +140,8 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     """纯解析：单行字典文本 -> 结构化 DictRow，不做任何 IO / 翻译副作用。
 
     解析语义与翻译引擎 load_dic 对齐：Tab/四空格先归一化为 |，再按 | 分割、
-    对每字段做转义处理；仅在行内不含 | 时才把 // # \\ 前缀视作注释
-    （含 | 的此类行引擎会按规则加载）。
+    对每字段做转义处理；仅当整行行首以 // 开头时视作整行注释。
+    note 字段为备注列原始内容（不剥离 // 前缀），仅供显示，不影响加载逻辑。
 
     Args:
         line: 单行字典文本（不含换行符）。
@@ -164,7 +153,7 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     raw_line = line
     if not line.strip():
         return DictRow("blank", [], raw_line)
-    # 注释判定：以 // # \\ 前缀开头（即使含 |）即为整行注释。
+    # 注释判定：仅 // 前缀，且只在整行行首起效（即使含 |）即为整行注释。
     # 与引擎各 load_dic / server 计数 / H 词库加载统一，避免含 | 的注释被当作普通词条加载。
     if line.lstrip().startswith(_COMMENT_PREFIXES):
         return DictRow("comment", [line], raw_line)
@@ -177,7 +166,8 @@ def parse_dict_line(line: str, category: str) -> DictRow:
         src = parts[0] if len(parts) > 0 else ""
         dst = parts[1] if len(parts) > 1 else ""
         rest = "|".join(parts[2:]) if len(parts) > 2 else ""
-        note = _split_note(rest)
+        # gpt/禁用词备注列原样保留（不剥离 //），禁用词运行时剥离在 load_h_check_words
+        note = rest
         row_type = "gpt" if category in ("gpt", "gpth", "gptnh") else "forbidden"
         return DictRow(
             row_type, [src, dst, rest], raw_line,
@@ -187,7 +177,8 @@ def parse_dict_line(line: str, category: str) -> DictRow:
         target, cond, search, replace = parts[0], parts[1], parts[2], parts[3]
         rest = "|".join(parts[4:]) if len(parts) > 4 else ""
         cond_items, spl_word = _parse_cond_items(cond)
-        note = _split_note(rest)
+        # 备注列原样保留（不剥离 //），仅供显示
+        note = rest
         return DictRow(
             "conditional", [target, cond, search, replace, rest], raw_line,
             target=target, cond_items=cond_items, spl_word=spl_word, note=note,
@@ -195,13 +186,9 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     if len(parts) >= 3 and parts[0] in _SITUATION_KEYS:
         scene = parts[0]
         search = parts[1]
-        replace = "|".join(parts[2:]) if len(parts) > 2 else ""
-        # situation 没有专门的 rest 列；只在末尾字段为单条注释时识别
-        note = ""
-        if len(parts) >= 4 and _COMMENT_PREFIXES and any(
-            parts[-1].lstrip().startswith(p) for p in _COMMENT_PREFIXES
-        ):
-            note = _split_note(parts[-1])
+        # 与引擎 CNormalDic.load_dic 一致：第3列即 replace（不含 |）；多余列作为备注
+        replace = parts[2] if len(parts) > 2 else ""
+        note = "|".join(parts[3:]) if len(parts) > 3 else ""
         return DictRow(
             "situation", [scene, search, replace], raw_line,
             target=scene, cond_items=[], spl_word="", note=note,
@@ -209,7 +196,8 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     search = parts[0] if len(parts) > 0 else ""
     replace = parts[1] if len(parts) > 1 else ""
     rest = "|".join(parts[2:]) if len(parts) > 2 else ""
-    note = _split_note(rest)
+    # 备注列原样保留（不剥离 //），仅供显示，不影响替换逻辑
+    note = rest
     return DictRow(
         "normal", [search, replace, rest], raw_line,
         target=None, cond_items=[], spl_word="", note=note,
@@ -305,6 +293,8 @@ class CBasicDicElement:
             return None
         search = row.values[0]
         replace = row.values[1]
+        # 注意：load_line 当前为死代码（CNormalDic/CGptDict 走 CBasicDicElement.__init__）。
+        # 此处 if/elif 与 __init__ 的双独立 if 口径不同（^^1^ 组合前缀仅命中一个）；如需启用请先统一。
         if search.startswith("^^"):  # startswith情况
             self.startswith_flag = True
             self.search_word = search[2:]
@@ -362,7 +352,7 @@ class CNormalDic:
         for line in dic_lines:
             if line.startswith("\n"):
                 continue
-            # 整行注释（// # \ 前缀，即使含 |）跳过，与 parse_dict_line 统一
+            # 整行注释（仅 // 前缀，即使含 |）跳过，与 parse_dict_line 统一
             if line.lstrip().startswith(_COMMENT_PREFIXES):
                 continue
 
@@ -563,17 +553,16 @@ class CGptDict:
         for line in dic_lines:
             if line.startswith("\n"):
                 continue
-            # 整行注释（// # \ 前缀，即使含 |）跳过，与 parse_dict_line 统一；
-            # 原仅跳 # 开头，现扩展到 //、\ 前缀，避免模板说明被解析为死词条
+            # 整行注释（仅 // 前缀，即使含 |）跳过，与 parse_dict_line 统一
             if line.lstrip().startswith(_COMMENT_PREFIXES):
                 continue
 
             # 兼容四个空格和Tab
             line = line.replace("    ", "\t")
             line = line.replace("\t", "|")
-            # 兼容src->dst #note
+            # 兼容旧箭头格式 src->dst（# 已不再是注释/分隔符，不再替换）
             if "->" in line:
-                line = line.replace("->", "|").replace("#", "|")
+                line = line.replace("->", "|")
 
             sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
             len_sp = len(sp)
@@ -583,10 +572,8 @@ class CGptDict:
 
             search_word = sp[0]
             replace_word = sp[1]
-            if len_sp > 2 and sp[2]:
-                note = sp[2]
-            else:
-                note = ""
+            # 与 parse_dict_line gpt 分支一致：note 取第3列后全部（含 | 拼接）
+            note = "|".join(sp[2:]) if len_sp > 2 else ""
 
             redundant_flag = False
             for d in self._dic_list:

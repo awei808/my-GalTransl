@@ -41,9 +41,11 @@ class ParseDictLineTests(unittest.TestCase):
         self.assertEqual(r.values, ["src", "dst", "note here"])
 
     def test_comment(self) -> None:
+        # 仅 // 前缀视作注释；# 与反斜杠不再是注释符号
         self.assertEqual(parse_dict_line("// note", "pre").type, "comment")
-        self.assertEqual(parse_dict_line("# note", "pre").type, "comment")
-        self.assertEqual(parse_dict_line("\\\\note", "pre").type, "comment")
+        self.assertEqual(parse_dict_line("//note", "pre").type, "comment")
+        self.assertEqual(parse_dict_line("# note", "pre").type, "normal")
+        self.assertEqual(parse_dict_line("\\\\note", "pre").type, "normal")
 
     def test_blank(self) -> None:
         self.assertEqual(parse_dict_line("   ", "pre").type, "blank")
@@ -74,10 +76,11 @@ class ParseDictLineTests(unittest.TestCase):
         r = parse_dict_line("  // 猫|狗 备注", "post")
         self.assertEqual(r.type, "comment")
 
-    def test_comment_with_hash_and_pipe(self) -> None:
-        # # 前缀 + 含 | 判注释
+    def test_hash_prefix_not_comment(self) -> None:
+        # # 不再是注释符号；含 | 的 # 行按普通词条解析
         r = parse_dict_line("# 词|备注说明", "gpt")
-        self.assertEqual(r.type, "comment")
+        self.assertEqual(r.type, "gpt")
+        self.assertEqual(r.values, ["# 词", "备注说明", ""])
 
     def test_escape_handling_applied(self) -> None:
         # 与引擎一致：每字段做转义处理（\n -> 真实换行）
@@ -122,13 +125,15 @@ class ParseDictLineTests(unittest.TestCase):
         self.assertEqual(r.cond_items[0].op, "")
         self.assertEqual(r.cond_items[1].word, "ひとづま")
         self.assertEqual(r.cond_items[1].op, "or")
-        self.assertEqual(r.note, "条件字典例子")
+        # note 保留备注列原始内容（含 // 前缀），不剥离
+        self.assertEqual(r.note, "//条件字典例子")
 
     def test_conditional_negate_prefix_extracted(self) -> None:
         r = parse_dict_line("pre_jp|!サタン|撒旦|魔王|//", "post")
         self.assertEqual(r.cond_items[0].word, "サタン")
         self.assertTrue(r.cond_items[0].negate)
-        self.assertEqual(r.note, "")
+        # 备注列原样保留（即使只是 // 前缀，不剥离为空）
+        self.assertEqual(r.note, "//")
 
     def test_conditional_startswith_endswith_extracted(self) -> None:
         r = parse_dict_line("pre_jp|>字<|search|replace", "post")
@@ -151,20 +156,22 @@ class ParseDictLineTests(unittest.TestCase):
     def test_normal_extracts_inline_note(self) -> None:
         r = parse_dict_line("搜索|替换|//普通字典例子", "post")
         self.assertEqual(r.type, "normal")
-        self.assertEqual(r.note, "普通字典例子")
-        # values 仍保留原始 rest（含 // 前缀），保持序列化回文本时不丢信息
+        # note 保留备注列原始内容（含 // 前缀），不剥离
+        self.assertEqual(r.note, "//普通字典例子")
         self.assertEqual(r.values, ["搜索", "替换", "//普通字典例子"])
 
     def test_gpt_extracts_inline_note(self) -> None:
         r = parse_dict_line("src|dst|//说明", "gpt")
         self.assertEqual(r.type, "gpt")
-        self.assertEqual(r.note, "说明")
+        # gpt 后端不剥离：note 保留备注列原始内容
+        self.assertEqual(r.note, "//说明")
         self.assertEqual(r.values, ["src", "dst", "//说明"])
 
     def test_situation_extracts_scene_as_target(self) -> None:
         r = parse_dict_line("diag|台詞|独白|//说明", "pre")
         self.assertEqual(r.target, "diag")
-        self.assertEqual(r.note, "说明")
+        # situation 末尾多余列原样作为备注（不剥离 //）
+        self.assertEqual(r.note, "//说明")
 
 
 class LoadLineTests(unittest.TestCase):
@@ -304,7 +311,8 @@ class ParseEndpointTests(_Base):
             body["rows"][0],
             {
                 "type": "gpt", "values": ["src", "dst", "note"], "raw": "src|dst|note",
-                "target": None, "cond_items": [], "spl_word": "", "note": "",
+                # gpt 后端不剥离：备注列原样作为 note
+                "target": None, "cond_items": [], "spl_word": "", "note": "note",
             },
         )
 
