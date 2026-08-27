@@ -625,7 +625,7 @@ class CGptDict:
             return entry
         TITLE_GPT="# Glossary\n| Src | Dst(/Dst2/..) | Note |\n| --- | --- | --- |\n"
         def _format_dic_entry_sakura(dic: CBasicDicElement) -> str:
-            """格式化字典条目为提示所需的字符串"""
+            """废弃的 SakuraLLM 代码：调用方从不传 type=="sakura"，本分支不可达（Sakura 配置段已移除）。"""
             entry = f"{dic.search_word}->{dic.replace_word}"
             if dic.note:
                 entry += f" #{dic.note}"
@@ -666,7 +666,7 @@ class CGptDict:
             if _should_add_dic(dic, input_text, input_text_copy, used_dic):
                 if type=="gpt":
                     promt += _format_dic_entry_gpt(dic)
-                elif type=="sakura":
+                elif type=="sakura":  # 废弃的 SakuraLLM 代码：调用方从不传该 type（Sakura 配置段已移除）
                     promt += _format_dic_entry_sakura(dic)
                 elif type=="tsv":
                     promt += _format_dic_entry_tsv(dic)
@@ -677,7 +677,7 @@ class CGptDict:
         if promt:
             if type=="gpt":
                 promt=TITLE_GPT+promt
-            elif type=="sakura":
+            elif type=="sakura":  # 废弃的 SakuraLLM 代码：调用方从不传该 type（Sakura 配置段已移除）
                 promt=TITLE_SAKURA+promt
             elif type=="tsv":
                 promt=TITLE_TSV+promt

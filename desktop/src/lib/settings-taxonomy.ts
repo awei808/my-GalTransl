@@ -268,8 +268,6 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         keys: [
           "plugin.filePlugin",
           "plugin.file_galtransl_json.output_with_src",
-          "backendSpecific.SakuraLLM.rewriteModelName",
-          "common.gpt.token_limit",
         ],
       },
     ],

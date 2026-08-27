@@ -28,21 +28,14 @@ interface OpenAICompatConfig {
   apiMinIntervalSec?: number;
   apiMaxRequests?: number;
 }
-interface SakuraConfig {
-  endpoints?: string[];
-  apiMaxErrorRate?: number;
-  apiMinIntervalSec?: number;
-  apiMaxRequests?: number;
-}
 interface ProfileEntry {
   name: string;
   config: Record<string, unknown>;
 }
 
-type ProfileType = "OpenAI-Compatible" | "SakuraLLM";
+type ProfileType = "OpenAI-Compatible";
 
-function getProfileType(config: Record<string, unknown>): ProfileType {
-  if (config["SakuraLLM"]) return "SakuraLLM";
+function getProfileType(_config: Record<string, unknown>): ProfileType {
   return "OpenAI-Compatible";
 }
 
@@ -95,21 +88,6 @@ export function BackendProfilesPage() {
       // 保留 stream/provider/thinking_mode 等既有字段，仅更新 tokens，
       // 否则每次编辑 token 都会清空其它 API 参数（含流式），导致无法传回后端。
       next["OpenAI-Compatible"] = { ...cur, tokens };
-      delete next["SakuraLLM"];
-      return next;
-    });
-  }
-  function getEndpoints(): string[] {
-    const sk = editConfig()["SakuraLLM"] as SakuraConfig | undefined;
-    return sk?.endpoints ?? [];
-  }
-  function setEndpoints(endpoints: string[]) {
-    setEditConfig((prev) => {
-      const cur = (prev["SakuraLLM"] as SakuraConfig) ?? {};
-      const next: Record<string, unknown> = { ...prev };
-      // 保留 SakuraLLM 其它字段，仅更新 endpoints，对称修复清空问题。
-      next["SakuraLLM"] = { ...cur, endpoints };
-      delete next["OpenAI-Compatible"];
       return next;
     });
   }
@@ -132,18 +110,6 @@ export function BackendProfilesPage() {
       return next;
     });
   }
-  function getSakura(): SakuraConfig {
-    return (editConfig()["SakuraLLM"] as SakuraConfig) ?? {};
-  }
-  function setSakuraField(patch: Partial<SakuraConfig>) {
-    setEditConfig((prev) => {
-      const cur = (prev["SakuraLLM"] as SakuraConfig) ?? {};
-      const next: Record<string, unknown> = { ...prev };
-      next["SakuraLLM"] = { ...cur, ...patch };
-      return next;
-    });
-  }
-
   function updateToken(idx: number, patch: Partial<TokenEntry>) {
     const tokens = getTokens().slice();
     tokens[idx] = { ...(tokens[idx] ?? {}), ...patch };
@@ -156,19 +122,6 @@ export function BackendProfilesPage() {
     const tokens = getTokens().slice();
     tokens.splice(idx, 1);
     setTokens(tokens);
-  }
-  function updateEndpoint(idx: number, val: string) {
-    const ends = getEndpoints().slice();
-    ends[idx] = val;
-    setEndpoints(ends);
-  }
-  function addEndpoint() {
-    setEndpoints([...getEndpoints(), ""]);
-  }
-  function removeEndpoint(idx: number) {
-    const ends = getEndpoints().slice();
-    ends.splice(idx, 1);
-    setEndpoints(ends);
   }
 
   function rowModels(idx: number): string[] {
@@ -200,11 +153,7 @@ export function BackendProfilesPage() {
 
   function changeType(t: ProfileType) {
     setEditType(t);
-    if (t === "OpenAI-Compatible") {
-      setEditConfig({ "OpenAI-Compatible": { stream: true, tokens: [{ endpoint: "", modelName: "", token: "" }] } });
-    } else {
-      setEditConfig({ "SakuraLLM": { endpoints: [""] } });
-    }
+    setEditConfig({ "OpenAI-Compatible": { stream: true, tokens: [{ endpoint: "", modelName: "", token: "" }] } });
     setModelsByIndex({});
     setOpenModelIdx(null);
   }
@@ -288,10 +237,6 @@ export function BackendProfilesPage() {
       const t = openai.tokens[0];
       return `${t.endpoint || "?"} / ${t.modelName || "?"}（${openai.tokens.length} 个密钥）`;
     }
-    const sakura = config["SakuraLLM"] as SakuraConfig | undefined;
-    if (sakura?.endpoints && sakura.endpoints.length > 0) {
-      return `Sakura: ${sakura.endpoints[0]}`;
-    }
     return "未配置";
   }
 
@@ -343,7 +288,6 @@ export function BackendProfilesPage() {
                 onChange={(e) => changeType(e.currentTarget.value as ProfileType)}
               >
                 <option value="OpenAI-Compatible">OpenAI 兼容接口</option>
-                <option value="SakuraLLM">Sakura 本地模型</option>
               </select>
             </div>
 
@@ -570,100 +514,6 @@ export function BackendProfilesPage() {
                         value={getOpenAI().apiMaxRequests ?? ""}
                         onInput={(e) =>
                           setOpenAIField({
-                            apiMaxRequests: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
-                          })
-                        }
-                        placeholder="0=不限制"
-                      />
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Show>
-
-            {/* Sakura 本地模型：逐 endpoint 结构化字段 */}
-            <Show when={editType() === "SakuraLLM"}>
-              <p class="bp-json-hint">填写本地 Sakura 模型服务地址（可多个，轮流调用）。</p>
-              <div class="bp-tokens">
-                <Index each={getEndpoints()}>
-                  {(epSignal, i) => (
-                    <div class="bp-token-row">
-                      <div class="bp-token-fields">
-                        <label class="bp-field">
-                          <span class="bp-field__label">本地地址 (endpoint)</span>
-                          <input
-                            class="field__input"
-                            value={epSignal()}
-                            onInput={(e) => updateEndpoint(i, e.currentTarget.value)}
-                            placeholder="http://127.0.0.1:8080"
-                          />
-                        </label>
-                      </div>
-                      <button
-                        class="bp-row-del"
-                        title="删除此地址"
-                        onClick={() => removeEndpoint(i)}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-                </Index>
-              </div>
-              <button class="btn btn--sm bp-add-btn" onClick={addEndpoint}>
-                + 添加地址
-              </button>
-              <div class="pc-group">
-                <div class="pc-group-title">API 调用限制（可选，留空=不限制）</div>
-                <div class="pc-field-list">
-                  <div class="pc-row">
-                    <span class="pc-row-label">错误率上限 (apiMaxErrorRate)</span>
-                    <span class="pc-row-control">
-                      <input
-                        class="field__input pc-num"
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="1"
-                        value={getSakura().apiMaxErrorRate ?? ""}
-                        onInput={(e) =>
-                          setSakuraField({
-                            apiMaxErrorRate: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
-                          })
-                        }
-                        placeholder="0=不限制"
-                      />
-                    </span>
-                  </div>
-                  <div class="pc-row">
-                    <span class="pc-row-label">请求最小间隔秒 (apiMinIntervalSec)</span>
-                    <span class="pc-row-control">
-                      <input
-                        class="field__input pc-num"
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={getSakura().apiMinIntervalSec ?? ""}
-                        onInput={(e) =>
-                          setSakuraField({
-                            apiMinIntervalSec: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
-                          })
-                        }
-                        placeholder="0=不限制"
-                      />
-                    </span>
-                  </div>
-                  <div class="pc-row">
-                    <span class="pc-row-label">请求次数上限 (apiMaxRequests)</span>
-                    <span class="pc-row-control">
-                      <input
-                        class="field__input pc-num"
-                        type="number"
-                        step="1"
-                        min="0"
-                        value={getSakura().apiMaxRequests ?? ""}
-                        onInput={(e) =>
-                          setSakuraField({
                             apiMaxRequests: e.currentTarget.value === "" ? undefined : Number(e.currentTarget.value),
                           })
                         }

@@ -283,7 +283,7 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
         else:
             OpenAITokenPool = None
 
-        # 初始化sakura端点队列
+        # 废弃的 SakuraLLM 代码：translator 无 sakura/galtransl 名称，本分支不可达（Sakura 配置段已移除）
         if "sakura" in translator or "galtransl" in translator:
             _raise_if_stop_requested(stop_event)
             sakura_endpoint_queue = await init_sakura_endpoint_queue(cfg)

@@ -381,7 +381,7 @@ class BaseEngine:
         self.init_chatbot(eng_type, config)
 
     def init_chatbot(self, eng_type: str, config: CProjectConfig) -> None:
-        # 后端配置段按 eng_type 隔离：Sakura 系列读 SakuraLLM 段，其余读 OpenAI-Compatible 段。
+        # 废弃的 SakuraLLM 代码：eng_type 无 sakura 名称，SakuraLLM 分支实际不可达（Sakura 配置段已移除）。
         # 各后端在 config.inc.yaml 的 backendSpecific 下独立配置，互不影响。
         section_name = "SakuraLLM" if "sakura" in (eng_type or "").lower() else "OpenAI-Compatible"
         backend_cfg = config.getBackendConfigSection(section_name)

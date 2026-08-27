@@ -16,6 +16,7 @@ from GalTransl.TerminalOutput import should_print_translation_logs, terminal_pro
 
 
 def normalize_sakura_endpoints(section: dict, fallback_endpoint: str = "") -> list[str]:
+    """废弃的 SakuraLLM 代码：Sakura 后端配置段已移除，本函数仅被 init_sakura_endpoint_queue 引用，实际不可达。"""
     raw_endpoints = section.get("endpoints", section.get("endpoint", []))
     if isinstance(raw_endpoints, str):
         raw_endpoints = [raw_endpoints]
@@ -374,7 +375,7 @@ class COpenAITokenPool:
 
 
 async def init_sakura_endpoint_queue(projectConfig: CProjectConfig) -> Optional[Queue]:
-    """
+    """废弃的 SakuraLLM 代码：Sakura 后端配置段已移除，唯一调用方 Runner 中对应分支不可达。
     初始化端点队列，用于Sakura或GalTransl引擎。
 
     参数:

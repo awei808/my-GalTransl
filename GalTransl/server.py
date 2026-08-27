@@ -529,6 +529,7 @@ async def _check_model_availability(
     （translator 名称含 NEED_OpenAITokenPool 片段）需要 token 检测；本地 /
     特殊端点（sakura、galtransl 等）走 endpointQueue，无需检测，返回
     applicable=False。检测阶段 proxy 行为与真实翻译任务保持一致（不传 proxy）。
+    注：sakura/galtransl 端点队列为废弃的 SakuraLLM 代码（Sakura 配置段已移除）。
     """
     # ── 配置名自动解析（与 cache/save 保持一致）──
     resolved_config = config_file_name

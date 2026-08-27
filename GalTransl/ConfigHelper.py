@@ -244,7 +244,7 @@ class CProjectConfig:
         if backendName=="OpenAI-Compatible":
             if "OpenAI-Compatible" not in self.projectConfig["backendSpecific"]:
                 backendName="GPT4"
-        elif backendName=="SakuraLLM":
+        elif backendName=="SakuraLLM":  # 废弃的 SakuraLLM 代码：Sakura 配置段已移除，仅历史兼容
             if "SakuraLLM" not in self.projectConfig["backendSpecific"]:
                 backendName="Sakura"
         return self.projectConfig["backendSpecific"][backendName]

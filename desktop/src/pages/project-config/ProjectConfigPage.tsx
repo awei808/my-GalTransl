@@ -151,22 +151,6 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "请求次数上限",
     hint: "累计 API 请求次数（含重试）达到上限即终止整个翻译流程。0 或不填表示不限制。",
   },
-  "backendSpecific.SakuraLLM.rewriteModelName": {
-    label: "自定义模型名（Sakura）",
-    hint: "使用 ollama 等本地模型时需修改。仅 Sakura 引擎。",
-  },
-  "backendSpecific.SakuraLLM.apiMaxErrorRate": {
-    label: "错误率上限（终止阈值）",
-    hint: "累计失败请求占比超过该值即终止整个翻译流程。0 或不填表示不限制。",
-  },
-  "backendSpecific.SakuraLLM.apiMinIntervalSec": {
-    label: "请求最小间隔（秒）",
-    hint: "两次 API 请求之间的最小间隔，用于节流。0 或不填表示不限制。",
-  },
-  "backendSpecific.SakuraLLM.apiMaxRequests": {
-    label: "请求次数上限",
-    hint: "累计 API 请求次数（含重试）达到上限即终止整个翻译流程。0 或不填表示不限制。",
-  },
   "plugin.filePlugin": {
     label: "文件格式插件",
     hint: "字幕用 file_subtitle_srt_lrc_vtt；小说用 file_epub_epub / file_plaintext_txt。",
@@ -232,10 +216,6 @@ const FIELD_UI: Record<string, FieldUI> = {
     hint: "no：不改；AdditionalPrompt：追加；OverwritePrompt：覆盖默认提示词。",
   },
   "common.gpt.prompt_content": { label: "提示词自定义内容" },
-  "common.gpt.token_limit": {
-    label: "单轮 Token 上限（Sakura）",
-    hint: "0 表示不限制，用于避免上下文溢出。仅 Sakura 引擎。",
-  },
   "internals.pipeline.maxInputChars": {
     label: "全局分析最大字符数（软阈值）",
     hint: "压缩后文本超过该值时仅打印告警、不做截断（无损原则，绝不删行），仅作提示。0 表示不检查。默认 95 万字符。",
