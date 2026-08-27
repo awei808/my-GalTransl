@@ -82,6 +82,47 @@ class CoerceTests(unittest.TestCase):
         self.assertEqual(BaseEngine._coerce_optional_int(50, 0), 50)
 
 
+class ApiErrorWaitCoerceTests(unittest.TestCase):
+    """apiErrorWait 规范化：auto/非法 -> -1（指数退避），数字 -> float（固定退避，支持亚秒）。"""
+
+    def test_auto_and_empty_map_to_negative_one(self) -> None:
+        self.assertEqual(BaseEngine._coerce_error_wait("auto"), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait("AUTO"), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait(""), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait(None), -1.0)
+
+    def test_invalid_string_falls_back_to_negative_one(self) -> None:
+        # 非法字符串、空串、不可解析值统一按 auto 处理
+        self.assertEqual(BaseEngine._coerce_error_wait("abc"), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait("   "), -1.0)
+
+    def test_bool_is_rejected_explicitly(self) -> None:
+        # bool 是 int 子类，若被 float() 会变成 1.0/0.0，必须拒绝
+        self.assertEqual(BaseEngine._coerce_error_wait(True), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait(False), -1.0)
+
+    def test_float_precision_is_preserved(self) -> None:
+        # 亚秒配置：0.5 秒应保留为 0.5，不被 int() 截断为 0
+        self.assertEqual(BaseEngine._coerce_error_wait(0.5), 0.5)
+        self.assertEqual(BaseEngine._coerce_error_wait("1.5"), 1.5)
+        self.assertEqual(BaseEngine._coerce_error_wait("0.25"), 0.25)
+
+    def test_int_forms_work(self) -> None:
+        self.assertEqual(BaseEngine._coerce_error_wait(2), 2.0)
+        self.assertEqual(BaseEngine._coerce_error_wait("120"), 120.0)
+
+    def test_zero_is_valid_fixed_wait(self) -> None:
+        # 0 是非负合法值：固定退避但抖动也来自 random.random()
+        self.assertEqual(BaseEngine._coerce_error_wait(0), 0.0)
+
+    def test_negative_non_finite_fall_back_to_negative_one(self) -> None:
+        # 负数、nan、inf 无退避时长意义，统一按 auto 处理，避免 sleep(inf/nan) 卡死
+        self.assertEqual(BaseEngine._coerce_error_wait(-1), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait("-2"), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait(float("nan")), -1.0)
+        self.assertEqual(BaseEngine._coerce_error_wait(float("inf")), -1.0)
+
+
 class BackendSectionIsolationTests(unittest.TestCase):
     def test_eng_type_selects_isolated_section(self) -> None:
         # 两个后端段配置互不相同，验证按 eng_type 隔离读取
@@ -136,6 +177,21 @@ class InitChatbotRealPathTests(unittest.TestCase):
         self.assertEqual(eng.api_max_error_rate, 0)
         self.assertEqual(eng.api_min_interval_sec, 0.0)
         self.assertEqual(eng.api_max_requests, 0)
+        # apiErrorWait 未配置时默认 "auto" -> -1（指数退避）
+        self.assertEqual(eng.apiErrorWait, -1.0)
+
+    def test_init_chatbot_keeps_subsecond_error_wait(self) -> None:
+        # 真实 init_chatbot 链路中，亚秒 apiErrorWait 应保留小数精度
+        cfg = _build_config({
+            "OpenAI-Compatible": {"apiErrorWait": "0.5"},
+        })
+        eng = BaseEngine.__new__(BaseEngine)
+        eng.trans_prompt = None
+        try:
+            eng.init_chatbot("gpt35", cfg)
+        except Exception:
+            pass
+        self.assertEqual(eng.apiErrorWait, 0.5)
 
 
 class RequestCountQuotaTests(unittest.TestCase):

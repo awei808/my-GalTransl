@@ -333,6 +333,27 @@ class BaseEngine:
             return default
         return max(0.0, result)
 
+    @staticmethod
+    def _coerce_error_wait(value: Any) -> float:
+        # API 错误重试等待(秒)："auto"/空/非法 -> -1（指数退避），数字 -> float（固定退避，支持亚秒）。
+        # bool 是 int 的子类，显式拒绝，避免 True/False 被当作 1/0 秒。
+        if isinstance(value, bool):
+            return -1.0
+        if isinstance(value, (int, float)):
+            result = float(value)
+        else:
+            raw_wait = str(value).strip().lower()
+            if raw_wait == "auto" or raw_wait == "":
+                return -1.0
+            try:
+                result = float(raw_wait)
+            except (TypeError, ValueError):
+                return -1.0
+        # nan/inf 无意义，统一回退指数退避；负数视为 auto（与文档范围 0-120 对齐）
+        if not math.isfinite(result) or result < 0:
+            return -1.0
+        return result
+
     def _apply_internal_prompt_template_overrides(self) -> None:
         """Apply runtime prompt-template overrides passed from backend service layer."""
         system_prompt_override = self.pj_config.getKey(
@@ -384,6 +405,8 @@ class BaseEngine:
         self.apiErrorWait = config.getBackendConfigSection(section_name).get(
             "apiErrorWait", "auto"
         )
+        # 规范化 apiErrorWait："auto"/非法值->-1（指数退避），数字->float（固定退避，支持亚秒）
+        self.apiErrorWait = self._coerce_error_wait(self.apiErrorWait)
         self.tokenStrategy = config.getBackendConfigSection(section_name).get(
             "tokenStrategy", "random"
         )
@@ -401,22 +424,6 @@ class BaseEngine:
         )
 
         self.trans_prompt = _apply_change_prompt(config, self.trans_prompt)
-
-        # 规范化 apiErrorWait："auto"/非法值->-1，数字字符串->int，避免后续比较的 TypeError
-        if isinstance(self.apiErrorWait, bool):
-            # bool 是 int 的子类，显式拒绝，避免 True/False 被当作 1/0
-            self.apiErrorWait = -1
-        elif isinstance(self.apiErrorWait, (int, float)):
-            self.apiErrorWait = int(self.apiErrorWait)
-        else:
-            raw_wait = str(self.apiErrorWait).strip().lower()
-            if raw_wait == "auto" or raw_wait == "":
-                self.apiErrorWait = -1
-            else:
-                try:
-                    self.apiErrorWait = int(float(raw_wait))
-                except (TypeError, ValueError):
-                    self.apiErrorWait = -1
 
         if self.proxyProvider:
             proxy_addr = self.proxyProvider.getProxy().addr
