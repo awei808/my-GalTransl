@@ -17,6 +17,8 @@ from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
     H_WORDS_LIST,
     H_BATCH_GUIDE,
+    H_INTIMATE_GUIDE,
+    H_TENSION_GUIDE,
     H_BATCH_FORBIDDEN,
     NORMAL_BATCH_GUIDE,
     FAILED_MARKERS,
@@ -59,6 +61,21 @@ from GalTransl.Service import JobCancelledError
   - 后续轮次：无需再重复翻译提示词与剧情元数据，只发送「待翻译句子（带 sig 的 jsonline）」。
   - 历史译文由多轮对话本身携带，不再通过 [history_result] 注入。
 """
+
+
+def _h_level(h_val: float) -> str:
+    """按 h 强度把区间归类到档位（与需求左闭右开一致）。
+
+    [0,0.25) normal / [0.25,0.5) tension / [0.5,0.75) intimate / [0.75,1] explicit。
+    入参应为 coerce_h_value 归一后的 0-1 浮点。
+    """
+    if h_val >= 0.75:
+        return "explicit"
+    if h_val >= 0.5:
+        return "intimate"
+    if h_val >= 0.25:
+        return "tension"
+    return "normal"
 
 
 @register_engine("ForGal-json-multi-chat")
@@ -988,16 +1005,18 @@ class ForGalJsonMulitChat(BaseTranslate):
     ) -> str:
         """把与本批行号区间 [lo, hi] 相交的批次级元数据格式化为提示词附加段落。
 
-        按 h 值分组渲染：H 区间段（h >= 0.5）与非 H 区间段分别给出差异化翻译指导；
-        H 段额外注入项目 hCheckDict 禁用词表（词数 ≤ 20 全量，超出截断）。
-        仅注入相关区间，避免整份区间表膨胀提示词。无相交区间时返回空串。
+        按 h 强度分 4 档渲染，各档分别给出差异化翻译指导：
+        [0,0.25) 标准非h / [0.25,0.5) 少量h氛围 / [0.5,0.75) h浓厚无性行为 /
+        [0.75,1] h浓厚有性行为。h >= 0.5 的档位额外注入项目 hCheckDict 禁用词表
+        （词数 ≤ 20 全量，超出截断）。仅注入相关区间，避免整份区间表膨胀提示词。
+        无相交区间时返回空串。
         """
         segments = batch_metadata.segments_in_range(lo, hi)
         if not segments:
             return ""
 
-        h_lines: list[str] = []
-        normal_lines: list[str] = []
+        # 按档位聚合区间行，档位顺序即渲染顺序
+        grouped: dict[str, list[str]] = {"normal": [], "tension": [], "intimate": [], "explicit": []}
         for b in segments:
             rng = parse_interval(b.get("区间") or b.get("interval"))
             if rng is None:
@@ -1011,20 +1030,27 @@ class ForGalJsonMulitChat(BaseTranslate):
                 f"- 区间[{b_lo}-{b_hi}] 视角:{view} 氛围:{atmos} "
                 f"H:{h_val:.1f} 用词色彩:{tone}"
             )
-            if is_h_value(h_val):
-                h_lines.append(line)
-            else:
-                normal_lines.append(line)
+            grouped[_h_level(h_val)].append(line)
 
+        _GUIDE_BY_LEVEL = {
+            "normal": NORMAL_BATCH_GUIDE,
+            "tension": H_TENSION_GUIDE,
+            "intimate": H_INTIMATE_GUIDE,
+            "explicit": H_BATCH_GUIDE,
+        }
         blocks: list[str] = []
-        if h_lines:
-            forbidden = self._format_h_forbidden_words()
-            h_block = "\n".join([H_BATCH_GUIDE, *h_lines])
-            if forbidden:
-                h_block += f"\n{forbidden}"
-            blocks.append(h_block)
-        if normal_lines:
-            blocks.append("\n".join([NORMAL_BATCH_GUIDE, *normal_lines]))
+        for level in ("normal", "tension", "intimate", "explicit"):
+            lines = grouped.get(level) or []
+            if not lines:
+                continue
+            guide = _GUIDE_BY_LEVEL[level]
+            block = "\n".join([guide, *lines])
+            # 禁用词只对 h >= 0.5 的档位（intimate/explicit）注入
+            if level in ("intimate", "explicit"):
+                forbidden = self._format_h_forbidden_words()
+                if forbidden:
+                    block += f"\n{forbidden}"
+            blocks.append(block)
         if not blocks:
             return ""
 
@@ -1041,8 +1067,10 @@ class ForGalJsonMulitChat(BaseTranslate):
     def _group_is_h_scene(self, group: CTransList, filename: str) -> bool:
         """判断本批待译句子组是否处于 h 场景（供字典按场景分流注入）。
 
-        与 _format_batch_metadata_block 的 H 判定口径同源：按全局行号区间与
-        batch.json 批次相交后取任一批次 h 标记。无元数据/空组时回退非 h。
+        与 _format_batch_metadata_block 的 H 判定同用 is_h_value（h >= 0.5）。
+        注意：字典分流是二元的 h/非h，tension 档（0.25 <= h < 0.5）不属于字典
+        分流的 H 场景，仅 _format_batch_metadata_block 会为其渲染 H_TENSION_GUIDE。
+        无元数据/空组时回退非 h。
         """
         bm = self._resolve_batch_metadata(filename)
         if bm is None or not getattr(bm, "batches", None):
