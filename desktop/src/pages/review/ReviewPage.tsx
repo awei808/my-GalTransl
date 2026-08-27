@@ -15,7 +15,7 @@ import {
 import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
-import { runPageAutosave, AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
+import { runPageAutosave, autosaveInfo, autosaveError } from "../../lib/usePageAutosave";
 import { replaceInEntries } from "../../lib/replaceEntries";
 import type {
   CacheEntry,
@@ -1848,7 +1848,7 @@ export function ReviewPage() {
       if (showToast) {
         // 全局提示词/剧情路线图无源文件，用完整路径的文件名展示
         const name = srcFile || metaLoadedFullPath.split(/[/\\]/).pop() || srcFile;
-        toast.info(successMessage ?? `已自动保存 ${name}`, AUTOSAVE_TOAST_DURATION);
+        autosaveInfo(successMessage ?? `已自动保存 ${name}`);
       }
       if (import.meta.env?.DEV) {
         console.debug(`[ReviewPage] 元数据已保存并重置撤销栈, file=${srcFile}`);
@@ -1856,7 +1856,7 @@ export function ReviewPage() {
       return true;
     } catch (e) {
       lastSaveFailed = true;
-      toast.error(`元数据保存失败：${getErrorMessage(e)}`);
+      autosaveError("元数据保存失败", e);
       return false;
     } finally {
       metaSavePending = false;
@@ -2105,7 +2105,7 @@ export function ReviewPage() {
     if (!appState.dirtyFiles.includes(myFile)) return; // 无修改则不落盘、不提示
     const ok = await saveCurrentFile();
     if (ok && appState.activeFilePath === myFile) {
-      toast.info(`已自动保存 ${myFile}`, AUTOSAVE_TOAST_DURATION);
+      autosaveInfo(`已自动保存 ${myFile}`);
     }
   }
 

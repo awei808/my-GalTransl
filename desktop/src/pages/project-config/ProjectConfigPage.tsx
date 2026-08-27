@@ -2,6 +2,7 @@ import { createSignal, For, Show, Switch, Match, createEffect, onCleanup } from 
 import { appState, setAppState, getActiveConfigFileName, navigateTo } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
+import { runPageAutosave } from "../../lib/usePageAutosave";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
 import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../../lib/api/general";
 import type { ProblemTypeInfo } from "../../lib/api/types";
@@ -1495,6 +1496,9 @@ export function ProjectConfigPage() {
     return String(v ?? "");
   }
 
+  // 最近一次保存失败的详情（卸载自动保存的 failMessage 动态读取，避免错误详情丢失）
+  let lastSaveError = "";
+
   async function doSave(
     showToast: boolean,
     targetPid?: string,
@@ -1504,6 +1508,7 @@ export function ProjectConfigPage() {
     const savePid = targetPid ?? pid();
     if (!savePid) return false;
     const saveConfigFileName = targetConfigFileName ?? getActiveConfigFileName();
+    lastSaveError = "";
     setSaving(true);
     const versionAtSave = editVersion;
     try {
@@ -1532,7 +1537,8 @@ export function ProjectConfigPage() {
       if (showToast) toast.success("配置已保存");
       return true;
     } catch (e) {
-      if (showToast) toast.error(`保存失败: ${getErrorMessage(e)}`);
+      lastSaveError = getErrorMessage(e);
+      if (showToast) toast.error(`保存失败：${lastSaveError}`);
       return false;
     } finally {
       setSaving(false);
@@ -1543,12 +1549,32 @@ export function ProjectConfigPage() {
     await doSave(true);
   }
 
+  /** 等待在途手动保存结束（卸载自动保存前调用，带超时兜底），避免保存在途时跳过导致编辑未落盘 */
+  async function waitForSavingDone(): Promise<void> {
+    const deadline = Date.now() + 3000;
+    while (saving() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  }
+
   // 切页自动保存：离开页面时若有未保存改动，用挂载时的项目/配置名快照保存。
-  // 卸载瞬间全局 activeProjectId/activeConfigFileName 可能已切换到别的项目或置空，
-  // 故不读取全局，避免把旧项目配置写入新项目或静默丢弃改动。
+  // 对齐全书 runPageAutosave 统一骨架（卸载时全局状态可能已切走，绝不读取全局）。
+  // 不设 isBusy：waitForSavingDone 超时（在途手动保存卡死）后仍强制自动保存，
+  // 避免被守卫拦截导致脏数据静默丢弃（保存为幂等覆盖写，与在途请求并发无冲突）。
   onCleanup(() => {
-    if (!dirty() || !pidSnapshot || loading() || saving()) return;
-    void doSave(true, pidSnapshot, configFileNameSnapshot());
+    // 卸载瞬间固化上次保存成败：最近一次保存失败后卸载重试成功时静默，
+    // 避免"先失败、后成功"相互矛盾的两个 toast（与 ReviewPage 的 saveFailed 语义一致）
+    const saveFailedAtUnmount = lastSaveError !== "";
+    void runPageAutosave({
+      waitForReady: waitForSavingDone,
+      skip: () => !pidSnapshot || loading(),
+      isDirty: () => dirty(),
+      save: () => doSave(false, pidSnapshot, configFileNameSnapshot()),
+      successMessage: () => (saveFailedAtUnmount ? "" : "已自动保存配置"),
+      // 失败详情由 doSave 内部捕获（返回 false 不抛异常），failMessage 动态读取补上
+      failMessage: () =>
+        lastSaveError ? `自动保存配置失败：${lastSaveError}` : "自动保存配置失败",
+    });
   });
 
   return (

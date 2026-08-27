@@ -46,7 +46,7 @@ import type {
   ConditionItem,
 } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
-import { runPageAutosave, AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
+import { runPageAutosave, autosaveInfo, autosaveError } from "../../lib/usePageAutosave";
 
 const TABS: { key: string; label: string }[] = [
   { key: "pre", label: "预处理" },
@@ -279,7 +279,7 @@ export function DictionaryPage() {
           content: text,
         });
       }
-      toast.info(successMessage ?? `已自动保存 ${displayFileName(key)}`, AUTOSAVE_TOAST_DURATION);
+      autosaveInfo(successMessage ?? `已自动保存 ${displayFileName(key)}`);
       // 常规路径（非项目切换保存）才原地更新快照，避免跨项目保存污染新数据
       if (targetPid === undefined) {
         const snapshot = isProjectFile ? data() : commonData();
@@ -293,7 +293,7 @@ export function DictionaryPage() {
       }
     } catch (e) {
       sendLog(`自动保存失败: ${e}`, "error");
-      toast.error(`自动保存失败: ${getErrorMessage(e)}`);
+      autosaveError("自动保存失败", e);
     }
   }
 
@@ -323,13 +323,10 @@ export function DictionaryPage() {
       // 保存在途期间继续输入时保留 dirty，避免新编辑被误判为已落盘
       if (targetPid === undefined && sentNames === nameEntries()) namesDirty = false;
       if (showToast)
-        toast.info(
-          typeof showToast === "string" ? showToast : "已自动保存人名表",
-          AUTOSAVE_TOAST_DURATION,
-        );
+        autosaveInfo(typeof showToast === "string" ? showToast : "已自动保存人名表");
     } catch (e) {
       sendLog(`自动保存人名失败: ${e}`, "error");
-      if (showToast) toast.error(`自动保存人名表失败: ${getErrorMessage(e)}`);
+      if (showToast) autosaveError("自动保存人名表失败", e);
     }
   }
 

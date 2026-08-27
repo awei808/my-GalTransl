@@ -5,7 +5,7 @@ import { openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
 import { getErrorMessage } from "../../lib/errors";
-import { AUTOSAVE_TOAST_DURATION } from "../../lib/usePageAutosave";
+import { runPageAutosave } from "../../lib/usePageAutosave";
 import { Icon } from "../../components/icons/Icon";
 import {
   fetchPlugins,
@@ -279,6 +279,8 @@ export function NewProjectWizard() {
       afterTranslationOrder: afterTranslationOrder(),
     });
   let settingsBaseline = "";
+  // 最近一次保存失败的详情（卸载自动保存的 failMessage 动态读取，避免错误详情丢失）
+  let lastSaveError = "";
 
   // 首次进入第 4/5 步（从其他步骤）时记录编辑基线；untrack 避免步骤内编辑本身更新基线。
   // 仅在基线为空时记录：步骤间往返（含 handleBack 回退再前进）不刷新基线，
@@ -290,22 +292,25 @@ export function NewProjectWizard() {
     }
   });
 
-  // 卸载自动保存：离开向导时若设置步骤（第 4/5 步）有未保存修改，用 toast 兜底保存
-  //（页面内 feedback 在卸载后不可见，故改用全局 toast 提示）。
+  // 卸载自动保存：离开向导时若设置步骤（第 4/5 步）有未保存修改，走统一骨架兜底保存
+  //（页面内 feedback 在卸载后不可见，故由骨架的全局 toast 提示）。
   // 用 settingsBaseline 非空判断"进入过设置步骤"（而非 currentStep >= 3）：
   // 用户在第 4/5 步编辑后回退到早期步骤再离开向导时，编辑仍需保存（基线保留但步骤已回退）
   onCleanup(() => {
-    if (settingsBaseline === "") return; // 从未进入设置步骤：无基线，无需保存
-    if (currentSettingsSnapshot() === settingsBaseline) return; // 无修改
-    void (async () => {
-      const ok = await handleSaveSettings();
-      if (ok) toast.info("已自动保存向导设置", AUTOSAVE_TOAST_DURATION);
-      else toast.error("自动保存向导设置失败");
-    })();
+    void runPageAutosave({
+      skip: () => settingsBaseline === "", // 从未进入设置步骤：无基线，无需保存
+      isDirty: () => currentSettingsSnapshot() !== settingsBaseline, // 无修改则完全静默
+      save: handleSaveSettings,
+      successMessage: "已自动保存向导设置",
+      // 失败详情由 handleSaveSettings 内部捕获（返回 false 不抛异常），failMessage 动态读取补上
+      failMessage: () =>
+        lastSaveError ? `自动保存向导设置失败：${lastSaveError}` : "自动保存向导设置失败",
+    });
   });
 
   // 保存设置
   async function handleSaveSettings(): Promise<boolean> {
+    lastSaveError = "";
     const dir = projectDir();
     const pid = projectId();
     if (!dir || !pid) return false;
@@ -405,6 +410,7 @@ export function NewProjectWizard() {
       settingsBaseline = currentSettingsSnapshot(); // 保存成功即新的编辑基线
       return true;
     } catch (err) {
+      lastSaveError = getErrorMessage(err);
       setFeedback({
         type: "error",
         message: `保存失败: ${getErrorMessage(err)}`,

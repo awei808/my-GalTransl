@@ -44,7 +44,28 @@ function resolveMessage(msg: string | (() => string) | undefined, fallback: stri
   return msg ?? fallback;
 }
 
-/** 执行一次页面卸载自动保存（供已在 onCleanup 内自行安排调用顺序的页面使用）。 */
+/** 自动保存成功提示（统一 info 短时长；msg 为空时静默）。 */
+export function autosaveInfo(msg: string): void {
+  if (!msg) return;
+  toast.info(msg, AUTOSAVE_TOAST_DURATION);
+}
+
+/** 自动保存失败提示（统一 error；err 存在时拼接错误详情）。 */
+export function autosaveError(failMessage: string, err?: unknown): void {
+  if (err === undefined) {
+    toast.error(failMessage);
+  } else {
+    toast.error(`${failMessage}：${getErrorMessage(err)}`);
+  }
+}
+
+/**
+ * 执行一次页面卸载自动保存（供已在 onCleanup 内自行安排调用顺序的页面使用）。
+ *
+ * 注意：本函数只对自身触发的 success/error toast 做 dispose 延后（setTimeout 宏任务）；
+ * 调用方 save/isDirty 内部自行调用的 toast（如 toast.warning、页面 feedback）不享受该
+ * 保护，组件卸载的 batch 上下文可能丢弃其 createStore 更新，请自行 setTimeout(fn, 0) 延后。
+ */
 export async function runPageAutosave(opts: PageAutosaveOptions): Promise<void> {
   await opts.waitForReady?.();
   if (opts.skip?.()) return;
@@ -58,13 +79,13 @@ export async function runPageAutosave(opts: PageAutosaveOptions): Promise<void> 
       // 延迟到宏任务：组件卸载（dispose）上下文中 SolidJS 的 batch 可能丢弃嵌套的
       // createStore 更新（setToasts），setTimeout 脱离该上下文后 toast 才能正常入列渲染
       setTimeout(() => {
-        toast.info(msg, AUTOSAVE_TOAST_DURATION);
+        autosaveInfo(msg);
       }, 0);
     } else if (!ok) {
-      toast.error(resolveMessage(opts.failMessage, "自动保存失败"));
+      autosaveError(resolveMessage(opts.failMessage, "自动保存失败"));
     }
   } catch (e) {
-    toast.error(`${resolveMessage(opts.failMessage, "自动保存失败")}：${getErrorMessage(e)}`);
+    autosaveError(resolveMessage(opts.failMessage, "自动保存失败"), e);
   }
 }
 
