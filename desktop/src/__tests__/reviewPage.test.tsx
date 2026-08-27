@@ -348,85 +348,25 @@ describe("场景 7：主译文框输入中撤销/重做（修复：撤销/重做
   });
 });
 
-describe("场景 8：元数据模式撤销/重做（修复：元数据编辑接入 undo 栈）", () => {
-  const META_FILE = "game/pass1_cache/script.meta.json";
-  const OTHER_META_FILE = "game/pass1_cache/other.meta.json";
-  const baseMeta: Record<string, unknown> = { id: "file01", title: "旧标题" };
-  const editedMeta: Record<string, unknown> = { id: "file01", title: "新标题" };
-
+describe("场景 8：元数据模式撤销/重做（方案 A：元数据走原生撤销，不参与 undo 栈）", () => {
   beforeEach(() => {
     clearUndo();
   });
 
-  it("元数据整对象快照入栈后 undo 取回 before（index 固定为 0，file 为元数据路径）", () => {
-    // 模拟 handleUndo 元数据分支：未保存编辑先 pushUndo 再 undo
-    pushUndo({
-      id: `${META_FILE}:meta`,
-      file: META_FILE,
-      index: 0,
-      before: baseMeta,
-      after: editedMeta,
-      description: "修改 元数据",
-    });
-    const entry = undo();
-    expect(entry?.index).toBe(0);
-    expect(entry?.file).toBe(META_FILE);
-    expect(entry?.before).toEqual(baseMeta);
+  it("元数据编辑不产生 undo 记录：栈保持空，undo 返回 null", () => {
+    // 方案 A 下 handleMetaContentChange 只改 metaEntry、标记 metaDirty，从不 pushUndo，
+    // 故 undoStore 对元数据模式始终为空，无可撤销操作
     expect(getUndoState().canUndo).toBe(false);
+    expect(undo()).toBeNull();
+    expect(getUndoState().stackSize).toBe(0);
   });
 
-  it("撤销后 redo 取回 after 整对象快照", () => {
-    pushUndo({
-      id: `${META_FILE}:meta`,
-      file: META_FILE,
-      index: 0,
-      before: baseMeta,
-      after: editedMeta,
-      description: "修改 元数据",
-    });
-    undo();
-    const entry = redo();
-    expect(entry?.after).toEqual(editedMeta);
-    expect(getUndoState().canRedo).toBe(false);
-  });
-
-  it("currentFile 与记录 file 不匹配时守卫拦截（模拟 handleUndo 的 file 校验）", () => {
-    pushUndo({
-      id: `${META_FILE}:meta`,
-      file: META_FILE,
-      index: 0,
-      before: baseMeta,
-      after: editedMeta,
-      description: "修改 元数据",
-    });
-    // 当前打开的是另一个元数据文件 → undo 取回记录后 handleUndo 直接 return，不生效
-    const entry = undo();
-    const matchesCurrent = entry?.file === OTHER_META_FILE;
-    expect(matchesCurrent).toBe(false);
-  });
-
-  it("存在未保存编辑时先入栈会清空 redo 栈（避免 redo 覆盖未保存编辑）", () => {
-    // 先有一条已撤销的历史（canRedo 应为 true）
-    pushUndo({
-      id: `${META_FILE}:meta`,
-      file: META_FILE,
-      index: 0,
-      before: baseMeta,
-      after: editedMeta,
-      description: "修改 元数据",
-    });
-    undo();
-    expect(getUndoState().canRedo).toBe(true);
-    // 模拟 handleRedo 元数据分支：有未保存编辑先 pushUndo（等价于 blur 提交，会清空 redo）
-    pushUndo({
-      id: `${META_FILE}:meta`,
-      file: META_FILE,
-      index: 0,
-      before: editedMeta,
-      after: { id: "file01", title: "再次编辑" },
-      description: "修改 元数据",
-    });
-    expect(getUndoState().canRedo).toBe(false);
+  it("undoStore 仍只服务于翻译条目（pushUndo 来源：字段编辑/删除/查找替换等），元数据不混入", () => {
+    // 验证 undoStore 本身不区分记录类型；元数据不参与由「不调用 pushUndo」保证。
+    // 这里模拟一条翻译记录确认栈语义正常，与元数据路径互不影响。
+    pushUndo({ id: "f:1", file: "pass3_cache/x.json", index: 1, before: { pre_dst: "a" }, after: { pre_dst: "b" } });
+    expect(getUndoState().canUndo).toBe(true);
+    expect(undo()?.id).toBe("f:1");
   });
 });
 
@@ -534,10 +474,6 @@ describe("场景 11：shouldYieldToNative 草稿态让出原生撤销", () => {
     expect(shouldYieldToNative(makeTextarea("3", "输入中未提交"), committedEntries)).toBe(true);
   });
 
-  it("非主译文框 textarea（如元数据框）→ 不让出", () => {
-    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(false);
-  });
-
   it("缺少 data-index → 无法定位条目，不让出", () => {
     const ta = makeTextarea("", "未提交");
     expect(shouldYieldToNative(ta, committedEntries)).toBe(false);
@@ -547,16 +483,8 @@ describe("场景 11：shouldYieldToNative 草稿态让出原生撤销", () => {
     expect(shouldYieldToNative(makeTextarea("3", ""), [])).toBe(false);
   });
 
-  it("元数据框：传入 metaDraftDirty=true → 让出原生逐字符撤销（方向 B）", () => {
-    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries, true)).toBe(true);
-  });
-
-  it("元数据框：metaDraftDirty=false（已提交/无草稿）→ 不让出，走操作级撤销", () => {
-    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries, false)).toBe(false);
-  });
-
-  it("元数据框：未传 metaDraftDirty → 默认 false，不让出", () => {
-    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(false);
+  it("元数据框：聚焦即让出原生逐字符撤销（方案 A：走原生，不入栈）", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(true);
   });
 
   it("展开字段：草稿未提交 → 让出原生逐字符撤销", () => {
@@ -597,8 +525,8 @@ describe("shouldBlurBeforeUndo：撤销/重做前需 blur 提交草稿的输入�
     expect(shouldBlurBeforeUndo(makeTextarea("entry-dst-input"))).toBe(true);
   });
 
-  it("元数据框 → 需要先 blur 提交草稿", () => {
-    expect(shouldBlurBeforeUndo(makeTextarea("meta-content-textarea"))).toBe(true);
+  it("元数据框 → 不 blur（方案 A：走原生撤销，避免失焦破坏原生历史）", () => {
+    expect(shouldBlurBeforeUndo(makeTextarea("meta-content-textarea"))).toBe(false);
   });
 
   it("展开字段（field-value--editable）→ 需要先 blur 提交草稿（修复：此前漏掉导致撤销被旧草稿覆盖）", () => {
@@ -682,11 +610,11 @@ describe("场景 12：handleRedo 不压栈草稿（pushUndo 会丢弃 redo 分�
     expect(peekRedo()?.id).toBe("a:2");
   });
 
-  it("存在 redo 分支时压栈（修复前 pushMetaDraftIfDirty）→ redo 分支被清空，peekRedo 返回 null", () => {
+  it("存在 redo 分支时 pushUndo（新编辑）→ redo 分支被清空，peekRedo 返回 null", () => {
     pushUndo({ id: "a:1", file: "a", index: 1, before: { pre_dst: "a1" }, after: { pre_dst: "a2" } });
     pushUndo({ id: "a:2", file: "a", index: 2, before: { pre_dst: "b1" }, after: { pre_dst: "b2" } });
     undo();
-    pushUndo({ id: "m:meta", file: "m", index: 0, before: { title: "x" }, after: { title: "y" } });
+    pushUndo({ id: "a:3", file: "a", index: 3, before: { pre_dst: "c1" }, after: { pre_dst: "c2" } });
     expect(peekRedo()).toBeNull();
   });
 });

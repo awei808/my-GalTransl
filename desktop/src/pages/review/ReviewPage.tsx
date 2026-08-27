@@ -44,22 +44,17 @@ export function applyProblemTypeFilter(
 
 /**
  * 判断当前是否应让出原生撤销/重做（草稿态）。
- * 主译文框或元数据框，焦点仍在 textarea 且内容未提交时，让出原生实现逐字符撤销；
+ * 主译文框/展开字段在内容未提交时、元数据框在聚焦时，让出原生实现逐字符撤销；
  * 已提交（失焦）或其它编辑器走自定义操作级撤销。
  *
  * Args:
  *   activeEl: 当前聚焦元素。
  *   entries: 当前文件的翻译条目（用于比对主译文框已提交值）。
- *   metaDraftDirty: 元数据框是否有未提交草稿（与撤销基线不同），由调用方计算后传入。
  */
-export function shouldYieldToNative(
-  activeEl: Element | null,
-  entries: CacheEntry[],
-  metaDraftDirty?: boolean,
-): boolean {
+export function shouldYieldToNative(activeEl: Element | null, entries: CacheEntry[]): boolean {
   if (!(activeEl instanceof HTMLTextAreaElement)) return false;
-  // 元数据框：草稿未提交即让出原生逐字符撤销
-  if (activeEl.classList.contains("meta-content-textarea")) return Boolean(metaDraftDirty);
+  // 元数据框：纯原生撤销，聚焦即让出逐字符撤销（失焦自动保存后不再保留历史）
+  if (activeEl.classList.contains("meta-content-textarea")) return true;
   if (!activeEl.classList.contains("entry-dst-input") && !activeEl.classList.contains("field-value--editable")) {
     return false;
   }
@@ -79,15 +74,14 @@ export function shouldYieldToNative(
 
 /**
  * 撤销/重做/跨文件切换前需要先 blur 提交草稿的输入框判定。
- * 主译文框、元数据框、展开字段（pre_dst/proofread_dst/alt_dst）均为草稿态，
- * 若未先提交就改 entries，聚焦中的旧草稿会在失焦时回写，覆盖撤销/重做结果。
+ * 主译文框、展开字段（pre_dst/proofread_dst/alt_dst）均为草稿态，若未先提交就改 entries，
+ * 聚焦中的旧草稿会在失焦时回写，覆盖撤销/重做结果。元数据框走原生撤销（方案 A），
+ * 不做操作级撤销前的 blur（避免失焦破坏原生历史）。
  */
 export function shouldBlurBeforeUndo(el: Element | null): boolean {
   return (
     el instanceof HTMLTextAreaElement &&
-    (el.classList.contains("entry-dst-input") ||
-      el.classList.contains("meta-content-textarea") ||
-      el.classList.contains("field-value--editable"))
+    (el.classList.contains("entry-dst-input") || el.classList.contains("field-value--editable"))
   );
 }
 
@@ -653,7 +647,10 @@ function MetadataCard(props: {
     }
   };
   const [content, setContent] = createSignal(restJson());
-  // 外部 entry 变更（如保存后 store 更新）且文本框未聚焦时，同步显示
+  // 外部 entry 变更（如保存后 store 更新）且文本框未聚焦时，同步显示。
+  // 依赖固化：方案 A 下元数据走原生撤销，原生历史在元素失焦时（Chromium）已被清空；
+  // 此处程序化 setContent 会进一步重置 value 并清空聚焦中的原生 undo 栈——这是「失焦后不再保留
+  // 撤销历史」的预期行为。切勿在聚焦时重置 content，否则会破坏正在进行的逐字符撤销。
   createEffect(() => {
     void props.entry;
     if (taRef && document.activeElement !== taRef) setContent(restJson());
@@ -882,8 +879,6 @@ export function ReviewPage() {
   let metaJsonInvalidShown = false;
   // 当前打开的元数据文件完整路径（切换保存时用于推导旧文件的 metaType/sourceFile）
   let metaLoadedFullPath = "";
-  // 元数据撤销基线：最近一次提交态快照（编辑入栈基准，撤销/重做后同步更新）
-  let metaUndoBase: MetadataEntry | null = null;
   // 磁盘态快照：最近一次加载/保存成功后的值（用于正确计算 dirty）
   let metaDiskSnapshot: MetadataEntry | null = null;
 
@@ -945,9 +940,8 @@ export function ReviewPage() {
   function handleKeyDown(e: KeyboardEvent) {
     const action = resolveKeyAction(e);
     if (!action) return;
-    // 草稿态（主译文框或元数据框，焦点在框内且内容未提交）：让出原生撤销/重做，实现输入中逐字符撤销
-    const metaDraftDirty = metaUndoBase !== null && metaEntry() !== null && !metaEqual(metaEntry(), metaUndoBase);
-    if ((action === "undo" || action === "redo") && shouldYieldToNative(document.activeElement, entries(), metaDraftDirty)) {
+    // 草稿态（主译文框/展开字段内容未提交、或元数据框聚焦）：让出原生撤销/重做，实现输入中逐字符撤销
+    if ((action === "undo" || action === "redo") && shouldYieldToNative(document.activeElement, entries())) {
       return;
     }
     e.preventDefault();
@@ -1112,33 +1106,11 @@ export function ReviewPage() {
   // 跨文件撤销/重做在途目标：跳转加载完成后自动恢复；跳转期间不消费 undo 栈，失败不丢记录
   let pendingRestore: PendingRestore | null = null;
 
-  // 元数据未保存编辑先入栈（pushUndo 会清空 redo 栈），使当前编辑成为可撤销的第一步
-  function pushMetaDraftIfDirty(): void {
-    const currentFile = appState.activeFilePath ?? "";
-    if (reviewMode() === "metadata" && metaDirty && metaEntry() && metaUndoBase && !metaEqual(metaUndoBase, metaEntry())) {
-      pushUndo({
-        id: `${currentFile}:meta`,
-        file: currentFile,
-        index: 0,
-        before: metaUndoBase,
-        after: metaEntry()!,
-        description: "修改 元数据",
-      });
-    }
-  }
-
-  // 应用一条撤销/重做记录：按记录所属文件的模式分发（translate → entries，metadata → metaEntry）
+  // 应用一条撤销/重做记录（方案 A：仅翻译条目参与操作级撤销；元数据走原生撤销，不入栈）
   function applyUndoEntry(entry: UndoEntry, dir: "undo" | "redo"): void {
     // 合法性校验：撤销需 before、重做需 after，缺失则跳过（避免写入非法值）
     if (dir === "undo" ? !entry.before : !entry.after) {
       console.error(`[ReviewPage] ${dir}记录缺少快照，已跳过：${entry.id}`);
-      return;
-    }
-    if (modeInfoOf(entry.file).mode === "metadata") {
-      const target = dir === "undo" ? (entry.before as MetadataEntry) : (entry.after as MetadataEntry);
-      setMetaEntry(target);
-      metaUndoBase = target;
-      metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
       return;
     }
     const isAdd = Object.keys(entry.before).length === 0 && Object.keys(entry.after).length > 0;
@@ -1196,8 +1168,13 @@ export function ReviewPage() {
   }
 
   function handleUndo() {
+    // 元数据框走原生撤销：聚焦时交由浏览器处理（键盘 Ctrl+Z 已由 shouldYieldToNative 让出；
+    // 经菜单/事件触发且焦点仍在框内时提示，避免静默无反馈、也避免误触发跨文件撤销）
+    if (document.activeElement?.classList.contains("meta-content-textarea")) {
+      toast.info("元数据编辑请在框内按 Ctrl+Z 撤销");
+      return;
+    }
     blurDraftInput();
-    pushMetaDraftIfDirty();
     const currentFile = appState.activeFilePath ?? "";
     const entry = peekUndo();
     if (!entry) {
@@ -1213,8 +1190,12 @@ export function ReviewPage() {
   }
 
   function handleRedo() {
+    // 元数据框走原生撤销：聚焦时交由浏览器处理（键盘 Ctrl+Y/Ctrl+Shift+Z 已由 shouldYieldToNative 让出）
+    if (document.activeElement?.classList.contains("meta-content-textarea")) {
+      toast.info("元数据编辑请在框内按 Ctrl+Y / Ctrl+Shift+Z 重做");
+      return;
+    }
     blurDraftInput();
-    // 不调用 pushMetaDraftIfDirty：压栈会丢弃 redo 分支，导致重做不可用（undo 后基线已同步，无需入栈草稿）
     const currentFile = appState.activeFilePath ?? "";
     const entry = peekRedo();
     if (!entry) {
@@ -1468,8 +1449,7 @@ export function ReviewPage() {
             const prevInfo = modeInfoOf(metaLoadedFullPath);
             // metaEntry() 在外层 if (metaDirty && metaEntry() && metaLoadedFullPath) 已保证非空
             await savePerFileMetadata(pid, prevInfo.metaType, prevInfo.sourceFile, metaEntry()!);
-            // 保存即新的撤销起点（与 saveMeta 一致）：防旧文件残留记录在切回时造成撤销错位
-            metaUndoBase = metaEntry();
+            // 保存即新的磁盘态，防旧文件残留脏状态在切回时误判
             metaDiskSnapshot = metaEntry();
             clearUndo();
             metaDirty = false;
@@ -1736,7 +1716,7 @@ export function ReviewPage() {
             metaDirty = false;
             // 清理旧文件的全局 dirtyFiles（编辑时 markDirty 过），避免残留导致切页误弹确认
             if (metaLoadedFullPath) markClean(metaLoadedFullPath);
-            clearUndo(); // 保存即新的撤销起点（与 saveMeta 一致），防旧文件残留记录造成撤销错位
+            clearUndo(); // 保存即新的撤销起点（与 saveMeta 一致）
           } catch (e) {
             // 保存失败：中止切换，保住未保存编辑（metaDirty 保持 true）
             toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
@@ -1755,7 +1735,6 @@ export function ReviewPage() {
         if (myToken !== metaSwitchToken) return; // 过期响应不写 metaEntry
         setMetaEntry(res.entry ?? null);
         metaDirty = false; // 新文件即磁盘态，未编辑
-        metaUndoBase = res.entry ?? null; // 重置撤销基线
         metaDiskSnapshot = res.entry ?? null; // 重置磁盘态快照
         metaJsonInvalidShown = false; // 新文件加载后重置非法 JSON 提示标志
         // activeFilePath 至此非空（正在加载目标文件）；?? "" 仅作类型收窄，与声明类型一致
@@ -1765,7 +1744,6 @@ export function ReviewPage() {
         if (myToken !== metaSwitchToken) return;
         setMetaEntry(null);
         metaDirty = false;
-        metaUndoBase = null;
         metaDiskSnapshot = null;
       } finally {
         if (myToken === metaSwitchToken) setMetaLoading(false);
@@ -1837,10 +1815,8 @@ export function ReviewPage() {
     try {
       await savePerFileMetadata(pid, metaType(), srcFile, entry);
       metaDiskSnapshot = entry; // 更新磁盘态快照
-      // 撤销基线取界面当前值而非保存值 entry：防保存响应返回时 metaEntry 已被撤销改写（竞态）导致基线错位
-      metaUndoBase = metaEntry();
-      clearUndo(); // 保存即新的撤销起点：清空保存前历史，撤销最多回到最近保存态
-      // 按快照重算 dirty：防保存响应返回时 metaEntry 已被撤销改写（竞态）而错误清脏
+      clearUndo(); // 保存即新的撤销起点：清空翻译模式保存前历史（元数据已走原生撤销，不入栈）
+      // 按快照重算 dirty：防保存响应返回时 metaEntry 已被用户再次编辑而错误清脏
       metaDirty = !metaEqual(metaEntry(), metaDiskSnapshot);
       lastSaveFailed = false;
       // 同步全局 dirtyFiles：保存成功即清理（与 handleMetaContentChange 的 markDirty 对应）
@@ -1851,7 +1827,7 @@ export function ReviewPage() {
         autosaveInfo(successMessage ?? `已自动保存 ${name}`);
       }
       if (import.meta.env?.DEV) {
-        console.debug(`[ReviewPage] 元数据已保存并重置撤销栈, file=${srcFile}`);
+        console.debug(`[ReviewPage] 元数据已保存（原生撤销，不入栈）, file=${srcFile}`);
       }
       return true;
     } catch (e) {
