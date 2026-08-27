@@ -51,7 +51,9 @@ _FIX_SPECS: dict = {
     ),
     CProblemType.丢失换行: FixSpec(
         mode=MODE_SRC_DST,
-        instruction="对照 src 换行数，在语义断点（标点、逗号后）补齐缺失的 <br>。",
+        instruction="对照 src 换行数，在语义断点（标点、逗号后）补齐缺失的 <br>。"
+        "修复后该句最多保留 3 个 <br>（即不超过 3 个断句片段），禁止出现 4 个及以上片段；"
+        "即使 src 换行数更多，也以此为上限。",
     ),
     CProblemType.多加换行: FixSpec(
         mode=MODE_SRC_DST,
@@ -59,11 +61,13 @@ _FIX_SPECS: dict = {
     ),
     CProblemType.长句丢失换行: FixSpec(
         mode=MODE_DST_ONLY,
-        instruction="对长句在语义断点（标点、逗号后）补 <br>，使每行长度合理、可读。",
+        instruction="对长句在语义断点（标点、逗号后）补 <br>，使每行长度合理、可读。"
+        "补入的 <br> 使修复后最多保留 3 个 <br>（不超过 3 个断句片段），禁止出现 4 个及以上片段。",
     ),
     CProblemType.频繁换行: FixSpec(
         mode=MODE_DST_ONLY,
-        instruction="合并 dst 碎片化短行，恢复合理行长度与断句。",
+        instruction="合并 dst 碎片化短行，恢复合理行长度与断句。"
+        "合并后该句最多保留 3 个 <br>（不超过 3 个断句片段），禁止出现 4 个及以上片段。",
     ),
     CProblemType.词频过高: FixSpec(
         mode=MODE_SRC_DST,
