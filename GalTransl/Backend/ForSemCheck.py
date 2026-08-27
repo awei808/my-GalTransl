@@ -125,8 +125,8 @@ class ForSemCheck(BaseImproveRound):
         suspected_error 为持久化信号：进入检测即清除全部旧标记再写新结果（幂等），
         避免重复运行累积误报。
         单轮模式：不维护多轮对话历史（不累积上下文），每批只发送
-        [system] + 本批 user（仅注入任务说明与批次 input），不注入术语表、
-        批次元数据、历史结果、翻译规范、全局分析、文件级元数据。
+        [system] + 本批 user（仅注入任务说明、批次 input 与文件级元数据），
+        不注入术语表、批次元数据、历史结果、翻译规范、全局分析。
         """
         if self._disabled_reason:
             LOGGER.warning(
@@ -151,6 +151,14 @@ class ForSemCheck(BaseImproveRound):
         )
         total_batches = (total + num_per_request - 1) // num_per_request
         hit_count = 0
+        # 文件级元数据：作为检测语境注入（每文件解析一次，供本文件各批复用），
+        # 无 FileMetaData.json 时返回 None → 不注入，行为与旧版一致。
+        metadata = self._resolve_file_metadata(filename)
+        metadata_block = (
+            self._format_file_metadata_block(metadata) if metadata is not None else ""
+        )
+        if metadata_block:
+            LOGGER.debug(f"{self._log_tag} {filename} 注入文件级元数据作为检测语境")
         LOGGER.info(
             f"{self._log_tag} {filename} 开始单轮语义差异检测，共 {total} 句，{total_batches} 批"
         )
@@ -164,7 +172,7 @@ class ForSemCheck(BaseImproveRound):
                 filename=filename,
                 include_src=True,
             )
-            user_content = self._build_semcheck_user_content(input_src)
+            user_content = self._build_semcheck_user_content(input_src, metadata_block)
             if self.pj_config.active_workers == 1:
                 LOGGER.info(
                     f"-> 语义检测输入[{batch_no}/{total_batches}] | "
@@ -225,13 +233,16 @@ class ForSemCheck(BaseImproveRound):
             LOGGER.info(f"{self._log_tag} {filename} 语义检测完成，未发现疑似错误")
         return trans_list
 
-    def _build_semcheck_user_content(self, input_src: str) -> str:
-        """单轮拼接语义检测 user 提示词：仅注入任务说明与批次 input。
+    def _build_semcheck_user_content(self, input_src: str, metadata_block: str = "") -> str:
+        """单轮拼接语义检测 user 提示词：替换 [TargetLang]/[Input] 占位符，可选注入文件级元数据。
 
-        模板已精简为「任务说明 + input 块」，此处只做 [TargetLang]、[Input]
-        两个占位符替换，不注入术语表/批次元数据/历史结果/翻译规范等其它内容。
+        除任务说明与批次 input 外，不注入术语表/批次元数据/历史结果/翻译规范。
+        metadata_block 非空时置于任务说明之前（<plot_metadata> 作为全局语境），
+        供 AI 结合剧情/角色信息判断译文语义是否可接受。
         """
         prompt_req = self.trans_prompt
+        if metadata_block:
+            prompt_req = metadata_block + prompt_req
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         prompt_req = prompt_req.replace("[Input]", input_src)
         return prompt_req

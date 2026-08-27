@@ -225,8 +225,7 @@ class ForSemCheckAgain(BaseImproveRound):
         """拼接复核轮 user 提示词：替换 [TargetLang]/[Input] 占位符，可选注入文件级元数据。
 
         除任务说明与批次 input 外，不注入术语表/批次元数据/历史结果/翻译规范。
-        metadata_block 非空时置于任务说明之前（<plot_metadata> 作为全局语境），
-        供 AI 结合剧情/角色信息判断译文是否可接受（如 H 场景委婉化、语境增译）。
+        metadata_block 非空时置于任务说明之前（<plot_metadata> 作为全局语境）。
         """
         prompt_req = self.trans_prompt
         if metadata_block:

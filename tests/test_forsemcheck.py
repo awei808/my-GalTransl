@@ -197,7 +197,7 @@ class BatchTranslateGuardTests(unittest.TestCase):
 
 
 class SemcheckPromptInjectionTests(unittest.TestCase):
-    """验证单轮 user 提示词：仅注入任务说明与批次 input，不注入其它内容。"""
+    """验证单轮 user 提示词：注入任务说明、批次 input 与可选文件级元数据，不注入其它内容。"""
 
     def _make_obj(self) -> ForSemCheck:
         obj = object.__new__(ForSemCheck)
@@ -225,6 +225,38 @@ class SemcheckPromptInjectionTests(unittest.TestCase):
         self.assertNotIn("<glossary>", prompt)
         self.assertNotIn("[TargetLang]", prompt)  # 已替换
         self.assertNotIn("[Input]", prompt)  # 已替换
+
+    def test_metadata_block_injected_before_task(self) -> None:
+        obj = self._make_obj()
+        metadata_block = (
+            "\n<plot_metadata>\n"
+            "id: 01_05_事前準備.txt.json\n"
+            "角色: 創、華恋、凛音\n"
+            "剧情: 众人入住 cosplay 度假岛 VIP 栋\n"
+            "标签: 日常、H\n"
+            "</plot_metadata>\n"
+        )
+        prompt = obj._build_semcheck_user_content(
+            input_src='#01|{"id":1}', metadata_block=metadata_block
+        )
+        # 元数据块在任务说明之前，作为全局语境
+        self.assertLess(prompt.index("<plot_metadata>"), prompt.index("### 任务"))
+        self.assertIn("角色: 創、華恋、凛音", prompt)
+        self.assertIn("剧情: 众人入住 cosplay 度假岛 VIP 栋", prompt)
+        # 占位符仍被正确替换
+        self.assertIn("#01|{\"id\":1}", prompt)
+        self.assertNotIn("[TargetLang]", prompt)
+        self.assertNotIn("[Input]", prompt)
+
+    def test_metadata_block_empty_keeps_old_behavior(self) -> None:
+        obj = self._make_obj()
+        prompt = obj._build_semcheck_user_content(
+            input_src='#01|{"id":1}', metadata_block=""
+        )
+        # 模板文字本身含 <plot_metadata> 字样，断言实际元数据内容不出现即可
+        self.assertNotIn("角色: ", prompt)
+        self.assertNotIn("剧情: ", prompt)
+        self.assertIn("### 任务", prompt)
 
 
 class CacheSerializationTests(unittest.TestCase):
@@ -266,6 +298,8 @@ class SemcheckBatchSplitTests(unittest.TestCase):
         obj.target_lang = "Simplified_Chinese"
         obj.eng_type = "ForSemCheck"
         obj._resolve_batch_metadata = Mock(return_value=None)
+        obj._resolve_file_metadata = Mock(return_value=None)
+        obj._format_file_metadata_block = Mock(return_value="")
         calls = []
 
         async def fake_llm(messages, filename, idx_tip, cb):
@@ -326,6 +360,8 @@ class SemcheckEmptyBlockTests(unittest.IsolatedAsyncioTestCase):
         obj.target_lang = "Simplified_Chinese"
         obj.eng_type = "ForSemCheck"
         obj._recorded_errors = []
+        obj._resolve_file_metadata = Mock(return_value=None)
+        obj._format_file_metadata_block = Mock(return_value="")
 
         def fake_record(filename, idx_tip, message, model):
             obj._recorded_errors.append((filename, idx_tip, message, model))
@@ -430,6 +466,8 @@ class SemcheckEchoBatchTests(unittest.IsolatedAsyncioTestCase):
         obj.eng_type = "ForSemCheck"
         obj._recorded_errors = []
         obj._llm_calls = []
+        obj._resolve_file_metadata = Mock(return_value=None)
+        obj._format_file_metadata_block = Mock(return_value="")
 
         def fake_record(filename, idx_tip, message, model):
             obj._recorded_errors.append((filename, idx_tip, message, model))
