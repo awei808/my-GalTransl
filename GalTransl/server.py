@@ -3968,6 +3968,7 @@ def build_handler(registry: JobRegistry) -> type:
                     "latest_prompt_preview": runtime.get("latest_prompt_preview", ""),
                     "translation_previews": runtime.get("translation_previews", {}),
                     "prompt_previews": runtime.get("prompt_previews", {}),
+                    "ttft_states": runtime.get("ttft_states", {}),
                     "recent_errors": runtime["recent_errors"],
                     "recent_successes": runtime["recent_successes"],
                     "notices": runtime.get("notices", []),

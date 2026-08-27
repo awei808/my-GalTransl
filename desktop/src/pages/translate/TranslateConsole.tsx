@@ -142,6 +142,23 @@ export function TranslateConsole() {
     Object.keys(promptPreviews()).sort((a, b) => Number(a) - Number(b));
   const activePromptWorkerId = () => promptWorkerTab() ?? promptWorkerIds()[0];
   const activePromptSnapshot = () => promptPreviews()[activePromptWorkerId()];
+  // 流式首字状态灯：按 worker_id 隔离，渲染颜色 + TTFT 数值
+  const ttftStates = () => runtime()?.ttft_states ?? {};
+  const ttftOf = (wid: string) => ttftStates()[wid];
+  // 状态灯颜色映射（与后端 TTFTStatus 对应）
+  const ttftColor = (status: string) => {
+    switch (status) {
+      case "WAITING":
+      case "RETRYING":
+        return "var(--ttft-waiting, #f0a020)";
+      case "FIRST_TOKEN":
+        return "var(--ttft-ok, #2ec26a)";
+      case "CANCELLED":
+        return "var(--ttft-cancel, #888)";
+      default:
+        return "var(--ttft-idle, #3a3f4b)";
+    }
+  };
   // 多 worker 并发时按 worker_id 隔离的最新译文预览快照（key 为 worker 标识）
   const translationPreviews = () => runtime()?.translation_previews ?? {};
   const activeTranslationPreview = () => translationPreviews()[activePromptWorkerId()];
@@ -738,6 +755,10 @@ export function TranslateConsole() {
                       class={`panel-tab panel-tab--sm ${activePromptWorkerId() === wid ? "panel-tab--active" : ""}`}
                       onClick={() => setPromptWorkerTab(wid)}
                     >
+                      <span
+                        class="ttft-dot"
+                        style={{ background: ttftColor(ttftOf(wid)?.status ?? "IDLE") }}
+                      />
                       Worker {Number(wid) + 1}
                     </button>
                   )}
@@ -750,6 +771,28 @@ export function TranslateConsole() {
                 <div class="prompt-worker-meta">
                   {activePromptSnapshot()?.filename}
                   {activePromptSnapshot()?.batch ? ` · 批次 ${activePromptSnapshot()?.batch}` : ""}
+                  <Show when={ttftOf(activePromptWorkerId())}>
+                    {() => {
+                      const t = ttftOf(activePromptWorkerId())!;
+                      return (
+                        <span class="ttft-badge" title="首字响应时间 Time To First Token">
+                          <span
+                            class="ttft-dot ttft-dot--sm"
+                            style={{ background: ttftColor(t.status) }}
+                          />
+                          {t.status === "FIRST_TOKEN" && t.ttft_ms != null
+                            ? ` 首字 ${t.ttft_ms.toFixed(0)}ms`
+                            : t.status === "WAITING"
+                            ? " 等待首字…"
+                            : t.status === "RETRYING"
+                            ? " 重试中…"
+                            : t.status === "CANCELLED"
+                            ? " 已取消"
+                            : ""}
+                        </span>
+                      );
+                    }}
+                  </Show>
                 </div>
               </Show>
             </Show>

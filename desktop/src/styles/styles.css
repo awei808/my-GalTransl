@@ -1457,6 +1457,27 @@ textarea {
   border-top: 1px dashed var(--color-border-default);
 }
 
+/* 流式首字状态灯（TTFT） */
+.ttft-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  box-shadow: 0 0 0 0 currentColor;
+}
+.ttft-dot--sm {
+  width: 6px;
+  height: 6px;
+}
+.ttft-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-2);
+  color: var(--color-text-secondary);
+}
+
 /* ── panel-content 变体 ── */
 .panel-content--pre {
   white-space: pre-wrap;

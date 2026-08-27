@@ -312,6 +312,23 @@ export type WorkerPromptPreview = {
   updated_at: string;
 };
 
+/** 流式首字状态灯取值，与后端 TTFTStatus 常量对应 */
+export type TTFTStatus =
+  | "IDLE"
+  | "WAITING"
+  | "FIRST_TOKEN"
+  | "RETRYING"
+  | "CANCELLED";
+
+/** 单个 worker 当前请求的流式首字状态与首字响应时间 */
+export type TTFTPreview = {
+  worker_id: string;
+  status: TTFTStatus;
+  ttft_ms: number | null;
+  model: string;
+  updated_at: string;
+};
+
 export type ProjectRuntimeResponse = {
   project_dir: string;
   job: RuntimeJob | null;
@@ -329,6 +346,8 @@ export type ProjectRuntimeResponse = {
   translation_previews: Record<string, string>;
   /** 多 worker 并发时按 worker_id 隔离的提示词快照（key 为 worker 标识） */
   prompt_previews: Record<string, WorkerPromptPreview>;
+  /** 多 worker 并发时按 worker_id 隔离的流式首字状态灯（key 为 worker 标识） */
+  ttft_states: Record<string, TTFTPreview>;
   recent_errors: ProjectRuntimeErrorEntry[];
   recent_successes: ProjectRuntimeSuccessEntry[];
   /** 一次性用户提示（后端流水线阶段告知），前端 toast 后调用 clearRuntimeNotices 清除 */

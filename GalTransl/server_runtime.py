@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 from packaging.version import InvalidVersion, Version
 from yaml import safe_load
@@ -101,6 +101,28 @@ class WorkerPromptSnapshot:
     updated_at: str = ""
 
 
+class TTFTStatus:
+    """流式首字状态灯的取值（字符串常量，便于前端字面对比）。"""
+    IDLE = "IDLE"            # 空闲：当前 worker 无进行中的请求
+    WAITING = "WAITING"      # 已发起请求，尚未收到首个正文分片
+    FIRST_TOKEN = "FIRST_TOKEN"  # 已收到首字（正文首片到达）
+    RETRYING = "RETRYING"    # 限流/异常触发重试中
+    CANCELLED = "CANCELLED"  # 任务整体取消
+
+
+@dataclass(slots=True)
+class TTFTPreview:
+    """单个 worker 当前请求的流式首字状态与首字响应时间。"""
+    worker_id: str
+    status: str = TTFTStatus.IDLE
+    ttft_ms: float | None = None  # 首字响应时间（毫秒），未收到或不可测为 None
+    model: str = ""
+    updated_at: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 RUNTIME_RECENT_EVENT_LIMIT = 80
 RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
 # Upper bound on success events per snapshot (500): each file keeps a 100-slot deque,
@@ -155,6 +177,8 @@ class RuntimeState:
     translation_previews: dict[str, str] = field(default_factory=dict)
     # 按 worker_id 隔离的提示词快照（多 worker 并发时各占一个 key）
     prompt_previews: dict[str, WorkerPromptSnapshot] = field(default_factory=dict)
+    # 按 worker_id 隔离的流式首字状态灯（多 worker 并发时各占一个 key，覆盖式）
+    ttft_states: dict[str, TTFTPreview] = field(default_factory=dict)
     updated_at: str = field(default_factory=_utcnow_text)
     file_totals: dict[str, int] = field(default_factory=dict)
     cache_file_display_map: dict[str, str] = field(default_factory=dict)
@@ -417,6 +441,7 @@ class RuntimeRegistry:
                     "latest_prompt_preview": "",
                     "translation_previews": {},
                     "prompt_previews": {},
+                    "ttft_states": {},
                     "workers_active": 0,
                     "workers_configured": 0,
                     "translation_speed_lpm": 0,
@@ -457,6 +482,16 @@ class RuntimeRegistry:
                         "updated_at": snap.updated_at,
                     }
                     for wid, snap in state.prompt_previews.items()
+                },
+                "ttft_states": {
+                    wid: {
+                        "worker_id": snap.worker_id,
+                        "status": snap.status,
+                        "ttft_ms": snap.ttft_ms,
+                        "model": snap.model,
+                        "updated_at": snap.updated_at,
+                    }
+                    for wid, snap in state.ttft_states.items()
                 },
                 "workers_active": state.workers_active,
                 "workers_configured": state.workers_configured,
@@ -542,6 +577,48 @@ def set_live_snippets(
                     preview_text = preview_text[-max_translation_len:]
                     LOGGER.debug(f"[prompt-preview] worker {worker_id} translation_preview 已封顶至最近 {max_translation_len} 字符")
                 state.translation_previews[worker_id] = preview_text
+        state.updated_at = _utcnow_text()
+
+
+def set_ttft_state(
+    project_dir: str,
+    status: str,
+    worker_id: str = "",
+    ttft_ms: float | None = None,
+    model: str = "",
+) -> None:
+    """更新指定 worker 当前请求的流式首字状态灯。
+
+    由 BaseEngine.ask_chatbot() 在流式生命周期关键点调用：
+    WAITING（发起请求）→ FIRST_TOKEN（首字到达，附 ttft_ms）→ RETRYING/CANCELLED，
+    成功后复位 IDLE（清空 ttft_ms 与 model）。非 worker 上下文（worker_id="-1"）不写入。
+    """
+    worker_id = worker_id or WORKER_ID_CTX.get()
+    if not worker_id or worker_id == "-1":
+        return
+    # IDLE 表示"当前无进行中请求"，须清空 ttft_ms 与 model，避免残留上次结果
+    if status == TTFTStatus.IDLE:
+        ttft_ms = None
+        model = ""
+    with RUNTIME_REGISTRY._lock:
+        state = RUNTIME_REGISTRY._states.get(_normalize_project_dir(project_dir))
+        if state is None:
+            return
+        prev = state.ttft_states.get(worker_id)
+        # IDLE 强制清空；非 IDLE 时 ttft_ms/model 仅在未提供时继承上一次的值
+        if status == TTFTStatus.IDLE:
+            result_ttft = None
+            result_model = ""
+        else:
+            result_ttft = ttft_ms if ttft_ms is not None else (prev.ttft_ms if prev else None)
+            result_model = model or (prev.model if prev else "")
+        state.ttft_states[worker_id] = TTFTPreview(
+            worker_id=worker_id,
+            status=status,
+            ttft_ms=result_ttft,
+            model=result_model,
+            updated_at=_utcnow_text(),
+        )
         state.updated_at = _utcnow_text()
 
 

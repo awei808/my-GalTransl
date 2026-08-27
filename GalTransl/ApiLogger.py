@@ -98,6 +98,7 @@ class ApiLogger:
         response_preview: str = "",
         reasoning: str = "",
         error: str = "",
+        ttft_ms: float | None = None,
     ) -> None:
         if self._writer_task is None or self._writer_task.done():
             return
@@ -113,6 +114,7 @@ class ApiLogger:
             "response": response_preview,
             "reasoning": reasoning,
             "error": error,
+            "ttft_ms": ttft_ms,
         })
 
     async def shutdown(self, timeout: float = 5.0) -> None:
@@ -209,10 +211,13 @@ class ApiLogger:
                 _ct = entry.get("completion_tokens", 0) or 0
                 _retry = entry.get("retry_count")
                 _retry_part = "" if not _retry else f" retry={_retry}"
+                # 流式首字响应时间：流式请求附真实值，非流式为 None 写 -
+                _ttft = entry.get("ttft_ms")
+                _ttft_part = f" ttft={round(_ttft, 1)}ms" if _ttft is not None else " ttft=-"
                 lines.append(
                     f'[{entry.get("ts_resp", "?")}][API] {tid} -RESP '
                     f'success {_lt}ms {_ct}t'
-                    f'{_retry_part}'
+                    f'{_retry_part}{_ttft_part}'
                 )
                 reason = entry.get("reasoning", "") or ""
                 if reason:

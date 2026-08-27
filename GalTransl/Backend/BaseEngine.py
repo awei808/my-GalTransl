@@ -1,5 +1,6 @@
 import asyncio
 import httpx
+import math
 from opencc import OpenCC
 from typing import Any, Optional, List
 from collections import deque
@@ -22,7 +23,7 @@ import json
 import random
 import time
 from contextlib import suppress
-from GalTransl.server_runtime import set_live_snippets
+from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets, set_ttft_state
 from GalTransl.ApiLogger import api_logger
 
 try:
@@ -63,18 +64,24 @@ _LAST_CHATBOT_STREAM_CTX: ContextVar = ContextVar("galtransl_last_chatbot_stream
 class RequestHealthMetrics:
     def __init__(self) -> None:
         self._samples: deque[tuple[float, float, bool]] = deque()
+        # 流式首字响应时间样本（秒），仅成功且流式请求记录
+        self._ttft_samples: deque[tuple[float, float]] = deque()
         self._lock = Lock()
 
     def _trim_locked(self, now: float, window_seconds: float) -> None:
         cutoff = now - max(5.0, float(window_seconds))
         while self._samples and self._samples[0][0] < cutoff:
             self._samples.popleft()
+        while self._ttft_samples and self._ttft_samples[0][0] < cutoff:
+            self._ttft_samples.popleft()
 
-    def record(self, latency_seconds: float, is_rate_limited: bool) -> None:
+    def record(self, latency_seconds: float, is_rate_limited: bool, ttft_seconds: float | None = None) -> None:
         now = time.monotonic()
         latency = max(0.0, float(latency_seconds))
         with self._lock:
             self._samples.append((now, latency, bool(is_rate_limited)))
+            if ttft_seconds is not None:
+                self._ttft_samples.append((now, max(0.0, float(ttft_seconds))))
             self._trim_locked(now, 120.0)
 
     def snapshot(self, window_seconds: float = 30.0) -> dict:
@@ -88,14 +95,26 @@ class RequestHealthMetrics:
                     "rate_limited": 0,
                     "rate_limited_ratio": 0.0,
                     "avg_latency": 0.0,
+                    "avg_ttft": 0.0,
+                    "p95_ttft": 0.0,
                 }
             rate_limited = sum(1 for _, _, limited in self._samples if limited)
             avg_latency = sum(lat for _, lat, _ in self._samples) / total
+            if self._ttft_samples:
+                ttf = sorted(f for _, f in self._ttft_samples)
+                avg_ttft = sum(ttf) / len(ttf)
+                idx = min(len(ttf) - 1, int(math.ceil(0.95 * len(ttf))) - 1)
+                p95_ttft = ttf[max(0, idx)]
+            else:
+                avg_ttft = 0.0
+                p95_ttft = 0.0
             return {
                 "total": total,
                 "rate_limited": rate_limited,
                 "rate_limited_ratio": rate_limited / total,
                 "avg_latency": avg_latency,
+                "avg_ttft": avg_ttft,
+                "p95_ttft": p95_ttft,
             }
 
 
@@ -610,9 +629,11 @@ class BaseEngine:
                 )
             await self._interruptible_sleep(wait_seconds)
 
-    def _record_request_health(self, latency_seconds: float, is_rate_limited: bool) -> None:
+    def _record_request_health(
+        self, latency_seconds: float, is_rate_limited: bool, ttft_seconds: float | None = None
+    ) -> None:
         try:
-            self.request_health_metrics.record(latency_seconds, is_rate_limited)
+            self.request_health_metrics.record(latency_seconds, is_rate_limited, ttft_seconds=ttft_seconds)
         except Exception:
             return
 
@@ -944,6 +965,16 @@ class BaseEngine:
                     )
                 )
 
+                # 流式首字状态灯：请求已发起，等待首个正文分片
+                try:
+                    if _pj_dir and is_stream:
+                        set_ttft_state(
+                            _pj_dir, "WAITING", worker_id=WORKER_ID_CTX.get(),
+                            model=token.model_name,
+                        )
+                except Exception:
+                    pass
+
                 # Poll stop_event while waiting; detect stop within 0.5s even when endpoint is slow
                 while not api_task.done():
                     if self._is_stop_requested(self.pj_config):
@@ -965,6 +996,7 @@ class BaseEngine:
                 result = ""
                 lastline = ""
                 reasoning_result = ""
+                _ttft_ms: float | None = None  # 流式首字响应时间（毫秒），未收到为 None
                 if is_stream:
                     stream_abort_requested = False
                     stream_line_buffer = ""
@@ -987,6 +1019,19 @@ class BaseEngine:
                                 lastline = lastline + _reasoning_piece
                             if hasattr(chunk.choices[0].delta, "content"):
                                 content_piece = chunk.choices[0].delta.content or ""
+                                # 首个非空正文分片到达：记录 TTFT 并点亮首字灯
+                                if content_piece and _ttft_ms is None:
+                                    _ttft_ms = (time.monotonic() - request_started) * 1000
+                                    try:
+                                        if _pj_dir:
+                                            set_ttft_state(
+                                                _pj_dir, "FIRST_TOKEN",
+                                                worker_id=WORKER_ID_CTX.get(),
+                                                ttft_ms=_ttft_ms,
+                                                model=token.model_name,
+                                            )
+                                    except Exception:
+                                        pass
                                 result = result + content_piece
                                 lastline = lastline + content_piece
                                 stream_line_buffer += content_piece
@@ -1044,6 +1089,7 @@ class BaseEngine:
                 self._record_request_health(
                     time.monotonic() - request_started,
                     is_rate_limited=False,
+                    ttft_seconds=(_ttft_ms / 1000.0) if _ttft_ms is not None else None,
                 )
                 # 先累加总请求数，再判断错误率（与失败路径口径一致）
                 with self._rate_lock:
@@ -1067,7 +1113,16 @@ class BaseEngine:
                         completion_tokens=_ct,
                         response_preview=result or "",
                         reasoning=reasoning_result,
+                        ttft_ms=_ttft_ms,
                     )
+                # 请求成功返回：该 worker 当前无进行中请求，状态灯复位 IDLE（ttft_ms 清 None）
+                try:
+                    if _pj_dir:
+                        set_ttft_state(
+                            _pj_dir, "IDLE", worker_id=WORKER_ID_CTX.get(),
+                        )
+                except Exception:
+                    pass
                 return result, token
             except Exception as e:
                 # 配额终止信号（次数/错误率超限）直接穿透，避免被当作失败重复记账。
@@ -1081,6 +1136,13 @@ class BaseEngine:
                             _call_trace, status="cancelled", latency_ms=_lat,
                             retry_count=api_try_count, error=str(e),
                         )
+                    try:
+                        if _pj_dir:
+                            set_ttft_state(
+                                _pj_dir, "CANCELLED", worker_id=WORKER_ID_CTX.get(),
+                            )
+                    except Exception:
+                        pass
                     raise
                 is_rate_limited = isinstance(e, RateLimitError)
                 self._record_request_health(
@@ -1094,6 +1156,16 @@ class BaseEngine:
                         self._failed_requests += 1
                 # 错误率超阈值时终止整个翻译流程
                 self._check_error_rate_quota()
+
+                # 流式首字状态灯：限流/异常触发重试，状态复位回 WAITING（新请求重新计时）
+                try:
+                    if _pj_dir and is_stream:
+                        set_ttft_state(
+                            _pj_dir, "RETRYING", worker_id=WORKER_ID_CTX.get(),
+                            model=token.model_name,
+                        )
+                except Exception:
+                    pass
 
                 api_try_count += 1
                 if max_retry_count is not None and api_try_count >= max_retry_count:
