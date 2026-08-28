@@ -333,7 +333,7 @@ class ForBatchMetaData(BaseEngine):
         self._save_metadata(meta, filename)
         LOGGER.info(
             f"[BatchMetaData] {filename} 已写入 "
-            f"transl_cache/pass2_cache/BatchMetadata.json "
+            f"transl_cache/pass2_cache/{filename}.batch.json "
             f"（共 {len(meta['批次'])} 个区间）"
         )
         return True

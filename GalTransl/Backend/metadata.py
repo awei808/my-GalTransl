@@ -13,7 +13,7 @@ from typing import Optional
 
 from GalTransl import LOGGER
 from GalTransl.ConfigHelper import CProjectConfig
-from GalTransl.Backend.utils import parse_interval
+from GalTransl.Backend.utils import coerce_bool, parse_interval
 
 
 def save_metadata_json(
@@ -66,11 +66,12 @@ class FileMetaData:
     属性（与 gt_input 中的 ``FileMetaData.json`` 顶层键一一对应；
     类内使用英文属性名，JSON 数据键保持中文）：
 
-        id        标识：文件级元数据的字符串标识（可空）
-        character 角色：角色/人物设定（字符串或字符串列表）
-        costume   服装：角色服装/外观描述（字符串）
-        plot      剧情：剧情梗概/背景（字符串）
-        tags      标签：题材/关键词标签（字符串或字符串列表）
+        id          标识：文件级元数据的字符串标识（可空）
+        character   角色：角色/人物设定（字符串或字符串列表）
+        costume     服装：角色服装/外观描述（字符串）
+        plot        剧情：剧情梗概/背景（字符串）
+        tags        标签：题材/关键词标签（字符串或字符串列表）
+        address_map 称呼映射：称谓决策表（list[dict]，见 __init__）
     """
 
     def __init__(
@@ -80,6 +81,7 @@ class FileMetaData:
         costume: object = "",
         plot: object = "",
         tags: object = None,
+        address_map: object = None,
     ) -> None:
         """
         初始化文件级元数据
@@ -89,12 +91,17 @@ class FileMetaData:
         :param costume: 服装/外观描述（str），对应 JSON 键「服装」
         :param plot: 剧情梗概（str），对应 JSON 键「剧情」
         :param tags: 标签（str 或 list[str]），对应 JSON 键「标签」
+        :param address_map: 称呼映射（list[dict]，对应 JSON 键「称呼映射」）。
+            每项含 被称呼者/原文/译文（称呼者可省略），见 _normalize_meta 约定。
         """
         self.id = id if id is not None else ""
         self.character = character
         self.costume = costume
         self.plot = plot
         self.tags = tags if tags is not None else []
+        self.address_map = (
+            address_map if isinstance(address_map, list) else []
+        )
 
     def __repr__(self):
         return (
@@ -102,7 +109,8 @@ class FileMetaData:
             f"character={self.character!r}, "
             f"costume={self.costume!r}, "
             f"plot={self.plot!r}, "
-            f"tags={self.tags!r})"
+            f"tags={self.tags!r}, "
+            f"address_map={self.address_map!r})"
         )
 
 
@@ -134,6 +142,7 @@ def format_file_metadata_block(
     costume = _join(metadata.costume) or "无"
     plot = _join(metadata.plot) or "无"
     tags = _join(metadata.tags) or "无"
+    address_block = _format_address_map_block(metadata.address_map)
     block = (
         "\n<plot_metadata>\n"
         f"{id_line}"
@@ -141,6 +150,7 @@ def format_file_metadata_block(
         f"服装: {costume}\n"
         f"剧情: {plot}\n"
         f"标签: {tags}\n"
+        f"{address_block}"
         "</plot_metadata>\n"
     )
     if include_guidance:
@@ -149,7 +159,43 @@ def format_file_metadata_block(
             "（与「角色」列表一致）、语气与剧情基调前后统一。"
             "后续轮次将只提供待翻译句子，无需重复翻译要求。\n"
         )
+        if metadata.address_map:
+            block += (
+                "同时保持人物称谓：同一角色被不同人称呼时，按上述「称呼映射」"
+                "使用对应的译文称谓（原文→译文）。\n"
+            )
     return block
+
+
+def _format_address_map_block(address_map: list) -> str:
+    """把称呼映射格式化为提示词「称呼映射」段落（含换行缩进）。
+
+    每项至少含 原文/译文，可选含 被称呼者/称呼者。形态：
+        - 被称呼者（由称呼者称呼）：原文「原文」→ 译文「译文」
+        - 被称呼者：原文「原文」→ 译文「译文」
+    """
+    if not address_map:
+        return ""
+    lines = []
+    for item in address_map:
+        if not isinstance(item, dict):
+            continue
+        src = str(item.get("原文", "") or "").strip()
+        dst = str(item.get("译文", "") or "").strip()
+        if not src or not dst:
+            continue
+        subject = str(item.get("被称呼者", "") or "").strip()
+        caller = str(item.get("称呼者", "") or "").strip()
+        if subject and caller:
+            head = f"{subject}（由{caller}称呼）"
+        elif subject:
+            head = subject
+        else:
+            head = src
+        lines.append(f"- {head}：原文「{src}」→ 译文「{dst}」")
+    if not lines:
+        return ""
+    return "称呼映射:\n" + "\n".join(lines) + "\n"
 
 
 def build_glossary_prompt_text(
@@ -208,11 +254,57 @@ def build_glossary_prompt_text(
     return glossary
 
 
-def load_file_metadata(projectConfig: "CProjectConfig", filename: str = "") -> Optional[FileMetaData]:
+def _to_dict_list(value: object) -> list:
+    """把「称呼映射」字段规范为 list[dict]；非 list[dict] 一律回退空列表。
+
+    Args:
+        value: 原始值（None / list[dict] / 其它）。
+
+    Returns:
+        过滤后的 list[dict]（非法元素剔除）。
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _resolve_address_map_enabled(
+    projectConfig: "CProjectConfig", enable_address_map: bool = None
+) -> bool:
+    """解析「称呼映射」读路径开关：None 时读取项目配置，显式传值则覆盖。
+
+    与生成阶段 ForFileMetaData 的 internals.forfilemeta.address_map 保持一致，
+    避免「生成阶段关闭、读路径仍注入旧缓存」的口径漂移。
+
+    Args:
+        projectConfig: 项目配置对象。
+        enable_address_map: 显式开关；None 时读取配置项（默认开启）。
+
+    Returns:
+        是否注入「称呼映射」字段。
+    """
+    if enable_address_map is None:
+        enable_address_map = coerce_bool(
+            projectConfig.getKey("internals.forfilemeta.address_map", True),
+            default=True,
+        )
+    return enable_address_map
+
+
+def load_file_metadata(
+    projectConfig: "CProjectConfig",
+    filename: str = "",
+    enable_address_map: bool = None,
+) -> Optional[FileMetaData]:
     """从 per-file 缓存载入单个文件级元数据。
 
     每个源文件的元数据独立存储在 ``{filename}.meta.json`` 中（由 ForFileMetaData
     后端生成），路径为 ``transl_cache/pass1_cache/{filename}.meta.json``。
+
+    Args:
+        projectConfig: 项目配置对象。
+        filename: 待载入的文件名。
+        enable_address_map: 是否注入「称呼映射」；None 时读取项目配置开关。
 
     文件不存在或解析失败时返回 None。
     """
@@ -244,27 +336,40 @@ def load_file_metadata(projectConfig: "CProjectConfig", filename: str = "") -> O
             return [str(x) for x in value]
         return [str(value)]
 
+    address_map = _to_dict_list(data.get("称呼映射"))
+    if not _resolve_address_map_enabled(projectConfig, enable_address_map):
+        address_map = []
+
     return FileMetaData(
         id=data.get("id") or "",
         character=_to_list(data.get("角色")),
         costume=data.get("服装") or "",
         plot=data.get("剧情") or "",
         tags=_to_list(data.get("标签")),
+        address_map=address_map,
     )
 
 
-def load_file_metadata_map(projectConfig: "CProjectConfig") -> dict:
+def load_file_metadata_map(
+    projectConfig: "CProjectConfig", enable_address_map: bool = None
+) -> dict:
     """遍历 pass1_cache/*.meta.json，载入「文件名 -> 文件级元数据」映射。
 
     每个源文件的元数据独立存储在 ``{filename}.meta.json`` 中。本函数遍历
     ``transl_cache/pass1_cache/`` 下所有 ``.meta.json`` 文件，解析为
     ``{id: FileMetaData}`` 字典。
+
+    Args:
+        projectConfig: 项目配置对象。
+        enable_address_map: 是否注入「称呼映射」；None 时读取项目配置开关。
     """
     from GalTransl import PASS1_CACHE_DIR
 
     pass1_dir = os.path.join(projectConfig.getCachePath(), PASS1_CACHE_DIR)
     if not os.path.isdir(pass1_dir):
         return {}
+
+    resolve_enabled = _resolve_address_map_enabled(projectConfig, enable_address_map)
 
     def _to_list(value):
         if value is None:
@@ -290,12 +395,14 @@ def load_file_metadata_map(projectConfig: "CProjectConfig") -> dict:
             fid = item.get("id") or ""
             if not fid:
                 continue
+            address_map = _to_dict_list(item.get("称呼映射")) if resolve_enabled else []
             result[fid] = FileMetaData(
                 id=fid,
                 character=_to_list(item.get("角色")),
                 costume=item.get("服装") or "",
                 plot=item.get("剧情") or "",
                 tags=_to_list(item.get("标签")),
+                address_map=address_map,
             )
     except OSError as e:
         LOGGER.warning(f"遍历 pass1_cache 失败：{e}")

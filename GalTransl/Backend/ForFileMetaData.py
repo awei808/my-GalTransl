@@ -15,7 +15,12 @@ from GalTransl.Backend.metadata import (
     save_metadata_json,
 )
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
-from GalTransl.Backend.Prompts import FORFILEMETA_PROMPT, FORFILEMETA_SYSTEM
+from GalTransl.Backend.Prompts import (
+    FORFILEMETA_PROMPT,
+    FORFILEMETA_SYSTEM,
+    _FORFILEMETA_ADDRESS_EXAMPLE,
+    _FORFILEMETA_ADDRESS_SPEC,
+)
 
 
 """
@@ -60,6 +65,10 @@ class ForFileMetaData(BaseEngine):
         raw = self.pj_config.getKey("internals.forfilemeta.inject_guideline", True)
         self._inject_guideline = coerce_bool(raw, default=True)
 
+        # 是否输出「称呼映射」字段（默认开启，可在 internals.forfilemeta.address_map 关闭）
+        raw = self.pj_config.getKey("internals.forfilemeta.address_map", True)
+        self._address_map_enabled = coerce_bool(raw, default=True)
+
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
@@ -95,6 +104,17 @@ class ForFileMetaData(BaseEngine):
             global_prompt=self._build_global_prompt_block(),
         )
         prompt_req = prompt_req.replace("[max_chars]", str(max_chars))
+        # 「称呼映射」字段说明与参考格式示例：开启时注入完整说明，关闭时替换为空
+        if self._address_map_enabled:
+            prompt_req = prompt_req.replace(
+                "[address_map_spec]", _FORFILEMETA_ADDRESS_SPEC
+            )
+            prompt_req = prompt_req.replace(
+                "[address_map_example]", _FORFILEMETA_ADDRESS_EXAMPLE
+            )
+        else:
+            prompt_req = prompt_req.replace("[address_map_spec]", "")
+            prompt_req = prompt_req.replace("[address_map_example]", "")
         return prompt_req
 
     # 1. 准备输入
@@ -122,8 +142,14 @@ class ForFileMetaData(BaseEngine):
         return extract_json_object(text, tag="FileMetaData", filename=filename)
 
     @staticmethod
-    def _normalize_meta(obj: dict, filename: str) -> dict:
-        """规整字段类型，并强制 id == 文件名（与多轮后端按 id 匹配文件名一致）。"""
+    def _normalize_meta(obj: dict, filename: str, enable_address_map: bool = True) -> dict:
+        """规整字段类型，并强制 id == 文件名（与多轮后端按 id 匹配文件名一致）。
+
+        Args:
+            obj: 解析后的元数据 dict。
+            filename: 当前文件名。
+            enable_address_map: 是否保留「称呼映射」字段；关闭时置空（与提示词注入口径一致）。
+        """
         roles = obj.get("角色", [])
         if isinstance(roles, str):
             roles = [roles]
@@ -134,13 +160,70 @@ class ForFileMetaData(BaseEngine):
             tags = [tags]
         tags = [str(x).strip() for x in tags if str(x).strip()]
 
+        address_map = (
+            ForFileMetaData._normalize_address_map(obj.get("称呼映射", []), filename)
+            if enable_address_map
+            else []
+        )
+
         return {
             "id": filename,
             "角色": roles,
             "服装": str(obj.get("服装", "") or ""),
             "剧情": str(obj.get("剧情", "") or ""),
             "标签": tags,
+            "称呼映射": address_map,
         }
+
+    @staticmethod
+    def _normalize_address_map(raw: object, filename: str) -> list:
+        """规整「称呼映射」为 list[dict]，容忍 LLM 输出结构错误。
+
+        仅保留含 原文/译文 的合法项；被称呼者/称呼者 缺失时分别用 原文 兜底/留空；
+        对「被称呼者+称呼者+原文+译文」完全相同的项去重（同一对原文不同译文时均保留）。
+        非法项丢弃并记 warning。
+
+        Args:
+            raw: 原始「称呼映射」值（可为 None / list / dict / 其它）。
+            filename: 当前文件名（日志用）。
+
+        Returns:
+            规整后的 list[dict]。
+        """
+        if not isinstance(raw, list):
+            if raw:
+                LOGGER.warning(
+                    f"[FileMetaData] {filename} 称呼映射 类型错误，期望 list，"
+                    f"实际 {type(raw).__name__}，已忽略"
+                )
+            return []
+        cleaned = []
+        seen = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                LOGGER.warning(
+                    f"[FileMetaData] {filename} 称呼映射 含非对象项，已忽略: {item}"
+                )
+                continue
+            src = str(item.get("原文", "") or "").strip()
+            dst = str(item.get("译文", "") or "").strip()
+            if not src or not dst:
+                LOGGER.warning(
+                    f"[FileMetaData] {filename} 称呼映射 项缺少 原文/译文，已忽略: {item}"
+                )
+                continue
+            subject = str(item.get("被称呼者", "") or "").strip() or src
+            caller = str(item.get("称呼者", "") or "").strip()
+            # 去重 key 含 dst：同一 (被称呼者, 称呼者, 原文) 若 LLM 给出不同译文，
+            # 两条都保留（不静默丢弃更优译文）；仅完全相同的项去重。
+            key = (subject, caller, src, dst)
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append({"被称呼者": subject, "原文": src, "译文": dst})
+            if caller:
+                cleaned[-1]["称呼者"] = caller
+        return cleaned
 
     # 3. 写入 per-file 元数据文件（实现收口于 metadata.save_metadata_json，原子写）
     def _save_metadata(self, meta: dict, filename: str = "") -> None:
@@ -220,12 +303,15 @@ class ForFileMetaData(BaseEngine):
             LOGGER.warning(f"[FileMetaData] {filename} 未解析到有效 JSON，跳过")
             return False
 
-        meta = self._normalize_meta(meta, filename)
+        meta = self._normalize_meta(
+            meta, filename, enable_address_map=self._address_map_enabled
+        )
         self._save_metadata(meta, filename)
         LOGGER.info(
             f"[FileMetaData] {filename} 已写入 "
-            f"transl_cache/pass1_cache/FileMetaData.json "
-            f"（角色={meta['角色']}，标签={meta['标签']}）"
+            f"transl_cache/pass1_cache/{filename}.meta.json "
+            f"（角色={meta['角色']}，标签={meta['标签']}，"
+            f"称呼映射={len(meta['称呼映射'])} 条）"
         )
         return True
 

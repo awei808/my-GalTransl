@@ -105,12 +105,12 @@ TRANSLATOR_SUPPORTED = {
         "en": "Unified problem fix: repairs translations by a configurable combination of problem types, each with its own fix instruction, generating alternative translations (alt_dst); input mode auto-derived from selected types (src+dst if any type needs source, else dst-only)."
     },
     "ForFileMetaData": {
-        "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 gt_input/FileMetaData.json。",
-        "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes gt_input/FileMetaData.json."
+        "zh-cn": "由剧本文件生成文件级元数据，包含文件内出场人物及服装、剧情和剧情标签，结果写入 transl_cache/pass1_cache/{filename}.meta.json。",
+        "en": "Generate FileMetaData from script files. No translation, no multi-turn; writes transl_cache/pass1_cache/{filename}.meta.json."
     },
     "ForBatchMetaData": {
         "zh-cn": "依据文件级元数据，将原文划分批次，并标注视角/氛围/H/用词色彩。",
-        "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes gt_input/BatchMetadata.json for multi-turn translation."
+        "en": "Partition scripts into translation intervals (batches) based on FileMetaData, tagging perspective/atmosphere/H/word-tone; writes transl_cache/pass2_cache/{filename}.batch.json for multi-turn translation."
     },
     "ForPlotRouteMap": {
         "zh-cn": "基于各文件剧情+剧情大纲生成剧情路线图和对应线路剧情",
