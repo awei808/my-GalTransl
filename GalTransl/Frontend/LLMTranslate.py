@@ -1649,12 +1649,14 @@ async def _run_full_pipeline(
                 projectConfig, "ForGlobalPrompt",
                 projectConfig.proxyPool, projectConfig.tokenPool,
             )
-            external_info = projectConfig.getKey("externals.gameInfo", "") or ""
-            success = await gptapi_global.batch_translate(
-                compressed_texts, external_info=external_info
-            )
-            if hasattr(gptapi_global, "shutdown"):
-                await gptapi_global.shutdown()
+            try:
+                external_info = projectConfig.getKey("externals.gameInfo", "") or ""
+                success = await gptapi_global.batch_translate(
+                    compressed_texts, external_info=external_info
+                )
+            finally:
+                if hasattr(gptapi_global, "shutdown"):
+                    await gptapi_global.shutdown()
             if not success:
                 LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
                 raise RuntimeError("全局游戏分析生成失败")
@@ -1720,12 +1722,14 @@ async def _run_full_pipeline(
                 projectConfig, "GenDic",
                 projectConfig.proxyPool, projectConfig.tokenPool,
             )
-            all_jsons = []
-            for json_list in file_json_lists.values():
-                all_jsons.extend(json_list)
-            dic_ok = await gptapi_dic.batch_translate(all_jsons)
-            if hasattr(gptapi_dic, "shutdown"):
-                await gptapi_dic.shutdown()
+            try:
+                all_jsons = []
+                for json_list in file_json_lists.values():
+                    all_jsons.extend(json_list)
+                dic_ok = await gptapi_dic.batch_translate(all_jsons)
+            finally:
+                if hasattr(gptapi_dic, "shutdown"):
+                    await gptapi_dic.shutdown()
             # internals.pipeline.abortOnDicFailure：术语表构建失败（如分词模型加载失败）时中止流水线。
             # batch_translate 仅在硬失败（分词模型无法加载）时返回 False；分片级失败已被记录但
             # 视为部分成功（与流水线容错设计一致），不中止，避免误伤"文本无可提取词条"的合法场景。
@@ -1766,52 +1770,54 @@ async def _run_full_pipeline(
             projectConfig, "ForFileMetaData",
             projectConfig.proxyPool, projectConfig.tokenPool,
         )
-        # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
-        # 已存在的文件级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
-        existing_fm_map = load_file_metadata_map(projectConfig)
-        force_regen_fm = projectConfig.getKey(
-            "internals.pipeline.forceRegenFileMeta", False
-        )
-        # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
-        workers_per_project = projectConfig.get_workers_per_project()
-        worker_count = max(1, workers_per_project)
-        processed_fm = await _run_meta_worker_pool(
-            projectConfig, gptapi_filemeta, file_json_lists,
-            existing_map=existing_fm_map,
-            worker_count=worker_count,
-            tag="FileMetaData", stage_prefix="文件级元数据",
-            force_regen=force_regen_fm,
-        )
-        skipped_files = total_files - processed_fm
+        try:
+            # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
+            # 已存在的文件级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
+            existing_fm_map = load_file_metadata_map(projectConfig)
+            force_regen_fm = projectConfig.getKey(
+                "internals.pipeline.forceRegenFileMeta", False
+            )
+            # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+            # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+            workers_per_project = projectConfig.get_workers_per_project()
+            worker_count = max(1, workers_per_project)
+            processed_fm = await _run_meta_worker_pool(
+                projectConfig, gptapi_filemeta, file_json_lists,
+                existing_map=existing_fm_map,
+                worker_count=worker_count,
+                tag="FileMetaData", stage_prefix="文件级元数据",
+                force_regen=force_regen_fm,
+            )
+            skipped_files = total_files - processed_fm
 
-        # 交叉验证 FileMetaData 条目数
-        fm_map = load_file_metadata_map(projectConfig)
-        fm_count = len(fm_map)
-        if fm_count < total_files:
-            LOGGER.warning(
-                f"[流水线] 阶段 4 警告：{fm_count}/{total_files} 个文件"
-                f"生成了元数据，缺失 {total_files - fm_count} 个"
-            )
-            record_runtime_notice(
-                projectConfig.getProjectDir(),
-                f"阶段 4/6 警告：{total_files - fm_count} 个文件未生成文件级元数据",
-            )
-        else:
-            LOGGER.info(
-                f"[流水线] 阶段 4 完成：{fm_count}/{total_files} 个文件"
-            )
-            record_runtime_notice(
-                projectConfig.getProjectDir(),
-                f"阶段 4/6：文件级元数据完成（{fm_count}/{total_files} 个文件）",
-            )
-        if skipped_files:
-            LOGGER.info(
-                f"[流水线] 阶段 4 跳过 {skipped_files} 个已存在文件级元数据的文件"
-            )
-        # 同时关闭 ForFileMetaData 后端
-        if hasattr(gptapi_filemeta, "shutdown"):
-            await gptapi_filemeta.shutdown()
+            # 交叉验证 FileMetaData 条目数
+            fm_map = load_file_metadata_map(projectConfig)
+            fm_count = len(fm_map)
+            if fm_count < total_files:
+                LOGGER.warning(
+                    f"[流水线] 阶段 4 警告：{fm_count}/{total_files} 个文件"
+                    f"生成了元数据，缺失 {total_files - fm_count} 个"
+                )
+                record_runtime_notice(
+                    projectConfig.getProjectDir(),
+                    f"阶段 4/6 警告：{total_files - fm_count} 个文件未生成文件级元数据",
+                )
+            else:
+                LOGGER.info(
+                    f"[流水线] 阶段 4 完成：{fm_count}/{total_files} 个文件"
+                )
+                record_runtime_notice(
+                    projectConfig.getProjectDir(),
+                    f"阶段 4/6：文件级元数据完成（{fm_count}/{total_files} 个文件）",
+                )
+            if skipped_files:
+                LOGGER.info(
+                    f"[流水线] 阶段 4 跳过 {skipped_files} 个已存在文件级元数据的文件"
+                )
+            # 同时关闭 ForFileMetaData 后端
+        finally:
+            if hasattr(gptapi_filemeta, "shutdown"):
+                await gptapi_filemeta.shutdown()
 
     # ── 阶段 4.5：剧情路线图生成 ──
     LOGGER.info("[流水线] 阶段 4.5/6：剧情路线图")
@@ -1848,17 +1854,19 @@ async def _run_full_pipeline(
                 projectConfig, "ForPlotRouteMap",
                 projectConfig.proxyPool, projectConfig.tokenPool,
             )
-            structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
-            user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
-            ok = await gptapi_plotroute.batch_translate(
-                structure_type=structure_type,
-                user_outline=user_outline,
-                force_regen=force_regen_pr,
-            )
-            if not ok:
-                LOGGER.warning("[流水线] 阶段 4.5 生成失败或未生成，继续流水线")
-            if hasattr(gptapi_plotroute, "shutdown"):
-                await gptapi_plotroute.shutdown()
+            try:
+                structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
+                user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
+                ok = await gptapi_plotroute.batch_translate(
+                    structure_type=structure_type,
+                    user_outline=user_outline,
+                    force_regen=force_regen_pr,
+                )
+                if not ok:
+                    LOGGER.warning("[流水线] 阶段 4.5 生成失败或未生成，继续流水线")
+            finally:
+                if hasattr(gptapi_plotroute, "shutdown"):
+                    await gptapi_plotroute.shutdown()
 
     # ── 阶段 5：批次级元数据生成 ──
     LOGGER.info("[流水线] 阶段 5/6：翻译区间划分")
@@ -1884,51 +1892,53 @@ async def _run_full_pipeline(
             projectConfig, "ForBatchMetaData",
             projectConfig.proxyPool, projectConfig.tokenPool,
         )
-        # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
-        # 已存在的批次级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
-        existing_bm_map = load_batch_metadata_map(projectConfig)
-        force_regen_bm = projectConfig.getKey(
-            "internals.pipeline.forceRegenBatchMeta", False
-        )
-        # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
-        workers_per_project = projectConfig.get_workers_per_project()
-        worker_count = max(1, workers_per_project)
-        processed_bm = await _run_meta_worker_pool(
-            projectConfig, gptapi_batchmeta, file_json_lists,
-            existing_map=existing_bm_map,
-            worker_count=worker_count,
-            tag="BatchMetaData", stage_prefix="批次划分",
-            force_regen=force_regen_bm,
-        )
-        skipped_batches = total_files - processed_bm
+        try:
+            # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
+            # 已存在的批次级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
+            existing_bm_map = load_batch_metadata_map(projectConfig)
+            force_regen_bm = projectConfig.getKey(
+                "internals.pipeline.forceRegenBatchMeta", False
+            )
+            # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+            # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+            workers_per_project = projectConfig.get_workers_per_project()
+            worker_count = max(1, workers_per_project)
+            processed_bm = await _run_meta_worker_pool(
+                projectConfig, gptapi_batchmeta, file_json_lists,
+                existing_map=existing_bm_map,
+                worker_count=worker_count,
+                tag="BatchMetaData", stage_prefix="批次划分",
+                force_regen=force_regen_bm,
+            )
+            skipped_batches = total_files - processed_bm
 
-        # 交叉验证 BatchMetadata 条目数
-        bm_map = load_batch_metadata_map(projectConfig)
-        bm_count = len(bm_map)
-        if bm_count < total_files:
-            LOGGER.warning(
-                f"[流水线] 阶段 5 警告：{bm_count}/{total_files} 个文件"
-                f"划分了批次，缺失 {total_files - bm_count} 个"
-            )
-            record_runtime_notice(
-                projectConfig.getProjectDir(),
-                f"阶段 5/6 警告：{total_files - bm_count} 个文件未划分翻译区间",
-            )
-        else:
-            LOGGER.info(
-                f"[流水线] 阶段 5 完成：{bm_count}/{total_files} 个文件"
-            )
-            record_runtime_notice(
-                projectConfig.getProjectDir(),
-                f"阶段 5/6：翻译区间划分完成（{bm_count}/{total_files} 个文件）",
-            )
-        if skipped_batches:
-            LOGGER.info(
-                f"[流水线] 阶段 5 跳过 {skipped_batches} 个已存在批次级元数据的文件"
-            )
-        if hasattr(gptapi_batchmeta, "shutdown"):
-            await gptapi_batchmeta.shutdown()
+            # 交叉验证 BatchMetadata 条目数
+            bm_map = load_batch_metadata_map(projectConfig)
+            bm_count = len(bm_map)
+            if bm_count < total_files:
+                LOGGER.warning(
+                    f"[流水线] 阶段 5 警告：{bm_count}/{total_files} 个文件"
+                    f"划分了批次，缺失 {total_files - bm_count} 个"
+                )
+                record_runtime_notice(
+                    projectConfig.getProjectDir(),
+                    f"阶段 5/6 警告：{total_files - bm_count} 个文件未划分翻译区间",
+                )
+            else:
+                LOGGER.info(
+                    f"[流水线] 阶段 5 完成：{bm_count}/{total_files} 个文件"
+                )
+                record_runtime_notice(
+                    projectConfig.getProjectDir(),
+                    f"阶段 5/6：翻译区间划分完成（{bm_count}/{total_files} 个文件）",
+                )
+            if skipped_batches:
+                LOGGER.info(
+                    f"[流水线] 阶段 5 跳过 {skipped_batches} 个已存在批次级元数据的文件"
+                )
+        finally:
+            if hasattr(gptapi_batchmeta, "shutdown"):
+                await gptapi_batchmeta.shutdown()
 
     # ── 阶段 6：翻译（ForGalJsonMulitChat）──
     LOGGER.info("[流水线] 阶段 6/6：翻译执行")
