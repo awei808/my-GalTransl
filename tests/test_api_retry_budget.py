@@ -128,6 +128,23 @@ class RetryBudgetTests(unittest.IsolatedAsyncioTestCase):
         # 第 1、2 次失败分别记 attempts=1、2（与轮换偏移量口径区分）
         self.assertEqual([r["retry_count"] for r in error_records], [1, 2])
 
+    async def test_chatbot_state_cleared_at_entry(self) -> None:
+        # D5：入口先复位请求状态，在首次尝试置位前就失败的调用
+        # 不再读到上一个请求残留的模型名/流式标志
+        engine = _make_engine()
+        engine.tokenStrategy = "invalid"  # 轮换选择点即抛，CTX 不会被置位
+        engine.client_list = [(object(), DummyToken())]
+        base_engine_module._LAST_CHATBOT_MODEL_CTX.set("stale-model")
+        base_engine_module._LAST_CHATBOT_STREAM_CTX.set(True)
+
+        with self.assertRaises(RuntimeError):
+            await engine.ask_chatbot(
+                messages=[{"role": "user", "content": "hi"}], max_retry_count=1
+            )
+
+        self.assertEqual(engine.get_last_chatbot_model(), "")
+        self.assertFalse(engine.get_last_chatbot_stream())
+
 
 if __name__ == "__main__":
     unittest.main()

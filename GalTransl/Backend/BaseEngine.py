@@ -966,6 +966,10 @@ class BaseEngine:
         # api_attempts 是尝试预算（429 限流不计入），两者独立计数
         api_try_count = base_try_count
         api_attempts = 0
+        # 每次调用先复位请求状态：在首次尝试置位前就失败的调用（如取消、
+        # tokenStrategy 非法），运行态上报不会再误挂上一个请求的模型名
+        _LAST_CHATBOT_MODEL_CTX.set("")
+        _LAST_CHATBOT_STREAM_CTX.set(False)
         client: AsyncOpenAI
         token: COpenAIToken
         client, token = random.choices(self.client_list, k=1)[0]
@@ -1007,6 +1011,9 @@ class BaseEngine:
                 raise JobCancelledError()
 
             request_started = time.monotonic()
+            # except 路径引用这两个变量（tokenStrategy 非法等在赋值前抛出时不可未绑定）
+            _call_trace = ""
+            _pj_dir = ""
             try:
                 if self.tokenStrategy == "random":
                     if api_try_count % 2 == 0:
@@ -1022,7 +1029,6 @@ class BaseEngine:
                 LOGGER.debug(f"Call {token.domain} withs token {token.maskToken()}")
 
                 # ── API 调用日志：记录请求信息 ──
-                _call_trace = ""
                 try:
                     _pj_dir = getattr(self.pj_config, "runtime_project_dir",
                                       self.pj_config.getProjectDir())
