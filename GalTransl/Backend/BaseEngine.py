@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import math
+from datetime import timedelta
 from opencc import OpenCC
 from typing import Any, Optional, List
 from collections import deque
@@ -28,8 +29,20 @@ from GalTransl.ApiLogger import api_logger
 
 try:
     from pyreqwest.compatibility.httpx import HttpxTransport
+    from pyreqwest.client import ClientBuilder as PyreqwestClientBuilder
 except Exception:
     HttpxTransport = None
+    PyreqwestClientBuilder = None
+
+
+def _default_http_limits() -> httpx.Limits:
+    """有界连接池：30s 空闲过期自愈指向已重启网关的僵尸空闲连接。
+
+    单客户端（单 token 单引擎实例）100 并发上限远高于实际 worker 数，属安全值。
+    """
+    return httpx.Limits(
+        max_keepalive_connections=20, max_connections=100, keepalive_expiry=30.0
+    )
 
 
 _GLOBAL_RPM_LOCK = Lock()
@@ -463,12 +476,20 @@ class BaseEngine:
         proxy_kwargs = build_httpx_proxy_kwargs(proxy_addr)
         if HttpxTransport is not None and not proxy_kwargs:
             try:
+                pyreqwest_client = None
+                if PyreqwestClientBuilder is not None:
+                    pyreqwest_client = (
+                        PyreqwestClientBuilder()
+                        .pool_idle_timeout(timedelta(seconds=30))
+                        .pool_max_idle_per_host(20)
+                        .build()
+                    )
                 return httpx.AsyncClient(
                     trust_env=trust_env,
-                    limits=httpx.Limits(
-                        max_keepalive_connections=None, max_connections=None
-                    ),
-                    transport=HttpxTransport(),
+                    limits=_default_http_limits(),
+                    transport=HttpxTransport(pyreqwest_client)
+                    if pyreqwest_client is not None
+                    else HttpxTransport(),
                 )
             except Exception as e:
                 LOGGER.warning(
@@ -480,9 +501,7 @@ class BaseEngine:
             )
         return DefaultAioHttpClient(
             trust_env=trust_env,
-            limits=httpx.Limits(
-                max_keepalive_connections=None, max_connections=None
-            ),
+            limits=_default_http_limits(),
             **proxy_kwargs,
         )
 
