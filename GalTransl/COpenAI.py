@@ -291,6 +291,7 @@ class COpenAITokenPool:
                 )
 
         tasks = []
+        task_indices: dict[asyncio.Task, int] = {}
         with terminal_progress(
             should_print_translation_logs(self.pj_config),
             total=len(self.tokens),
@@ -304,8 +305,10 @@ class COpenAITokenPool:
                 LOGGER.info(
                     f"Testing key{index}---{token.maskToken()}---{token.model_name}"
                 )
-                tasks.append(asyncio.create_task(check_one_token(token)))
-            result: list[tuple[bool, COpenAIToken]] = []
+                task = asyncio.create_task(check_one_token(token))
+                tasks.append(task)
+                task_indices[task] = len(tasks) - 1
+            result_by_index: dict[int, tuple[bool, COpenAIToken]] = {}
             pending = set(tasks)
             try:
                 while pending:
@@ -316,13 +319,17 @@ class COpenAITokenPool:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     for done_task in done:
-                        result.append(await done_task)
+                        # 探活完成顺序随机，fallback 策略依赖配置顺序，
+                        # 按创建索引归位后再重建结果列表
+                        result_by_index[task_indices[done_task]] = await done_task
             except BaseException:
                 for task in tasks:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
+
+        result = [result_by_index[i] for i in range(len(tasks))]
 
         # replace list with new one
         newList: list[tuple[bool, COpenAIToken]] = []
