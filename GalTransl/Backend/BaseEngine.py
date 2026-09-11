@@ -534,6 +534,10 @@ class BaseEngine:
         if getattr(self, "_shutdown_done", False):
             return None
         async with self._client_recycle_lock:
+            # 锁内复查：shutdown 可能在外层检查后、加锁前完成置位并关闭全部
+            # 客户端（其快照不含新建客户端），此时重建将泄漏到进程退出
+            if getattr(self, "_shutdown_done", False):
+                return None
             current = next(
                 (
                     pair

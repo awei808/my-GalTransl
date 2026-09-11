@@ -179,6 +179,29 @@ class ClientRecycleTests(unittest.IsolatedAsyncioTestCase):
         # 已被替换的客户端再次回收：配对不存在，返回 None
         self.assertIsNone(await engine._recycle_failed_client(client_a, token_a))
 
+    async def test_recycle_aborts_when_shutdown_wins_the_race(self) -> None:
+        # 确定性复现窄竞态：外层检查通过后、加锁前 shutdown 完成置位，
+        # 锁内复查必须中止回收，否则新建客户端不在 shutdown 快照里、无人关闭
+        engine = _make_engine()
+        token = DummyToken()
+        client = object()
+        engine.client_list = [(client, token)]
+
+        class _ShutdownWinsLock(asyncio.Lock):
+            async def acquire(self):
+                await super().acquire()
+                engine._shutdown_done = True
+                return True
+
+        engine._client_recycle_lock = _ShutdownWinsLock()
+
+        replacement = await engine._recycle_failed_client(client, token)
+
+        self.assertIsNone(replacement)
+        self.assertEqual(_FakeAsyncOpenAI.instances, [])
+        self.assertIs(engine.client_list[0][0], client)
+        self.assertEqual(engine._retired_clients, [])
+
 
 class RetiredClientShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_shutdown_closes_active_and_retired_clients(self) -> None:
