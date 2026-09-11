@@ -2643,6 +2643,28 @@ textarea {
   margin-top: var(--space-1);
 }
 
+/* 字段选择与正则开关并排（正则开关复用 find-input 选择框样式） */
+.find-input-group--row {
+  display: flex;
+  gap: 4px;
+}
+
+.find-input-group--row .find-input {
+  flex: 1;
+  width: auto;
+}
+
+.find-toggle {
+  flex: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.find-toggle--active {
+  border-color: var(--color-border-focus);
+  color: var(--color-border-focus);
+}
+
 /* 查找结果列表 */
 .find-results {
   margin-top: var(--space-1);

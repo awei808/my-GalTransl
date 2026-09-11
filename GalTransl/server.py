@@ -3531,6 +3531,19 @@ def build_handler(registry: JobRegistry) -> type:
                     query = str(payload.get("query", "")).strip()
                     field = str(payload.get("field", "all")).strip()  # all | src | dst
                     max_results = min(int(payload.get("max_results", 500)), 2000)
+                    # 正则模式（options.re）：仅用于搜索；编译一次，非法正则返回 400
+                    options = payload.get("options")
+                    use_regex = isinstance(options, dict) and bool(options.get("re", False))
+                    search_pattern = None
+                    if use_regex:
+                        try:
+                            search_pattern = re.compile(query)
+                        except re.error as exc:
+                            self._send_json(
+                                {"error": f"无效的正则表达式: {exc}"},
+                                status=HTTPStatus.BAD_REQUEST,
+                            )
+                            return
 
                     if not query:
                         self._send_json({"results": [], "total": 0})
@@ -3564,10 +3577,18 @@ def build_handler(registry: JobRegistry) -> type:
                                         speaker_text = " ".join(str(x) for x in raw_name)
                                     else:
                                         speaker_text = str(raw_name) if raw_name else ""
-                                    match_src = query.lower() in src_text.lower()
-                                    match_dst = query.lower() in dst_text.lower()
-                                    match_problem = query.lower() in problem_text.lower()
-                                    match_speaker = bool(speaker_text) and query.lower() in speaker_text.lower()
+                                    if search_pattern is not None:
+                                        match_src = bool(search_pattern.search(src_text))
+                                        match_dst = bool(search_pattern.search(dst_text))
+                                        match_problem = bool(search_pattern.search(problem_text))
+                                        match_speaker = bool(speaker_text) and bool(
+                                            search_pattern.search(speaker_text)
+                                        )
+                                    else:
+                                        match_src = query.lower() in src_text.lower()
+                                        match_dst = query.lower() in dst_text.lower()
+                                        match_problem = query.lower() in problem_text.lower()
+                                        match_speaker = bool(speaker_text) and query.lower() in speaker_text.lower()
                                     if field == "src" and not match_src:
                                         continue
                                     if field == "dst" and not match_dst:

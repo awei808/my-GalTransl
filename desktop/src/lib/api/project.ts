@@ -254,11 +254,12 @@ export async function searchCache(
   query: string,
   field: CacheSearchField = "all",
   maxResults = 500,
+  options?: { re?: boolean },
 ) {
   return apiRequest<CacheSearchResponse>(`/api/projects/${projectId}/cache/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, field, max_results: maxResults }),
+    body: JSON.stringify({ query, field, max_results: maxResults, options }),
   });
 }
 

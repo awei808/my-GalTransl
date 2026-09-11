@@ -321,6 +321,8 @@ function FindReplacePanel() {
   const [query, setQuery] = createSignal("");
   const [replaceText, setReplaceText] = createSignal("");
   const [field, setField] = createSignal<CacheSearchField>("all");
+  // 正则模式：仅用于搜索，替换仍为字面匹配
+  const [useRegex, setUseRegex] = createSignal(false);
   const [results, setResults] = createSignal<CacheSearchResult[]>([]);
   const [searched, setSearched] = createSignal(false);
   const [searching, setSearching] = createSignal(false);
@@ -347,7 +349,7 @@ function FindReplacePanel() {
     }
     setSearching(true);
     try {
-      const res = await searchCache(pid, q, field(), 500);
+      const res = await searchCache(pid, q, field(), 500, { re: useRegex() });
       setResults(res.results ?? []);
       setSearched(true);
       if (res.total === 0) toast.info("未找到匹配结果");
@@ -370,6 +372,10 @@ function FindReplacePanel() {
     }
     if (f === "problem") {
       toast.warning("问题字段不支持替换，请切换字段后再试");
+      return;
+    }
+    if (useRegex()) {
+      toast.warning("正则模式仅用于搜索，不支持替换");
       return;
     }
     setReplacing(true);
@@ -427,6 +433,10 @@ function FindReplacePanel() {
       toast.warning("问题字段不支持替换，请切换字段后再试");
       return;
     }
+    if (useRegex()) {
+      toast.warning("正则模式仅用于搜索，不支持替换");
+      return;
+    }
     // 纯前端替换只作用于校对页当前打开文件：未打开文件或目标条目属于其他文件时提示
     if (!appState.activeFilePath) {
       toast.warning("请先在校对页打开要替换的文件");
@@ -470,6 +480,10 @@ function FindReplacePanel() {
     }
     if (f === "problem") {
       toast.warning("问题字段不支持替换，请切换字段后再试");
+      return;
+    }
+    if (useRegex()) {
+      toast.warning("正则模式仅用于搜索，不支持替换");
       return;
     }
     if (!file || appState.activeView !== "review") {
@@ -529,7 +543,7 @@ function FindReplacePanel() {
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           />
         </div>
-        <div class="find-input-group">
+        <div class="find-input-group find-input-group--row">
           <select
             class="find-input"
             value={field()}
@@ -540,6 +554,14 @@ function FindReplacePanel() {
             <option value="dst">译文</option>
             <option value="problem">问题</option>
           </select>
+          <button
+            type="button"
+            class={`find-input find-toggle${useRegex() ? " find-toggle--active" : ""}`}
+            title="使用正则表达式匹配（仅搜索，不支持替换）"
+            onClick={() => setUseRegex(!useRegex())}
+          >
+            正则
+          </button>
         </div>
         <div class="find-actions">
           <button class="btn btn--sm" onClick={handleSearch} disabled={searching()}>
