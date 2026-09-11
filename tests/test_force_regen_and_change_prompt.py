@@ -63,6 +63,7 @@ class ForceRegenEngineTests(unittest.IsolatedAsyncioTestCase):
             "[plot_metadata]\n[SourceLang]\n[TargetLang]"
         )
         backend._inject_guideline = False
+        backend._address_map_enabled = False
         backend._global_prompt_loaded = True
         backend._global_prompt = None
         backend.source_lang = "ja"

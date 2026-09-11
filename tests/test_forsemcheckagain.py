@@ -293,6 +293,9 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase):
                 "costume": ["女仆装"],
                 "plot": "众人入住 cosplay 度假岛，华恋是女仆",
                 "tags": ["日常", "H"],
+                "address_map": [
+                    {"原文": "お兄ちゃん", "译文": "哥哥", "被称呼者": "華恋", "称呼者": "創"}
+                ],
             },
         )()
         trans_list = [_trans(2, "确认句", "疑似错误")]
@@ -304,6 +307,9 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<plot_metadata>", captured["user"])
         self.assertIn("角色: 創、華恋", captured["user"])
         self.assertIn("剧情: 众人入住 cosplay 度假岛，华恋是女仆", captured["user"])
+        # 称呼映射渲染进元数据块
+        self.assertIn("称呼映射:", captured["user"])
+        self.assertIn("- 華恋（由創称呼）：原文「お兄ちゃん」→ 译文「哥哥」", captured["user"])
         # 元数据块位于任务说明之前
         self.assertLess(
             captured["user"].index("<plot_metadata>"),
