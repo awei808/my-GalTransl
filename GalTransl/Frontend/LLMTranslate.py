@@ -598,58 +598,60 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
-        total = len(file_json_lists)
-        LOGGER.info(
-            f"[FileMetaData] 开始为 {total} 个文件生成文件级元数据"
-        )
-        _update_runtime(projectConfig, stage="生成文件级元数据")
-        # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
-        _update_runtime(
-            projectConfig,
-            file_totals=_build_meta_file_totals(file_json_lists, input_dir),
-        )
-        # 载入已有缓存映射，跳过已生成元数据的文件
-        existing_fm_map = {}
         try:
-            from GalTransl.Backend.metadata import load_file_metadata_map
-            existing_fm_map = load_file_metadata_map(projectConfig)
-        except Exception as exc:
-            LOGGER.debug(f"[FileMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
-
-        # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
-        workers_per_project = projectConfig.get_workers_per_project()
-        worker_count = max(1, workers_per_project)
-        await _run_meta_worker_pool(
-            projectConfig, gptapi, file_json_lists,
-            existing_map=existing_fm_map,
-            worker_count=worker_count,
-            tag="FileMetaData", stage_prefix="文件级元数据",
-        )
-        LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
-
-        # 交叉验证：检查 FileMetaData.json 条目数
-        from GalTransl.Backend.metadata import load_file_metadata_map
-        try:
-            fm_map = load_file_metadata_map(projectConfig)
-            fm_count = len(fm_map)
-            if fm_count < total:
-                LOGGER.warning(
-                    f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件生成了元数据，"
-                    f"缺失 {total - fm_count} 个文件，请检查对应文件的 WARNING 日志"
-                )
-            else:
-                LOGGER.info(
-                    f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件全部生成元数据"
-                )
-        except Exception as e:
-            LOGGER.debug(
-                f"[FileMetaData] 交叉验证读取失败（不影响流程）：{e}"
+            total = len(file_json_lists)
+            LOGGER.info(
+                f"[FileMetaData] 开始为 {total} 个文件生成文件级元数据"
             )
+            _update_runtime(projectConfig, stage="生成文件级元数据")
+            # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
+            _update_runtime(
+                projectConfig,
+                file_totals=_build_meta_file_totals(file_json_lists, input_dir),
+            )
+            # 载入已有缓存映射，跳过已生成元数据的文件
+            existing_fm_map = {}
+            try:
+                from GalTransl.Backend.metadata import load_file_metadata_map
+                existing_fm_map = load_file_metadata_map(projectConfig)
+            except Exception as exc:
+                LOGGER.debug(f"[FileMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
-        _update_runtime(projectConfig, stage="文件级元数据生成完毕")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
+            # 多 worker 并发生成文件级元数据（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+            # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+            workers_per_project = projectConfig.get_workers_per_project()
+            worker_count = max(1, workers_per_project)
+            await _run_meta_worker_pool(
+                projectConfig, gptapi, file_json_lists,
+                existing_map=existing_fm_map,
+                worker_count=worker_count,
+                tag="FileMetaData", stage_prefix="文件级元数据",
+            )
+            LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
+
+            # 交叉验证：检查 FileMetaData.json 条目数
+            from GalTransl.Backend.metadata import load_file_metadata_map
+            try:
+                fm_map = load_file_metadata_map(projectConfig)
+                fm_count = len(fm_map)
+                if fm_count < total:
+                    LOGGER.warning(
+                        f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件生成了元数据，"
+                        f"缺失 {total - fm_count} 个文件，请检查对应文件的 WARNING 日志"
+                    )
+                else:
+                    LOGGER.info(
+                        f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件全部生成元数据"
+                    )
+            except Exception as e:
+                LOGGER.debug(
+                    f"[FileMetaData] 交叉验证读取失败（不影响流程）：{e}"
+                )
+
+            _update_runtime(projectConfig, stage="文件级元数据生成完毕")
+        finally:
+            if hasattr(gptapi, "shutdown"):
+                await gptapi.shutdown()
         return True
 
     if eng_type == "ForPlotRouteMap":
@@ -658,22 +660,24 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
-        LOGGER.info("[PlotRouteMap] 开始生成剧情路线图")
-        _update_runtime(projectConfig, stage="生成剧情路线图")
-        structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
-        user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
-        force_regen = projectConfig.getKey(
-            "internals.pipeline.forceRegenPlotRoute", False
-        )
-        ok = await gptapi.batch_translate(
-            structure_type=structure_type,
-            user_outline=user_outline,
-            force_regen=force_regen,
-        )
-        if not ok:
-            LOGGER.warning("[PlotRouteMap] 生成失败或未生成，跳过")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
+        try:
+            LOGGER.info("[PlotRouteMap] 开始生成剧情路线图")
+            _update_runtime(projectConfig, stage="生成剧情路线图")
+            structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
+            user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
+            force_regen = projectConfig.getKey(
+                "internals.pipeline.forceRegenPlotRoute", False
+            )
+            ok = await gptapi.batch_translate(
+                structure_type=structure_type,
+                user_outline=user_outline,
+                force_regen=force_regen,
+            )
+            if not ok:
+                LOGGER.warning("[PlotRouteMap] 生成失败或未生成，跳过")
+        finally:
+            if hasattr(gptapi, "shutdown"):
+                await gptapi.shutdown()
         _update_runtime(projectConfig, stage="剧情路线图生成完毕")
         return True
 
@@ -683,58 +687,60 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
-        total = len(file_json_lists)
-        LOGGER.info(
-            f"[BatchMetaData] 开始为 {total} 个文件划分翻译区间"
-        )
-        _update_runtime(projectConfig, stage="划分翻译区间")
-        # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
-        _update_runtime(
-            projectConfig,
-            file_totals=_build_meta_file_totals(file_json_lists, input_dir),
-        )
-        # 载入已有缓存映射，跳过已划分批次的文件
-        existing_bm_map = {}
         try:
-            from GalTransl.Backend.metadata import load_batch_metadata_map
-            existing_bm_map = load_batch_metadata_map(projectConfig)
-        except Exception as exc:
-            LOGGER.debug(f"[BatchMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
-
-        # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
-        # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
-        workers_per_project = projectConfig.get_workers_per_project()
-        worker_count = max(1, workers_per_project)
-        await _run_meta_worker_pool(
-            projectConfig, gptapi, file_json_lists,
-            existing_map=existing_bm_map,
-            worker_count=worker_count,
-            tag="BatchMetaData", stage_prefix="批次划分",
-        )
-        LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
-
-        # 交叉验证：检查 BatchMetadata.json 条目数
-        from GalTransl.Backend.metadata import load_batch_metadata_map
-        try:
-            bm_map = load_batch_metadata_map(projectConfig)
-            bm_count = len(bm_map)
-            if bm_count < total:
-                LOGGER.warning(
-                    f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件划分了批次，"
-                    f"缺失 {total - bm_count} 个文件，请检查对应文件的 WARNING 日志"
-                )
-            else:
-                LOGGER.info(
-                    f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件全部划分批次"
-                )
-        except Exception as e:
-            LOGGER.debug(
-                f"[BatchMetaData] 交叉验证读取失败（不影响流程）：{e}"
+            total = len(file_json_lists)
+            LOGGER.info(
+                f"[BatchMetaData] 开始为 {total} 个文件划分翻译区间"
             )
+            _update_runtime(projectConfig, stage="划分翻译区间")
+            # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
+            _update_runtime(
+                projectConfig,
+                file_totals=_build_meta_file_totals(file_json_lists, input_dir),
+            )
+            # 载入已有缓存映射，跳过已划分批次的文件
+            existing_bm_map = {}
+            try:
+                from GalTransl.Backend.metadata import load_batch_metadata_map
+                existing_bm_map = load_batch_metadata_map(projectConfig)
+            except Exception as exc:
+                LOGGER.debug(f"[BatchMetaData] 载入已有缓存失败，将全部重新生成: {exc}")
 
-        _update_runtime(projectConfig, stage="批次级元数据生成完毕")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
+            # 多 worker 并发划分翻译区间（绑定 WORKER_ID_CTX，提示词预览按 worker 分板块）
+            # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
+            workers_per_project = projectConfig.get_workers_per_project()
+            worker_count = max(1, workers_per_project)
+            await _run_meta_worker_pool(
+                projectConfig, gptapi, file_json_lists,
+                existing_map=existing_bm_map,
+                worker_count=worker_count,
+                tag="BatchMetaData", stage_prefix="批次划分",
+            )
+            LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
+
+            # 交叉验证：检查 BatchMetadata.json 条目数
+            from GalTransl.Backend.metadata import load_batch_metadata_map
+            try:
+                bm_map = load_batch_metadata_map(projectConfig)
+                bm_count = len(bm_map)
+                if bm_count < total:
+                    LOGGER.warning(
+                        f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件划分了批次，"
+                        f"缺失 {total - bm_count} 个文件，请检查对应文件的 WARNING 日志"
+                    )
+                else:
+                    LOGGER.info(
+                        f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件全部划分批次"
+                    )
+            except Exception as e:
+                LOGGER.debug(
+                    f"[BatchMetaData] 交叉验证读取失败（不影响流程）：{e}"
+                )
+
+            _update_runtime(projectConfig, stage="批次级元数据生成完毕")
+        finally:
+            if hasattr(gptapi, "shutdown"):
+                await gptapi.shutdown()
         return True
 
     # ---- 2.7b 独立引擎：换行位置异常修复（ForBRStation）/ 残留日文修复（ForJPResidue）/ 禁用词修复（ForBanWordFix）----
@@ -764,124 +770,126 @@ async def doLLMTranslate(
             projectConfig.post_dic.sort_dic()
             projectConfig.gpt_dic.sort_dic()
         gptapi = await init_gptapi(projectConfig)
-        total = len(file_json_lists)
-        # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
-        workers_per_project = projectConfig.get_workers_per_project()
-        worker_count = max(1, workers_per_project)
-        projectConfig.active_workers = worker_count
-        LOGGER.info(
-            f"{_log_tag} 开始为 {total} 个文件执行{_stage_tag}，并发 {worker_count} worker"
-        )
-        _update_runtime(projectConfig, stage=_stage_tag)
-        num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
-            num_better = int(num_better) if num_better else 100
-        except (TypeError, ValueError):
-            num_better = 100
+            total = len(file_json_lists)
+            # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
+            workers_per_project = projectConfig.get_workers_per_project()
+            worker_count = max(1, workers_per_project)
+            projectConfig.active_workers = worker_count
+            LOGGER.info(
+                f"{_log_tag} 开始为 {total} 个文件执行{_stage_tag}，并发 {worker_count} worker"
+            )
+            _update_runtime(projectConfig, stage=_stage_tag)
+            num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+            try:
+                num_better = int(num_better) if num_better else 100
+            except (TypeError, ValueError):
+                num_better = 100
 
-        async def _br_single_file(file_path: str, json_list: list) -> None:
-            """处理单个文件的换行修复：重建句子、命中缓存、修复并写回备选译文。"""
-            _check_stop_requested(projectConfig)
-            file_name = (
-                file_path.replace(input_dir, "")
-                .lstrip(os_sep)
-                .replace(os_sep, "-}")
-            )
-            cache_file_path = joinpath(cache_dir, file_name)
-            if not isPathExists(cache_file_path):
-                LOGGER.warning(f"{_log_tag} {file_name} 无缓存译文，跳过")
-                return
-            # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
-            # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
-            from GalTransl.Loader import load_transList
+            async def _br_single_file(file_path: str, json_list: list) -> None:
+                """处理单个文件的换行修复：重建句子、命中缓存、修复并写回备选译文。"""
+                _check_stop_requested(projectConfig)
+                file_name = (
+                    file_path.replace(input_dir, "")
+                    .lstrip(os_sep)
+                    .replace(os_sep, "-}")
+                )
+                cache_file_path = joinpath(cache_dir, file_name)
+                if not isPathExists(cache_file_path):
+                    LOGGER.warning(f"{_log_tag} {file_name} 无缓存译文，跳过")
+                    return
+                # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
+                # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
+                from GalTransl.Loader import load_transList
 
-            trans_list, _ = load_transList(json_list)
-            preprocess_trans_list(
-                trans_list,
-                projectConfig,
-                projectConfig.pre_dic,
-                projectConfig.tPlugins,
-            )
-            await get_transCache_from_json(
-                trans_list,
-                cache_file_path,
-                retry_failed=False,
-                proofread=False,
-                retran_key="",
-                eng_type=eng_type,
-            )
-            # 注入文件级元数据（供首轮修复）
-            file_metadata = getattr(projectConfig, "file_metadata", None)
-            if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
-                gptapi.set_file_metadata(file_metadata, file_name)
-            _update_runtime(projectConfig, current_file=file_name)
-            await gptapi.batch_translate(
-                file_name,
-                cache_file_path,
-                trans_list,
-                num_better,
-                gpt_dic=projectConfig.gpt_dic,
-            )
-            # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
-            # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
-            has_content = any(
-                t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
-                for t in trans_list
-            )
-            if has_content:
-                await save_transCache_to_json(
+                trans_list, _ = load_transList(json_list)
+                preprocess_trans_list(
+                    trans_list,
+                    projectConfig,
+                    projectConfig.pre_dic,
+                    projectConfig.tPlugins,
+                )
+                await get_transCache_from_json(
                     trans_list,
                     cache_file_path,
-                    post_save=True,
-                    project_dir=_runtime_project_dir(projectConfig),
+                    retry_failed=False,
+                    proofread=False,
+                    retran_key="",
+                    eng_type=eng_type,
                 )
-            else:
-                LOGGER.warning(
-                    f"{_log_tag} {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                # 注入文件级元数据（供首轮修复）
+                file_metadata = getattr(projectConfig, "file_metadata", None)
+                if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
+                    gptapi.set_file_metadata(file_metadata, file_name)
+                _update_runtime(projectConfig, current_file=file_name)
+                await gptapi.batch_translate(
+                    file_name,
+                    cache_file_path,
+                    trans_list,
+                    num_better,
+                    gpt_dic=projectConfig.gpt_dic,
                 )
+                # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
+                # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
+                has_content = any(
+                    t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
+                    for t in trans_list
+                )
+                if has_content:
+                    await save_transCache_to_json(
+                        trans_list,
+                        cache_file_path,
+                        post_save=True,
+                        project_dir=_runtime_project_dir(projectConfig),
+                    )
+                else:
+                    LOGGER.warning(
+                        f"{_log_tag} {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                    )
 
-        # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
-        file_queue: asyncio.Queue = asyncio.Queue()
-        for file_path, json_list in file_json_lists.items():
-            file_queue.put_nowait((file_path, json_list))
-        for _ in range(worker_count):
-            file_queue.put_nowait(None)
+            # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
+            file_queue: asyncio.Queue = asyncio.Queue()
+            for file_path, json_list in file_json_lists.items():
+                file_queue.put_nowait((file_path, json_list))
+            for _ in range(worker_count):
+                file_queue.put_nowait(None)
 
-        async def _br_worker_loop(worker_index: int) -> None:
-            # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
-            worker_token = WORKER_ID_CTX.set(str(worker_index))
-            LOGGER.debug(
-                f"{_log_tag} worker_loop[{worker_index}] 启动, "
-                f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
-            )
+            async def _br_worker_loop(worker_index: int) -> None:
+                # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+                worker_token = WORKER_ID_CTX.set(str(worker_index))
+                LOGGER.debug(
+                    f"{_log_tag} worker_loop[{worker_index}] 启动, "
+                    f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+                )
+                try:
+                    while True:
+                        _check_stop_requested(projectConfig)
+                        item = await file_queue.get()
+                        if item is None:
+                            return
+                        file_path, json_list = item
+                        await _br_single_file(file_path, json_list)
+                finally:
+                    WORKER_ID_CTX.reset(worker_token)
+
+            br_tasks = [
+                asyncio.create_task(_br_worker_loop(i)) for i in range(worker_count)
+            ]
             try:
-                while True:
-                    _check_stop_requested(projectConfig)
-                    item = await file_queue.get()
-                    if item is None:
-                        return
-                    file_path, json_list = item
-                    await _br_single_file(file_path, json_list)
-            finally:
-                WORKER_ID_CTX.reset(worker_token)
-
-        br_tasks = [
-            asyncio.create_task(_br_worker_loop(i)) for i in range(worker_count)
-        ]
-        try:
-            await asyncio.gather(*br_tasks)
-        except Exception:
-            # 任一 worker 抛出未捕获异常（缓存读取/写盘失败等）：取消其余 worker，
-            # 避免孤儿任务继续处理导致状态不一致
-            for task in br_tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*br_tasks, return_exceptions=True)
-            raise
-        LOGGER.info(f"{_log_tag} {_stage_tag}完成")
-        _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
+                await asyncio.gather(*br_tasks)
+            except Exception:
+                # 任一 worker 抛出未捕获异常（缓存读取/写盘失败等）：取消其余 worker，
+                # 避免孤儿任务继续处理导致状态不一致
+                for task in br_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*br_tasks, return_exceptions=True)
+                raise
+            LOGGER.info(f"{_log_tag} {_stage_tag}完成")
+            _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
+        finally:
+            if hasattr(gptapi, "shutdown"):
+                await gptapi.shutdown()
         return True
 
     # ---- 2.7 独立引擎：译文质量改进（ForImproveTranslation）----
@@ -904,122 +912,124 @@ async def doLLMTranslate(
             projectConfig.post_dic.sort_dic()
             projectConfig.gpt_dic.sort_dic()
         gptapi = await init_gptapi(projectConfig)
-        total = len(file_json_lists)
-        # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
-        workers_per_project = projectConfig.get_workers_per_project()
-        worker_count = max(1, workers_per_project)
-        projectConfig.active_workers = worker_count
-        LOGGER.info(f"[改进轮] 开始为 {total} 个文件执行译文质量改进评估，并发 {worker_count} worker")
-        _update_runtime(projectConfig, stage="译文质量改进")
-        num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
-            num_better = int(num_better) if num_better else 100
-        except (TypeError, ValueError):
-            num_better = 100
+            total = len(file_json_lists)
+            # 复用翻译轮并发数；worker 数 = 文件级并发数（一个 worker 一个文件、文件内串行）
+            workers_per_project = projectConfig.get_workers_per_project()
+            worker_count = max(1, workers_per_project)
+            projectConfig.active_workers = worker_count
+            LOGGER.info(f"[改进轮] 开始为 {total} 个文件执行译文质量改进评估，并发 {worker_count} worker")
+            _update_runtime(projectConfig, stage="译文质量改进")
+            num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+            try:
+                num_better = int(num_better) if num_better else 100
+            except (TypeError, ValueError):
+                num_better = 100
 
-        async def _improve_single_file(file_path: str, json_list: list) -> None:
-            """处理单个文件的改进轮：重建句子、命中缓存、评估并写回备选译文。"""
-            _check_stop_requested(projectConfig)
-            file_name = (
-                file_path.replace(input_dir, "")
-                .lstrip(os_sep)
-                .replace(os_sep, "-}")
-            )
-            cache_file_path = joinpath(cache_dir, file_name)
-            if not isPathExists(cache_file_path):
-                LOGGER.warning(f"[改进轮] {file_name} 无缓存译文，跳过")
-                return
-            # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
-            # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
-            from GalTransl.Loader import load_transList
+            async def _improve_single_file(file_path: str, json_list: list) -> None:
+                """处理单个文件的改进轮：重建句子、命中缓存、评估并写回备选译文。"""
+                _check_stop_requested(projectConfig)
+                file_name = (
+                    file_path.replace(input_dir, "")
+                    .lstrip(os_sep)
+                    .replace(os_sep, "-}")
+                )
+                cache_file_path = joinpath(cache_dir, file_name)
+                if not isPathExists(cache_file_path):
+                    LOGGER.warning(f"[改进轮] {file_name} 无缓存译文，跳过")
+                    return
+                # 从输入 json 重建 CSentense：复用 load_transList（与翻译轮 splitter 一致），
+                # 自动处理 name/names/message/index 并链接 prev/next，保证缓存命中匹配
+                from GalTransl.Loader import load_transList
 
-            trans_list, _ = load_transList(json_list)
-            preprocess_trans_list(
-                trans_list,
-                projectConfig,
-                projectConfig.pre_dic,
-                projectConfig.tPlugins,
-            )
-            await get_transCache_from_json(
-                trans_list,
-                cache_file_path,
-                retry_failed=False,
-                proofread=False,
-                retran_key="",
-                eng_type=eng_type,
-            )
-            # 注入文件级元数据（供首轮评估）
-            file_metadata = getattr(projectConfig, "file_metadata", None)
-            if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
-                gptapi.set_file_metadata(file_metadata, file_name)
-            _update_runtime(projectConfig, current_file=file_name)
-            await gptapi.batch_translate(
-                file_name,
-                cache_file_path,
-                trans_list,
-                num_better,
-                gpt_dic=projectConfig.gpt_dic,
-            )
-            # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
-            # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
-            has_content = any(
-                t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
-                for t in trans_list
-            )
-            if has_content:
-                await save_transCache_to_json(
+                trans_list, _ = load_transList(json_list)
+                preprocess_trans_list(
+                    trans_list,
+                    projectConfig,
+                    projectConfig.pre_dic,
+                    projectConfig.tPlugins,
+                )
+                await get_transCache_from_json(
                     trans_list,
                     cache_file_path,
-                    post_save=True,
-                    project_dir=_runtime_project_dir(projectConfig),
+                    retry_failed=False,
+                    proofread=False,
+                    retran_key="",
+                    eng_type=eng_type,
                 )
-            else:
-                LOGGER.warning(
-                    f"[改进轮] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                # 注入文件级元数据（供首轮评估）
+                file_metadata = getattr(projectConfig, "file_metadata", None)
+                if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
+                    gptapi.set_file_metadata(file_metadata, file_name)
+                _update_runtime(projectConfig, current_file=file_name)
+                await gptapi.batch_translate(
+                    file_name,
+                    cache_file_path,
+                    trans_list,
+                    num_better,
+                    gpt_dic=projectConfig.gpt_dic,
                 )
+                # 保存缓存快照（写 alt_dst）：仅当存在有效译文/备选译文时才保存，
+                # 避免"无译文"（如缓存未命中）时把已有缓存覆盖成空数组
+                has_content = any(
+                    t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
+                    for t in trans_list
+                )
+                if has_content:
+                    await save_transCache_to_json(
+                        trans_list,
+                        cache_file_path,
+                        post_save=True,
+                        project_dir=_runtime_project_dir(projectConfig),
+                    )
+                else:
+                    LOGGER.warning(
+                        f"[改进轮] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                    )
 
-        # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
-        file_queue: asyncio.Queue = asyncio.Queue()
-        for file_path, json_list in file_json_lists.items():
-            file_queue.put_nowait((file_path, json_list))
-        for _ in range(worker_count):
-            file_queue.put_nowait(None)
+            # 文件级 worker 池：一个 worker 一个文件、文件内串行，保留单文件多轮对话单链
+            file_queue: asyncio.Queue = asyncio.Queue()
+            for file_path, json_list in file_json_lists.items():
+                file_queue.put_nowait((file_path, json_list))
+            for _ in range(worker_count):
+                file_queue.put_nowait(None)
 
-        async def _improve_worker_loop(worker_index: int) -> None:
-            # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
-            worker_token = WORKER_ID_CTX.set(str(worker_index))
-            LOGGER.debug(
-                f"[改进轮] worker_loop[{worker_index}] 启动, "
-                f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
-            )
+            async def _improve_worker_loop(worker_index: int) -> None:
+                # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+                worker_token = WORKER_ID_CTX.set(str(worker_index))
+                LOGGER.debug(
+                    f"[改进轮] worker_loop[{worker_index}] 启动, "
+                    f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+                )
+                try:
+                    while True:
+                        _check_stop_requested(projectConfig)
+                        item = await file_queue.get()
+                        if item is None:
+                            return
+                        file_path, json_list = item
+                        await _improve_single_file(file_path, json_list)
+                finally:
+                    WORKER_ID_CTX.reset(worker_token)
+
+            improve_tasks = [
+                asyncio.create_task(_improve_worker_loop(i)) for i in range(worker_count)
+            ]
             try:
-                while True:
-                    _check_stop_requested(projectConfig)
-                    item = await file_queue.get()
-                    if item is None:
-                        return
-                    file_path, json_list = item
-                    await _improve_single_file(file_path, json_list)
-            finally:
-                WORKER_ID_CTX.reset(worker_token)
-
-        improve_tasks = [
-            asyncio.create_task(_improve_worker_loop(i)) for i in range(worker_count)
-        ]
-        try:
-            await asyncio.gather(*improve_tasks)
-        except Exception:
-            # 任一 worker 抛出未捕获异常（缓存读取/写盘失败等）：取消其余 worker，
-            # 避免孤儿任务继续处理导致状态不一致
-            for task in improve_tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*improve_tasks, return_exceptions=True)
-            raise
-        LOGGER.info("[改进轮] 译文质量改进完成")
-        _update_runtime(projectConfig, stage="译文质量改进完成")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
+                await asyncio.gather(*improve_tasks)
+            except Exception:
+                # 任一 worker 抛出未捕获异常（缓存读取/写盘失败等）：取消其余 worker，
+                # 避免孤儿任务继续处理导致状态不一致
+                for task in improve_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*improve_tasks, return_exceptions=True)
+                raise
+            LOGGER.info("[改进轮] 译文质量改进完成")
+            _update_runtime(projectConfig, stage="译文质量改进完成")
+        finally:
+            if hasattr(gptapi, "shutdown"):
+                await gptapi.shutdown()
         return True
 
     # ---- 2.7c 独立引擎：语义差异检测（ForSemCheck）/ 命中句二次复核（ForSemCheckAgain）----
@@ -1039,121 +1049,123 @@ async def doLLMTranslate(
             initDictList(gpt_dic_list, default_dic_dir, project_dir)
         )
         gptapi = await init_gptapi(projectConfig)
-        total = len(file_json_lists)
-        worker_count = max(1, projectConfig.get_workers_per_project())
-        projectConfig.active_workers = worker_count
-        LOGGER.info(
-            f"[{_stage_tag}] 开始为 {total} 个文件执行{_stage_tag}，并发 {worker_count} worker"
-        )
-        _update_runtime(projectConfig, stage=_stage_tag)
-        num_better = projectConfig.getKey("gpt.numPerRequestBetter")
         try:
-            num_better = int(num_better) if num_better else 100
-        except (TypeError, ValueError):
-            num_better = 100
+            total = len(file_json_lists)
+            worker_count = max(1, projectConfig.get_workers_per_project())
+            projectConfig.active_workers = worker_count
+            LOGGER.info(
+                f"[{_stage_tag}] 开始为 {total} 个文件执行{_stage_tag}，并发 {worker_count} worker"
+            )
+            _update_runtime(projectConfig, stage=_stage_tag)
+            num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+            try:
+                num_better = int(num_better) if num_better else 100
+            except (TypeError, ValueError):
+                num_better = 100
 
-        async def _semcheck_single_file(file_path: str, json_list: list) -> None:
-            """处理单个文件的语义检测/二次复核：重建句子、命中缓存、执行并写回 suspected_error。"""
-            _check_stop_requested(projectConfig)
-            file_name = (
-                file_path.replace(input_dir, "")
-                .lstrip(os_sep)
-                .replace(os_sep, "-}")
-            )
-            cache_file_path = joinpath(cache_dir, file_name)
-            if not isPathExists(cache_file_path):
-                LOGGER.warning(f"[{_stage_tag}] {file_name} 无缓存译文，跳过")
-                return
-            from GalTransl.Loader import load_transList
+            async def _semcheck_single_file(file_path: str, json_list: list) -> None:
+                """处理单个文件的语义检测/二次复核：重建句子、命中缓存、执行并写回 suspected_error。"""
+                _check_stop_requested(projectConfig)
+                file_name = (
+                    file_path.replace(input_dir, "")
+                    .lstrip(os_sep)
+                    .replace(os_sep, "-}")
+                )
+                cache_file_path = joinpath(cache_dir, file_name)
+                if not isPathExists(cache_file_path):
+                    LOGGER.warning(f"[{_stage_tag}] {file_name} 无缓存译文，跳过")
+                    return
+                from GalTransl.Loader import load_transList
 
-            trans_list, _ = load_transList(json_list)
-            preprocess_trans_list(
-                trans_list,
-                projectConfig,
-                projectConfig.pre_dic,
-                projectConfig.tPlugins,
-            )
-            await get_transCache_from_json(
-                trans_list,
-                cache_file_path,
-                retry_failed=False,
-                proofread=False,
-                retran_key="",
-                eng_type=eng_type,
-            )
-            _update_runtime(projectConfig, current_file=file_name)
-            await gptapi.batch_translate(
-                file_name,
-                cache_file_path,
-                trans_list,
-                num_better,
-                gpt_dic=projectConfig.gpt_dic,
-            )
-            # 与主翻译路径一致：先做译文后处理（恢复对话符号/译后字典/dst 插件），
-            # 再跑问题检测，避免 post_dst 缺「」导致标点错漏误报「本有引号」。
-            postprocess_trans_list(
-                trans_list, projectConfig, projectConfig.post_dic, projectConfig.tPlugins
-            )
-            # 落盘前重跑 find_problems：让 suspected_error 被认领为「疑似错误」problem
-            h_ranges = _resolve_file_h_ranges(
-                project_dir, cache_file_path, projectConfig
-            )
-            find_problems(trans_list, projectConfig, projectConfig.gpt_dic, h_ranges=h_ranges)
-            # 保存缓存快照（写 suspected_error 与 problem）
-            has_content = any(
-                t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
-                for t in trans_list
-            )
-            if has_content:
-                await save_transCache_to_json(
+                trans_list, _ = load_transList(json_list)
+                preprocess_trans_list(
+                    trans_list,
+                    projectConfig,
+                    projectConfig.pre_dic,
+                    projectConfig.tPlugins,
+                )
+                await get_transCache_from_json(
                     trans_list,
                     cache_file_path,
-                    post_save=True,
-                    project_dir=_runtime_project_dir(projectConfig),
+                    retry_failed=False,
+                    proofread=False,
+                    retran_key="",
+                    eng_type=eng_type,
                 )
-            else:
-                LOGGER.warning(
-                    f"[{_stage_tag}] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                _update_runtime(projectConfig, current_file=file_name)
+                await gptapi.batch_translate(
+                    file_name,
+                    cache_file_path,
+                    trans_list,
+                    num_better,
+                    gpt_dic=projectConfig.gpt_dic,
                 )
+                # 与主翻译路径一致：先做译文后处理（恢复对话符号/译后字典/dst 插件），
+                # 再跑问题检测，避免 post_dst 缺「」导致标点错漏误报「本有引号」。
+                postprocess_trans_list(
+                    trans_list, projectConfig, projectConfig.post_dic, projectConfig.tPlugins
+                )
+                # 落盘前重跑 find_problems：让 suspected_error 被认领为「疑似错误」problem
+                h_ranges = _resolve_file_h_ranges(
+                    project_dir, cache_file_path, projectConfig
+                )
+                find_problems(trans_list, projectConfig, projectConfig.gpt_dic, h_ranges=h_ranges)
+                # 保存缓存快照（写 suspected_error 与 problem）
+                has_content = any(
+                    t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != ""
+                    for t in trans_list
+                )
+                if has_content:
+                    await save_transCache_to_json(
+                        trans_list,
+                        cache_file_path,
+                        post_save=True,
+                        project_dir=_runtime_project_dir(projectConfig),
+                    )
+                else:
+                    LOGGER.warning(
+                        f"[{_stage_tag}] {file_name} 无有效译文，跳过缓存保存（保留已有缓存）"
+                    )
 
-        file_queue: asyncio.Queue = asyncio.Queue()
-        for file_path, json_list in file_json_lists.items():
-            file_queue.put_nowait((file_path, json_list))
-        for _ in range(worker_count):
-            file_queue.put_nowait(None)
+            file_queue: asyncio.Queue = asyncio.Queue()
+            for file_path, json_list in file_json_lists.items():
+                file_queue.put_nowait((file_path, json_list))
+            for _ in range(worker_count):
+                file_queue.put_nowait(None)
 
-        async def _semcheck_worker_loop(worker_index: int) -> None:
-            worker_token = WORKER_ID_CTX.set(str(worker_index))
-            LOGGER.debug(
-                f"[{_stage_tag}] worker_loop[{worker_index}] 启动, "
-                f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
-            )
+            async def _semcheck_worker_loop(worker_index: int) -> None:
+                worker_token = WORKER_ID_CTX.set(str(worker_index))
+                LOGGER.debug(
+                    f"[{_stage_tag}] worker_loop[{worker_index}] 启动, "
+                    f"WORKER_ID_CTX={WORKER_ID_CTX.get()!r}"
+                )
+                try:
+                    while True:
+                        _check_stop_requested(projectConfig)
+                        item = await file_queue.get()
+                        if item is None:
+                            return
+                        file_path, json_list = item
+                        await _semcheck_single_file(file_path, json_list)
+                finally:
+                    WORKER_ID_CTX.reset(worker_token)
+
+            semcheck_tasks = [
+                asyncio.create_task(_semcheck_worker_loop(i)) for i in range(worker_count)
+            ]
             try:
-                while True:
-                    _check_stop_requested(projectConfig)
-                    item = await file_queue.get()
-                    if item is None:
-                        return
-                    file_path, json_list = item
-                    await _semcheck_single_file(file_path, json_list)
-            finally:
-                WORKER_ID_CTX.reset(worker_token)
-
-        semcheck_tasks = [
-            asyncio.create_task(_semcheck_worker_loop(i)) for i in range(worker_count)
-        ]
-        try:
-            await asyncio.gather(*semcheck_tasks)
-        except Exception:
-            for task in semcheck_tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*semcheck_tasks, return_exceptions=True)
-            raise
-        LOGGER.info(f"[{_stage_tag}] {_stage_tag}完成")
-        _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
+                await asyncio.gather(*semcheck_tasks)
+            except Exception:
+                for task in semcheck_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*semcheck_tasks, return_exceptions=True)
+                raise
+            LOGGER.info(f"[{_stage_tag}] {_stage_tag}完成")
+            _update_runtime(projectConfig, stage=f"{_stage_tag}完成")
+        finally:
+            if hasattr(gptapi, "shutdown"):
+                await gptapi.shutdown()
         return True
 
     # ---- 2.8 独立引擎：仅生成全局游戏分析（ForGlobalPrompt）----
@@ -1208,34 +1220,36 @@ async def doLLMTranslate(
             projectConfig, "ForGlobalPrompt",
             projectConfig.proxyPool, projectConfig.tokenPool,
         )
-        external_info = projectConfig.getKey("externals.gameInfo", "") or ""
-        success = await gptapi_global.batch_translate(
-            compressed_texts, external_info=external_info
-        )
-        if not success:
-            LOGGER.error("[GlobalPrompt] 全局游戏分析生成失败")
-            raise RuntimeError("全局游戏分析生成失败")
+        try:
+            external_info = projectConfig.getKey("externals.gameInfo", "") or ""
+            success = await gptapi_global.batch_translate(
+                compressed_texts, external_info=external_info
+            )
+            if not success:
+                LOGGER.error("[GlobalPrompt] 全局游戏分析生成失败")
+                raise RuntimeError("全局游戏分析生成失败")
 
-        # 校验 GlobalPrompt.json
-        global_prompt = load_global_prompt(projectConfig)
-        if global_prompt is None:
-            raise RuntimeError("GlobalPrompt.json 不存在或格式错误")
-        gp_validation = validate_global_prompt(global_prompt)
-        if not gp_validation["valid"]:
-            for err in gp_validation["errors"]:
-                LOGGER.error(f"[GlobalPrompt] 内容校验失败: {err}")
-            raise RuntimeError("GlobalPrompt 内容校验失败")
-        for warn in gp_validation.get("warnings", []):
-            LOGGER.warning(f"[GlobalPrompt] 警告: {warn}")
+            # 校验 GlobalPrompt.json
+            global_prompt = load_global_prompt(projectConfig)
+            if global_prompt is None:
+                raise RuntimeError("GlobalPrompt.json 不存在或格式错误")
+            gp_validation = validate_global_prompt(global_prompt)
+            if not gp_validation["valid"]:
+                for err in gp_validation["errors"]:
+                    LOGGER.error(f"[GlobalPrompt] 内容校验失败: {err}")
+                raise RuntimeError("GlobalPrompt 内容校验失败")
+            for warn in gp_validation.get("warnings", []):
+                LOGGER.warning(f"[GlobalPrompt] 警告: {warn}")
 
-        char_count = len(global_prompt.get("角色列表", []))
-        LOGGER.info(
-            f"[GlobalPrompt] 全局分析已生成，{char_count} 个角色，"
-            f"已写入 transl_cache/pass0_cache/GlobalPrompt.json"
-        )
-        _update_runtime(projectConfig, stage="全局游戏分析生成完毕")
-        if hasattr(gptapi_global, "shutdown"):
-            await gptapi_global.shutdown()
+            char_count = len(global_prompt.get("角色列表", []))
+            LOGGER.info(
+                f"[GlobalPrompt] 全局分析已生成，{char_count} 个角色，"
+                f"已写入 transl_cache/pass0_cache/GlobalPrompt.json"
+            )
+            _update_runtime(projectConfig, stage="全局游戏分析生成完毕")
+        finally:
+            if hasattr(gptapi_global, "shutdown"):
+                await gptapi_global.shutdown()
         return True
 
     # 3. 根据 sortBy 决定 chunk 顺序：name（文件名自然序）或 size（大 chunk 优先）
