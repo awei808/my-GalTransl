@@ -16,7 +16,7 @@ from GalTransl.ConfigHelper import (
 from GalTransl.Utils import load_guideline_file
 from GalTransl.Backend.utils import coerce_bool
 from GalTransl.TerminalOutput import should_print_translation_logs
-from openai import RateLimitError, AsyncOpenAI
+from openai import RateLimitError, AsyncOpenAI, APIConnectionError, APITimeoutError
 from openai import DefaultAioHttpClient
 from openai._types import NOT_GIVEN
 import json
@@ -286,6 +286,11 @@ class BaseEngine:
             self.proxyProvider = None
 
         self._shutdown_done = False
+        # 客户端韧性：连续传输错误的客户端自动重建。失败计数以客户端对象本身为键
+        # （对象被 _retired_clients 持引用，无 id 复用问题）。
+        self._client_failure_counts: dict[AsyncOpenAI, int] = {}
+        self._retired_clients: list[AsyncOpenAI] = []
+        self._client_recycle_lock = asyncio.Lock()
 
         if self.target_lang == "Simplified_Chinese":
             self.opencc = OpenCC("t2s.json")
@@ -430,39 +435,9 @@ class BaseEngine:
         else:
             proxy_addr = None
 
-        trust_env = False  # 不使用系统代理
-        proxy_kwargs = build_httpx_proxy_kwargs(proxy_addr)
         self.client_list = []
         for token in self.tokenProvider.get_available_token():
-            http_client = None
-
-            use_pyreqwest_transport = HttpxTransport is not None and not proxy_kwargs
-            if use_pyreqwest_transport:
-                try:
-                    http_client = httpx.AsyncClient(
-                        trust_env=trust_env,
-                        limits=httpx.Limits(
-                            max_keepalive_connections=None, max_connections=None
-                        ),
-                        transport=HttpxTransport(),
-                    )
-                except Exception as e:
-                    LOGGER.warning(
-                        f"初始化 pyreqwest HttpxTransport 失败，回退 DefaultAioHttpClient: {e}"
-                    )
-
-            if http_client is None:
-                if HttpxTransport is not None and proxy_kwargs:
-                    LOGGER.warning(
-                        "检测到代理配置，当前回退到 DefaultAioHttpClient（pyreqwest transport 路径未启用代理注入）"
-                    )
-                http_client = DefaultAioHttpClient(
-                    trust_env=trust_env,
-                    limits=httpx.Limits(
-                        max_keepalive_connections=None, max_connections=None
-                    ),
-                    **proxy_kwargs,
-                )
+            http_client = self._build_http_client(proxy_addr)
 
             client = AsyncOpenAI(
                 api_key=token.token,
@@ -480,6 +455,97 @@ class BaseEngine:
             f"reasoning_effort={self.reasoning_effort or '未设置'} "
             f"可用key数={len(self.client_list)}"
         )
+
+    @staticmethod
+    def _build_http_client(proxy_addr: Optional[str]):
+        """构建单个 token 使用的 HTTP 客户端（无代理走 pyreqwest，有代理回退 httpx）。"""
+        trust_env = False  # 不使用系统代理
+        proxy_kwargs = build_httpx_proxy_kwargs(proxy_addr)
+        if HttpxTransport is not None and not proxy_kwargs:
+            try:
+                return httpx.AsyncClient(
+                    trust_env=trust_env,
+                    limits=httpx.Limits(
+                        max_keepalive_connections=None, max_connections=None
+                    ),
+                    transport=HttpxTransport(),
+                )
+            except Exception as e:
+                LOGGER.warning(
+                    f"初始化 pyreqwest HttpxTransport 失败，回退 DefaultAioHttpClient: {e}"
+                )
+        elif HttpxTransport is not None and proxy_kwargs:
+            LOGGER.warning(
+                "检测到代理配置，当前回退到 DefaultAioHttpClient（pyreqwest transport 路径未启用代理注入）"
+            )
+        return DefaultAioHttpClient(
+            trust_env=trust_env,
+            limits=httpx.Limits(
+                max_keepalive_connections=None, max_connections=None
+            ),
+            **proxy_kwargs,
+        )
+
+    @staticmethod
+    def _is_transport_error(error: BaseException) -> bool:
+        """判断是否为连接层错误（可安全通过重建客户端恢复）。
+
+        5xx/429/认证等 API 状态错误不在此列，避免无意义的客户端重建。
+        """
+        return isinstance(
+            error,
+            (
+                APIConnectionError,
+                APITimeoutError,
+                httpx.TransportError,
+                TimeoutError,
+                ConnectionError,
+                OSError,
+            ),
+        )
+
+    async def _recycle_failed_client(
+        self, failed_client: AsyncOpenAI, token: COpenAIToken
+    ) -> Optional[AsyncOpenAI]:
+        """连续传输错误后原地替换单个不健康的 API 客户端（全新连接池），不打断其他 worker。
+
+        替换出的旧客户端移入 _retired_clients 持引用：既防其他 worker 仍在其上的
+        在途请求被误关，也顺带保证其内存地址不被复用。关闭统一延迟到 shutdown()。
+        """
+        if getattr(self, "_shutdown_done", False):
+            return None
+        async with self._client_recycle_lock:
+            current = next(
+                (
+                    pair
+                    for pair in self.client_list
+                    if pair[0] is failed_client and pair[1] is token
+                ),
+                None,
+            )
+            if current is None:
+                return None
+
+            proxy_addr = None
+            if self.proxyProvider:
+                try:
+                    proxy_addr = self.proxyProvider.getProxy().addr
+                except Exception:
+                    proxy_addr = None
+
+            replacement = AsyncOpenAI(
+                api_key=token.token,
+                base_url=token.domain,
+                max_retries=0,
+                http_client=self._build_http_client(proxy_addr),
+            )
+            self.client_list = [
+                (replacement if client is failed_client else client, pair_token)
+                for client, pair_token in self.client_list
+            ]
+            self._retired_clients.append(failed_client)
+            LOGGER.warning(f"连续网络错误，已刷新 API 客户端 [{token.maskToken()}]")
+            return replacement
 
     @staticmethod
     def _is_stop_requested(pj_config: CProjectConfig) -> bool:
@@ -1130,6 +1196,9 @@ class BaseEngine:
                         )
                 except Exception:
                     pass
+                failure_counts = getattr(self, "_client_failure_counts", None)
+                if failure_counts is not None:
+                    failure_counts.pop(client, None)
                 return result, token
             except Exception as e:
                 # 配额终止信号（次数/错误率超限）直接穿透，避免被当作失败重复记账。
@@ -1163,6 +1232,23 @@ class BaseEngine:
                         self._failed_requests += 1
                 # 错误率超阈值时终止整个翻译流程
                 self._check_error_rate_quota()
+
+                # 连续传输错误计数：达到阈值重建该客户端（全新连接池）后再重试；
+                # 放在熔断检查之后，任务被熔断终止时不必白建客户端。
+                if BaseEngine._is_transport_error(e):
+                    failure_counts = getattr(self, "_client_failure_counts", None)
+                    if failure_counts is not None:
+                        failure_counts[client] = failure_counts.get(client, 0) + 1
+                        if failure_counts[client] >= 3:
+                            # 先记住失败客户端：回收成功后 client 变量会指向新客户端
+                            failed_client = client
+                            try:
+                                replacement = await self._recycle_failed_client(client, token)
+                                if replacement is not None:
+                                    client = replacement
+                            except Exception:
+                                LOGGER.debug("刷新失败的 API 客户端时出错", exc_info=True)
+                            failure_counts.pop(failed_client, None)
 
                 # 流式首字状态灯：限流/异常触发重试，状态复位回 WAITING（新请求重新计时）
                 try:
@@ -1280,7 +1366,13 @@ class BaseEngine:
             return
         self._shutdown_done = True
 
-        for client, _ in getattr(self, "client_list", []):
+        clients = [client for client, _ in getattr(self, "client_list", [])]
+        clients.extend(getattr(self, "_retired_clients", []))
+        seen_clients: set[int] = set()
+        for client in clients:
+            if id(client) in seen_clients:
+                continue
+            seen_clients.add(id(client))
             if client is None:
                 continue
 
@@ -1308,3 +1400,7 @@ class BaseEngine:
                             pass
                 except Exception:
                     pass
+
+        retired_clients = getattr(self, "_retired_clients", None)
+        if retired_clients is not None:
+            retired_clients.clear()
