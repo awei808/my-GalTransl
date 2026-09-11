@@ -14,6 +14,7 @@ backendSpecific:
     stream: true # 流式请求，一般不用修改除非接口不支持流式[True/False]
     apiTimeout: 300 # 请求超时时间，单位秒
     apiErrorWait: auto # 发生API Error时的等待时间，包括频率限制。auto将自动适应[auto/0-120]
+    maxApiRetries: 6 # 单次LLM调用的最大尝试次数（429限流不计入，仅退避重试），耗尽后本批失败交由上层兜底。[1-100]
     apiMaxErrorRate: 0.3 # 累计错误率上限(失败请求/总请求)，超过则终止翻译流程。0表示不限制。[0.0-1.0]
     apiMinIntervalSec: 2.0 # 两次API请求最小间隔(秒)，用于节流。0表示不限制。[0-60]
     apiMaxRequests: 1000 # 累计API请求次数上限(含重试)，超过则终止翻译流程。0表示不限制。[0-1000000]

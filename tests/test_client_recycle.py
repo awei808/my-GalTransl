@@ -59,6 +59,7 @@ class _DummyResponse:
 def _make_engine(strategy: str = "fallback") -> BaseEngine:
     engine = BaseEngine.__new__(BaseEngine)
     engine.pj_config = type("Cfg", (), {"stop_event": None})()
+    engine.eng_type = "test"
     engine.client_list = []
     engine.tokenStrategy = strategy
     engine.global_request_rpm = 0

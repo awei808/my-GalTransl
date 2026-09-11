@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any, List, Optional, Tuple
 
@@ -524,3 +525,26 @@ def normalize_batch_intervals(
             )
 
     return cleaned
+
+# 十进制数字字面量：拒下划线（int("1_000")=1000）等 Python 收而前端拒的写法
+_DECIMAL_LITERAL_RE = re.compile(r"^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$")
+
+
+def coerce_positive_int_strict(value: object, default: int) -> int:
+    """把 yaml 手改值强制转为正整数，非法一律回退 default。
+
+    守卫口径与桌面端阈值输入对齐：拒 bool、拒非数字、拒非整数
+    （如 17.5，与前端 Number.isInteger 一致）、拒 <=0。
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, str) and not _DECIMAL_LITERAL_RE.match(value.strip()):
+        return default
+    try:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(f) or not f.is_integer():
+        return default
+    val = int(f)
+    return val if val > 0 else default

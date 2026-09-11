@@ -15,7 +15,7 @@ from GalTransl.ConfigHelper import (
     CProjectConfig,
 )
 from GalTransl.Utils import load_guideline_file
-from GalTransl.Backend.utils import coerce_bool
+from GalTransl.Backend.utils import coerce_bool, coerce_positive_int_strict
 from GalTransl.TerminalOutput import should_print_translation_logs
 from openai import RateLimitError, AsyncOpenAI, APIConnectionError, APITimeoutError
 from openai import DefaultAioHttpClient
@@ -429,6 +429,11 @@ class BaseEngine:
             "tokenStrategy", "random"
         )
         self.stream = config.getBackendConfigSection(section_name).get("stream", True)
+        # 单次 LLM 调用的最大尝试预算（不含 429 限流重试）：默认 6，
+        # 死端点不再无限重试，耗尽后由上层失败兜底（跳批/留待下次运行）
+        self.max_api_retries = coerce_positive_int_strict(
+            config.getBackendConfigSection(section_name).get("maxApiRetries", 6), 6
+        )
         # 思考相关配置（profile 级，缺省时零发送，向后兼容）
         self.provider = config.getBackendConfigSection(section_name).get("provider", "auto")
         self.thinking_mode = config.getBackendConfigSection(section_name).get(
@@ -952,7 +957,15 @@ class BaseEngine:
         stream_line_callback: Optional[Any] = None,
         max_retry_count: Optional[int] = None,
     ) -> tuple[str, COpenAIToken]:
+        # 未显式传 max_retry_count 时使用实例默认预算 maxApiRetries（默认 6）
+        if max_retry_count is None:
+            max_retry_count = getattr(self, "max_api_retries", None)
+        if max_retry_count is not None:
+            max_retry_count = coerce_positive_int_strict(max_retry_count, 6)
+        # api_try_count 驱动 token 轮换与退避指数（每次失败都递增）；
+        # api_attempts 是尝试预算（429 限流不计入），两者独立计数
         api_try_count = base_try_count
+        api_attempts = 0
         client: AsyncOpenAI
         token: COpenAIToken
         client, token = random.choices(self.client_list, k=1)[0]
@@ -1205,7 +1218,7 @@ class BaseEngine:
                         pass
                     api_logger.record(
                         _call_trace, status="success", latency_ms=_lat,
-                        retry_count=api_try_count, prompt_tokens=_pt,
+                        retry_count=api_attempts, prompt_tokens=_pt,
                         completion_tokens=_ct,
                         response_preview=result or "",
                         reasoning=reasoning_result,
@@ -1233,7 +1246,7 @@ class BaseEngine:
                         _lat = (time.monotonic() - request_started) * 1000
                         api_logger.record(
                             _call_trace, status="cancelled", latency_ms=_lat,
-                            retry_count=api_try_count, error=str(e),
+                            retry_count=api_attempts, error=str(e),
                         )
                     try:
                         if _pj_dir:
@@ -1284,18 +1297,21 @@ class BaseEngine:
                     pass
 
                 api_try_count += 1
-                if max_retry_count is not None and api_try_count >= max_retry_count:
-                    # ── API 调用日志：达到重试上限 ──
-                    if _call_trace:
-                        _lat = (time.monotonic() - request_started) * 1000
-                        api_logger.record(
-                            _call_trace, status="failed", latency_ms=_lat,
-                            retry_count=api_try_count, error=str(e),
-                        )
-                    raise RuntimeError(
-                        f"ask_chatbot reached retry limit ({max_retry_count}): "
-                        f"{type(e).__name__}: {e}"
-                    ) from e
+                if not is_rate_limited:
+                    # 429 限流是暂时性速率约束，不消耗尝试预算，仅退避后重试
+                    api_attempts += 1
+                    if max_retry_count is not None and api_attempts >= max_retry_count:
+                        # ── API 调用日志：达到尝试上限 ──
+                        if _call_trace:
+                            _lat = (time.monotonic() - request_started) * 1000
+                            api_logger.record(
+                                _call_trace, status="failed", latency_ms=_lat,
+                                retry_count=api_attempts, error=str(e),
+                            )
+                        raise RuntimeError(
+                            f"ask_chatbot reached retry limit ({max_retry_count}): "
+                            f"{type(e).__name__}: {e}"
+                        ) from e
 
                 # gemini no_candidates
                 if "candidates" in str(e) and api_try_count > 1:
@@ -1304,7 +1320,7 @@ class BaseEngine:
                         _lat = (time.monotonic() - request_started) * 1000
                         api_logger.record(
                             _call_trace, status="failed", latency_ms=_lat,
-                            retry_count=api_try_count, error=str(e),
+                            retry_count=api_attempts, error=str(e),
                         )
                     return "", token
                 if self.apiErrorWait >= 0:
@@ -1362,7 +1378,7 @@ class BaseEngine:
                         _lat = (time.monotonic() - request_started) * 1000
                         api_logger.record(
                             _call_trace, status="error", latency_ms=_lat,
-                            retry_count=api_try_count,
+                            retry_count=api_attempts,
                             error=(str(e) or "")[:2000],
                         )
                     LOGGER.warning(
@@ -1373,7 +1389,7 @@ class BaseEngine:
                         kind="api",
                         message=message_text,
                         filename=raw_file_name,
-                        retry_count=api_try_count,
+                        retry_count=api_attempts,
                         model=getattr(token, "model_name", "") or None,
                         sleep_seconds=float(sleep_time),
                         level="warning",

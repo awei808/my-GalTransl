@@ -14,9 +14,7 @@ from asyncio import gather
 from tenacity import retry, stop_after_attempt, wait_fixed
 import httpx
 import inspect
-import math
 import os
-import re
 import yaml
 from httpx import AsyncClient, TimeoutException
 from time import time
@@ -26,29 +24,8 @@ from yaml import safe_load
 from os import path, sep
 from enum import Enum
 from importlib.metadata import version
+from GalTransl.Backend.utils import coerce_positive_int_strict as _coerce_positive_int
 
-# 十进制数字字面量：拒下划线（int("1_000")=1000）等 Python 收而前端拒的写法
-_DECIMAL_LITERAL_RE = re.compile(r"^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$")
-
-
-def _coerce_positive_int(raw: object, default: int) -> int:
-    """把 yaml 手改值强制转为正整数，非法一律回退 default。
-
-    守卫口径与桌面端阈值输入对齐：拒 bool、拒非数字、拒非整数
-    （如 17.5，与前端 Number.isInteger 一致）、拒 <=0。
-    """
-    if isinstance(raw, bool):
-        return default
-    if isinstance(raw, str) and not _DECIMAL_LITERAL_RE.match(raw.strip()):
-        return default
-    try:
-        f = float(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError, OverflowError):
-        return default
-    if not math.isfinite(f) or not f.is_integer():
-        return default
-    val = int(f)
-    return val if val > 0 else default
 
 
 def build_httpx_proxy_kwargs(proxy_addr: Optional[str]) -> dict:

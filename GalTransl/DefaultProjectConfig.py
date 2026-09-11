@@ -20,6 +20,7 @@ backendSpecific:
     extra_body: "" # 高级参数JSON，透传到请求体（可覆盖上述映射），如 {"thinking_budget": 4096}
     apiTimeout: 300 # 请求超时时间，单位秒
     apiErrorWait: auto # 发生API Error时的等待时间，包括频率限制。auto将自动适应[auto/0-120]
+    maxApiRetries: 6 # 单次LLM调用的最大尝试次数（429限流不计入，仅退避重试），耗尽后本批失败交由上层兜底。[1-100]
 
 # 插件，插件列表可在启动程序后选择show-plugs查看，或在plugins目录内查看
 plugin:
