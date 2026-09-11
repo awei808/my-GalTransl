@@ -441,6 +441,30 @@ def postprocess_trans_list(
                     )
 
 
+async def _run_gendic_flow(
+    projectConfig: CProjectConfig, all_jsons: list, gptapi: Any
+) -> bool:
+    """GenDic 字典生成流程：无论成功、失败还是取消，都确保关闭 gptapi 的 HTTP 客户端。"""
+    try:
+        LOGGER.info(f"[GenDic] 开始为 {len(all_jsons)} 条文本生成 GPT 字典")
+        dic_ok = await gptapi.batch_translate(all_jsons)
+        # 与完整流水线阶段 3 一致：仅硬失败（分词模型加载失败）时按 abortOnDicFailure 决定是否中止。
+        if not dic_ok:
+            abort = projectConfig.getKey("internals.pipeline.abortOnDicFailure", False)
+            if abort:
+                LOGGER.error("[GenDic] 术语表生成失败，按 abortOnDicFailure 配置中止流水线")
+                raise RuntimeError(
+                    "术语表生成失败（分词模型加载失败），已按 abortOnDicFailure=true 中止流水线"
+                )
+            LOGGER.warning("[GenDic] 术语表生成失败，abortOnDicFailure=false 继续")
+        else:
+            LOGGER.info("[GenDic] GPT 字典生成完成")
+        return True
+    finally:
+        if hasattr(gptapi, "shutdown"):
+            await gptapi.shutdown()
+
+
 async def doLLMTranslate(
     projectConfig: CProjectConfig,
 ) -> bool:
@@ -568,22 +592,7 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
-        LOGGER.info(f"[GenDic] 开始为 {len(all_jsons)} 条文本生成 GPT 字典")
-        dic_ok = await gptapi.batch_translate(all_jsons)
-        # 与完整流水线阶段 3 一致：仅硬失败（分词模型加载失败）时按 abortOnDicFailure 决定是否中止。
-        if not dic_ok:
-            abort = projectConfig.getKey("internals.pipeline.abortOnDicFailure", False)
-            if abort:
-                LOGGER.error("[GenDic] 术语表生成失败，按 abortOnDicFailure 配置中止流水线")
-                raise RuntimeError(
-                    "术语表生成失败（分词模型加载失败），已按 abortOnDicFailure=true 中止流水线"
-                )
-            LOGGER.warning("[GenDic] 术语表生成失败，abortOnDicFailure=false 继续")
-        else:
-            LOGGER.info("[GenDic] GPT 字典生成完成")
-        if hasattr(gptapi, "shutdown"):
-            await gptapi.shutdown()
-        return True
+        return await _run_gendic_flow(projectConfig, all_jsons, gptapi)
 
     if eng_type == "ForFileMetaData":
         _check_stop_requested(projectConfig)
