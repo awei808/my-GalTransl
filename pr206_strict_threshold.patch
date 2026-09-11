@@ -1,0 +1,151 @@
+diff --git a/GalTransl/ConfigHelper.py b/GalTransl/ConfigHelper.py
+index 25dd4bc..c584277 100644
+--- a/GalTransl/ConfigHelper.py
++++ b/GalTransl/ConfigHelper.py
+@@ -23,6 +23,10 @@ from yaml import safe_load
+ from os import path, sep
+ from enum import Enum
+ from importlib.metadata import version
++import re
++
++# 十进制数字字面量：拒下划线（float("1_000")=1000）等 Python 收而前端拒的写法
++_DECIMAL_LITERAL_RE = re.compile(r"^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$")
+ 
+ 
+ def build_httpx_proxy_kwargs(proxy_addr: Optional[str]) -> dict:
+@@ -245,16 +249,22 @@ class CProjectConfig:
+ 
+     def getAvgSentenceLengthThreshold(self) -> int:
+         # 用户手改 config.yaml 可能写成 "17"(字符串) 或 17.5(浮点)，需强制转 int。
+-        # 守卫与前端 resolveThreshold 完全对齐：拒 bool、拒超界/非数字、拒 <=0，取整用 half-up。
++        # 守卫与前端 resolveThreshold 完全对齐：拒 bool、拒非数字、拒非整数、拒 <=0，统一回退 17。
+         raw = self.projectConfig.get("problemAnalyze", {}).get(
+             "avgSentenceLengthThreshold", 17
+         )
+         if isinstance(raw, bool):
+             return 17
++        if isinstance(raw, str) and not _DECIMAL_LITERAL_RE.match(raw.strip()):
++            return 17
+         try:
+-            val = int(math.floor(float(raw) + 0.5))
++            f = float(raw)
+         except (TypeError, ValueError, OverflowError):
+             return 17
++        # 非整数值（如 17.5）直接拒绝，与前端 Number.isInteger 口径一致
++        if not math.isfinite(f) or not f.is_integer():
++            return 17
++        val = int(f)
+         if val <= 0:
+             return 17
+         return val
+diff --git a/desktop/src/pages/project-config/ProblemAnalyzeSection.tsx b/desktop/src/pages/project-config/ProblemAnalyzeSection.tsx
+index e1647fe..c9eba1c 100644
+--- a/desktop/src/pages/project-config/ProblemAnalyzeSection.tsx
++++ b/desktop/src/pages/project-config/ProblemAnalyzeSection.tsx
+@@ -26,17 +26,16 @@ const DEFAULT_THRESHOLD = 17;
+ const DECIMAL_LITERAL_RE = /^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/;
+ 
+ // 与后端 CProjectConfig.getAvgSentenceLengthThreshold 守卫口径逐条对齐：
+-// 拒布尔、拒非十进制字面量、拒非有限数、拒 <=0（统一回退 17），取整用 half-up。
++// 拒布尔、拒非十进制字面量、拒非有限数、拒非整数、拒 <=0（统一回退 17）。
+ function resolveThreshold(config: Record<string, unknown> | null): number {
+   const pa = (config?.problemAnalyze as Record<string, unknown>) || {};
+   const raw = pa.avgSentenceLengthThreshold;
+   if (typeof raw === 'boolean') return DEFAULT_THRESHOLD;
+   if (typeof raw === 'string' && !DECIMAL_LITERAL_RE.test(raw.trim())) return DEFAULT_THRESHOLD;
+   const f = Number(raw);
+-  if (!Number.isFinite(f)) return DEFAULT_THRESHOLD;
+-  const n = Math.round(f);
+-  if (n <= 0) return DEFAULT_THRESHOLD;
+-  return n;
++  if (!Number.isFinite(f) || !Number.isInteger(f)) return DEFAULT_THRESHOLD;
++  if (f <= 0) return DEFAULT_THRESHOLD;
++  return f;
+ }
+ 
+ export function ProblemAnalyzeSection({ config, onProblemListChange, onThresholdChange, onDirty }: ProblemAnalyzeSectionProps) {
+diff --git a/desktop/src/styles/pages/project-config.css b/desktop/src/styles/pages/project-config.css
+index 8f3dc9d..5a6294f 100644
+--- a/desktop/src/styles/pages/project-config.css
++++ b/desktop/src/styles/pages/project-config.css
+@@ -553,6 +553,57 @@
+   color: #a16207;
+ }
+ 
++.problem-analyze-section__threshold {
++  display: flex;
++  flex-direction: column;
++  gap: var(--space-2);
++  padding-top: var(--space-2);
++  border-top: 1px solid var(--color-line);
++}
++
++.problem-analyze-section__threshold-label {
++  display: flex;
++  align-items: center;
++  gap: var(--space-3);
++}
++
++.problem-analyze-section__threshold-label > span {
++  font-size: 13px;
++  font-weight: 600;
++  color: var(--color-text);
++}
++
++.problem-analyze-section__threshold-input {
++  width: 72px;
++  min-height: 32px;
++  padding: 0 var(--space-3);
++  border: 1px solid var(--color-line);
++  border-radius: var(--radius-control);
++  font-size: 13px;
++  color: var(--color-text);
++  background: var(--color-neutral-soft, transparent);
++}
++
++.problem-analyze-section__threshold-input:focus {
++  outline: none;
++  border-color: var(--color-primary, var(--color-line));
++}
++
++.problem-analyze-section__threshold-input--error {
++  border-color: #c53030;
++}
++
++.problem-analyze-section__threshold-desc {
++  font-size: 11.5px;
++  color: var(--color-text-muted);
++  line-height: 1.5;
++}
++
++.problem-analyze-section__threshold-error {
++  font-size: 11.5px;
++  color: #c53030;
++}
++
+ /* ── Retransl Key Section ── */
+ 
+ .retransl-key-section {
+diff --git a/tests/test_single_sentence_too_long.py b/tests/test_single_sentence_too_long.py
+index 9161e11..77348ba 100644
+--- a/tests/test_single_sentence_too_long.py
++++ b/tests/test_single_sentence_too_long.py
+@@ -110,13 +110,13 @@ class ThresholdGuardTests(unittest.TestCase):
+         self.assertEqual(self.threshold_of(" 17 "), 17)
+         self.assertEqual(self.threshold_of("1e1"), 10)
+ 
+-    def test_rounding_is_half_up_like_js_math_round(self) -> None:
+-        self.assertEqual(self.threshold_of(2.5), 3)
+-        self.assertEqual(self.threshold_of(16.5), 17)
+-        self.assertEqual(self.threshold_of(17.5), 18)
++    def test_non_integer_falls_back_to_default(self) -> None:
++        # 非整数一律回退 17（与前端 Number.isInteger 口径一致），不再 half-up 舍入
++        for raw in [17.5, 2.5, 16.5, "17.5", 0.4, -0.4]:
++            self.assertEqual(self.threshold_of(raw), 17, f"raw={raw!r}")
+ 
+     def test_invalid_values_fallback_to_default(self) -> None:
+-        for raw in [True, False, 0, -5, 0.4, -0.4, None, "", "abc", "0x10",
++        for raw in [True, False, 0, -5, None, "", "abc", "0x10", "1_000", "1_0",
+                     "Infinity", "nan", float("inf"), float("nan"), 1e309]:
+             self.assertEqual(self.threshold_of(raw), 17, f"raw={raw!r}")
+ 

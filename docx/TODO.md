@@ -25,6 +25,9 @@
 - 文件元数据提取后端中，新增称呼翻译策略，要求给出原文到译文的翻译 **未实测**
 - 翻译控制台显示哪些后端任务已完成
 - 复核轮模板不使用文件元数据，使用批次元数据
+- **允许字典输入正则来匹配对应词语**
+- **多轮对话中翻译需要对h区间文本的冲击力要求更强，对非h区间文本的画面感要求更强**
+- **问题修复轮新增配置：是否附带上下文**
 - context.ensure_global_prompt_loaded（context.py:20-44）确实无锁，if engine._global_prompt_loaded 后为同步段、无 await。多 worker 共享同一 ForFileMetaData 实例（LLMTranslate.py:1742 创建单实例），依赖"同步段内无 await 不切换协程"不变式。存量问题，非本次改动引入（context.py 既有）。
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
