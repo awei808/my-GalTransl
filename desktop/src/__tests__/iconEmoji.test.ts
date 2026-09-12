@@ -13,6 +13,17 @@ const APPROVED_EMOJI: Record<string, string> = {
   "tone-error": "❌",
   "tone-warning": "⚠️",
   "tone-info": "ℹ️",
+  // 左侧 ActivityBar 导航与快捷入口
+  "play-stroke": "🌐",
+  edit: "📝",
+  search: "🔍",
+  "alert-circle": "🚨",
+  swap: "🔀",
+  book: "📖",
+  terminal: "💻",
+  settings: "⚙️",
+  server: "🖥️",
+  exclamation: "❗",
 };
 
 describe("图标注册表 emoji 机制", () => {

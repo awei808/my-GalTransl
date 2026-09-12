@@ -31,6 +31,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
       // 中心圆（描边圆环）
       "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
     ],
+    emoji: "⚙️",
   },
 
   // ── File / Folder ──
@@ -60,6 +61,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   book: {
     d: "M4 4v16h7a2 2 0 0 1 2-2 2 2 0 0 1 2 2h7V4h-7a2 2 0 0 0-2 2 2 2 0 0 0-2-2H4Zm9 2v14",
+    emoji: "📖",
   },
   library: {
     d: "M5 3v18M9 3v18M13 3v18M17 3v18M21 3v18",
@@ -76,6 +78,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   server: {
     d: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm0 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3ZM7 8h.01M7 15h.01",
+    emoji: "🖥️",
   },
 
   // ── Status / Action ──
@@ -100,6 +103,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   "play-stroke": {
     d: "M7 4.5 19 12 7 19.5V4.5Z",
+    emoji: "🌐",
   },
   square: {
     d: "M6 6h12v12H6V6Z",
@@ -113,6 +117,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   "alert-circle": {
     d: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8v5M12 16h.01",
+    emoji: "🚨",
   },
   "alert-triangle": {
     d: "M12 4 2.5 19h19L12 4Zm0 6v4M12 16h.01",
@@ -121,6 +126,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
     // 实心感叹号：竖线 + 圆点，视觉中心在 SVG 中心，左右天然对称
     d: "M10.5 3.5h3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM12 16.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
     fill: true,
+    emoji: "❗",
   },
 
   // ── Config / Tools ──
@@ -146,6 +152,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   search: {
     d: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM16 16l4 4",
+    emoji: "🔍",
   },
   refresh: {
     d: "M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5",
@@ -187,12 +194,14 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   edit: {
     d: "M4 20h4L18 10l-4-4L4 16v4ZM14 6l4 4",
+    emoji: "📝",
   },
   swap: {
     d: [
       "M7 16V4m0 0L3 8m4-4l4 4",
       "M17 8v12m0 0l4-4m-4 4l-4-4",
     ],
+    emoji: "🔀",
   },
   copy: {
     d: "M8 4h10a2 2 0 0 1 2 2v10M6 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z",
@@ -204,6 +213,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   // ── Terminal / Build ──
   terminal: {
     d: "M4 17l6-6-6-6M13 19h7",
+    emoji: "💻",
   },
 };
 
