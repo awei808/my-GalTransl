@@ -239,3 +239,101 @@
   --z-dialog: 3000; /* 居中确认弹窗组 */
   --z-tooltip: 4000; /* 悬浮提示 */
 }
+
+/* ==========================================
+   9. 鲜艳风格覆盖（浅色-鲜艳 / 深色-鲜艳）
+   ==========================================
+   配色值取自上游 GalTransl tokens.css 调色板，按语义映射到本地变量名：
+   上游 --color-primary/-strong/-soft → 本地 brand-*/border-focus/text-link/status-info；
+   上游 --color-bg/-surface/-surface-strong → 本地 bg-app/-panel/-input；
+   上游 --color-text/-text-muted → 本地 text-primary/-secondary；
+   上游 --color-line/-line-strong → 本地 border-default/-hover；
+   上游 --color-success/warning/danger 及 *-soft → 本地 status-*/bg-*；
+   上游 --color-neutral-soft → 本地 bg-subtle。
+   本地特有变量（hover/active/selected 由主色派生透明度；tertiary 由
+   secondary 加深一档；progress/diff 为翻译专用色，沿用本地值）。
+   圆角/间距/阴影系统不随鲜艳风格变化，保持本地布局身份。 */
+[data-theme-style="vivid"] {
+  --color-brand-primary: #2f6feb;
+  --color-brand-primary-hover: #1d5fe0;
+  --color-brand-primary-active: #174bb8;
+  --color-brand-dark: #4d8bff;
+  --color-brand-dark-hover: #6fa0ff;
+  --color-brand-dark-active: #3a7af0;
+
+  --color-bg-app: #f4f7fb;
+  --color-bg-panel: #ffffff;
+  --color-bg-input: #ffffff;
+  --color-bg-hover: rgba(47, 111, 235, 0.08);
+  --color-bg-active: rgba(47, 111, 235, 0.15);
+  --color-bg-selected: rgba(47, 111, 235, 0.2);
+  --color-bg-overlay: rgba(16, 24, 40, 0.45);
+
+  --color-border-default: #d8e1ec;
+  --color-border-hover: #bfd0e2;
+  --color-border-focus: #2f6feb;
+
+  --color-text-primary: #1f2a37;
+  --color-text-secondary: #5b6b7f;
+  --color-text-tertiary: #7d8ca0;
+  --color-text-disabled: #a5b2c2;
+  --color-text-on-brand: #ffffff;
+  --color-text-link: #2f6feb;
+
+  --color-status-success: #0f9d58;
+  --color-status-warning: #a96500;
+  --color-status-error: #d93025;
+  --color-status-info: #2f6feb;
+
+  --color-bg-success: #e7f8ee;
+  --color-bg-warning: #fff4dd;
+  --color-bg-error: #fdecea;
+  --color-bg-info: #edf3ff;
+  --color-bg-subtle: #eef2f7;
+}
+
+[data-theme="dark"][data-theme-style="vivid"] {
+  --color-brand-primary: #6fa0ff;
+  --color-brand-primary-hover: #8ab2ff;
+  --color-brand-primary-active: #5b8ff0;
+  --color-brand-dark: #8ab2ff;
+  --color-brand-dark-hover: #a3c3ff;
+  --color-brand-dark-active: #6fa0ff;
+
+  --color-bg-app: #0d1219;
+  --color-bg-panel: #141c28;
+  --color-bg-input: #1a2330;
+  --color-bg-hover: rgba(111, 160, 255, 0.14);
+  --color-bg-active: rgba(111, 160, 255, 0.22);
+  --color-bg-selected: rgba(111, 160, 255, 0.3);
+  --color-bg-overlay: rgba(0, 0, 0, 0.55);
+
+  --color-border-default: #2d3b52;
+  --color-border-hover: #41536f;
+  --color-border-focus: #6fa0ff;
+
+  --color-text-primary: #e5edf8;
+  --color-text-secondary: #9ba9bd;
+  --color-text-tertiary: #7d8ba1;
+  --color-text-disabled: #55647a;
+  --color-text-on-brand: #ffffff;
+  --color-text-link: #6fa0ff;
+
+  --color-status-success: #50d38d;
+  --color-status-warning: #f0b95b;
+  --color-status-error: #ff8078;
+  --color-status-info: #6fa0ff;
+
+  --color-bg-success: rgba(80, 211, 141, 0.18);
+  --color-bg-warning: rgba(240, 185, 91, 0.2);
+  --color-bg-error: rgba(255, 128, 120, 0.2);
+  --color-bg-info: rgba(111, 160, 255, 0.2);
+  --color-bg-subtle: #1a2330;
+}
+
+/* 鲜艳深色沿用上游更重的投影与暗色滚动条底色 */
+[data-theme="dark"][data-theme-style="vivid"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.36);
+  --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 22px 52px rgba(0, 0, 0, 0.36);
+}
