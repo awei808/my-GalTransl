@@ -78,7 +78,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   server: {
     d: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm0 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3ZM7 8h.01M7 15h.01",
-    emoji: "🖥️",
+    emoji: "💻",
   },
 
   // ── Status / Action ──
@@ -117,7 +117,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   "alert-circle": {
     d: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8v5M12 16h.01",
-    emoji: "🚨",
+    emoji: "❓",
   },
   "alert-triangle": {
     d: "M12 4 2.5 19h19L12 4Zm0 6v4M12 16h.01",
@@ -213,7 +213,7 @@ export const ICON_PATHS: Record<string, IconDef> = {
   // ── Terminal / Build ──
   terminal: {
     d: "M4 17l6-6-6-6M13 19h7",
-    emoji: "💻",
+    emoji: "🖥️",
   },
 };
 

@@ -17,12 +17,12 @@ const APPROVED_EMOJI: Record<string, string> = {
   "play-stroke": "🌐",
   edit: "📝",
   search: "🔍",
-  "alert-circle": "🚨",
+  "alert-circle": "❓",
   swap: "🔀",
   book: "📖",
-  terminal: "💻",
+  terminal: "🖥️",
   settings: "⚙️",
-  server: "🖥️",
+  server: "💻",
   exclamation: "❗",
 };
 
