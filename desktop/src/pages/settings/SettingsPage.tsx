@@ -143,7 +143,9 @@ export function SettingsPage() {
   }
 
   function applyBgOpacity(raw: string) {
-    const val = Number(raw) || NaN;
+    // 注意：不能写 Number(raw) || NaN，否则合法的 0 会被当成 falsy 转成 NaN，
+    // 进而被 normalize 回退为默认值，导致"设为 0 不生效"（同 applyPageSizeLimit）。
+    const val = raw.trim() === "" ? NaN : Number(raw);
     const cur = getCustomBackgroundPreference();
     try {
       const next = setCustomBackgroundPreference({
@@ -158,7 +160,8 @@ export function SettingsPage() {
 
   function applyBgSurfaceOpacity(raw: string) {
     const cur = getCustomBackgroundPreference();
-    const val = Number(raw) || NaN;
+    // 空串按无效处理；0 低于下限 18 会被 normalize 钳制回默认，属预期行为
+    const val = raw.trim() === "" ? NaN : Number(raw);
     try {
       const next = setCustomBackgroundPreference({
         ...cur,

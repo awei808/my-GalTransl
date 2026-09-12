@@ -1,7 +1,9 @@
 import "./styles/styles.css";
+import "./styles/custom-background.css";
 
 import { onMount, onCleanup, Show, createEffect } from "solid-js";
 import { open } from "@tauri-apps/plugin-shell";
+import { customBackground, applyCustomBackgroundPreference } from "./lib/customBackground";
 import { TitleBar } from "./components/TitleBar";
 import { ActivityBar } from "./components/ActivityBar";
 import { SidebarPanel } from "./components/SidebarPanel";
@@ -67,8 +69,9 @@ export function App() {
   });
 
   onMount(() => {
-    // 启动时应用已保存的主题偏好（theme.ts 模块加载时已应用一次，此处幂等兜底）
+    // 启动时应用已保存的主题/背景偏好（两模块加载时已各应用一次，此处幂等兜底）
     applyThemePreference();
+    applyCustomBackgroundPreference();
     document.addEventListener("keydown", handleGlobalKeyDown);
     document.addEventListener("click", handleExternalLinkClick);
   });
@@ -79,6 +82,12 @@ export function App() {
 
   return (
     <>
+      <Show when={customBackground().imageDataUrl}>
+        <div
+          class="app-custom-background"
+          style={{ "background-image": `url("${customBackground().imageDataUrl}")` }}
+        />
+      </Show>
       <TitleBar />
       <div class={`app-body ${bodyClass()}`}>
         <ActivityBar />

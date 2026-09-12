@@ -1972,7 +1972,7 @@ textarea {
   font-size: var(--font-sm);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
-  background: var(--color-bg-surface);
+  background: var(--color-bg-input);
   color: var(--color-text-primary);
 }
 
@@ -1994,7 +1994,7 @@ textarea {
 
 .global-find-close {
   border: 1px solid var(--color-border-default);
-  background: var(--color-bg-surface);
+  background: var(--color-bg-input);
   color: var(--color-text-primary);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
@@ -2015,7 +2015,7 @@ textarea {
 .global-find-prev,
 .global-find-next {
   border: 1px solid var(--color-border-default);
-  background: var(--color-bg-surface);
+  background: var(--color-bg-input);
   color: var(--color-text-primary);
   border-radius: var(--radius-sm);
   padding: 4px 9px;
@@ -4974,6 +4974,12 @@ a:hover {
 }
 .bp-add-btn {
   align-self: flex-start;
+}
+
+/* 后端配置页按钮加大一档：字号 12→14px、内边距 +2px（仅本页，不影响全局 .btn--sm） */
+.page-backend-profiles .btn--sm {
+  padding: 5px 12px;
+  font-size: var(--font-md);
 }
 .bp-raw {
   margin-top: var(--space-1);

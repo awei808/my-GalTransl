@@ -1,0 +1,98 @@
+/* ==========================================
+   自定义背景（设置页上传图片后生效）
+   结构：根元素 .custom-bg-on + 透明度变量（App.tsx 写入）
+   → 固定定位背景图层 + 表面 token 半透明覆盖
+   ========================================== */
+
+/* 背景图层：置于内容之下，body 透明后可见 */
+.app-custom-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: var(--custom-bg-opacity, 0.35);
+  pointer-events: none;
+}
+
+/* 表面 token 覆盖：所有走 token 的表面统一半透明，深浅色/扁平鲜艳按 RGB 基底区分。
+   根元素自身给实底：body 透明后画布回退 WebView 白底，用面板实色兜底（透明 PNG 场景） */
+:root.custom-bg-on {
+  background: var(--custom-bg-panel-solid);
+  --custom-bg-panel-solid: #ffffff;
+  --color-bg-app: transparent;
+  --color-bg-panel: rgb(255 255 255 / var(--custom-bg-surface-opacity, 0.33));
+  --color-bg-input: rgb(255 255 255 / min(0.92, var(--custom-bg-surface-opacity, 0.33) + 0.12));
+  --color-bg-subtle: rgb(243 246 250 / min(0.95, var(--custom-bg-surface-opacity, 0.33) + 0.25));
+  /* 焦点环内圈原用 --color-bg-app，置透明后改用面板实色 */
+  --shadow-focus: 0 0 0 2px var(--custom-bg-panel-solid), 0 0 0 4px var(--color-brand-primary);
+}
+
+:root.custom-bg-on[data-theme="dark"] {
+  --custom-bg-panel-solid: #1f252b;
+  --color-bg-panel: rgb(31 37 43 / var(--custom-bg-surface-opacity, 0.33));
+  --color-bg-input: rgb(42 48 56 / min(0.95, var(--custom-bg-surface-opacity, 0.33) + 0.12));
+  --color-bg-subtle: rgb(42 48 56 / min(0.95, var(--custom-bg-surface-opacity, 0.33) + 0.25));
+}
+
+:root.custom-bg-on[data-theme-style="vivid"] {
+  --custom-bg-panel-solid: #ffffff;
+  --color-bg-subtle: rgb(238 242 247 / min(0.95, var(--custom-bg-surface-opacity, 0.33) + 0.25));
+}
+
+:root.custom-bg-on[data-theme="dark"][data-theme-style="vivid"] {
+  --custom-bg-panel-solid: #141c28;
+  --color-bg-panel: rgb(20 28 40 / var(--custom-bg-surface-opacity, 0.33));
+  --color-bg-input: rgb(26 35 48 / min(0.95, var(--custom-bg-surface-opacity, 0.33) + 0.12));
+  --color-bg-subtle: rgb(26 35 48 / min(0.95, var(--custom-bg-surface-opacity, 0.33) + 0.25));
+}
+
+/* body 原为 var(--color-bg-app)，开启背景后放行图层。
+   特异性(0,2,1)高于鲜艳模式光晕渐变 [data-theme-style="vivid"] body(0,1,1)：
+   用户背景图有意取代鲜艳渐变底，非遗漏 */
+:root.custom-bg-on body {
+  background: transparent;
+}
+
+/* 侧栏：扁平模式下原为 --color-bg-app（已被置透明），改走半透明面板填充 + 毛玻璃；
+   鲜艳模式沿用其自带 color-mix(86%)+blur(14px) 规则，用 :not 排除避免覆盖 */
+:root.custom-bg-on:not([data-theme-style="vivid"]) .sidebar-panel {
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
+  -webkit-backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
+}
+
+/* 项目配置分组标题条原为 --color-bg-app（已被置透明），走半透明面板 */
+:root.custom-bg-on .pc-group-title {
+  background: var(--color-bg-panel);
+}
+
+/* 毛玻璃：对低实例数的主要表面加模糊（模糊半径随表面不透明度联动，同上游公式）；
+   排除 .entry-card 等高实例列表项与输入框，避免大面积 backdrop-filter 掉帧 */
+:root.custom-bg-on .titlebar,
+:root.custom-bg-on .activitybar,
+:root.custom-bg-on .statusbar,
+:root.custom-bg-on .translate-header,
+:root.custom-bg-on .translate-panel,
+:root.custom-bg-on .meta-card,
+:root.custom-bg-on .home-panel,
+:root.custom-bg-on .pc-group,
+:root.custom-bg-on .plugin-detail,
+:root.custom-bg-on .bp-new-dialog,
+:root.custom-bg-on .ctx-menu,
+:root.custom-bg-on .titlebar-dropdown,
+:root.custom-bg-on .review-filter-dropdown-panel,
+:root.custom-bg-on .backend-dropdown,
+:root.custom-bg-on .global-find {
+  backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
+  -webkit-backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
+}
+
+/* 弹窗保持实心：仅 .confirm-dialog 与 .plotroute-modal 两个模态，
+   下拉/浮层（ctx-menu 等）按需求保留半透明 */
+:root.custom-bg-on .confirm-dialog,
+:root.custom-bg-on .plotroute-modal {
+  background: var(--custom-bg-panel-solid);
+}
+

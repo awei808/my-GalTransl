@@ -167,7 +167,11 @@ function normalizeCustomBackgroundPreference(value: unknown): CustomBackgroundPr
   if (!value || typeof value !== "object") return defaultCustomBackgroundPreference();
   const preference = value as Partial<CustomBackgroundPreference>;
   return {
-    imageDataUrl: typeof preference.imageDataUrl === "string" ? preference.imageDataUrl : "",
+    // 仅接受 data:image/ 前缀，拦截被篡改的 localStorage 值进入 url() 拼接
+    imageDataUrl:
+      typeof preference.imageDataUrl === "string" && preference.imageDataUrl.startsWith("data:image/")
+        ? preference.imageDataUrl
+        : "",
     imageName: typeof preference.imageName === "string" ? preference.imageName : "",
     opacity: normalizeCustomBackgroundOpacity(preference.opacity),
     surfaceOpacity: normalizeCustomBackgroundSurfaceOpacity(preference.surfaceOpacity),
