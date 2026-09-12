@@ -1,4 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
+import { Icon } from "../../components/icons";
 import { setAppState, openProject } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
@@ -149,16 +150,7 @@ export function HomePage() {
               <For each={recent()}>
                 {(p) => (
                   <div class="home-list-item clickable" onClick={() => handleOpenRecent(p.dir)}>
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-                    </svg>
+                    <Icon name="folder" size={16} />
                     <span class="home-list-name">{p.name}</span>
                     <span class="home-list-meta">{p.dir}</span>
                   </div>

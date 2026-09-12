@@ -1,5 +1,7 @@
 import { For, Show, Portal } from "solid-js/web";
 import { getToastItems, toast, ToastEntry } from "../../stores/toastStore";
+import { Icon } from "../icons";
+import { themeVivid } from "../../lib/theme";
 
 function ToastItem(props: { entry: ToastEntry }) {
   const toneClass = () => `toast-item toast--${props.entry.tone}`;
@@ -12,34 +14,7 @@ function ToastItem(props: { entry: ToastEntry }) {
   return (
     <div class={toneClass()} role="alert">
       <div class="toast-icon">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <Show when={props.entry.tone === "success"}>
-            <path d="M22 11.1V12a10 10 0 1 1-6-9.2" />
-            <path d="M22 4 12 14.01l-3-3" />
-          </Show>
-          <Show when={props.entry.tone === "error"}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </Show>
-          <Show when={props.entry.tone === "warning"}>
-            <path d="M12 2 2 21h20L12 2Z" />
-            <line x1="12" y1="9" x2="12" y2="13" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </Show>
-          <Show when={props.entry.tone === "info"}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
-          </Show>
-        </svg>
+        <Icon name={`tone-${props.entry.tone}`} size={18} strokeWidth={2} />
       </div>
       <div class="toast-message">
         {props.entry.allowHtml ? (
@@ -56,17 +31,21 @@ function ToastItem(props: { entry: ToastEntry }) {
         }}
         aria-label="关闭"
       >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <line x1="6" y1="6" x2="18" y2="18" />
-          <line x1="18" y1="6" x2="6" y2="18" />
-        </svg>
+        {themeVivid() ? (
+          <span class="icon-unicode" aria-hidden="true">✕</span>
+        ) : (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        )}
       </button>
     </div>
   );

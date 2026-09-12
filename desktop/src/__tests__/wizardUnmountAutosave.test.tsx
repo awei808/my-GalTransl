@@ -42,6 +42,9 @@ vi.mock("../lib/api/preferences", () => ({
   setSelectedBackendProfile: vi.fn(),
   getBackendProfileNames: () => [],
   getDefaultBackendProfile: () => "",
+  getThemeModePreference: () => "light-flat" as const,
+  setThemeModePreference: vi.fn((m: string) => m),
+  THEME_MODE_CHANGE_EVENT: "galtransl:theme-mode-change",
 }));
 
 vi.mock("../stores/confirmStore", () => ({

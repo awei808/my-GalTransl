@@ -26,7 +26,7 @@ import type {
 } from "../../lib/api/types";
 import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
-import { isDarkTheme, themeDark } from "../../lib/theme";
+import { isDarkTheme, themeDark, themeVivid } from "../../lib/theme";
 import { PlotRoutePanel } from "./PlotRoutePanel";
 import { ProblemTypeFilterDropdown } from "../../components/ProblemTypeFilterDropdown";
 
@@ -524,16 +524,20 @@ export function EntryCard(props: {
             title="展开/收起全部字段"
             {...buttonHandlers(props.onToggleExpanded)}
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d={props.expanded ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
-            </svg>
+            {themeVivid() ? (
+              <span class="icon-unicode" aria-hidden="true">{props.expanded ? "▲" : "▼"}</span>
+            ) : (
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d={props.expanded ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+              </svg>
+            )}
             <span class="entry-btn-text">展开</span>
           </button>
           <button

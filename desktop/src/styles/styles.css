@@ -5601,3 +5601,22 @@ a:hover {
   background: rgba(176, 97, 232, 0.12);
   border-color: #b061e8;
 }
+
+/* ── 鲜艳模式图标（emoji / Unicode 几何符）── */
+.icon-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 几何符号（chevron/关闭叉）：普通文本字符，跟随 currentColor */
+.icon-unicode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-weight: 600;
+  flex-shrink: 0;
+}

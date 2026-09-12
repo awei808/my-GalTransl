@@ -1,4 +1,5 @@
 import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, For, Switch, Match, untrack } from "solid-js";
+import { Icon } from "../../components/icons";
 import { appState, setAppState, getActiveConfigFileName, navigateTo, type ModelCheckState } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
@@ -648,16 +649,7 @@ export function TranslateConsole() {
                     onClick={() => setDropdownOpen(!dropdownOpen())}
                   >
                     <span>{appState.selectedBackend || "选择后端"}</span>
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path d="M5 9l7 7 7-7" />
-                    </svg>
+                    <Icon name="chevron-down" size={12} strokeWidth={2} />
                   </div>
                   <Show when={dropdownOpen()}>
                     <div class="backend-dropdown">

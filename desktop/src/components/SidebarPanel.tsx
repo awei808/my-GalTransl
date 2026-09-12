@@ -1,4 +1,6 @@
 import { Match, Switch, createSignal, createEffect, createMemo, onCleanup, Show, For } from "solid-js";
+import { themeVivid } from "../lib/theme";
+import { Icon } from "./icons";
 import { appState, setAppState, getActiveConfigFileName } from "../stores/appStore";
 import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
@@ -33,9 +35,7 @@ function TreeIcon(props: { node: FileNode }) {
     <Show
       when={n().is_file}
       fallback={
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="flex-shrink:0;color:var(--color-text-tertiary)">
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-        </svg>
+        <Icon name="folder" size={16} style="flex-shrink:0;color:var(--color-text-tertiary)" />
       }
     >
       <Show
@@ -289,10 +289,7 @@ function FileExplorer() {
               if (m) handleReveal(m.path, m.isMetadata);
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="flex-shrink:0">
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-              <path d="M2 12h13M13 9l3 3-3 3" />
-            </svg>
+            <Icon name="open-in-folder" size={14} strokeWidth={1.6} style="flex-shrink:0" />
             在文件管理器中打开
           </button>
           <Show when={ctxMenu()!.isFile}>
@@ -833,22 +830,26 @@ function ProblemList() {
                     onClick={() => toggleFile(filename)}
                   >
                       {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
-                      <svg
-                        class="problem-toggle-icon"
-                        viewBox="0 0 16 16"
-                        width="14"
-                        height="14"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M4 6l4 4 4-4"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.6"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
+                      {themeVivid() ? (
+                        <span class="icon-unicode problem-toggle-icon" aria-hidden="true">▼</span>
+                      ) : (
+                        <svg
+                          class="problem-toggle-icon"
+                          viewBox="0 0 16 16"
+                          width="14"
+                          height="14"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M4 6l4 4 4-4"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
+                      )}
                     </button>
                   </div>
                   <Show when={expandedFiles().has(filename)}>
@@ -958,22 +959,26 @@ function AltList() {
                     onClick={() => toggleFile(filename)}
                   >
                     {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
-                    <svg
-                      class="problem-toggle-icon"
-                      viewBox="0 0 16 16"
-                      width="14"
-                      height="14"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M4 6l4 4 4-4"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.6"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
+                    {themeVivid() ? (
+                      <span class="icon-unicode problem-toggle-icon" aria-hidden="true">▼</span>
+                    ) : (
+                      <svg
+                        class="problem-toggle-icon"
+                        viewBox="0 0 16 16"
+                        width="14"
+                        height="14"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M4 6l4 4 4-4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    )}
                   </button>
                 </div>
                 <Show when={expandedFiles().has(filename)}>
