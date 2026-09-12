@@ -550,7 +550,12 @@ export type AppSettings = {
   writeFrontendLog?: boolean;
 };
 
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode =
+  | "light-flat"
+  | "dark-flat"
+  | "light-vivid"
+  | "dark-vivid"
+  | "system";
 
 export type CustomBackgroundPreference = {
   imageDataUrl: string;

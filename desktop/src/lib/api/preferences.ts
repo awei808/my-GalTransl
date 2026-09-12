@@ -97,7 +97,26 @@ function normalizeCustomBackgroundOpacity(value: unknown): number {
 }
 
 function normalizeThemeMode(value: unknown): ThemeMode {
-  if (value === "light" || value === "dark" || value === "system") return value;
+  if (
+    value === "light-flat" ||
+    value === "dark-flat" ||
+    value === "light-vivid" ||
+    value === "dark-vivid" ||
+    value === "system"
+  ) {
+    return value;
+  }
+  if (value === "light" || value === "dark") {
+    // 旧偏好（flat 命名引入前）一次性映射到对应扁平模式并回写存储
+    const mapped = value === "light" ? "light-flat" : "dark-flat";
+    try {
+      localStorage.setItem(THEME_MODE_KEY, mapped);
+      console.info(`[theme] 迁移旧主题偏好 ${value} -> ${mapped}`);
+    } catch {
+      // ignore storage errors
+    }
+    return mapped as ThemeMode;
+  }
   return "system";
 }
 

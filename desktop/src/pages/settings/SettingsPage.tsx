@@ -375,8 +375,10 @@ export function SettingsPage() {
               value={themeMode()}
               onChange={(e) => applyTheme(e.currentTarget.value as ThemeMode)}
             >
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
+              <option value="light-flat">浅色-扁平</option>
+              <option value="dark-flat">深色-扁平</option>
+              <option value="light-vivid">浅色-鲜艳</option>
+              <option value="dark-vivid">深色-鲜艳</option>
               <option value="system">跟随系统</option>
             </select>
           </div>
