@@ -5664,3 +5664,10 @@ a:hover {
   border: 2px solid transparent;
   background-clip: content-box;
 }
+
+/* 深色-扁平：校对页原文对比度调高（text-secondary 的 #b0b8c4 在暗底上偏灰）。
+   取 secondary 与 primary 之间的亮度，保持原文弱于译文输入框的层级；
+   仅作用于扁平深色，鲜艳深色沿用上游 text-muted 值。 */
+[data-theme="dark"][data-theme-style="flat"] .entry-src {
+  color: #ccd3dd;
+}
