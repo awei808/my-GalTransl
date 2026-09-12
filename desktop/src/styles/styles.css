@@ -5620,3 +5620,47 @@ a:hover {
   font-weight: 600;
   flex-shrink: 0;
 }
+
+/* ── 鲜艳风格装饰层（仅 data-theme-style=vivid 生效）── */
+
+/* 页面底：双色光晕 + 纵向三段渐变（上游 body 的招牌处理） */
+[data-theme-style="vivid"] body {
+  background:
+    radial-gradient(circle at top left, var(--vivid-bg-glow-primary), transparent 28%),
+    radial-gradient(circle at top right, var(--vivid-bg-glow-success), transparent 24%),
+    linear-gradient(180deg, var(--vivid-bg-gradient-top) 0%, var(--color-bg-app) 44%, var(--vivid-bg-gradient-bottom) 100%);
+}
+
+/* 外壳容器半透明 + 背景模糊，让渐变底透出来 */
+[data-theme-style="vivid"] .activitybar,
+[data-theme-style="vivid"] .sidebar-panel {
+  background: color-mix(in srgb, var(--color-bg-panel) 86%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* 按钮：中圆角 + 主色投影 + 轻微悬浮 */
+[data-theme-style="vivid"] .btn {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-btn);
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-normal) var(--ease-default),
+    transform var(--duration-fast) var(--ease-default);
+}
+
+[data-theme-style="vivid"] .btn:hover {
+  transform: translateY(-1px);
+}
+
+[data-theme-style="vivid"] .btn:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* 滚动条：鲜艳模式下加粗描边透明轨道（对齐上游观感） */
+[data-theme-style="vivid"] ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background-clip: content-box;
+}

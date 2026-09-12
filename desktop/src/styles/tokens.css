@@ -337,3 +337,27 @@
   --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.45);
   --shadow-lg: 0 22px 52px rgba(0, 0, 0, 0.36);
 }
+
+/* ==========================================
+   10. 鲜艳风格装饰 tokens（渐变光晕/按钮投影/圆角提升）
+   ========================================== */
+[data-theme-style="vivid"] {
+  --vivid-bg-glow-primary: rgba(47, 111, 235, 0.12);
+  --vivid-bg-glow-success: rgba(15, 157, 88, 0.08);
+  --vivid-bg-gradient-top: #f8fbff;
+  --vivid-bg-gradient-bottom: #edf2f8;
+  --shadow-btn: 0 10px 24px rgba(47, 111, 235, 0.2);
+  /* 圆角整体上调一档（对齐上游 24/18/14 的宽松观感，按本地尺度折算） */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+}
+
+[data-theme="dark"][data-theme-style="vivid"] {
+  --vivid-bg-glow-primary: rgba(67, 129, 255, 0.22);
+  --vivid-bg-glow-success: rgba(65, 194, 132, 0.16);
+  --vivid-bg-gradient-top: #101824;
+  --vivid-bg-gradient-bottom: #0a0f16;
+  --shadow-btn: 0 12px 30px rgba(54, 122, 255, 0.35);
+}
