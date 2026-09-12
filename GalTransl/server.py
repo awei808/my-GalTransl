@@ -302,7 +302,8 @@ def _rebuild_trans_list_with_postprocess(
         s.trans_conf = e.get("trans_conf", 0)
         s.doub_content = e.get("doub_content", "")
         s.unknown_proper_noun = e.get("unknown_proper_noun", "")
-        s.skip_check = e.get("skip_check", False)
+        # bool 归一化：请求体/缓存里非 bool 值（如 "false"）不误判为真
+        s.skip_check = bool(e.get("skip_check", False))
         s.suspected_error = e.get("suspected_error", "")
         trans_list.append(s)
 

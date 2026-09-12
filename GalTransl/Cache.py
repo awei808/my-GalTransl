@@ -554,7 +554,9 @@ async def get_transCache_from_json(
         if "suspected_error" in cache_dict[cache_key]:
             tran.suspected_error = cache_dict[cache_key]["suspected_error"]
         if "skip_check" in cache_dict[cache_key]:
-            tran.skip_check = cache_dict[cache_key]["skip_check"]
+            # bool 归一化：手改/旧版缓存可能存 1/"false" 等值，"false" 字符串
+            # 会被当真值导致误跳过检查
+            tran.skip_check = bool(cache_dict[cache_key]["skip_check"])
         if "problem" in cache_dict[cache_key]:
             tran.problem = cache_dict[cache_key]["problem"]
 

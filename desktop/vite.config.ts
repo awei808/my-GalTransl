@@ -7,6 +7,10 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 1420,
+    watch: {
+      // Tauri 自行监视 Rust 源码；Vite 不监视被锁定的构建产物
+      ignored: ["**/src-tauri/**"],
+    },
   },
   clearScreen: false,
   test: {

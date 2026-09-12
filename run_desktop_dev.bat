@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal
 set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222
-cd /d %~dp0
+cd /d "%~dp0"
 
 where python >nul 2>nul
 if errorlevel 1 (
@@ -39,9 +39,9 @@ start "GalTransl Backend" cmd /k python run_backend.py --host 127.0.0.1 --port 1
 where cargo >nul 2>nul
 if errorlevel 1 (
   echo Cargo not found. Falling back to browser frontend dev server.
-  start "GalTransl Frontend" cmd /k "cd /d %~dp0desktop && npm run dev"
+  start "GalTransl Frontend" /D "%~dp0desktop" cmd /k npm run dev
 ) else (
-  start "GalTransl Desktop" cmd /k "set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 && cd /d %~dp0desktop && npm run tauri:dev"
+  start "GalTransl Desktop" /D "%~dp0desktop" cmd /k "set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 && npm run tauri:dev"
 )
 
 echo Backend and desktop frontend are starting in separate windows.

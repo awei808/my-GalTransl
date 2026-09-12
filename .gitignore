@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 venv/
+.venv/
 
 # Unit test files
 unittest_*
