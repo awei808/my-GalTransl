@@ -1,6 +1,13 @@
 import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, For, Switch, Match, untrack } from "solid-js";
 import { Icon } from "../../components/icons";
-import { appState, setAppState, getActiveConfigFileName, navigateTo, type ModelCheckState } from "../../stores/appStore";
+import {
+  appState,
+  setAppState,
+  getActiveConfigFileName,
+  navigateTo,
+  createFileToastTracker,
+  type ModelCheckState,
+} from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { confirm } from "../../stores/confirmStore";
@@ -210,11 +217,9 @@ export function TranslateConsole() {
     if (!cur || !ids.includes(cur)) setPromptWorkerTab(ids[0]);
   });
 
-  // 文件级 toast 追踪（开始 / 出错 / 完成），避免重复弹窗
-  const prevFilesCompleted = new Set<string>();
-  const prevFilesStarted = new Set<string>();
-  const prevFilesFailed = new Set<string>();
-  const prevFileSnapshot = new Map<string, { translated: number; failed: number }>();
+  // 文件级 toast 追踪（开始 / 出错 / 完成）已提升为全局 appState.fileToastTracker：
+  // 切页会卸载重建本组件（Switch 无 keep-alive），组件局部 Set 会清空并对
+  // 已完成/进行中的文件重复弹窗，全局快照跨重挂保留
 
   // 仅在项目打开时轮询
   createEffect(() => {
@@ -250,38 +255,37 @@ export function TranslateConsole() {
         const taskType = taskTypeLabel(rt.job?.translator ?? "");
 
         // ── 文件级 toast：开始 / 出错 / 完成（仅运行中检测，避免重复）──
+        // 追踪器位于全局 store（此处已在 await 之后，读取不会进入 effect 依赖）
+        const tracker = appState.fileToastTracker;
         if (status === "running" && rt.files) {
           for (const f of rt.files) {
-            const prev = prevFileSnapshot.get(f.filename);
+            const prev = tracker.snapshot.get(f.filename);
             const prevTranslated = prev ? prev.translated : 0;
             const prevFailed = prev ? prev.failed : 0;
             const translatedNow = f.translated;
             const failedNow = f.failed;
             const isComplete = f.total > 0 && translatedNow >= f.total;
             // 开始：已翻译从 0 变为 >0（且尚未完成，避免缓存命中的文件误报“开始”）
-            if (!isComplete && translatedNow > 0 && prevTranslated === 0 && !prevFilesStarted.has(f.filename)) {
-              prevFilesStarted.add(f.filename);
+            if (!isComplete && translatedNow > 0 && prevTranslated === 0 && !tracker.started.has(f.filename)) {
+              tracker.started.add(f.filename);
               toast.info(`【${taskType}】${fileDesc(rt, f.filename)} 开始翻译`);
             }
             // 出错：失败条数从 0 变为 >0
-            if (failedNow > 0 && prevFailed === 0 && !prevFilesFailed.has(f.filename)) {
-              prevFilesFailed.add(f.filename);
+            if (failedNow > 0 && prevFailed === 0 && !tracker.failed.has(f.filename)) {
+              tracker.failed.add(f.filename);
               toast.error(`【${taskType}】${fileDesc(rt, f.filename)} 翻译出错（${failedNow} 条失败）`);
             }
             // 完成：全部条目翻译完
-            if (isComplete && !prevFilesCompleted.has(f.filename)) {
-              prevFilesCompleted.add(f.filename);
+            if (isComplete && !tracker.completed.has(f.filename)) {
+              tracker.completed.add(f.filename);
               toast.success(`【${taskType}】${fileDesc(rt, f.filename)} 翻译完成`);
             }
-            prevFileSnapshot.set(f.filename, { translated: translatedNow, failed: failedNow });
+            tracker.snapshot.set(f.filename, { translated: translatedNow, failed: failedNow });
           }
         }
         // 非运行中时重置追踪
         if (!status || status !== "running") {
-          prevFilesCompleted.clear();
-          prevFilesStarted.clear();
-          prevFilesFailed.clear();
-          prevFileSnapshot.clear();
+          setAppState("fileToastTracker", createFileToastTracker());
         }
 
         // ── 任务级 toast：状态变更通知；失败时主动停止任务 ──

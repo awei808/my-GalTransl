@@ -23,6 +23,23 @@ export interface ModelCheckSnapshot {
   projectId: string | null;
 }
 
+/** 文件级 toast 追踪器（开始/出错/完成），提升到全局以避免切页重挂后重复弹窗 */
+export interface FileToastTracker {
+  completed: Set<string>;
+  started: Set<string>;
+  failed: Set<string>;
+  snapshot: Map<string, { translated: number; failed: number }>;
+}
+
+export function createFileToastTracker(): FileToastTracker {
+  return {
+    completed: new Set(),
+    started: new Set(),
+    failed: new Set(),
+    snapshot: new Map(),
+  };
+}
+
 // ── 类型 ──
 
 export type ActiveView =
@@ -77,6 +94,8 @@ export interface AppState {
   modelCheck: ModelCheckSnapshot;
   /** 上一轮 /runtime 轮询到的任务状态（全局持久，避免切回页面时把"运行中"误判为"刚开始"而重复弹窗） */
   prevJobStatus: string;
+  /** 文件级 toast 追踪器（全局持久，翻译控制台切页重挂后不重复弹"开始/完成/出错"） */
+  fileToastTracker: FileToastTracker;
   /** 侧边栏问题列表请求跳转到的条目索引（ReviewPage 加载文件后执行滚动，完成后自动清空） */
   reviewJumpToIndex: number | null;
   /** 查找替换侧边栏发起的纯前端替换请求（ReviewPage 消费后自动清空） */
@@ -114,6 +133,7 @@ export const defaultState: AppState = {
   problemVersion: 0,
   modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   prevJobStatus: "",
+  fileToastTracker: createFileToastTracker(),
   reviewJumpToIndex: null,
   replaceRequest: null,
   settingsScrollTarget: null,
@@ -175,6 +195,7 @@ export async function openProject(projectId: string, opts?: { configFileName?: s
     reviewJumpToIndex: null,
     replaceRequest: null,
     prevJobStatus: "",
+    fileToastTracker: createFileToastTracker(),
     modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   });
 
@@ -216,6 +237,7 @@ export function closeProject() {
     dirtyFiles: [],
     replaceRequest: null,
     prevJobStatus: "",
+    fileToastTracker: createFileToastTracker(),
     modelCheck: { state: "idle", result: null, backend: "", projectId: null },
   });
 }
