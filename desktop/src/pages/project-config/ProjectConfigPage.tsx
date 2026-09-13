@@ -1191,9 +1191,9 @@ export function ProjectConfigPage() {
         <div class="pc-row">
           <div class="pc-row-label">
             <label class="pc-label" for="avg-sentence-length-threshold">
-              平均分句长度阈值（长句丢失换行）
+              平均分句长度阈值（单句过长）
             </label>
-            <p class="pc-desc">译文平均分句长度超过该值即报「长句丢失换行」，建议 15~25。</p>
+            <p class="pc-desc">译文平均分句长度超过该值即报「单句过长」，建议 15~25。</p>
           </div>
           <div class="pc-row-control">
             <input
@@ -1214,9 +1214,9 @@ export function ProjectConfigPage() {
         <div class="pc-row">
           <div class="pc-row-label">
             <label class="pc-label" for="avg-sentence-length-threshold-h">
-              H 场景平均分句长度阈值（长句丢失换行）
+              H 场景平均分句长度阈值（单句过长）
             </label>
-            <p class="pc-desc">H 剧情区间内译文平均分句长度超过该值才报「长句丢失换行」，默认 24，建议 20~30。</p>
+            <p class="pc-desc">H 剧情区间内译文平均分句长度超过该值才报「单句过长」，默认 24，建议 20~30。</p>
           </div>
           <div class="pc-row-control">
             <input

@@ -61,7 +61,7 @@ _FIX_SPECS: dict = {
     ),
     CProblemType.长句丢失换行: FixSpec(
         mode=MODE_DST_ONLY,
-        instruction="对长句在语义断点（标点、逗号后）补 <br>，使每行长度合理、可读。"
+        instruction="该句被判定为单句过长：在语义断点（标点、逗号后）补 <br>，使每行长度合理、可读。"
         "补入的 <br> 使修复后最多保留 3 个 <br>（不超过 3 个断句片段），禁止出现 4 个及以上片段。",
     ),
     CProblemType.频繁换行: FixSpec(

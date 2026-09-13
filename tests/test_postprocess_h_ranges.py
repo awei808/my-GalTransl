@@ -1,7 +1,7 @@
 """翻译阶段 H 区间传递回归测试（postprocess_results）。
 
 背景：postprocess_results 在翻译完成写缓存时调用 find_problems，此前不传 h_ranges，
-导致 H 场景句子「长句丢失换行」走平均分句阈值而非 H 专用阈值。修复后应把
+导致 H 场景句子「单句过长」走平均分句阈值而非 H 专用阈值。修复后应把
 _resolve_file_h_ranges 解析出的 H 区间传给 find_problems。
 
 本测试 patch 副作用依赖，聚焦验证「h_ranges 被正确传递到 find_problems」。

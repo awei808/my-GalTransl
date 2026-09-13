@@ -257,8 +257,10 @@ class NewlineDetectionTests(_Base):
         self.assertNotIn("丢失换行", results[1]["problem"])
 
 
+
+
 class LongSentenceNewlineTests(_Base):
-    """长句丢失换行：平均分句长度超过 avgSentenceLengthThreshold 才报；h 场景用 avgSentenceLengthThresholdH。"""
+    """单句过长（旧名长句丢失换行）：平均分句长度超过 avgSentenceLengthThreshold 才报；h 场景用 avgSentenceLengthThresholdH。"""
 
     def _set_problem_config(
         self,
@@ -290,10 +292,10 @@ class LongSentenceNewlineTests(_Base):
             json.dump({"批次": [{"区间": [lo, hi], "h": True} for lo, hi in h_ranges]}, f, ensure_ascii=False)
 
     def test_long_sentence_triggers_when_avg_exceeds_threshold(self) -> None:
-        # 译文无换行且整句超长（avg=整句长度 > 17）→ 报"长句丢失换行"
+        # 译文无换行且整句超长（avg=整句长度 > 17）→ 报"单句过长"
         _, init = self._init_project("ls_long")
         pid = init["project_id"]
-        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        self._set_problem_config(init["project_dir"], ["单句过长"], 17)
         entries = [
             {
                 "index": 1,
@@ -310,13 +312,13 @@ class LongSentenceNewlineTests(_Base):
         )
         self.assertEqual(status, 200)
         results = {r["index"]: r for r in body["results"]}
-        self.assertIn("长句丢失换行", results[1]["problem"])
+        self.assertIn("单句过长", results[1]["problem"])
 
     def test_short_sentence_not_triggers(self) -> None:
         # 有换行且平均分句长度 ≤ 阈值 → 不报
         _, init = self._init_project("ls_short")
         pid = init["project_id"]
-        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        self._set_problem_config(init["project_dir"], ["单句过长"], 17)
         entries = [
             {
                 "index": 1,
@@ -333,13 +335,13 @@ class LongSentenceNewlineTests(_Base):
         )
         self.assertEqual(status, 200)
         results = {r["index"]: r for r in body["results"]}
-        self.assertNotIn("长句丢失换行", results[1]["problem"])
+        self.assertNotIn("单句过长", results[1]["problem"])
 
     def test_no_newline_in_src_skips_detection(self) -> None:
         # 原文无换行 → 门控跳过，即使译文超长也不报
         _, init = self._init_project("ls_gate")
         pid = init["project_id"]
-        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        self._set_problem_config(init["project_dir"], ["单句过长"], 17)
         entries = [
             {
                 "index": 1,
@@ -356,13 +358,13 @@ class LongSentenceNewlineTests(_Base):
         )
         self.assertEqual(status, 200)
         results = {r["index"]: r for r in body["results"]}
-        self.assertNotIn("长句丢失换行", results[1]["problem"])
+        self.assertNotIn("单句过长", results[1]["problem"])
 
     def test_real_newline_in_src_triggers(self) -> None:
         # 真实换行（\r\n 控制符）同样触发：译成一行超长句
         _, init = self._init_project("ls_real")
         pid = init["project_id"]
-        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 10)
+        self._set_problem_config(init["project_dir"], ["单句过长"], 10)
         entries = [
             {
                 "index": 1,
@@ -379,13 +381,13 @@ class LongSentenceNewlineTests(_Base):
         )
         self.assertEqual(status, 200)
         results = {r["index"]: r for r in body["results"]}
-        self.assertIn("长句丢失换行", results[1]["problem"])
+        self.assertIn("单句过长", results[1]["problem"])
 
     def test_h_scene_uses_dedicated_threshold_not_regular(self) -> None:
         # h 场景内 avg 超过普通阈值 17 但未超过 h 专用阈值 24 → 不报（证明 h 阈值生效）
         _, init = self._init_project("ls_h_thr")
         pid = init["project_id"]
-        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17, 24)
+        self._set_problem_config(init["project_dir"], ["单句过长"], 17, 24)
         self._write_h_batch(init["project_dir"], [(1, 3)])
         # 译文无换行，整句长度 18（>17 且 <24）
         entries = [
@@ -404,13 +406,13 @@ class LongSentenceNewlineTests(_Base):
         )
         self.assertEqual(status, 200)
         results = {r["index"]: r for r in body["results"]}
-        self.assertNotIn("长句丢失换行", results[1]["problem"])
+        self.assertNotIn("单句过长", results[1]["problem"])
 
     def test_h_scene_triggers_when_exceeds_h_threshold(self) -> None:
-        # h 场景内 avg 超过 h 专用阈值 24 → 报"长句丢失换行"
+        # h 场景内 avg 超过 h 专用阈值 24 → 报"单句过长"
         _, init = self._init_project("ls_h_over")
         pid = init["project_id"]
-        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17, 24)
+        self._set_problem_config(init["project_dir"], ["单句过长"], 17, 24)
         self._write_h_batch(init["project_dir"], [(1, 3)])
         # 译文无换行，整句长度远超 24
         entries = [
@@ -429,7 +431,7 @@ class LongSentenceNewlineTests(_Base):
         )
         self.assertEqual(status, 200)
         results = {r["index"]: r for r in body["results"]}
-        self.assertIn("长句丢失换行", results[1]["problem"])
+        self.assertIn("单句过长", results[1]["problem"])
 
 
 class NewlinePositionTests(_Base):
@@ -836,6 +838,26 @@ class ModifierLengthTests(_Base):
         problem = self._check(pid, "这是书。\n笔是我的。")
         self.assertNotIn("定语过长", problem)
         self.assertNotIn("状语过长", problem)
+
+
+class LongSentenceLegacyAliasTests(LongSentenceNewlineTests):
+    """旧配置写法「长句丢失换行」经别名仍可启用检测，但报出的是新名「单句过长」。"""
+
+    def test_legacy_alias_enables_detection_with_new_name(self) -> None:
+        _, init = self._init_project("ls_alias")
+        self._set_problem_config(init["project_dir"], ["长句丢失换行"], 17)
+        entries = [
+            {"index": 1, "name": "", "pre_src": "ああ。\nいい。",
+             "post_src": "ああ。\nいい。",
+             "pre_dst": "这是一句非常长的中文翻译完全没有换行符来分割整句话。"},
+        ]
+        status, body = self._req(
+            "POST",
+            f"/api/projects/{init['project_id']}/cache/check",
+            body={"filename": "pass3_cache/alias.txt.json", "entries": entries},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("单句过长", body["results"][0]["problem"])
 
 
 if __name__ == "__main__":

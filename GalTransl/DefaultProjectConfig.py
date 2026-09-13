@@ -65,7 +65,7 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
-  gpt.afterTranslation: [] # 完整流水线翻译完成后追加的后处理后端（阶段 7）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮；brfix换行修复；jpfix残留日文修复；banfix禁用词修复；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，需先跑过semcheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：长句丢失换行/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/fix]
+  gpt.afterTranslation: [] # 完整流水线翻译完成后追加的后处理后端（阶段 7）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮；brfix换行修复；jpfix残留日文修复；banfix禁用词修复；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，需先跑过semcheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/fix]
   gpt.enableBetterTranslation: false # [已废弃] 由 gpt.afterTranslation 取代。旧项目兼容：true 等价于 afterTranslation=improve。[True/False]
   gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
@@ -142,11 +142,11 @@ problemAnalyze:
     - 独白男他 # 独白（无name）里出现“他”，排除“其他/他们/他人/他乡/他国/他日/他山”
     #- 引入英文 # 本来没有英文，译文引入了英文
     #- 比日文长严格 # 比日文长1倍以上就提醒
-    #- 长句丢失换行 # 译文平均分句长度超过 avgSentenceLengthThreshold，疑似丢失应有换行
+    #- 单句过长 # 译文平均分句长度超过 avgSentenceLengthThreshold，单句过长（疑似丢失应有换行）
     #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）、空格、Tab、emoji 或颜文字之后
     - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
-  avgSentenceLengthThreshold: 17 # 长句丢失换行的分句长度阈值，默认17，建议范围15~25
-  avgSentenceLengthThresholdH: 24 # 长句丢失换行的H场景专用分句长度阈值，默认24，建议范围20~30
+  avgSentenceLengthThreshold: 17 # 单句过长的分句长度阈值，默认17，建议范围15~25
+  avgSentenceLengthThresholdH: 24 # 单句过长的H场景专用分句长度阈值，默认24，建议范围20~30
 
 # 字典设置
 dictionary:

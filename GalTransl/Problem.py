@@ -245,7 +245,7 @@ def find_problems(
                     else projectConfig.getAvgSentenceLengthThreshold()
                 )
                 if clean_len / (n_number + 1) > threshold:
-                    problem_list.append("长句丢失换行")
+                    problem_list.append("单句过长")
         if CProblemType.换行位置异常 in find_type:
             bad_lines = []
             # 归一化真实/字面换行为真实 \n 后按段检查换行前内容（标点/空格/Tab/emoji/颜文字）

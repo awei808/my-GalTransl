@@ -114,6 +114,7 @@ class CProblemType(Enum):
     缺控制符 = 11
     独白男他 = 12
     长句丢失换行 = 13
+    单句过长 = 13  # 对齐上游显示名的兼容别名：新旧 problemList 写法均可
     换行位置异常 = 14
     定语过长 = 15
     状语过长 = 16
@@ -300,7 +301,7 @@ class CProjectConfig:
         return problem_analyze["arinashiDict"]
 
     def getAvgSentenceLengthThreshold(self) -> int:
-        """长句丢失换行的平均分句长度阈值，默认17，建议15~25。"""
+        """单句过长的平均分句长度阈值，默认17，建议15~25。"""
         return _coerce_positive_int(
             self.projectConfig.get("problemAnalyze", {}).get(
                 "avgSentenceLengthThreshold", 17
@@ -309,7 +310,7 @@ class CProjectConfig:
         )
 
     def getHSentenceLengthThreshold(self) -> int:
-        """长句丢失换行的 H 场景专用平均分句长度阈值，默认24，建议20~30。"""
+        """单句过长的 H 场景专用平均分句长度阈值，默认24，建议20~30。"""
         return _coerce_positive_int(
             self.projectConfig.get("problemAnalyze", {}).get(
                 "avgSentenceLengthThresholdH", 24
