@@ -81,7 +81,6 @@
 :root.custom-bg-on .plugin-detail,
 :root.custom-bg-on .bp-new-dialog,
 :root.custom-bg-on .ctx-menu,
-:root.custom-bg-on .titlebar-dropdown,
 :root.custom-bg-on .review-filter-dropdown-panel,
 :root.custom-bg-on .backend-dropdown,
 :root.custom-bg-on .global-find {
@@ -94,5 +93,19 @@
 :root.custom-bg-on .confirm-dialog,
 :root.custom-bg-on .plotroute-modal {
   background: var(--custom-bg-panel-solid);
+}
+
+/* 标题栏菜单下拉固定实底：悬浮菜单不做半透明，保证可读性 */
+:root.custom-bg-on .titlebar-dropdown {
+  background: var(--custom-bg-panel-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* titlebar 因毛玻璃形成层叠上下文，下拉被其后渲染的 activitybar/sidebar 盖住；
+   抬升 titlebar 绘制层级（仍低于 toast/dialog/tooltip 的 2000+） */
+:root.custom-bg-on .titlebar {
+  position: relative;
+  z-index: 1;
 }
 
