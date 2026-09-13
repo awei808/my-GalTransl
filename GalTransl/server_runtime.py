@@ -15,7 +15,14 @@ from typing import Any, Dict
 from packaging.version import InvalidVersion, Version
 from yaml import safe_load
 
-from GalTransl import CACHE_FOLDERNAME, LOGGER
+from GalTransl import (
+    CACHE_FOLDERNAME,
+    INPUT_FOLDERNAME,
+    LOGGER,
+    PASS1_CACHE_DIR,
+    PASS2_CACHE_DIR,
+)
+from GalTransl.Utils import get_file_list
 
 def _utcnow_text() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -632,6 +639,8 @@ class _CacheProgressFileStat:
     translated_keys: frozenset[str]
     problem_keys: frozenset[str]
     failed_keys: frozenset[str]
+    # 全部条目 key（含未翻译），用于 file_totals 缺失时的进度分母回退
+    total_keys: frozenset[str] = field(default_factory=frozenset)
     retran_terms_signature: tuple[str, ...] = field(default_factory=tuple)
     retran_hit_keys: dict[str, frozenset[str]] = field(default_factory=dict)
 
@@ -690,12 +699,15 @@ class RuntimeProgressCache:
     def __init__(self) -> None:
         self._project_files: dict[str, dict[str, _CacheProgressFileStat]] = {}
         self._retran_config_cache: dict[str, _RetranConfigStat] = {}
+        # pass1/pass2 缓存清单缓存：按项目目录键控，value 为 (目录 mtime 签名, meta 清单, batch 清单)
+        self._stage_listing: dict[str, tuple[tuple[int, int], dict[str, int], dict[str, int]]] = {}
         self._lock = threading.Lock()
 
     def reset_project(self, project_dir: str) -> None:
         normalized = _normalize_project_dir(project_dir)
         with self._lock:
             self._project_files.pop(normalized, None)
+            self._stage_listing.pop(normalized, None)
 
     def get_retran_key(self, project_dir: str, config_file_name: str = "config.yaml") -> str | list[str]:
         config_path = os.path.join(project_dir, config_file_name or "config.yaml")
@@ -735,6 +747,74 @@ class RuntimeProgressCache:
 
         return retran_key
 
+    @staticmethod
+    def _list_input_display_names(project_dir: str) -> list[str]:
+        """枚举输入目录中的源文件，返回显示名列表（相对路径，/ 分隔）。
+
+        文件清单复用 Utils.get_file_list（已排除 FileMetaData.json 等元数据控制文件），
+        并额外跳过点文件与 .tmp。显示名与 LLMTranslate._build_runtime_file_maps
+        的 file_totals 键同口径。
+        """
+        input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+        if not os.path.isdir(input_dir):
+            input_dir = os.path.join(project_dir, "json_jp")
+            if not os.path.isdir(input_dir):
+                return []
+        display_names: list[str] = []
+        for file_path in get_file_list(input_dir):
+            name = os.path.basename(file_path)
+            if name.startswith(".") or name.endswith(".tmp"):
+                continue
+            rel = os.path.relpath(file_path, input_dir)
+            display_names.append(rel.replace(os.sep, "/"))
+        return sorted(display_names)
+
+    def _get_meta_stage_listing(
+        self, project_dir: str, cache_dir: str
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """列出 pass1/pass2 缓存文件存在清单（按目录 mtime 缓存，避免每次轮询重扫）。
+
+        返回 (meta_map, batch_map)：key 为去掉 .meta.json / .batch.json 后缀的
+        缓存条目名（即输入文件 basename），value 为缓存文件 mtime_ns。
+        缓存按项目目录键控，避免多项目共享单例时互相串数据。
+        """
+        meta_dir = os.path.join(cache_dir, PASS1_CACHE_DIR)
+        batch_dir = os.path.join(cache_dir, PASS2_CACHE_DIR)
+        try:
+            meta_sig = int(os.stat(meta_dir).st_mtime_ns)
+        except OSError:
+            meta_sig = -1
+        try:
+            batch_sig = int(os.stat(batch_dir).st_mtime_ns)
+        except OSError:
+            batch_sig = -1
+
+        listing_key = _normalize_project_dir(project_dir)
+        cached = self._stage_listing.get(listing_key)
+        if cached is not None and cached[0] == (meta_sig, batch_sig):
+            return cached[1], cached[2]
+
+        def _scan(listing_dir: str, suffix: str) -> dict[str, int]:
+            result: dict[str, int] = {}
+            try:
+                for name in os.listdir(listing_dir):
+                    if not name.endswith(suffix):
+                        continue
+                    try:
+                        result[name[: -len(suffix)]] = int(
+                            os.stat(os.path.join(listing_dir, name)).st_mtime_ns
+                        )
+                    except OSError:
+                        continue
+            except OSError:
+                pass
+            return result
+
+        meta_map = _scan(meta_dir, ".meta.json")
+        batch_map = _scan(batch_dir, ".batch.json")
+        self._stage_listing[listing_key] = ((meta_sig, batch_sig), meta_map, batch_map)
+        return meta_map, batch_map
+
     def get_progress(
         self,
         project_dir: str,
@@ -764,6 +844,10 @@ class RuntimeProgressCache:
                             or name.endswith(_CACHE_APPEND_SUFFIX)
                         ):
                             continue
+                        if name.endswith(".meta.json") or name.endswith(".batch.json"):
+                            # pass1/pass2 元数据缓存不是句子条目，不参与翻译进度统计，
+                            # 其存在性由 _get_meta_stage_listing 单独检测（阶段绿标）
+                            continue
 
                         # 用相对于 cache_dir 的路径作为 key，避免不同子目录下同名文件冲突
                         rel_dir = os.path.relpath(dirpath, cache_dir)
@@ -788,6 +872,7 @@ class RuntimeProgressCache:
                         translated_keys: set[str] = set()
                         problem_keys: set[str] = set()
                         failed_keys: set[str] = set()
+                        total_keys: set[str] = set()
                         retran_hit_keys: dict[str, set[str]] = {term: set() for term in retran_terms}
 
                         def _name_src(items: list[Any], idx: int) -> str:
@@ -920,6 +1005,7 @@ class RuntimeProgressCache:
                                 problem_keys.add(entry_key)
                             if is_failed:
                                 failed_keys.add(entry_key)
+                            total_keys.add(entry_key)
 
                         project_stats[rel_key] = _CacheProgressFileStat(
                             mtime_ns=int(stat.st_mtime_ns),
@@ -927,6 +1013,7 @@ class RuntimeProgressCache:
                             translated_keys=frozenset(translated_keys),
                             problem_keys=frozenset(problem_keys),
                             failed_keys=frozenset(failed_keys),
+                            total_keys=frozenset(total_keys),
                             retran_terms_signature=retran_terms_signature,
                             retran_hit_keys={
                                 term: frozenset(hit_keys)
@@ -941,6 +1028,28 @@ class RuntimeProgressCache:
             file_progress_map: dict[str, dict[str, Any]] = {}
             retran_counts: dict[str, set[str]] = {term: set() for term in retran_terms}
 
+            # 阶段检测数据源：输入文件清单 + pass1/pass2 缓存存在清单
+            input_displays = self._list_input_display_names(project_dir)
+            meta_map, batch_map = self._get_meta_stage_listing(project_dir, cache_dir)
+            input_display_set = set(input_displays) | set(file_totals)
+
+            def _resolve_display(canonical_name: str) -> str:
+                # 缓存文件名 -> 显示名：优先 display_map；其次把 "-}" 还原为 "/"
+                # 并去掉多块后缀 _N（与 _build_runtime_file_maps 的命名互逆），
+                # 保证后端重启（file_totals/display_map 为空）后仍能对回输入文件
+                display = cache_file_display_map.get(canonical_name)
+                if display:
+                    return display
+                path_like = canonical_name.replace("-}", "/")
+                chunk_match = re.match(r"^(.*)_\d+$", path_like)
+                candidates = [path_like]
+                if chunk_match:
+                    candidates.append(chunk_match.group(1))
+                for candidate in candidates:
+                    if candidate in input_display_set:
+                        return candidate
+                return canonical_name
+
             for rel_key, stat in project_stats.items():
                 # rel_key 可能是 "pass3_cache/xxx.json" 或仅 "xxx.json"；
                 # cache_file_display_map 的键总是纯文件名，故取 basename 做映射。
@@ -950,8 +1059,12 @@ class RuntimeProgressCache:
                     if base_name.endswith(_CACHE_APPEND_SUFFIX)
                     else base_name
                 )
-                display_name = cache_file_display_map.get(canonical_name, canonical_name)
-                if file_totals and display_name not in file_totals:
+                display_name = _resolve_display(canonical_name)
+                if (
+                    file_totals
+                    and display_name not in file_totals
+                    and display_name not in input_display_set
+                ):
                     continue
                 if display_name not in file_progress_map:
                     file_progress_map[display_name] = {
@@ -963,10 +1076,12 @@ class RuntimeProgressCache:
                         "_translated_keys": set(),
                         "_problem_keys": set(),
                         "_failed_keys": set(),
+                        "_total_keys": set(),
                     }
                 file_progress_map[display_name]["_translated_keys"].update(stat.translated_keys)
                 file_progress_map[display_name]["_problem_keys"].update(stat.problem_keys)
                 file_progress_map[display_name]["_failed_keys"].update(stat.failed_keys)
+                file_progress_map[display_name]["_total_keys"].update(stat.total_keys)
                 for term, hit_keys in stat.retran_hit_keys.items():
                     retran_counts.setdefault(term, set()).update(hit_keys)
 
@@ -982,11 +1097,32 @@ class RuntimeProgressCache:
                         "_translated_keys": set(),
                         "_problem_keys": set(),
                         "_failed_keys": set(),
+                        "_total_keys": set(),
+                    },
+                )
+
+            # 输入目录中尚无任何 pass3 缓存的文件也要进入列表（如仅跑过元数据后端）
+            for display_name in input_displays:
+                file_progress_map.setdefault(
+                    display_name,
+                    {
+                        "filename": display_name,
+                        "total": int(file_totals.get(display_name, 0)),
+                        "translated": 0,
+                        "problems": 0,
+                        "failed": 0,
+                        "_translated_keys": set(),
+                        "_problem_keys": set(),
+                        "_failed_keys": set(),
+                        "_total_keys": set(),
                     },
                 )
 
             for file_progress in file_progress_map.values():
                 total_count = int(file_progress.get("total", 0))
+                if total_count <= 0:
+                    # file_totals 缺失（如后端重启后未重跑翻译）时，用缓存条目数回退分母
+                    total_count = len(file_progress["_total_keys"])
                 translated = len(file_progress["_translated_keys"])
                 problems = len(file_progress["_problem_keys"])
                 failed = len(file_progress["_failed_keys"])
@@ -996,12 +1132,26 @@ class RuntimeProgressCache:
                     problems = min(problems, total_count)
                     failed = min(failed, total_count)
 
+                trans_done = total_count > 0 and translated >= total_count
+                # 阶段完成检测：文件/批次元数据按缓存文件前缀存在性，翻译按条目统计；
+                # 校对暂无独立缓存文件（结果写回 pass3 条目 proofread_dst 字段），先预留接口
+                # TODO: 校对缓存独立成文件后，在此检测该文件前缀的校对缓存并置位 done
+                file_base = os.path.basename(file_progress["filename"])
+                file_progress["stages"] = [
+                    {"key": "meta", "done": file_base in meta_map},
+                    {"key": "batch", "done": file_base in batch_map},
+                    {"key": "trans", "done": trans_done},
+                    {"key": "proofread", "done": False},
+                ]
+
+                file_progress["total"] = total_count
                 file_progress["translated"] = translated
                 file_progress["problems"] = problems
                 file_progress["failed"] = failed
                 file_progress.pop("_translated_keys", None)
                 file_progress.pop("_problem_keys", None)
                 file_progress.pop("_failed_keys", None)
+                file_progress.pop("_total_keys", None)
 
             files = sorted(file_progress_map.values(), key=lambda item: item["filename"])
             return {
