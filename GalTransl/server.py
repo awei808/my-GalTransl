@@ -2426,6 +2426,8 @@ class JobRegistry:
             self.clear_project_stop(spec.project_dir)
 
 
+# cache 替换端点（/cache/replace、/cache/replace-entry）对 src/problem 字段的统一拒绝文案
+_REPLACE_FIELD_REJECTED_MSG = "原文/问题字段不支持替换，仅支持译文（dst）或全部（all，仅译文侧字段）"
 # 新建项目目录布局（A-1）：与桌面向导 NewProjectWizard 创建的 4 类子目录保持一致
 _SAMPLE_CACHE_FILENAME = "_示例缓存文件.json"
 _SAMPLE_CACHE_JSON_CONTENT = json.dumps(
@@ -3633,11 +3635,16 @@ def build_handler(registry: JobRegistry) -> type:
                     payload = self._read_json_body()
                     query = str(payload.get("query", "")).strip()
                     replacement = str(payload.get("replacement", ""))
-                    field = str(payload.get("field", "dst")).strip()  # src | dst | all
+                    field = str(payload.get("field", "dst")).strip()  # dst | all（src/problem 拒绝）
                     dry_run = bool(payload.get("dry_run", False))
 
                     if not query:
                         self._send_json({"error": "empty query"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    # 原文替换会污染送翻文本（post_src）且与搜索口径（pre_src）不一致；问题字段只读。
+                    # 与前端侧边栏守卫一致，all 仅替换译文侧字段
+                    if field in ("src", "problem"):
+                        self._send_json({"error": _REPLACE_FIELD_REJECTED_MSG}, status=HTTPStatus.BAD_REQUEST)
                         return
 
                     # 真实替换会写缓存文件：翻译任务运行中与 worker 增量写盘互相覆盖，拒绝执行
@@ -3671,14 +3678,7 @@ def build_handler(registry: JobRegistry) -> type:
                             for e in entries:
                                 if not isinstance(e, dict):
                                     continue
-                                src_key = "post_src" if "post_src" in e else ("post_jp" if "post_jp" in e else None)
                                 dst_key = "pre_dst" if "pre_dst" in e else ("pre_zh" if "pre_zh" in e else None)
-                                # replace in src
-                                if field in ("src", "all") and src_key and query in e.get(src_key, ""):
-                                    if not dry_run:
-                                        e[src_key] = e[src_key].replace(query, replacement)
-                                    file_matches += 1
-                                    file_changed = True
                                 # replace in dst
                                 if field in ("dst", "all") and dst_key and query in e.get(dst_key, ""):
                                     if not dry_run:
@@ -3743,13 +3743,17 @@ def build_handler(registry: JobRegistry) -> type:
                     payload = self._read_json_body()
                     query = str(payload.get("query", "")).strip()
                     replacement = str(payload.get("replacement", ""))
-                    field = str(payload.get("field", "dst")).strip()  # src | dst | all
+                    field = str(payload.get("field", "dst")).strip()  # dst | all（src/problem 拒绝）
                     filename = str(payload.get("filename", "")).strip()
                     index = payload.get("index")
                     dry_run = bool(payload.get("dry_run", False))
 
                     if not query:
                         self._send_json({"error": "empty query"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    # 与 /cache/replace 一致：原文/问题字段不支持替换
+                    if field in ("src", "problem"):
+                        self._send_json({"error": _REPLACE_FIELD_REJECTED_MSG}, status=HTTPStatus.BAD_REQUEST)
                         return
                     if not filename:
                         self._send_json({"error": "empty filename"}, status=HTTPStatus.BAD_REQUEST)
@@ -3792,14 +3796,7 @@ def build_handler(registry: JobRegistry) -> type:
                             continue
                         if str(e.get("index", "")) != str(index):
                             continue
-                        src_key = "post_src" if "post_src" in e else ("post_jp" if "post_jp" in e else None)
                         dst_key = "pre_dst" if "pre_dst" in e else ("pre_zh" if "pre_zh" in e else None)
-                        # replace in src
-                        if field in ("src", "all") and src_key and query in e.get(src_key, ""):
-                            if not dry_run:
-                                e[src_key] = e[src_key].replace(query, replacement)
-                            file_matches += 1
-                            file_changed = True
                         # replace in dst
                         if field in ("dst", "all") and dst_key and query in e.get(dst_key, ""):
                             if not dry_run:

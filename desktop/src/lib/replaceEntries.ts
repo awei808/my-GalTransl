@@ -28,13 +28,9 @@ function pickTextKey(
   return null;
 }
 
-/** 按字段口径解析一条条目上参与替换的文本键（与后端 /cache/replace 一致） */
+/** 按字段口径解析一条条目上参与替换的文本键（与后端 /cache/replace 一致）；src/problem 不参与替换 */
 function resolveReplaceKeys(e: CacheEntry, field: CacheReplaceField): Array<keyof CacheEntry> {
   const keys: Array<keyof CacheEntry> = [];
-  if (field === "src" || field === "all") {
-    const k = pickTextKey(e, "post_src", "post_jp");
-    if (k) keys.push(k);
-  }
   if (field === "dst" || field === "all") {
     const k1 = pickTextKey(e, "pre_dst", "pre_zh");
     if (k1) keys.push(k1);
@@ -46,7 +42,8 @@ function resolveReplaceKeys(e: CacheEntry, field: CacheReplaceField): Array<keyo
 
 /**
  * 在内存条目列表中执行查找替换。
- * - 命中判断 `text.includes(query)`，替换用 `String.replace`（只替换第一处，与后端一致）；
+ * - 命中判断 `text.includes(query)`，替换用 split/join 全量替换（字面量语义，与后端 str.replace 一致）；
+ * - 仅替换译文侧字段，src/problem 字段返回原列表；
  * - opts.onlyIndex 指定时仅处理该 index 的条目（「替换单个」）；
  * - 返回替换后的 entries 与实际变化条目的 before/after 完整快照。
  */
@@ -81,7 +78,8 @@ export function replaceInEntries(
       }
       // k 经 pickTextKey 限定为字符串字段；keyof CacheEntry 联合类型无法直接索引赋值，作 Record 写入
       const record = entry as unknown as Record<string, unknown>;
-      record[k] = text.replace(query, replacement);
+      // split/join 为纯字面量替换，不会解释替换串中的 $& 等特殊序列（与后端 str.replace 一致）
+      record[k] = text.split(query).join(replacement);
     }
     if (modified) changed.push({ index: e.index, before: e, after: entry });
     next.push(entry);

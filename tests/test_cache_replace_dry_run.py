@@ -12,6 +12,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from typing import Optional, Tuple
 
 from GalTransl import server as _server_mod
 
@@ -257,6 +258,69 @@ class CacheReplaceEntryTests(_Base):
             "filename": "pass3_cache/不存在.json", "index": 1, "dry_run": True,
         })
         self.assertEqual(status, 404)
+
+
+    def test_replace_all_field_only_replaces_dst_side(self) -> None:
+        # all 口径收敛为译文侧字段：post_src 不再被改动（原文替换已封锁）
+        _, init = self._init_project("cr_all_dst")
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        rel = "all_dst.txt.json"
+        self._write_cache(pdir, rel, [
+            {"index": 1, "name": "", "pre_src": "旧原文", "post_src": "旧原文",
+             "pre_dst": "旧译文", "proofread_dst": "旧校对"},
+        ])
+
+        status, body = self._req("POST", f"/api/projects/{pid}/cache/replace", body={
+            "query": "旧", "replacement": "新", "field": "all", "dry_run": False,
+        })
+        self.assertEqual(status, 200)
+        # 仅 pre_dst 与 proofread_dst 两处命中（此前含 post_src 为三处）
+        self.assertEqual(body["total_matches"], 2)
+        saved = self._read_cache(pdir, rel)
+        self.assertEqual(saved[0]["post_src"], "旧原文")
+        self.assertEqual(saved[0]["pre_dst"], "新译文")
+        self.assertEqual(saved[0]["proofread_dst"], "新校对")
+
+
+class CacheReplaceFieldGuardTests(_Base):
+    """原文/问题字段替换封锁：src 与 problem 字段返回 400 且不落盘。"""
+
+    def _assert_rejected(
+        self, endpoint: str, pid: str, pdir: str, rel: str, field: str, index: Optional[int] = None
+    ) -> None:
+        body = {"query": "旧", "replacement": "新", "field": field, "dry_run": False}
+        if endpoint == "replace-entry":
+            body["filename"] = rel
+            body["index"] = index if index is not None else 1
+        status, resp = self._req("POST", f"/api/projects/{pid}/cache/{endpoint}", body=body)
+        self.assertEqual(status, 400, f"field={field} 应被 {endpoint} 拒绝")
+        self.assertIn("不支持替换", resp.get("error", ""))
+        saved = self._read_cache(pdir, rel)
+        self.assertEqual(saved[0]["pre_dst"], "旧译文")
+        self.assertEqual(saved[0]["post_src"], "旧原文")
+
+    def _init_with_cache(self, name: str, rel: str) -> Tuple[str, str]:
+        _, init = self._init_project(name)
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        self._write_cache(pdir, rel, [
+            {"index": 1, "name": "", "pre_src": "旧原文", "post_src": "旧原文", "pre_dst": "旧译文"},
+        ])
+        return pid, pdir
+
+    def test_replace_rejects_src_field(self) -> None:
+        pid, pdir = self._init_with_cache("crf_src", "src_guard.txt.json")
+        self._assert_rejected("replace", pid, pdir, "src_guard.txt.json", "src")
+
+    def test_replace_rejects_problem_field(self) -> None:
+        pid, pdir = self._init_with_cache("crf_problem", "problem_guard.txt.json")
+        self._assert_rejected("replace", pid, pdir, "problem_guard.txt.json", "problem")
+
+    def test_replace_entry_rejects_src_and_problem_fields(self) -> None:
+        pid, pdir = self._init_with_cache("crf_entry", "entry_guard.txt.json")
+        self._assert_rejected("replace-entry", pid, pdir, "entry_guard.txt.json", "src")
+        self._assert_rejected("replace-entry", pid, pdir, "entry_guard.txt.json", "problem")
 
 
 if __name__ == "__main__":

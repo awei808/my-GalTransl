@@ -209,7 +209,8 @@ export type CacheSearchResponse = {
   total: number;
 };
 
-export type CacheReplaceField = "src" | "dst" | "all";
+/** 替换字段：原文（src）/问题（problem）不可替换，搜索请用 CacheSearchField */
+export type CacheReplaceField = "dst" | "all";
 
 export type CacheReplaceEntryRequest = {
   query: string;

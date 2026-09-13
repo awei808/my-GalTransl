@@ -19,6 +19,7 @@ import type {
   AltTransEntry,
   CacheSearchResult,
   CacheSearchField,
+  CacheReplaceField,
   ProblemTypeInfo,
 } from "../lib/api/types";
 
@@ -358,27 +359,34 @@ function FindReplacePanel() {
     }
   }
 
-  async function handleReplace() {
+  /** 替换入参统一校验：失败返回提示文案；通过返回经校验的非空 pid 与查找词（三个替换入口共用） */
+  function validateReplaceInput(): { pid: string; query: string } | string {
     const pid = appState.activeProjectId;
     const q = query().trim();
-    const r = replaceText();
+    if (!pid || !q) return "请先输入查找内容";
     const f = field();
-    if (!pid || !q) {
-      toast.warning("请先输入查找内容");
-      return;
-    }
-    if (f === "problem") {
-      toast.warning("问题字段不支持替换，请切换字段后再试");
-      return;
-    }
-    if (useRegex()) {
-      toast.warning("正则模式仅用于搜索，不支持替换");
+    if (f === "problem") return "问题字段不支持替换，请切换字段后再试";
+    if (f === "src") return "原文字段不支持替换，请切换到译文后重试";
+    if (useRegex()) return "正则模式仅用于搜索，不支持替换";
+    return { pid, query: q };
+  }
+
+  /** 搜索字段 → 替换字段映射：src/problem 不可替换，由 validateReplaceInput 提前拦截，此处兜底收敛为 dst */
+  function toReplaceField(f: CacheSearchField): CacheReplaceField {
+    return f === "all" ? "all" : "dst";
+  }
+
+  async function handleReplace() {
+    const r = replaceText();
+    const v = validateReplaceInput();
+    if (typeof v === "string") {
+      toast.warning(v);
       return;
     }
     setReplacing(true);
     try {
       // 先执行 dryRun 确认数量（dry_run 响应携带替换前原值 entries，作为撤销 before 快照）
-      const dryRes = await replaceCache(pid, q, r, f, true);
+      const dryRes = await replaceCache(v.pid, v.query, r, toReplaceField(field()), true);
       if (dryRes.total_matches === 0) {
         toast.info("未找到可替换的匹配项");
         setReplacing(false);
@@ -399,7 +407,7 @@ function FindReplacePanel() {
       }
 
       // 执行真实替换（响应携带替换后 entries，作为撤销 after 快照）
-      const real = await replaceCache(pid, q, r, f, false);
+      const real = await replaceCache(v.pid, v.query, r, toReplaceField(field()), false);
       toast.success(`已替换 ${real.total_matches} 个匹配项，涉及 ${real.total_files} 个文件`);
 
       // 替换成功后构造撤销栈：before=替换前原值，after=替换后值，仅入栈实际发生变化的条目
@@ -418,20 +426,10 @@ function FindReplacePanel() {
 
   /** 替换单个：仅替换校对页当前打开文件中该条目的匹配文本（纯前端，不写盘，保存后生效） */
   function handleReplaceOne(r: CacheSearchResult) {
-    const pid = appState.activeProjectId;
-    const q = query().trim();
     const rText = replaceText();
-    const f = field();
-    if (!pid || !q) {
-      toast.warning("请先输入查找内容");
-      return;
-    }
-    if (f === "problem") {
-      toast.warning("问题字段不支持替换，请切换字段后再试");
-      return;
-    }
-    if (useRegex()) {
-      toast.warning("正则模式仅用于搜索，不支持替换");
+    const v = validateReplaceInput();
+    if (typeof v === "string") {
+      toast.warning(v);
       return;
     }
     // 纯前端替换只作用于校对页当前打开文件：未打开文件或目标条目属于其他文件时提示
@@ -449,9 +447,9 @@ function FindReplacePanel() {
     try {
       // 交由 ReviewPage 消费：内存替换 + 标脏 + 入撤销栈，不写盘
       setAppState("replaceRequest", {
-        query: q,
+        query: v.query,
         replacement: rText,
-        field: f,
+        field: toReplaceField(field()),
         targetFile: r.filename,
         onlyIndex: r.index,
       });
@@ -466,21 +464,11 @@ function FindReplacePanel() {
 
   /** 文件内全部替换：仅替换校对页当前打开文件的全部匹配条目（纯前端，不写盘，保存后生效） */
   function handleReplaceInFile() {
-    const pid = appState.activeProjectId;
-    const q = query().trim();
     const r = replaceText();
-    const f = field();
     const file = appState.activeFilePath;
-    if (!pid || !q) {
-      toast.warning("请先输入查找内容");
-      return;
-    }
-    if (f === "problem") {
-      toast.warning("问题字段不支持替换，请切换字段后再试");
-      return;
-    }
-    if (useRegex()) {
-      toast.warning("正则模式仅用于搜索，不支持替换");
+    const v = validateReplaceInput();
+    if (typeof v === "string") {
+      toast.warning(v);
       return;
     }
     if (!file || appState.activeView !== "review") {
@@ -488,7 +476,7 @@ function FindReplacePanel() {
       return;
     }
     // 交由 ReviewPage 消费：内存替换 + 标脏 + 入撤销栈，不写盘
-    setAppState("replaceRequest", { query: q, replacement: r, field: f, targetFile: file });
+    setAppState("replaceRequest", { query: v.query, replacement: r, field: toReplaceField(field()), targetFile: file });
     // 替换结果由 ReviewPage 消费后 toast 反馈
   }
 
