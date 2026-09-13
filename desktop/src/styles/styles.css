@@ -4117,7 +4117,7 @@ a:hover {
   min-width: 16px;
   height: 16px;
   padding: 0 5px;
-  font-size: 11px;
+  font-size: var(--font-base);
   line-height: 1;
   border-radius: 8px;
   background: var(--color-bg-hover);
@@ -4151,7 +4151,7 @@ a:hover {
 
 .dict-file-header {
   padding: var(--space-2);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   color: var(--color-text-secondary);
   border-bottom: 1px solid var(--color-border-default);
@@ -4172,7 +4172,7 @@ a:hover {
 
 .dict-file-group-label {
   padding: var(--space-2) var(--space-2) var(--space-1);
-  font-size: var(--font-xs);
+  font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   color: var(--color-text-tertiary);
   letter-spacing: 0.02em;
@@ -4182,7 +4182,7 @@ a:hover {
 .dict-scene-hint {
   margin: 0 0 var(--space-2);
   padding: var(--space-2) var(--space-3);
-  font-size: var(--font-xs);
+  font-size: var(--font-base);
   line-height: 1.6;
   color: var(--color-text-secondary);
   background: var(--color-surface-subtle);
@@ -4219,7 +4219,7 @@ a:hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   overflow: hidden;
 }
 
@@ -4239,7 +4239,7 @@ a:hover {
   flex-shrink: 0;
   display: inline-block;
   padding: 0 5px;
-  font-size: 10px;
+  font-size: var(--font-base);
   line-height: 1.6;
   border-radius: 3px;
   background: var(--color-bg-hover);
@@ -4248,7 +4248,7 @@ a:hover {
 
 .dict-file-count {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
 }
 
@@ -4264,7 +4264,7 @@ a:hover {
   color: var(--color-text-tertiary);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: var(--font-base);
   flex-shrink: 0;
   opacity: 0;
   transition: all var(--duration-fast);
@@ -4283,7 +4283,7 @@ a:hover {
 
 .dict-empty {
   padding: var(--space-3) var(--space-2);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
   text-align: center;
   border: 1px dashed var(--color-border-default);
@@ -4308,7 +4308,7 @@ a:hover {
   width: 56px;
   height: 30px;
   padding: 0 4px;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   background: var(--color-bg-input);
@@ -4358,7 +4358,7 @@ a:hover {
 
 .dict-editor-filename {
   font-family: var(--font-mono);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4367,7 +4367,7 @@ a:hover {
 
 .dict-editor-stats {
   flex-shrink: 0;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
   padding: 1px 8px;
   border-radius: var(--radius-sm);
@@ -4385,7 +4385,7 @@ a:hover {
 
 .dict-view-btn {
   padding: 3px 12px;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-secondary);
   background: transparent;
   border: none;
@@ -4405,7 +4405,7 @@ a:hover {
 }
 
 .dict-dirty-mark {
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-status-warning);
 }
 
@@ -4414,7 +4414,7 @@ a:hover {
   width: 100%;
   padding: var(--space-2);
   font-family: var(--font-mono);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   line-height: 1.6;
   border: none;
   background: transparent;
@@ -4445,7 +4445,7 @@ a:hover {
 }
 
 .dict-name-count {
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-secondary);
 }
 
@@ -4459,7 +4459,7 @@ a:hover {
   grid-template-columns: 1fr auto 1fr 70px;
   gap: var(--space-1);
   padding: var(--space-1) var(--space-2);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   color: var(--color-text-secondary);
   border-bottom: 1px solid var(--color-border-default);
@@ -4524,7 +4524,7 @@ a:hover {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
 }
 
 .dict-table thead th {
@@ -4532,7 +4532,7 @@ a:hover {
   top: 0;
   z-index: 1;
   text-align: left;
-  font-size: 11px;
+  font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   color: var(--color-text-tertiary);
   background: var(--color-bg-panel);
@@ -4558,7 +4558,7 @@ a:hover {
 }
 
 .dict-cell-comment {
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
   font-style: italic;
   font-family: var(--font-mono);
@@ -4567,7 +4567,7 @@ a:hover {
 .dict-cell-note {
   display: inline-block;
   max-width: 100%;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
   font-style: italic;
   font-family: var(--font-mono);
@@ -4588,7 +4588,7 @@ a:hover {
   border: none;
   background: transparent;
   outline: none;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   font-family: var(--font-mono);
   color: var(--color-text-primary);
   padding: 2px 4px;
@@ -4615,7 +4615,7 @@ a:hover {
 }
 
 .dict-cell-select {
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   font-family: var(--font-mono);
   color: var(--color-text-primary);
   background: var(--color-bg-input);
@@ -4647,7 +4647,7 @@ a:hover {
 }
 
 .dict-cell-fixed {
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
   font-style: italic;
   white-space: nowrap;
@@ -4663,7 +4663,7 @@ a:hover {
 
 .name-entry-arrow {
   color: var(--color-text-tertiary);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   padding: 0 4px;
 }
 
@@ -4690,7 +4690,7 @@ a:hover {
 
 .name-col-count-val {
   color: var(--color-text-tertiary);
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   text-align: right;
 }
 
@@ -4699,7 +4699,7 @@ a:hover {
 }
 
 .dict-name-hint {
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
   color: var(--color-text-tertiary);
   margin-bottom: var(--space-1);
 }
