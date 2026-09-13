@@ -25,6 +25,7 @@ from GalTransl.Backend.Prompts import (
 import collections
 from threading import Lock
 from GalTransl.TerminalOutput import should_print_translation_logs, terminal_progress
+from GalTransl.server_runtime import set_live_snippets
 
 # 维护状态：已重新纳入正常迭代维护（设计文档 gendic_terms_mode_design.md）。
 # 当前同时支持 segments 模式（旧，传完整片段给 AI）与 terms 模式（新，本地提取词表后逐词翻译），
@@ -716,6 +717,16 @@ class GenDic(BaseEngine):
             f.write("# 格式为日文[|]中文[|]解释(可不写)，参考项目wiki\n")
             for item in final_list:
                 f.write(item[0] + "|" + item[1] + "|" + item[2] + "\n")
+        # 推送结果预览（前端翻译控制台"结果预览"；预览异常不影响主流程）
+        try:
+            set_live_snippets(
+                self.runtime_project_dir,
+                translation_preview="\n".join(
+                    f"{item[0]}|{item[1]}|{item[2]}" for item in final_list
+                ),
+            )
+        except Exception:
+            pass
         return path
 
     def _prepare_runtime_progress(self, total_tasks: int) -> None:

@@ -7,6 +7,7 @@ from GalTransl.ConfigHelper import (
 )
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.Cache import save_transCache_to_json
+from GalTransl.server_runtime import set_live_snippets
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
@@ -408,6 +409,16 @@ class BaseTranslate(BaseEngine):
 
             _print_translation_block(result_output)
             trans_result_list += trans_result
+            # 实时推送结果预览（前端翻译控制台"结果预览"，所有 BaseTranslate 系后端通用；
+            # 预览仅用于 UI 展示，任何异常都不影响翻译主流程）
+            if trans_result:
+                try:
+                    set_live_snippets(
+                        self.runtime_project_dir,
+                        translation_preview="\n".join(str(t) for t in trans_result),
+                    )
+                except Exception:
+                    pass
             transl_step_count += 1
             if transl_step_count >= self.save_steps:
                 await save_transCache_to_json(

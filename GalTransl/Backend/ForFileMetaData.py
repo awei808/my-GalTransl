@@ -1,3 +1,4 @@
+import json
 import math
 import os
 from typing import Optional
@@ -307,6 +308,14 @@ class ForFileMetaData(BaseEngine):
             meta, filename, enable_address_map=self._address_map_enabled
         )
         self._save_metadata(meta, filename)
+        # 推送结果预览（前端翻译控制台"结果预览"；预览异常不影响主流程）
+        try:
+            set_live_snippets(
+                self.runtime_project_dir,
+                translation_preview=json.dumps(meta, ensure_ascii=False, indent=2),
+            )
+        except Exception:
+            pass
         LOGGER.info(
             f"[FileMetaData] {filename} 已写入 "
             f"transl_cache/pass1_cache/{filename}.meta.json "

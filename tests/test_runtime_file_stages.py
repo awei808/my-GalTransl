@@ -3,7 +3,7 @@
 - get_progress 按 input 文件前缀检测 pass1/pass2/pass3 阶段完成状态（校对预留）；
 - file_totals 缺失（后端重启）时用缓存条目数回退进度分母；
 - pass1/pass2 元数据缓存不再混入句子条目统计；
-- _stage_listing 按项目键控并在 reset_project 时清除。
+- set_live_snippets 非 worker 上下文写入公共 key "-1"。
 """
 import os
 import tempfile
@@ -12,7 +12,11 @@ import unittest
 import orjson
 
 from GalTransl.server import RuntimeProgressCache
-from GalTransl.server_runtime import _normalize_project_dir
+from GalTransl.server_runtime import (
+    RUNTIME_REGISTRY,
+    _normalize_project_dir,
+    set_live_snippets,
+)
 
 
 def _make_cache_entry(index: int, name: str, pre_src: str, pre_dst: str) -> dict:
@@ -133,6 +137,36 @@ class RuntimeFileStageTests(unittest.TestCase):
         for control in ("FileMetaData.json", "PlotMetadata.json", "BatchMetadata.json"):
             self.assertNotIn(control, names)
 
+    def test_stage_listing_cache_is_project_scoped(self) -> None:
+        """_stage_listing 按项目目录键控，reset_project 时一并清除。"""
+        cache = RuntimeProgressCache()
+        with tempfile.TemporaryDirectory() as tmpdir_a:
+            with tempfile.TemporaryDirectory() as tmpdir_b:
+                cache_dir_a = self._make_project(tmpdir_a)
+                cache_dir_b = self._make_project(tmpdir_b)
+                for cache_dir in (cache_dir_a, cache_dir_b):
+                    self._write_json(os.path.join(cache_dir, "pass1_cache", "a.json.meta.json"), [{}])
+
+                meta_a, batch_a = cache._get_meta_stage_listing(tmpdir_a, cache_dir_a)
+                meta_b, batch_b = cache._get_meta_stage_listing(tmpdir_b, cache_dir_b)
+                self.assertIn("a.json", meta_a)
+                self.assertIn("a.json", meta_b)
+                self.assertEqual(len(cache._stage_listing), 2)
+                # 删除 B 的元数据缓存后强制变更目录 mtime（避免同一时间戳 tick 内 mtime 不变），
+                # B 重新扫描而 A 的缓存不受影响
+                os.remove(os.path.join(cache_dir_b, "pass1_cache", "a.json.meta.json"))
+                os.utime(os.path.join(cache_dir_b, "pass1_cache"), ns=(1_000_000_000, 1_000_000_000))
+                meta_b2, _ = cache._get_meta_stage_listing(tmpdir_b, cache_dir_b)
+                self.assertNotIn("a.json", meta_b2)
+                meta_a2, _ = cache._get_meta_stage_listing(tmpdir_a, cache_dir_a)
+                self.assertIn("a.json", meta_a2)
+
+            cache.reset_project(tmpdir_a)
+            self.assertNotIn(
+                _normalize_project_dir(tmpdir_a),
+                cache._stage_listing,
+            )
+
     def test_nested_input_display_name_restored_from_flattened_cache(self) -> None:
         """子目录输入文件的 pass3 缓存名（-} 扁平化）应还原为 / 分隔显示名。"""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -152,33 +186,26 @@ class RuntimeFileStageTests(unittest.TestCase):
         self.assertIn("sub/a.json", files)
         self.assertEqual(files["sub/a.json"]["translated"], 1)
 
-    def test_stage_listing_cache_is_project_scoped(self) -> None:
-        """_stage_listing 按项目目录键控，reset_project 时一并清除。"""
-        cache = RuntimeProgressCache()
-        with tempfile.TemporaryDirectory() as tmpdir_a:
-            with tempfile.TemporaryDirectory() as tmpdir_b:
-                cache_dir_a = self._make_project(tmpdir_a)
-                cache_dir_b = self._make_project(tmpdir_b)
-                for cache_dir in (cache_dir_a, cache_dir_b):
-                    self._write_json(os.path.join(cache_dir, "pass1_cache", "a.json.meta.json"), [{}])
 
-                meta_a, batch_a = cache._get_meta_stage_listing(tmpdir_a, cache_dir_a)
-                meta_b, batch_b = cache._get_meta_stage_listing(tmpdir_b, cache_dir_b)
-                self.assertIn("a.json", meta_a)
-                self.assertIn("a.json", meta_b)
-                self.assertEqual(len(cache._stage_listing), 2)
-                # 删除 B 的元数据缓存后 mtime 变化，B 重新扫描而 A 的缓存不受影响
-                os.remove(os.path.join(cache_dir_b, "pass1_cache", "a.json.meta.json"))
-                meta_b2, _ = cache._get_meta_stage_listing(tmpdir_b, cache_dir_b)
-                self.assertNotIn("a.json", meta_b2)
-                meta_a2, _ = cache._get_meta_stage_listing(tmpdir_a, cache_dir_a)
-                self.assertIn("a.json", meta_a2)
+class NonWorkerPreviewKeyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        RUNTIME_REGISTRY.ensure_project(self.tmp)
 
-            cache.reset_project(tmpdir_a)
-            self.assertNotIn(
-                _normalize_project_dir(tmpdir_a),
-                cache._stage_listing,
-            )
+    def tearDown(self) -> None:
+        RUNTIME_REGISTRY._states.pop(_normalize_project_dir(self.tmp), None)
+
+    def test_translation_preview_without_worker_writes_public_key(self) -> None:
+        """非 worker 上下文（worker_id=-1）的结果预览应写入公共 key "-1"。"""
+        set_live_snippets(self.tmp, translation_preview="结果文本")
+        snapshot = RUNTIME_REGISTRY.get_runtime_snapshot(self.tmp)
+        self.assertEqual(snapshot["translation_previews"].get("-1"), "结果文本")
+
+    def test_translation_preview_with_worker_writes_worker_key(self) -> None:
+        """worker 上下文仍按 worker key 隔离写入。"""
+        set_live_snippets(self.tmp, translation_preview="worker 结果", worker_id="0")
+        snapshot = RUNTIME_REGISTRY.get_runtime_snapshot(self.tmp)
+        self.assertEqual(snapshot["translation_previews"].get("0"), "worker 结果")
 
 
 if __name__ == "__main__":

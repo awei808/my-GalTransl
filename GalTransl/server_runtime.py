@@ -541,8 +541,9 @@ def set_live_snippets(
     此时仅更新 latest_prompt_preview 兼容元数据生成阶段。
 
     提示词预览（prompt_preview）：覆盖式更新，限 8000 字符。
-    译文预览（translation_preview）：按 worker 覆盖式更新，仅写入非 worker 上下文外
-    的 worker 快照，单条封顶 10000 字符保留最新尾部，避免内存与接口传输无限增长。
+    结果预览（translation_preview）：按 worker 覆盖式更新，单条封顶 10000 字符保留
+    最新尾部，避免内存与接口传输无限增长；非 worker 上下文（元数据生成、全局分析等
+    单上下文后端）写入公共 key "-1"，供前端在无 worker 分板块时展示。
     """
     max_len = 8000  # 仅提示词预览限制长度
     max_translation_len = 10000  # 单 worker 译文预览封顶长度，保留最新尾部
@@ -576,14 +577,14 @@ def set_live_snippets(
                     f"worker_id={worker_id!r}（-1/空表示非 worker 上下文）, 仅更新 latest_prompt_preview"
                 )
         if translation_preview:
-            # 仅 worker 上下文写入（与提示词快照口径一致），非 worker 阶段不维护译文快照
-            if worker_id and worker_id != "-1":
-                # 覆盖式替换该 worker 最新译文预览，而非跨批次累积
-                preview_text = translation_preview
-                if len(preview_text) > max_translation_len:
-                    preview_text = preview_text[-max_translation_len:]
-                    LOGGER.debug(f"[prompt-preview] worker {worker_id} translation_preview 已封顶至最近 {max_translation_len} 字符")
-                state.translation_previews[worker_id] = preview_text
+            # 覆盖式替换该 worker 最新结果预览，而非跨批次累积；
+            # 非 worker 上下文统一写入公共 key "-1"（如全局分析、GenDic 等单上下文后端）
+            preview_key = worker_id if (worker_id and worker_id != "-1") else "-1"
+            preview_text = translation_preview
+            if len(preview_text) > max_translation_len:
+                preview_text = preview_text[-max_translation_len:]
+                LOGGER.debug(f"[prompt-preview] worker {preview_key} translation_preview 已封顶至最近 {max_translation_len} 字符")
+            state.translation_previews[preview_key] = preview_text
         state.updated_at = _utcnow_text()
 
 

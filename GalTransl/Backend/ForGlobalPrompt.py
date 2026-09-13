@@ -32,6 +32,7 @@ from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
 from GalTransl.Backend.utils import coerce_bool, extract_json_object
 from GalTransl.DataValidator import validate_global_prompt
+from GalTransl.server_runtime import set_live_snippets
 
 
 # ── 全局提示词加载工具函数 ──
@@ -480,6 +481,15 @@ class ForGlobalPrompt(BaseEngine):
 
         # ── 保存 ──
         self._save_global_prompt(meta)
+
+        # 推送结果预览（前端翻译控制台"结果预览"；预览异常不影响主流程）
+        try:
+            set_live_snippets(
+                self.runtime_project_dir,
+                translation_preview=json.dumps(meta, ensure_ascii=False, indent=2),
+            )
+        except Exception:
+            pass
 
         char_count = len(meta.get("角色列表", []))
         LOGGER.info(

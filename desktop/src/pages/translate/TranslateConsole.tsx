@@ -160,9 +160,17 @@ export function TranslateConsole() {
         return "var(--ttft-idle, #3a3f4b)";
     }
   };
-  // 多 worker 并发时按 worker_id 隔离的最新译文预览快照（key 为 worker 标识）
+  // 多 worker 并发时按 worker_id 隔离的最新结果预览快照（key 为 worker 标识）；
+  // 非 worker 上下文的后端（元数据、全局分析、GenDic 等）统一写入公共 key "-1"
   const translationPreviews = () => runtime()?.translation_previews ?? {};
-  const activeTranslationPreview = () => translationPreviews()[activePromptWorkerId()];
+  const activeTranslationPreview = () => {
+    const previews = translationPreviews();
+    if (promptWorkerIds().length === 0) {
+      // 无 worker 分板块时展示公共结果预览，使所有后端都有结果输出可见
+      return previews["-1"] ?? Object.values(previews)[0] ?? "";
+    }
+    return previews[activePromptWorkerId()];
+  };
   // 多 worker 并发时，从各 worker 提示词快照聚合正在处理的文件（去重保序）
   const activeFiles = createMemo(() => {
     const seen = new Set<string>();
@@ -793,7 +801,7 @@ export function TranslateConsole() {
               <button
                 class={`panel-tab ${panelTab() === "assembled" ? "panel-tab--active" : ""}`}
                 onClick={() => setPanelTab("assembled")}
-              >译文预览</button>
+              >结果预览</button>
               <button
                 class={`panel-tab ${panelTab() === "errors" ? "panel-tab--active" : ""}`}
                 onClick={() => setPanelTab("errors")}
@@ -816,7 +824,8 @@ export function TranslateConsole() {
 
             {/* ── 标签内容 ── */}
             <Switch fallback={<div class="panel-content">未知面板</div>}>
-              {/* 译文预览：按 worker 分板块（与提示词栏共享 worker tab 选中态） */}
+              {/* 结果预览：按 worker 分板块（与提示词栏共享 worker tab 选中态）；
+                  无 worker 分板块时展示非 worker 后端的公共结果（key "-1"） */}
               <Match when={panelTab() === "assembled"}>
                 <div class="panel-tabs panel-tabs--prompt">
                   <For each={promptWorkerIds()}>
@@ -831,7 +840,10 @@ export function TranslateConsole() {
                   </For>
                 </div>
                 <div class="panel-content panel-content--pre">
-                  {activeTranslationPreview() || "等待该 Worker 提交译文…"}
+                  {activeTranslationPreview() ||
+                    (promptWorkerIds().length > 0
+                      ? "等待该 Worker 提交结果…"
+                      : "暂无结果预览，运行后端后此处显示其输出")}
                 </div>
               </Match>
 

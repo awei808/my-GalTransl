@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Optional
 
@@ -6,7 +7,7 @@ from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORBATCHMETA_PROMPT, FORBATCHMETA_SYSTEM
-from GalTransl.server_runtime import record_runtime_notice
+from GalTransl.server_runtime import record_runtime_notice, set_live_snippets
 from GalTransl.Backend.metadata import (
     build_glossary_prompt_text,
     format_file_metadata_block,
@@ -331,6 +332,14 @@ class ForBatchMetaData(BaseEngine):
                 f"已标注「区间过大」，翻译时该批次将整体发送",
             )
         self._save_metadata(meta, filename)
+        # 推送结果预览（前端翻译控制台"结果预览"；预览异常不影响主流程）
+        try:
+            set_live_snippets(
+                self.runtime_project_dir,
+                translation_preview=json.dumps(meta, ensure_ascii=False, indent=2),
+            )
+        except Exception:
+            pass
         LOGGER.info(
             f"[BatchMetaData] {filename} 已写入 "
             f"transl_cache/pass2_cache/{filename}.batch.json "
