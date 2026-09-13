@@ -68,6 +68,8 @@ beforeEach(() => {
   vi.mocked(initProject).mockResolvedValue({
     project_id: PID,
     project_dir: "D:/workspace/TestProj",
+    created: [],
+    config_file_name: "config.yaml",
   });
   vi.mocked(ensureDesktopBackendReady).mockResolvedValue(undefined as never);
   vi.mocked(fetchPlugins).mockResolvedValue([
@@ -83,6 +85,8 @@ beforeEach(() => {
       externals: undefined,
       internals: undefined,
     },
+    project_dir: "D:/workspace/TestProj",
+    config_file_name: "config.yaml",
   });
   vi.mocked(updateProjectConfig).mockResolvedValue({ success: true } as never);
 });
@@ -162,6 +166,8 @@ describe("NewProjectWizard 显式保存按钮", () => {
         externals: undefined,
         internals: { pipeline: { enableTranslate: false } },
       },
+      project_dir: "D:/workspace/TestProj",
+      config_file_name: "config.yaml",
     });
     await goToSettingsStep();
     fireEvent.click(

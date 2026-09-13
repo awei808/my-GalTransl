@@ -1,4 +1,5 @@
 import { createSignal, createEffect, createMemo, untrack, For, Index, Show, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 import { sendLog } from "../../lib/api/log";
 import { appState, getActiveConfigFileName } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
@@ -247,7 +248,7 @@ export function DictionaryPage() {
   }
 
   async function doAutoSaveInner(
-    key: string,
+    key: string | null,
     text: string,
     configName: string,
     targetPid?: string | null,
@@ -1290,8 +1291,8 @@ export function DictionaryPage() {
                       <table class="dict-table">
                         <thead>
                           <tr>
-                            {cardFields().map((label, i) => (
-                              <th key={i}>{label}</th>
+                            {cardFields().map((label) => (
+                              <th>{label}</th>
                             ))}
                           </tr>
                         </thead>

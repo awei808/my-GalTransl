@@ -763,27 +763,24 @@ export function TranslateConsole() {
                 <div class="prompt-worker-meta">
                   {activePromptSnapshot()?.filename}
                   {activePromptSnapshot()?.batch ? ` · 批次 ${activePromptSnapshot()?.batch}` : ""}
-                  <Show when={ttftOf(activePromptWorkerId())}>
-                    {() => {
-                      const t = ttftOf(activePromptWorkerId())!;
-                      return (
-                        <span class="ttft-badge" title="首字响应时间 Time To First Token">
-                          <span
-                            class="ttft-dot ttft-dot--sm"
-                            style={{ background: ttftColor(t.status) }}
-                          />
-                          {t.status === "FIRST_TOKEN" && t.ttft_ms != null
-                            ? ` 首字 ${t.ttft_ms.toFixed(0)}ms`
-                            : t.status === "WAITING"
-                            ? " 等待首字…"
-                            : t.status === "RETRYING"
-                            ? " 重试中…"
-                            : t.status === "CANCELLED"
-                            ? " 已取消"
-                            : ""}
-                        </span>
-                      );
-                    }}
+                  <Show when={ttftOf(activePromptWorkerId())} keyed>
+                    {(t) => (
+                      <span class="ttft-badge" title="首字响应时间 Time To First Token">
+                        <span
+                          class="ttft-dot ttft-dot--sm"
+                          style={{ background: ttftColor(t.status) }}
+                        />
+                        {t.status === "FIRST_TOKEN" && t.ttft_ms != null
+                          ? ` 首字 ${t.ttft_ms.toFixed(0)}ms`
+                          : t.status === "WAITING"
+                          ? " 等待首字…"
+                          : t.status === "RETRYING"
+                          ? " 重试中…"
+                          : t.status === "CANCELLED"
+                          ? " 已取消"
+                          : ""}
+                      </span>
+                    )}
                   </Show>
                 </div>
               </Show>

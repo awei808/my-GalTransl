@@ -613,8 +613,9 @@ export function ProjectConfigPage() {
   }
 
   const pid = () => appState.activeProjectId;
-  // 切页自动保存用：挂载时刻的项目 id 与配置名快照（卸载时全局状态可能已切换到别的项目/已关闭项目）
-  const pidSnapshot = pid();
+  // 切页自动保存用：挂载时刻的项目 id 与配置名快照（卸载时全局状态可能已切换到别的项目/已关闭项目）；
+  // 快照为空时 skip 守卫会跳过自动保存，无需落盘目标
+  const pidSnapshot: string | undefined = pid() ?? undefined;
   const [configFileNameSnapshot, setConfigFileNameSnapshot] = createSignal(
     getActiveConfigFileName(),
   );

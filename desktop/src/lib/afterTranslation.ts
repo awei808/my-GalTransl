@@ -57,18 +57,18 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
   },
 ];
 
-/** 统一修复后端参数（对应后端 ForFixRound） */
-export interface FixConfig {
+/** 统一修复后端参数（对应后端 ForFixRound）；type 而非 interface：需赋给 ConfigValue 的索引签名分支 */
+export type FixConfig = {
   /** 组合修复的问题类型白名单（problemAnalyze.problemList 同款类型名）；空数组 = 运行跳过 */
   types: string[];
   /** 是否把 problem 注入输入 JSONL（默认 true） */
   injectProblem: boolean;
-}
+};
 
-/** fix 对象条目：统一问题修复后端参数化配置 */
-export interface FixEntry {
+/** fix 对象条目：统一问题修复后端参数化配置（type 而非 interface：type 具备隐式索引签名，可赋给 ConfigValue） */
+export type FixEntry = {
   fix: FixConfig;
-}
+};
 
 export type AfterTranslationEntry = string | FixEntry;
 

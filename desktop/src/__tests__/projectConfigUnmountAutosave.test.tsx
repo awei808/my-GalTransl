@@ -48,7 +48,10 @@ beforeEach(() => {
   vi.mocked(fetchProjectConfig).mockResolvedValue({
     config: { common: { language: "zh-cn" } },
   } as never);
-  vi.mocked(fetchConfigSchema).mockResolvedValue({ parameters: {} });
+  vi.mocked(fetchConfigSchema).mockResolvedValue({
+    project_dir: "D:/workspace/TestProj",
+    parameters: {},
+  });
   vi.mocked(fetchTranslationGuidelines).mockResolvedValue([] as never);
   vi.mocked(fetchPlugins).mockResolvedValue([] as never);
   vi.mocked(fetchProblemTypes).mockResolvedValue([] as never);
