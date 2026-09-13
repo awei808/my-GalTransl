@@ -66,6 +66,24 @@ class _Base(unittest.TestCase):
             f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
         return fp
 
+    def _set_problem_config(
+        self,
+        project_dir: str,
+        problems: list,
+        threshold: int = 17,
+        h_threshold: int = 24,
+    ) -> None:
+        cfg_path = os.path.join(project_dir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["problemAnalyze"] = {
+            "problemList": problems,
+            "avgSentenceLengthThreshold": threshold,
+            "avgSentenceLengthThresholdH": h_threshold,
+        }
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+
 
 class CacheCheckTests(_Base):
     def test_cache_check_detects_residual_japanese(self) -> None:
@@ -257,28 +275,8 @@ class NewlineDetectionTests(_Base):
         self.assertNotIn("丢失换行", results[1]["problem"])
 
 
-
-
 class LongSentenceNewlineTests(_Base):
     """单句过长（旧名长句丢失换行）：平均分句长度超过 avgSentenceLengthThreshold 才报；h 场景用 avgSentenceLengthThresholdH。"""
-
-    def _set_problem_config(
-        self,
-        project_dir: str,
-        problems: list,
-        threshold: int = 17,
-        h_threshold: int = 24,
-    ) -> None:
-        cfg_path = os.path.join(project_dir, "config.yaml")
-        with open(cfg_path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-        cfg["problemAnalyze"] = {
-            "problemList": problems,
-            "avgSentenceLengthThreshold": threshold,
-            "avgSentenceLengthThresholdH": h_threshold,
-        }
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg, f, allow_unicode=True)
 
     def _write_h_batch(self, project_dir: str, h_ranges: list) -> None:
         """写入 pass3 占位缓存与 pass2_cache 的 H 区间批次文件（cache/check 按此解析 h_ranges）。"""

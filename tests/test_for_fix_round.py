@@ -237,7 +237,7 @@ class SetFixParamsTests(unittest.TestCase):
 
     def test_long_line_missing_newline_is_dst_only(self) -> None:
         t = self._backend()
-        t.set_fix_params([CProblemType.长句丢失换行])
+        t.set_fix_params([CProblemType.单句过长])
         self.assertFalse(t._include_src)
 
     def test_mixed_combination_with_src_required_type_includes_src(self) -> None:

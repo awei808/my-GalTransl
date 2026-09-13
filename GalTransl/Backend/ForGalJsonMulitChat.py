@@ -253,12 +253,14 @@ class ForGalJsonMulitChat(BaseTranslate):
         if not problem:
             return ""
         # find_problems 生成文本与枚举名不一致的类别 -> 文本前缀别名
+        # 前提：problem_types 必须经 CProblemType[name] 枚举规范化（配置串直传
+        # 原始字符串时 alias 匹配不成立）。value 为该类型的旧文本前缀。
         type_aliases = {
             "标点错漏": ("本无", "本有"),
             "语言不通": ("语言不通-非GBK",),
             "字典使用": ("未使用",),
             "用词不当": ("h场景用词不当",),
-            "长句丢失换行": ("单句过长",),
+            "单句过长": ("长句丢失换行",),
         }
         allowed = {
             (t.name if hasattr(t, "name") else str(t)).strip() for t in problem_types

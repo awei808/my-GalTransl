@@ -586,6 +586,8 @@ export function ProjectConfigPage() {
       }
       // 旧项目 config 可能仍写「h场景用词不当」，映射到新类型名「用词不当」
       list = list.map((x) => (x === "h场景用词不当" ? "用词不当" : x));
+      // 同理：「长句丢失换行」→「单句过长」
+      list = list.map((x) => (x === "长句丢失换行" ? "单句过长" : x));
       setEnabledProblemTypes(list);
       const rawThreshold = section["avgSentenceLengthThreshold"];
       setAvgThreshold(

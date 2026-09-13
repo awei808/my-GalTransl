@@ -160,7 +160,7 @@ export function SettingsPage() {
 
   function applyBgSurfaceOpacity(raw: string) {
     const cur = getCustomBackgroundPreference();
-    // 空串按无效处理；0 低于下限 18 会被 normalize 钳制回默认，属预期行为
+    // 空串按无效处理；0 低于下限 18 会被 normalize 钳制到下限，属预期行为
     const val = raw.trim() === "" ? NaN : Number(raw);
     try {
       const next = setCustomBackgroundPreference({

@@ -234,7 +234,7 @@ def find_problems(
         if CProblemType.多加换行 in find_type:
             if _newline_count(pre_src) < _newline_count(post_dst):
                 problem_list.append("多加换行")
-        if CProblemType.长句丢失换行 in find_type:
+        if CProblemType.单句过长 in find_type:
             # 原文有换行才检测；真实/字面换行均归一化处理；h 场景用专用阈值
             if _newline_count(pre_src) > 0:
                 n_number = _newline_count(post_dst)
