@@ -108,6 +108,17 @@ function backendHint(name: string): string {
   return BACKEND_HINTS[name] || "";
 }
 
+/* ── 文件进度阶段绿矩形的悬停名称（key 与后端 stages[].key 对应）── */
+const FILE_STAGE_LABELS: Record<string, string> = {
+  meta: "文件级元数据",
+  batch: "批次级元数据",
+  trans: "翻译执行",
+  proofread: "校对",
+};
+function stageChipLabel(key: string): string {
+  return `${FILE_STAGE_LABELS[key] || key} 已完成`;
+}
+
 /* ── 翻译控制台 ── */
 export function TranslateConsole() {
   const [runtime, setRuntime] = createSignal<ProjectRuntimeResponse | null>(null);
@@ -882,14 +893,21 @@ export function TranslateConsole() {
                     fallback={
                       <div class="empty-state">
                         <p class="empty-state__title">暂无文件进度</p>
-                        <p class="empty-state__desc">启动翻译后显示各文件翻译进度。</p>
+                        <p class="empty-state__desc">项目含输入文件后，此处显示各文件的阶段与翻译进度。</p>
                       </div>
                     }
                   >
                     <For each={fileProgress()}>
                       {(fp) => {
-                        const pct = fp.total > 0 ? Math.round((fp.translated / fp.total) * 100) : 0;
-                        const done = fp.translated >= fp.total && fp.total > 0;
+                        const stages = fp.stages;
+                        const isStageDone = (key: string) =>
+                          !!stages && stages.some((s) => s.key === key && s.done);
+                        const transDone = fp.total > 0 && fp.translated >= fp.total;
+                        // 进度条 = 最新阶段进度：翻译阶段用行数百分比（完成 100%）；
+                        // 文件/批次元数据为二元阶段（无行级进度，完成即变绿矩形）
+                        const transPct = fp.total > 0 ? Math.round((fp.translated / fp.total) * 100) : 0;
+                        const pct = isStageDone("trans") ? 100 : transPct;
+                        const done = transDone;
                         const active = activeFileSet().has(fp.filename.split("/").pop() ?? fp.filename);
                         // 四态：已完成 / 处理中（正在被 worker 处理）/ 排队中 / 空闲
                         const statusText = () =>
@@ -902,7 +920,15 @@ export function TranslateConsole() {
                         return (
                           <div class="fp-row">
                             <div class="fp-info">
-                              <span class="fp-name" title={fp.filename}>{fp.filename}</span>
+                              <div class="fp-info-left">
+                                <span class="fp-name" title={fp.filename}>{fp.filename}</span>
+                                {/* 已完成阶段绿矩形（悬停显示阶段名；校对阶段预留暂不产生） */}
+                                <span class="fp-stages">
+                                  <For each={(stages ?? []).filter((s) => s.done)}>
+                                    {(s) => <span class="fp-stage-chip" title={stageChipLabel(s.key)} />}
+                                  </For>
+                                </span>
+                              </div>
                               <span class={`fp-status ${statusClass}`}>
                                 {statusText()}
                               </span>

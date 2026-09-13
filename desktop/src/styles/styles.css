@@ -1566,7 +1566,30 @@ textarea {
   font-size: var(--font-base);
   color: var(--color-text-primary);
   word-break: break-all;
-  max-width: calc(100% - 80px);
+  min-width: 0;
+}
+
+.fp-info-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+/* 已完成阶段绿矩形（文件名右侧，悬停显示阶段名） */
+.fp-stages {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.fp-stage-chip {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--color-status-success);
+  flex-shrink: 0;
 }
 
 .fp-status {

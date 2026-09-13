@@ -235,12 +235,23 @@ export type CacheReplaceResponse = {
   file_details: CacheReplaceFileDetail[];
 };
 
+/** 文件进度阶段 key：文件级元数据 / 批次级元数据 / 翻译执行 / 校对（预留，暂无独立缓存文件） */
+export type FileStageKey = "meta" | "batch" | "trans" | "proofread";
+
+/** 单个文件的阶段完成状态 */
+export type FileStage = {
+  key: FileStageKey;
+  done: boolean;
+};
+
 export type FileProgress = {
   filename: string;
   total: number;
   translated: number;
   problems: number;
   failed: number;
+  /** 阶段完成状态（文件名右侧绿矩形 + 最新阶段进度条的数据源） */
+  stages?: FileStage[];
 };
 
 export type ProjectProgressResponse = {
