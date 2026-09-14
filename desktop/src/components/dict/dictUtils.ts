@@ -155,6 +155,15 @@ export function getTypeLabel(type: DictRowType, _tab: DictTab): string {
 }
 
 /**
+ * 判断注释行是否为分区线（如 `//=====可以分区=====`、`//---- 分隔 ----`）。
+ * 口径：剥掉行首空白与 `//` 后，紧跟 3 个及以上分隔符（=、-、*、_、~ 及全角变体）。
+ * 分区线在卡片视图渲染为标题条；未来搜索过滤等也可复用此判定。
+ */
+export function isDictSectionDivider(line: string): boolean {
+  return /^\s*\/\/\s*[=＝*＊\-－－_~～]{3,}/.test(line);
+}
+
+/**
  * 条件列子项序列化为引擎可识别的字符串（与 GalTransl.Dictionary._serialize_cond_item 对齐）。
  */
 export function serializeCondItem(item: ConditionItem): string {
@@ -210,12 +219,13 @@ export type DictColumnEditor =
   | "replace"     // 条件行：替换词列
   | "note";       // 条件行：只读备注
 
-/** 表格列定义：label 为表头文字，editor 决定单元格渲染与字段绑定 */
+/** 表格列定义：label 为表头文字，editor 决定单元格渲染与字段绑定，width 为 colgroup 列宽 */
 export type DictColumnDef = {
   key: string;
   label: string;
   editor: DictColumnEditor;
   valueIndex?: number;
+  width?: string;
 };
 
 /**
@@ -227,38 +237,38 @@ export const DICT_TABLE_COLUMNS: Record<
   DictColumnDef[]
 > = {
   gpt: [
-    { key: "src", label: "原文", editor: "plain", valueIndex: 0 },
-    { key: "dst", label: "译文", editor: "plain", valueIndex: 1 },
-    { key: "exp", label: "解释(可空)", editor: "noteOrPlain", valueIndex: 2 },
+    { key: "src", label: "原文", editor: "plain", valueIndex: 0, width: "30%" },
+    { key: "dst", label: "译文", editor: "plain", valueIndex: 1, width: "30%" },
+    { key: "exp", label: "解释(可空)", editor: "noteOrPlain", valueIndex: 2, width: "40%" },
   ],
   wordNormal: [
-    { key: "word", label: "词", editor: "plain", valueIndex: 0 },
-    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 1 },
+    { key: "word", label: "词", editor: "plain", valueIndex: 0, width: "40%" },
+    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 1, width: "60%" },
   ],
   replaceNormal: [
-    { key: "search", label: "搜索", editor: "plain", valueIndex: 0 },
-    { key: "replace", label: "替换", editor: "plain", valueIndex: 1 },
-    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 2 },
+    { key: "search", label: "搜索", editor: "plain", valueIndex: 0, width: "32%" },
+    { key: "replace", label: "替换", editor: "plain", valueIndex: 1, width: "32%" },
+    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 2, width: "36%" },
   ],
   forbidden: [
-    { key: "word", label: "词", editor: "plain", valueIndex: 0 },
-    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 1 },
+    { key: "word", label: "词", editor: "plain", valueIndex: 0, width: "40%" },
+    { key: "note", label: "备注", editor: "noteOrPlain", valueIndex: 1, width: "60%" },
   ],
   conditional: [
-    { key: "target", label: "目标", editor: "target" },
-    { key: "conds", label: "条件", editor: "condItems" },
-    { key: "search", label: "搜索", editor: "search" },
-    { key: "replace", label: "替换", editor: "replace" },
-    { key: "note", label: "备注", editor: "note" },
+    { key: "target", label: "目标", editor: "target", width: "20%" },
+    { key: "conds", label: "条件", editor: "condItems", width: "26%" },
+    { key: "search", label: "搜索", editor: "search", width: "18%" },
+    { key: "replace", label: "替换", editor: "replace", width: "18%" },
+    { key: "note", label: "备注", editor: "note", width: "18%" },
   ],
   situation: [
-    { key: "scene", label: "场景", editor: "plain", valueIndex: 0 },
-    { key: "search", label: "搜索", editor: "plain", valueIndex: 1 },
-    { key: "replace", label: "替换", editor: "plain", valueIndex: 2 },
+    { key: "scene", label: "场景", editor: "plain", valueIndex: 0, width: "14%" },
+    { key: "search", label: "搜索", editor: "plain", valueIndex: 1, width: "34%" },
+    { key: "replace", label: "替换", editor: "plain", valueIndex: 2, width: "34%" },
     // 第4+列引擎不加载，仅作展示（与 conditional 的只读备注列观感对齐），编辑不写回
-    { key: "note", label: "备注", editor: "note" },
+    { key: "note", label: "备注", editor: "note", width: "18%" },
   ],
-  comment: [{ key: "content", label: "内容", editor: "plain", valueIndex: 0 }],
+  comment: [{ key: "content", label: "内容", editor: "plain", valueIndex: 0, width: "100%" }],
 };
 
 /** 按行类型 + tab 返回表格列定义（normal 词库/替换两套格式由 tab 分流） */

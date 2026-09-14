@@ -4540,12 +4540,14 @@ a:hover {
 .dict-table-wrap {
   flex: 1;
   overflow: auto;
-  padding: var(--space-2);
+  /* 无顶部内距：sticky 表头需贴住滚动口顶边，否则滚动时上方漏出内容带 */
+  padding: 0 var(--space-2) var(--space-2);
 }
 
 .dict-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
   font-size: var(--font-base);
 }
@@ -4555,21 +4557,33 @@ a:hover {
   top: 0;
   z-index: 1;
   text-align: left;
-  font-size: var(--font-base);
+  font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
   color: var(--color-text-tertiary);
   background: var(--color-bg-panel);
-  border-bottom: 1px solid var(--color-border-default);
-  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border-hover);
+  padding: 6px 10px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* 列分隔线：半透明，弱于行底线 */
+.dict-table th + th,
+.dict-table td + td {
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+}
+
 .dict-table tbody td {
-  padding: 4px 8px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--color-border-default);
   vertical-align: middle;
+}
+
+/* 斑马纹：偶数行次级底色；必须置于 hover 规则之前，同级特异性下后者覆盖 */
+.dict-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-bg-subtle) 55%, transparent);
 }
 
 .dict-table tbody tr:hover {
@@ -4580,11 +4594,54 @@ a:hover {
   box-shadow: inset 3px 0 0 var(--color-brand-primary);
 }
 
+/* 条件/场景行首列类型徽标：绝对定位于输入框左侧，不影响列宽 */
+.dict-row td[data-type-label]:first-child {
+  position: relative;
+  padding-left: 58px;
+}
+
+.dict-row td[data-type-label]:first-child::before {
+  content: attr(data-type-label);
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-xs);
+  font-style: normal;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.dict-row--conditional td[data-type-label]:first-child::before {
+  color: var(--color-status-info);
+  background: color-mix(in srgb, var(--color-bg-info) 80%, transparent);
+}
+
+.dict-row--situation td[data-type-label]:first-child::before {
+  color: var(--color-status-warning);
+  background: color-mix(in srgb, var(--color-bg-warning) 80%, transparent);
+}
+
 .dict-cell-comment {
   font-size: var(--font-base);
   color: var(--color-text-tertiary);
   font-style: italic;
   font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--color-bg-subtle) 60%, transparent);
+}
+
+/* 分区线注释行（//==== 等）：渲染为标题条，视觉分段长表格 */
+.dict-row--divider td.dict-cell-comment {
+  font-style: normal;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-info) 65%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--color-brand-primary) 55%, transparent);
+  /* 补偿左边框 3px，保持文字与普通行对齐 */
+  padding-left: 7px;
 }
 
 .dict-cell-note {

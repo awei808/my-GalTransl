@@ -28,8 +28,9 @@ import type {
 import {
   getFilesByTab,
   parseDictContent,
-  getFieldLabels,
   getTableColumns,
+  getTypeLabel,
+  isDictSectionDivider,
   stripProjectDirMarker,
   stripTabPrefix,
   condSemanticOf,
@@ -490,12 +491,12 @@ export function DictionaryPage() {
     setDraftText(rowsToText(all));
   }
 
-  /** 卡片字段标签 */
-  function cardFields() {
+  /** 当前表格列定义（表头/colgroup 的单一事实源）：取首个数据行类型；无数据行时按 tab 回退 normal 格式 */
+  function cardColumnDefs(): DictColumnDef[] {
     const tab = activeTab();
     const row = parsedRows().find((r) => r.type !== "blank" && r.type !== "comment");
-    if (!row) return getFieldLabels("normal", tab as DictTab);
-    return getFieldLabels(row.type, tab as DictTab);
+    if (!row) return getTableColumns("normal", tab as DictTab);
+    return getTableColumns(row.type, tab as DictTab);
   }
 
   /** 表格单元格渲染：按列定义的编辑器类型分发（含条件行结构化控件，保留原卡片编辑能力） */
@@ -1289,10 +1290,15 @@ export function DictionaryPage() {
                       fallback={<div class="dict-editor-empty">暂无条目，点击下方按钮添加</div>}
                     >
                       <table class="dict-table">
+                        <colgroup>
+                          {cardColumnDefs().map((col) => (
+                            <col style={col.width ? { width: col.width } : undefined} />
+                          ))}
+                        </colgroup>
                         <thead>
                           <tr>
-                            {cardFields().map((label) => (
-                              <th>{label}</th>
+                            {cardColumnDefs().map((col) => (
+                              <th>{col.label}</th>
                             ))}
                           </tr>
                         </thead>
@@ -1303,10 +1309,23 @@ export function DictionaryPage() {
                                 <Show
                                   when={rowSignal().type === "comment"}
                                   fallback={
-                                    <tr class={`dict-row dict-row--${rowSignal().type}`}>
+                                    <tr
+                                      class={`dict-row dict-row--${rowSignal().type}`}
+                                      // data-row-index/type 为未来正则搜索的行定位/高亮预留，勿删
+                                      data-row-index={ri}
+                                      data-row-type={rowSignal().type}
+                                    >
                                       <Index each={getTableColumns(rowSignal().type, activeTab() as DictTab)}>
-                                        {(colSignal) => (
-                                          <td>
+                                        {(colSignal, csi) => (
+                                          <td
+                                            data-type-label={
+                                              csi === 0 &&
+                                              (rowSignal().type === "conditional" ||
+                                                rowSignal().type === "situation")
+                                                ? getTypeLabel(rowSignal().type, activeTab() as DictTab)
+                                                : undefined
+                                            }
+                                          >
                                             {dictCell(ri, colSignal(), rowSignal())}
                                           </td>
                                         )}
@@ -1314,8 +1333,16 @@ export function DictionaryPage() {
                                     </tr>
                                   }
                                 >
-                                  <tr class="dict-row dict-row--comment">
-                                    <td colspan={cardFields().length} class="dict-cell-comment">
+                                  <tr
+                                    class={`dict-row dict-row--comment${
+                                      isDictSectionDivider(rowSignal().values[0] ?? "")
+                                        ? " dict-row--divider"
+                                        : ""
+                                    }`}
+                                    data-row-index={ri}
+                                    data-row-type="comment"
+                                  >
+                                    <td colspan={cardColumnDefs().length} class="dict-cell-comment">
                                       {rowSignal().values[0]}
                                     </td>
                                   </tr>

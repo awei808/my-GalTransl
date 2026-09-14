@@ -20,6 +20,7 @@ import {
   getTableColumns,
   DICT_TABLE_COLUMNS,
   getTypeLabel,
+  isDictSectionDivider,
   dictFileScene,
   stripTabPrefix,
   stripProjectDirMarker,
@@ -395,5 +396,43 @@ describe("DICT_TABLE_COLUMNS / getTableColumns（表格表头列定义）", () =
       "备注",
     ]);
     expect(getFieldLabels("gpt" as never, "gpt" as never)).toEqual(["原文", "译文", "解释(可空)"]);
+  });
+
+  it("全部列定义都带百分比宽度（colgroup + table-layout: fixed 依赖）", () => {
+    for (const cols of Object.values(DICT_TABLE_COLUMNS)) {
+      for (const col of cols) {
+        expect(col.width).toMatch(/^\d+(\.\d+)?%$/);
+      }
+    }
+  });
+
+  it("每种行类型的列宽合计为 100%", () => {
+    for (const cols of Object.values(DICT_TABLE_COLUMNS)) {
+      const sum = cols.reduce((acc, c) => acc + parseFloat(c.width ?? "0"), 0);
+      expect(Math.round(sum)).toBe(100);
+    }
+  });
+});
+
+describe("isDictSectionDivider（注释行分区线判定）", () => {
+  it("识别 // 后紧跟 3+ 分隔符的分区线", () => {
+    expect(isDictSectionDivider("//=====可以分区=====")).toBe(true);
+    expect(isDictSectionDivider("//==========")).toBe(true);
+    expect(isDictSectionDivider("//--- 分隔 ---")).toBe(true);
+    expect(isDictSectionDivider("//***备注***")).toBe(true);
+    // 行首空白 + // 仍为注释行（与后端 lstrip 口径一致）
+    expect(isDictSectionDivider("  //=====")).toBe(true);
+    // 全角分隔符
+    expect(isDictSectionDivider("//＝＝＝＝")).toBe(true);
+  });
+
+  it("普通注释行与数据行不是分区线", () => {
+    expect(isDictSectionDivider("// 公共词典用于规范翻译风格")).toBe(false);
+    expect(isDictSectionDivider("//格式为日文[Tab]中文")).toBe(false);
+    expect(isDictSectionDivider("// 以下是建议重点检查")).toBe(false);
+    // 分隔符不足 3 个
+    expect(isDictSectionDivider("//--")).toBe(false);
+    expect(isDictSectionDivider("数の子|鲱鱼子")).toBe(false);
+    expect(isDictSectionDivider("")).toBe(false);
   });
 });
