@@ -27,9 +27,6 @@ galtransl_backend.spec
 .codebuddy/
 desktop/*.timestamp-*.mjs
 
-# 本地个人规则/架构文档（不入库）
-AGENTS.md
-CLAUDE.md
 
 # 翻译生成缓存（本地产物，不入库）
 sampleProject/transl_cache/
@@ -38,3 +35,8 @@ desktop/tsconfig.tsbuildinfo
 #测试程序引入
 Reload
 cc_probe
+
+# 本地ai code文档（不入库）
+AGENTS.md
+CLAUDE.md
+.zcode/
