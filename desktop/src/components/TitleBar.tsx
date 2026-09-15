@@ -255,6 +255,16 @@ export function TitleBar() {
             </div>
           )}
         </For>
+        <div
+          class="titlebar-menuitem"
+          role="button"
+          onClick={() => {
+            setOpenMenu(null);
+            navigateTo("home");
+          }}
+        >
+          回到首页
+        </div>
       </nav>
       <div class="titlebar-title">GalTransl Desktop</div>
     </header>

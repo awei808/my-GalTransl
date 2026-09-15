@@ -868,6 +868,10 @@ textarea {
   line-height: var(--leading-relaxed);
 }
 
+.home-cta {
+  margin-top: var(--space-2);
+}
+
 /* ── 首页面板列 ── */
 .home-panels {
   display: flex;

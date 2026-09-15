@@ -1,6 +1,6 @@
 import { createSignal, For, Show, onMount } from "solid-js";
 import { Icon } from "../../components/icons";
-import { setAppState, openProject } from "../../stores/appStore";
+import { setAppState, openProject, navigateTo } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
 import { fetchJobs } from "../../lib/api/general";
@@ -139,6 +139,10 @@ export function HomePage() {
                 </a>
           </p>
         </div>
+        <button class="btn btn--primary home-cta" onClick={() => navigateTo("new-project")}>
+          <Icon name="plus" size={16} />
+          新建项目向导
+        </button>
       </div>
 
       <div class="home-panels">
