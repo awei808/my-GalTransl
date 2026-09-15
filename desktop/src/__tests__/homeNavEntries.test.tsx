@@ -14,7 +14,7 @@ import { TitleBar } from "../components/TitleBar";
 import { appState, setAppState } from "../stores/appStore";
 
 vi.mock("../lib/api/general", () => ({
-  fetchVersion: vi.fn().mockResolvedValue({ version: "0.4.1" }),
+  fetchVersion: vi.fn().mockResolvedValue({ version: "0.4.2" }),
   fetchJobs: vi.fn().mockResolvedValue([]),
 }));
 
