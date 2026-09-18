@@ -2433,12 +2433,14 @@ async def postprocess_results(
     eng_type = projectConfig.select_translator
     gpt_dic = projectConfig.gpt_dic
     name_replaceDict = projectConfig.name_replaceDict
+    from GalTransl.Backend.RebuildTranslate import REBUILD_ENGINES
 
     # 后处理阶段（替代原"向多轮对话追加改进轮"）：整文件翻译+校对完成后，
     # 按 gpt.afterTranslation 配置逐文件调度修复/改进后端（空列表跳过）。
     # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
+    # 重建引擎不执行阶段7（后处理会调用模型，重建只基于现有缓存）。
     _after_order = _resolve_after_translation_order(projectConfig)
-    if _after_order:
+    if _after_order and eng_type not in REBUILD_ENGINES:
         _improve_enabled = projectConfig.getKey("internals.pipeline.enableImprove", True)
         if not _improve_enabled:
             LOGGER.debug(
@@ -2505,6 +2507,10 @@ async def postprocess_results(
             file_path.replace(input_dir, "").lstrip(os_sep).replace(os_sep, "-}")
             + (f"_{chunk.chunk_index}" if chunk.total_chunks > 1 else ""),
         )
+
+        # rebuildr 是"只重建输出文件"模式，不应修改缓存；其余引擎正常刷新
+        if eng_type == "rebuildr":
+            continue
 
         # 刷新 problem 字段（仅翻译模式；GenDic/dump-name 等不刷新）。
         # 解析该文件 H 区间后传入 find_problems，使 H 场景长句阈值走 getHSentenceLengthThreshold，

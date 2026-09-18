@@ -147,6 +147,8 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
     "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",
     "ForPlotRouteMap": "GalTransl.Backend.ForPlotRouteMap",
+    "rebuildr": "GalTransl.Backend.RebuildTranslate",
+    "rebuilda": "GalTransl.Backend.RebuildTranslate",
 }
 
 # 引擎注册表：eng_type 名称 -> 惰性构造工厂。

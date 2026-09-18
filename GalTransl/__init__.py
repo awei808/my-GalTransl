@@ -120,6 +120,14 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "自动化构建GPT字典",
         "en": "Automatically build GPT dictionary, requires a large model, recommended GPT4/Claude-3/Deepseek-V3"
     },
+    "rebuildr": {
+        "zh-cn": "重建结果：用译前译后字典经缓存刷写 gt_output 结果 json，跳过翻译且不写缓存（需缓存完整覆盖全部句子）。",
+        "en": "Rebuild results: rewrite gt_output via cache with pre/post dictionaries applied; skips translation and cache writing (cache must cover all lines)."
+    },
+    "rebuilda": {
+        "zh-cn": "重建缓存和结果：用译前译后字典刷写缓存与 gt_output 结果 json，跳过翻译（需缓存完整覆盖全部句子）。",
+        "en": "Rebuild cache and results: rewrite cache + gt_output via cache with pre/post dictionaries; skips translation (cache must cover all lines)."
+    },
     "dump-name": {
         "zh-cn": "导出name字段，生成name替换表，用于翻译name字段",
         "en": "Export name field to generate name replacement table for name field translation"

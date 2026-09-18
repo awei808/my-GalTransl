@@ -4747,7 +4747,13 @@ def build_handler(registry: JobRegistry) -> type:
                 )
                 return
             if path == "/api/translators":
-                _hidden_translators = {"show-plugs", "dump-name", *UTILITY_ENGINES}
+                _hidden_translators = {
+                    "show-plugs",
+                    "dump-name",
+                    "rebuildr",
+                    "rebuilda",
+                    *UTILITY_ENGINES,
+                }
                 translators = [
                     {
                         "name": name,

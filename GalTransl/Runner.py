@@ -273,6 +273,8 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
         if proxyPool and translator not in [
             "dump-name",
             "show-plugs",
+            "rebuildr",
+            "rebuilda",
         ]:
             _raise_if_stop_requested(stop_event)
             await proxyPool.checkAvailablity()
