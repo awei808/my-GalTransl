@@ -262,6 +262,8 @@ python -m GalTransl -p <项目目录> -t <翻译引擎> [-l info] [-c 配置文�
 
 &ensp;&ensp;&ensp;&ensp;`-c/--config` 可指定项目目录下的配置文件名；不指定时自动识别 `config.inc.yaml`（优先）或 `config.yaml`。`run_GalTransl.py`（即 `run_GalTransl_terminal.bat` 调用的入口）为交互式选择，输入项目路径与配置文件路径均可，配置文件同样自动识别。
 
+&ensp;&ensp;&ensp;&ensp;除翻译引擎外，CLI 还提供不调用模型的工具引擎：`-t recheck`（全部重检：对全部缓存重跑问题检测并写回）、`-t check-batch-size`（批次划分预检：列出行数超过最大可自然划分值的待翻译文件）、`-t build-output`（构建输出：从缓存重建 `gt_output` 结果文件）。
+
 &ensp;&ensp;&ensp;&ensp;**但是，不建议就这样开始翻译了**，请至少要先学会[GPT字典的使用](#gpt字典)，或者选择GenDic来生成一个人名字典，为你要翻译的gal设定好各角色的人名字典，这样才能保证基本的翻译质量。   
 
 &ensp;&ensp;&ensp;&ensp;翻译完成后，**记得修修缓存**，因为大模型经常会犯错。GalTransl会自动查找一些常见问题并记录于缓存中。可以对缓存进行修正，并重新运行程序来基于缓存重新生成结果json，见[自动化找错章节](#自动化找错)和[翻译缓存章节](#翻译缓存)

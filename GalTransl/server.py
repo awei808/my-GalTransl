@@ -34,6 +34,7 @@ from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig
 # 兼容别名：历史代码与测试以 _detect_config_file 引用配置探测
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
+from GalTransl.UtilityEngines import UTILITY_ENGINES
 from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
@@ -1249,6 +1250,42 @@ def _validate_build(project_dir: str, filenames: list[str] | None = None) -> dic
         "cache_total": len(cache_names),
         "missing_files": missing_files,
         "content_issues": content_issues,
+    }
+
+
+def _check_batch_size(project_dir: str, config_name: str) -> dict[str, Any]:
+    """批次划分预检（纯计算，无模型调用）：按 internals.forbatchmeta 计算最大可自然划分行数。
+
+    Returns:
+        {"max_natural_lines", "oversize_files": [{"filename", "lines"}], "applicable": True}；
+        配置读取失败时抛异常，由调用方决定如何呈现。
+    """
+    config_data = _read_yaml_file(os.path.join(project_dir, config_name))
+    fb = (config_data.get("internals") or {}).get("forbatchmeta") or {}
+    try:
+        max_batch_size = max(1, int(fb.get("max_batch_size", 64)))
+    except (TypeError, ValueError):
+        max_batch_size = 64
+    try:
+        max_batches = max(1, int(fb.get("max_batches", 20)))
+    except (TypeError, ValueError):
+        max_batches = 20
+    max_natural_lines = int(0.9 * max_batch_size * max_batches)
+    oversize_files: list[dict[str, Any]] = []
+    input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+    for entry in _list_dir_entries(input_dir, count_json_entries=True):
+        name = entry.get("name", "")
+        if not name.endswith(".json"):
+            continue
+        if name in ("FileMetaData.json", "BatchMetadata.json"):
+            continue
+        lines = entry.get("entry_count") or 0
+        if lines > max_natural_lines:
+            oversize_files.append({"filename": name, "lines": lines})
+    return {
+        "max_natural_lines": max_natural_lines,
+        "oversize_files": oversize_files,
+        "applicable": True,
     }
 
 
@@ -2782,31 +2819,7 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json(result)
                     return
                 try:
-                    config_data = _read_yaml_file(os.path.join(project_dir, config_file_name))
-                    fb = (config_data.get("internals") or {}).get("forbatchmeta") or {}
-                    try:
-                        max_batch_size = max(1, int(fb.get("max_batch_size", 64)))
-                    except (TypeError, ValueError):
-                        max_batch_size = 64
-                    try:
-                        max_batches = max(1, int(fb.get("max_batches", 20)))
-                    except (TypeError, ValueError):
-                        max_batches = 20
-                    max_natural_lines = int(0.9 * max_batch_size * max_batches)
-                    result["max_natural_lines"] = max_natural_lines
-                    result["applicable"] = True
-                    input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
-                    for entry in _list_dir_entries(input_dir, count_json_entries=True):
-                        name = entry.get("name", "")
-                        if not name.endswith(".json"):
-                            continue
-                        if name in ("FileMetaData.json", "BatchMetadata.json"):
-                            continue
-                        lines = entry.get("entry_count") or 0
-                        if lines > max_natural_lines:
-                            result["oversize_files"].append(
-                                {"filename": name, "lines": lines}
-                            )
+                    result = _check_batch_size(project_dir, config_file_name)
                 except Exception as exc:
                     self._send_json(
                         {"error": f"批次划分预检失败: {exc}"},
@@ -4734,7 +4747,7 @@ def build_handler(registry: JobRegistry) -> type:
                 )
                 return
             if path == "/api/translators":
-                _hidden_translators = {"show-plugs", "dump-name"}
+                _hidden_translators = {"show-plugs", "dump-name", *UTILITY_ENGINES}
                 translators = [
                     {
                         "name": name,

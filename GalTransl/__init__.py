@@ -128,6 +128,18 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "显示全部插件列表",
         "en": "Show all plugin list"
     },
+    "recheck": {
+        "zh-cn": "全部重检：对 pass3_cache 全部缓存重跑问题检测并写回 problem / post_dst_preview（不调用模型）。",
+        "en": "Recheck all pass3 cache files: re-run problem detection and write back problem/post_dst_preview. No model calls.",
+    },
+    "check-batch-size": {
+        "zh-cn": "批次划分预检：按 internals.forbatchmeta 计算最大可自然划分行数，列出行数超限的待翻译文件（不调用模型）。",
+        "en": "Batch size precheck: compute max natural lines from internals.forbatchmeta and list oversize input files. No model calls.",
+    },
+    "build-output": {
+        "zh-cn": "构建输出：构建前校验（仅提示）后，从缓存重建 gt_output 结果文件（不调用模型）。",
+        "en": "Build output: rebuild gt_output from cache after non-blocking validation. No model calls.",
+    },
 }
 
 # 死代码

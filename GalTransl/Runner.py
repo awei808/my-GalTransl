@@ -10,6 +10,7 @@ from GalTransl.yapsy.PluginManager import PluginManager
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
 from GalTransl.Frontend.LLMTranslate import doLLMTranslate
 from GalTransl.i18n import get_text,GT_LANG
+from GalTransl.UtilityEngines import is_utility_engine, run_utility_engine
 from GalTransl.CSplitter import (
     DictionaryCountSplitter,
     EqualPartsSplitter,
@@ -182,6 +183,10 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
         _job_handlers.append(file_handler)
 
     try:
+        # 工具引擎（不调用模型）：跳过定时启动/插件/代理/令牌池初始化，直接短路执行
+        if is_utility_engine(translator):
+            run_utility_engine(cfg, translator)
+            return None
         # 每次启动翻译流程时清理 api_calls.log，避免长期累积占用磁盘
         retained_hours, log_size = cleanup_api_log(
             os.path.join(PROJECT_DIR, "api_calls.log")

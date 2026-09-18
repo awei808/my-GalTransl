@@ -10,6 +10,7 @@ from GalTransl import (
     TRANSLATOR_SUPPORTED
 )
 from GalTransl.ConfigHelper import detect_config_file
+from GalTransl.UtilityEngines import UTILITY_ENGINES
 from GalTransl.i18n import get_text,GT_LANG
 
 class BulletMenu:
@@ -246,7 +247,7 @@ class ProjectManager:
                     return
             
             # 创建快捷方式（如果适用）
-            if self.translator not in ["show-plugs", "dump-name"]:
+            if self.translator not in ["show-plugs", "dump-name", *UTILITY_ENGINES]:
                 self.create_shortcut_win()
             # 执行核心任务
             self.start_worker()
