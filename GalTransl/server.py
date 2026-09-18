@@ -32,6 +32,8 @@ from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig
+# 兼容别名：历史代码与测试以 _detect_config_file 引用配置探测
+from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
 from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
@@ -1358,21 +1360,6 @@ def _is_safe_config_filename(filename: str) -> bool:
     if ".." in trimmed:
         return False
     return True
-
-
-def _detect_config_file(project_dir: str) -> str:
-    """探测项目目录下真实存在的配置文件名。
-
-    GalTransl 项目可能使用 ``config.inc.yaml``（含敏感/个性化配置）或
-    ``config.yaml``。前端打开项目时据此拿到真实配置名，避免写死 ``config.yaml``
-    导致读不到 / 写错配置文件。优先 ``config.inc.yaml``，其次 ``config.yaml``，
-    都不存在时回退 ``config.yaml``（与提交任务时的回退逻辑一致）。
-    """
-    candidates = ("config.inc.yaml", "config.yaml")
-    for name in candidates:
-        if os.path.isfile(os.path.join(project_dir, name)):
-            return name
-    return "config.yaml"
 
 
 def _is_path_within(base_dir: str, target_path: str) -> bool:

@@ -114,6 +114,8 @@ class JobSpec:
     backend_profile: str = ""
     backend_profile_data: dict[str, Any] = field(default_factory=dict)
     prompt_template_overrides: dict[str, dict[str, str]] = field(default_factory=dict)
+    # 默认 True 保持服务端（非交互）语义；CLI 入口需显式传 False 以启用进度条与交互提示
+    non_interactive: bool = True
 
 
 @dataclass(slots=True)
@@ -187,7 +189,8 @@ async def run_job_async(
 
     try:
         cfg = CProjectConfig(spec.project_dir, spec.config_file_name)
-        cfg.non_interactive = True  # 前端启动，非交互模式
+        # 服务端任务非交互；CLI 任务（non_interactive=False）保留进度条与交互提示
+        cfg.non_interactive = spec.non_interactive
         cfg.runtime_project_dir = spec.project_dir
         app_settings = load_app_settings()
         cfg.print_translation_log_in_terminal = bool(app_settings.get("printTranslationLogInTerminal", True))

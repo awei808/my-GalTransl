@@ -64,6 +64,19 @@ def build_httpx_sync_proxy_kwargs(proxy_addr: Optional[str]) -> dict:
     return {"mounts": {"all://": httpx.HTTPTransport(proxy=proxy_addr)}}
 
 
+def detect_config_file(project_dir: str) -> str:
+    """探测项目目录下真实存在的配置文件名。
+
+    优先 ``config.inc.yaml``，其次 ``config.yaml``，都不存在时回退 ``config.yaml``
+    （与提交任务时的回退逻辑一致）。
+    """
+    candidates = ("config.inc.yaml", "config.yaml")
+    for name in candidates:
+        if os.path.isfile(os.path.join(project_dir, name)):
+            return name
+    return "config.yaml"
+
+
 def has_usable_proxy_config(proxy_cfg: Optional[dict]) -> bool:
     if not isinstance(proxy_cfg, dict):
         return False

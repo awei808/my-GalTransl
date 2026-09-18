@@ -9,6 +9,7 @@ from GalTransl import (
     PROGRAM_SPLASH,
     TRANSLATOR_SUPPORTED
 )
+from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.i18n import get_text,GT_LANG
 
 class BulletMenu:
@@ -69,7 +70,8 @@ class ProjectManager:
                 config_file_name = os.path.basename(user_input_abs)
                 project_dir = os.path.dirname(user_input_abs)
             else:
-                config_file_name = CONFIG_FILENAME
+                # 目录输入：自动探测 config.inc.yaml / config.yaml
+                config_file_name = detect_config_file(user_input_abs)
                 project_dir = user_input_abs
 
             if not os.path.exists(project_dir):
