@@ -1238,6 +1238,8 @@ export function ReviewPage() {
     if (entry.file === currentFile) {
       undo();
       applyUndoEntry(entry, "undo");
+      // 撤回触发时给出反馈；跨文件恢复走专属流程不在此列
+      toast.info(`已撤销：${entry.description ?? "上一步操作"}`);
     } else {
       void startCrossFileRestore(entry, "undo");
     }
@@ -1259,6 +1261,7 @@ export function ReviewPage() {
     if (entry.file === currentFile) {
       redo();
       applyUndoEntry(entry, "redo");
+      toast.info(`已重做：${entry.description ?? "上一步操作"}`);
     } else {
       void startCrossFileRestore(entry, "redo");
     }
@@ -2106,7 +2109,13 @@ export function ReviewPage() {
     const panel = suggestPanel();
     if (serial === null || !panel?.text) return;
     closeSuggestPanel();
-    // 走统一字段修改链路：自动入撤销栈、标脏；值相同时 handleFieldChange 幂等跳过
+    // 与当前备选译文相同（按换行规范化比较）时 handleFieldChange 幂等跳过，这里如实提示
+    const current = entries().find((e) => e.index === serial);
+    if (normNewlines(String(current?.alt_dst ?? "")) === normNewlines(panel.text)) {
+      toast.info("AI 建议与当前备选译文相同");
+      return;
+    }
+    // 走统一字段修改链路：自动入撤销栈、标脏
     handleFieldChange(serial, "alt_dst", panel.text);
     toast.success("AI 建议已写入备选译文");
   }

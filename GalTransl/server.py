@@ -3193,8 +3193,14 @@ def build_handler(registry: JobRegistry) -> type:
                     import orjson
                     with open(file_path, "rb") as f:
                         cache_entries = orjson.loads(f.read())
+                    # 按条目序号定位（容错跳过 index 非法的坏行，不让单条坏数据拖垮整个请求）
                     pos = next(
-                        (p for p, e in enumerate(cache_entries) if isinstance(e, dict) and int(e.get("index", -1)) == index),
+                        (
+                            p for p, e in enumerate(cache_entries)
+                            if isinstance(e, dict)
+                            and str(e.get("index", "")).strip().lstrip("-").isdigit()
+                            and int(e.get("index", -1)) == index
+                        ),
                         None,
                     )
                     if pos is None:
