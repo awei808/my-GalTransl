@@ -441,6 +441,22 @@ export async function checkCacheProblems(
   });
 }
 
+/** 校对页单句 AI 建议译文（一次性，不落盘）。LLM 生成较慢，放宽超时到 120s */
+export async function requestAiSuggest(
+  projectId: string,
+  body: { file: string; index: number; draft?: string; instruction?: string },
+) {
+  return apiRequest<{ suggestion: string; model: string }>(
+    `/api/projects/${projectId}/review/ai-suggest`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      timeoutMs: 120000,
+    },
+  );
+}
+
 /** 对 pass3_cache 下全部缓存文件重新运行问题检测并写回（后端接口同名单文件语义一致） */
 export async function recheckAllCacheProblems(projectId: string, configFileName?: string) {
   return apiRequest<CacheRecheckAllResponse>(`/api/projects/${projectId}/cache/recheck-all`, {

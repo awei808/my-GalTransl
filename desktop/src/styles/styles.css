@@ -5868,3 +5868,95 @@ a:hover {
 [data-theme="dark"][data-theme-style="flat"] .entry-src {
   color: #d8dee7;
 }
+
+/* AI 建议面板：双击条目空白处发起，采纳后写入备选译文 */
+.suggest-panel {
+  margin-top: var(--space-1);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle, var(--color-bg-panel));
+  padding: var(--space-1) var(--space-2);
+}
+
+.suggest-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.suggest-panel-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.suggest-panel-model {
+  font-size: var(--font-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.suggest-panel-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.suggest-panel-close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.suggest-panel-body {
+  margin-top: 4px;
+  font-size: var(--font-base);
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.suggest-panel-body--loading {
+  color: var(--color-text-tertiary);
+}
+
+.suggest-panel-body--error {
+  color: var(--color-status-error);
+}
+
+.suggest-panel-foot {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: 6px;
+  align-items: center;
+}
+
+.suggest-panel-instruction {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: var(--font-sm);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+}
+
+.suggest-panel-instruction:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.entry-btn--suggest-accept {
+  border-color: var(--color-status-success);
+  color: var(--color-status-success);
+}
+
+.entry-btn--suggest-accept:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

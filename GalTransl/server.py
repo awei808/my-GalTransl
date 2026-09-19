@@ -25,6 +25,7 @@ from datetime import datetime
 from yaml import safe_load, safe_dump
 
 from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, AUTHOR, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
+from GalTransl import ReviewAssist
 from GalTransl.Dictionary import parse_dict_line, DictRow, _COMMENT_PREFIXES
 from GalTransl.Utils import get_n_symbol
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
@@ -658,6 +659,69 @@ async def _check_model_availability(
 
 
 _STAGE_CHECK_SKIP_MESSAGE = "与已检测的后端配置相同，跳过重复检测"
+
+
+class _SuggestConfigError(Exception):
+    """AI 建议的后端配置不可用（无 token / 无可用 profile），映射为 400。"""
+
+
+# 校对页 AI 建议的全局单飞锁：同一时刻只允许一个请求在跑（防误触连发打爆 API）
+_REVIEW_SUGGEST_LOCK = threading.Lock()
+
+
+def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str, str]:
+    """解析 AI 建议用的 (api_key, base_url, model)。
+
+    口径：请求携带的 profile_data → 请求携带的 profile 名 → 项目配置 backendSpecific
+    → 首个含 OpenAI-Compatible 的全局 profile。与 check-model / name-table 的
+    解析顺序保持一致，任何一步都跳过 -example- 示例 key。
+    """
+    oai_section: dict | None = None
+    profile_data = payload.get("backend_profile_data")
+    if isinstance(profile_data, dict) and profile_data:
+        candidate = profile_data.get("OpenAI-Compatible")
+        if isinstance(candidate, dict):
+            oai_section = candidate
+    if oai_section is None:
+        profile_name = str(payload.get("backend_profile", "")).strip()
+        profiles = _read_backend_profiles().get("profiles", {})
+        if profile_name:
+            candidate = profiles.get(profile_name, {}).get("OpenAI-Compatible")
+            if isinstance(candidate, dict):
+                oai_section = candidate
+            else:
+                raise _SuggestConfigError(f"后端配置「{profile_name}」不存在或无 OpenAI-Compatible 段")
+    if oai_section is None:
+        # 项目自身的 backendSpecific（翻译任务实际使用的后端）
+        try:
+            resolved_config = _detect_config_file(project_dir)
+            cfg = CProjectConfig(project_dir, resolved_config)
+            cfg.non_interactive = True
+            candidate = cfg.getBackendConfigSection("OpenAI-Compatible")
+            if isinstance(candidate, dict):
+                oai_section = candidate
+        except Exception:
+            oai_section = None
+    if oai_section is None:
+        for _name, _conf in _read_backend_profiles().get("profiles", {}).items():
+            candidate = _conf.get("OpenAI-Compatible") if isinstance(_conf, dict) else None
+            if isinstance(candidate, dict):
+                oai_section = candidate
+                break
+    if not isinstance(oai_section, dict):
+        raise _SuggestConfigError("未找到可用的 OpenAI 兼容后端配置，请先在「模型设置」中添加")
+
+    token_entry = ReviewAssist.pick_real_token(oai_section.get("tokens"))
+    if token_entry is None:
+        raise _SuggestConfigError("后端配置中没有真实 API token（示例 key 不会被使用）")
+    api_key = str(token_entry.get("token", "") or "")
+    endpoint = str(token_entry.get("endpoint", "") or "https://api.openai.com")
+    model = str(
+        token_entry.get("modelName")
+        or oai_section.get("rewriteModelName")
+        or "gpt-4o-mini"
+    )
+    return api_key, ReviewAssist.normalize_base_url(endpoint), model
 
 
 async def _check_stage_model_availability(
@@ -3081,6 +3145,91 @@ def build_handler(registry: JobRegistry) -> type:
                     self._send_json({"success": True, "path": target})
                 except Exception as exc:
                     self._send_json({"error": f"打开文件管理器失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            # POST /api/projects/:id/review/ai-suggest — 校对页单句 AI 建议译文（一次性，不落盘）
+            if sub_path == "/review/ai-suggest":
+                if self.command != "POST":
+                    self._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+                    return
+                try:
+                    payload = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                file_name = str(payload.get("file", "")).strip()
+                instruction = str(payload.get("instruction", "") or "").strip()
+                draft = str(payload.get("draft", "") or "")
+                try:
+                    index = int(payload.get("index"))
+                except (TypeError, ValueError):
+                    self._send_json({"error": "index must be an integer"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                if not file_name:
+                    self._send_json({"error": "missing file"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                if registry._has_running_job_for_project(project_dir):
+                    self._send_json({"error": "翻译任务运行中，请先停止任务再使用 AI 建议"}, status=HTTPStatus.CONFLICT)
+                    return
+                if not _REVIEW_SUGGEST_LOCK.acquire(blocking=False):
+                    self._send_json({"error": "已有一个 AI 建议请求进行中，请稍候"}, status=HTTPStatus.CONFLICT)
+                    return
+                try:
+                    # 读缓存条目（路径穿越防护与 /cache/:filename 一致）
+                    norm = os.path.normpath(file_name.replace("\\", "/"))
+                    if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+                    file_path = os.path.join(cache_dir, norm)
+                    abs_cache = os.path.abspath(cache_dir)
+                    abs_file = os.path.abspath(file_path)
+                    if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
+                        self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    if not os.path.isfile(file_path):
+                        self._send_json({"error": f"cache file not found: {file_name}"}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    import orjson
+                    with open(file_path, "rb") as f:
+                        cache_entries = orjson.loads(f.read())
+                    pos = next(
+                        (p for p, e in enumerate(cache_entries) if isinstance(e, dict) and int(e.get("index", -1)) == index),
+                        None,
+                    )
+                    if pos is None:
+                        self._send_json({"error": f"条目不存在: {file_name}#{index}"}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    entry = cache_entries[pos]
+                    prev_entry = cache_entries[pos - 1] if pos > 0 else {}
+                    next_entry = cache_entries[pos + 1] if pos + 1 < len(cache_entries) else {}
+
+                    api_key, base_url, model = _resolve_suggest_backend(payload, project_dir)
+                    messages = ReviewAssist.build_suggest_messages(
+                        str(entry.get("pre_src", "") or ""),
+                        draft if draft else str(entry.get("proofread_dst", "") or entry.get("pre_dst", "") or ""),
+                        prev_dst=str(prev_entry.get("pre_dst", "") or ""),
+                        next_dst=str(next_entry.get("pre_dst", "") or ""),
+                        problem=str(entry.get("problem", "") or ""),
+                        doub_content=str(entry.get("doub_content", "") or ""),
+                        instruction=instruction,
+                    )
+                    raw = ReviewAssist.request_suggestion(
+                        messages, api_key=api_key, base_url=base_url, model=model
+                    )
+                    suggestion = ReviewAssist.extract_suggestion(raw)
+                    if not suggestion:
+                        self._send_json({"error": "AI 返回了空建议，请重试"}, status=HTTPStatus.BAD_GATEWAY)
+                        return
+                    LOGGER.info(f"AI 建议: {norm}#{index} model={model} 建议 {len(suggestion)} 字")
+                    self._send_json({"suggestion": suggestion, "model": model})
+                except _SuggestConfigError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                except Exception as exc:
+                    LOGGER.warning(f"AI 建议失败: {file_name}#{index}: {exc}")
+                    self._send_json({"error": f"AI 建议失败: {exc}"}, status=HTTPStatus.BAD_GATEWAY)
+                finally:
+                    _REVIEW_SUGGEST_LOCK.release()
                 return
 
             # GET /api/projects/:id/cache

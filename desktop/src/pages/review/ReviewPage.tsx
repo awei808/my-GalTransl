@@ -11,6 +11,7 @@ import {
   savePerFileMetadata,
   checkCacheProblems,
   fetchNameDict,
+  requestAiSuggest,
 } from "../../lib/api/project";
 import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
@@ -347,6 +348,17 @@ export function EntryCard(props: {
   onFocusChange?: (focused: boolean) => void;
   // 角色名替换表（仅显示层使用，不写入缓存）
   nameDict: Record<string, string>;
+  // AI 建议面板（仅当前条目非 null）：父级发起请求并持有状态
+  suggestPanel?: {
+    loading: boolean;
+    text: string;
+    error: string;
+    model: string;
+  } | null;
+  onRequestSuggest?: (currentDst: string) => void;
+  onSuggestAccept?: () => void;
+  onSuggestRegenerate?: (instruction: string) => void;
+  onSuggestClose?: () => void;
 }) {
   const e = () => props.entry;
   const hasProblem = () => !!e().problem;
@@ -433,8 +445,20 @@ export function EntryCard(props: {
     };
   }
 
+  // AI 建议面板的补充要求草稿（重新生成时传给父级）
+  const [suggestInstruction, setSuggestInstruction] = createSignal("");
+  // 双击条目空白处发起 AI 建议：文本区/输入框/按钮/原文区不算空白（双击常用于选词）
+  function handleCardDblClick(ev: MouseEvent) {
+    const el = ev.target as HTMLElement;
+    if (el.closest("textarea, input, button, select, a, .entry-src, .entry-problem-text")) return;
+    props.onRequestSuggest?.(draftDst());
+  }
+
   return (
-    <div class={`entry-card ${hasProblem() ? "has-problem" : ""} ${e().skip_check ? "skip-check" : ""}`}>
+    <div
+      class={`entry-card ${hasProblem() ? "has-problem" : ""} ${e().skip_check ? "skip-check" : ""}`}
+      onDblClick={handleCardDblClick}
+    >
       {/* ── 默认 3 行 ── */}
       <div class="entry-default">
         {/* 问题行 */}
@@ -598,6 +622,61 @@ export function EntryCard(props: {
             <span class="entry-btn-text">删除</span>
           </button>
         </div>
+
+        {/* AI 建议面板：双击空白处发起，采纳后写入 alt_dst 走既有交换/撤销链路 */}
+        <Show when={props.suggestPanel}>
+          <div class="suggest-panel">
+            <div class="suggest-panel-head">
+              <span class="suggest-panel-title">AI 建议译文</span>
+              <Show when={props.suggestPanel!.model}>
+                <span class="suggest-panel-model" title="生成所用模型">{props.suggestPanel!.model}</span>
+              </Show>
+              <button
+                type="button"
+                class="suggest-panel-close"
+                title="关闭建议面板"
+                onClick={() => props.onSuggestClose?.()}
+              >
+                ✕
+              </button>
+            </div>
+            <Show
+              when={!props.suggestPanel!.loading}
+              fallback={<div class="suggest-panel-body suggest-panel-body--loading">生成中…</div>}
+            >
+              <Show
+                when={!props.suggestPanel!.error}
+                fallback={<div class="suggest-panel-body suggest-panel-body--error">{props.suggestPanel!.error}</div>}
+              >
+                <div class="suggest-panel-body">{props.suggestPanel!.text || "（空建议）"}</div>
+              </Show>
+            </Show>
+            <div class="suggest-panel-foot">
+              <input
+                class="suggest-panel-instruction"
+                placeholder="补充要求（可选，重新生成时生效）"
+                value={suggestInstruction()}
+                onInput={(e) => setSuggestInstruction(e.currentTarget.value)}
+              />
+              <button
+                type="button"
+                class="entry-btn"
+                disabled={props.suggestPanel!.loading}
+                onClick={() => props.onSuggestRegenerate?.(suggestInstruction())}
+              >
+                <span class="entry-btn-text">重新生成</span>
+              </button>
+              <button
+                type="button"
+                class="entry-btn entry-btn--suggest-accept"
+                disabled={props.suggestPanel!.loading || !props.suggestPanel!.text}
+                onClick={() => props.onSuggestAccept?.()}
+              >
+                <span class="entry-btn-text">采纳为备选</span>
+              </button>
+            </div>
+          </div>
+        </Show>
       </div>
 
       {/* ── 展开全部字段 ── */}
@@ -1960,6 +2039,78 @@ export function ReviewPage() {
     entriesRev++;
   }
 
+  // ── AI 建议面板（单句，一次性调用，不落盘；采纳写入 alt_dst）──
+  const [suggestIndex, setSuggestIndex] = createSignal<number | null>(null);
+  const [suggestPanel, setSuggestPanel] = createSignal<{
+    loading: boolean;
+    text: string;
+    error: string;
+    model: string;
+    currentDst: string;
+  } | null>(null);
+  // 过期响应丢弃计数：连点/切文件时旧响应不回填面板
+  let suggestSeq = 0;
+
+  function closeSuggestPanel() {
+    suggestSeq++;
+    setSuggestIndex(null);
+    setSuggestPanel(null);
+  }
+
+  // 切文件后原条目不再属于当前文件，关闭面板防串台
+  createEffect(() => {
+    void appState.activeFilePath;
+    closeSuggestPanel();
+  });
+
+  async function generateSuggest(serial: number, currentDst: string, instruction: string) {
+    const pid = appState.activeProjectId;
+    const file = appState.activeFilePath;
+    if (!pid || !file) {
+      toast.warning("请先打开翻译项目");
+      return;
+    }
+    const seq = ++suggestSeq;
+    setSuggestIndex(serial);
+    setSuggestPanel({ loading: true, text: "", error: "", model: "", currentDst });
+    try {
+      const res = await requestAiSuggest(pid, {
+        file,
+        index: serial,
+        draft: currentDst || undefined,
+        instruction: instruction || undefined,
+      });
+      if (seq !== suggestSeq) return; // 过期响应（已关闭/已重新发起）
+      setSuggestPanel({
+        loading: false,
+        text: res.suggestion,
+        error: "",
+        model: res.model,
+        currentDst,
+      });
+    } catch (err) {
+      if (seq !== suggestSeq) return;
+      const msg = getErrorMessage(err);
+      setSuggestPanel({ loading: false, text: "", error: msg, model: "", currentDst });
+      toast.error(`AI 建议失败：${msg}`);
+    }
+  }
+
+  function handleEntryDblClick(serial: number, currentDst: string) {
+    if (suggestPanel()?.loading) return; // 生成中忽略连点
+    void generateSuggest(serial, currentDst, "");
+  }
+
+  function handleSuggestAccept() {
+    const serial = suggestIndex();
+    const panel = suggestPanel();
+    if (serial === null || !panel?.text) return;
+    closeSuggestPanel();
+    // 走统一字段修改链路：自动入撤销栈、标脏；值相同时 handleFieldChange 幂等跳过
+    handleFieldChange(serial, "alt_dst", panel.text);
+    toast.success("AI 建议已写入备选译文");
+  }
+
   function handleJump() {
     const raw = jumpValue().trim();
     if (!raw) {
@@ -2452,6 +2603,14 @@ export function ReviewPage() {
                           onDelete={() => handleDelete(idx)}
                           onSwapAlt={() => handleSwapAlt(idx)}
                           onFieldChange={(field, value) => handleFieldChange(idx, field, value)}
+                          suggestPanel={suggestIndex() === idx ? suggestPanel() : null}
+                          onRequestSuggest={(currentDst) => handleEntryDblClick(idx, currentDst)}
+                          onSuggestAccept={() => handleSuggestAccept()}
+                          onSuggestRegenerate={(instruction) => {
+                            const panel = suggestPanel();
+                            void generateSuggest(idx, panel?.currentDst ?? "", instruction);
+                          }}
+                          onSuggestClose={() => closeSuggestPanel()}
                         />
                       </div>
                       {hEnd && (

@@ -35,18 +35,24 @@ function getApiToken(): string | null {
   return fromEnv ? fromEnv : null;
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const baseUrl = getBackendBaseUrl();
+/** apiRequest 选项：RequestInit 之外支持自定义超时（毫秒），默认 30s */
+export interface ApiRequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
 
-  // 30 秒超时，防止请求挂死
+export async function apiRequest<T>(path: string, init?: ApiRequestOptions): Promise<T> {
+  const baseUrl = getBackendBaseUrl();
+  const { timeoutMs, ...restInit } = init ?? {};
+
+  // 30 秒默认超时，防止请求挂死（慢请求可用 timeoutMs 放宽）
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  const reqHeaders = new Headers(init?.headers as HeadersInit | undefined);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 30000);
+  const reqHeaders = new Headers(restInit.headers as HeadersInit | undefined);
   const token = getApiToken();
   if (token) {
     reqHeaders.set("Authorization", `Bearer ${token}`);
   }
-  const mergedInit: RequestInit = { ...init, signal: controller.signal, headers: reqHeaders };
+  const mergedInit: RequestInit = { ...restInit, signal: controller.signal, headers: reqHeaders };
 
   let response: Response;
   try {
