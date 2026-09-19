@@ -183,18 +183,26 @@ describe("ReviewPage 卸载自动保存（metadata 路）", () => {
       expect(vi.mocked(fetchPerFileMetadata)).toHaveBeenCalledWith(PID, "filemeta", META_SRC);
     });
     await vi.waitFor(() => {
-      expect(document.querySelector(".meta-content-textarea")).not.toBeNull();
+      expect(document.querySelector(".meta-kv-value")).not.toBeNull();
     });
     return result;
   }
 
+  /** 在键值编辑器中聚焦某字段的值并输入（不处理失焦） */
+  function editMetaValue(key: string, value: string): HTMLTextAreaElement {
+    const row = Array.from(document.querySelectorAll(".meta-kv-row")).find(
+      (r) => (r.querySelector(".meta-kv-key") as HTMLInputElement | null)?.value === key,
+    );
+    if (!row) throw new Error(`找不到字段行: ${key}`);
+    const ta = row.querySelector(".meta-kv-value") as HTMLTextAreaElement;
+    ta.focus();
+    fireEvent.input(ta, { target: { value } });
+    return ta;
+  }
+
   it("metadata 编辑后切页卸载 → 由 saveMeta 落盘且不并发双写（captureUnmountSnapshot 跳过在途）", async () => {
     const { unmount } = await renderMetaLoaded();
-    const ta = document.querySelector(".meta-content-textarea") as HTMLTextAreaElement;
-    ta.focus();
-    fireEvent.input(ta, {
-      target: { value: '{"id":"filemeta","content":"新内容"}' },
-    });
+    editMetaValue("content", "新内容");
     // 不失焦直接卸载：onCleanup blur 触发 saveMeta(true)（在途），
     // captureUnmountSnapshot 的 metadata 分支应因 metaSavePending 跳过，避免并发双写
     unmount();
@@ -222,12 +230,8 @@ describe("ReviewPage 卸载自动保存（metadata 路）", () => {
 
   it("metadata 编辑后失焦保存成功 → 卸载不重复保存（saveMeta 的 metaDirty 检查）", async () => {
     const { unmount } = await renderMetaLoaded();
-    const ta = document.querySelector(".meta-content-textarea") as HTMLTextAreaElement;
-    ta.focus();
-    fireEvent.input(ta, {
-      target: { value: '{"id":"filemeta","content":"新内容"}' },
-    });
-    fireEvent.blur(ta); // 失焦 → saveMeta(true) 落盘
+    const ta = editMetaValue("content", "新内容");
+    fireEvent.focusOut(ta); // 失焦离开编辑器 → saveMeta(true) 落盘
     await vi.waitFor(() => {
       expect(vi.mocked(savePerFileMetadata)).toHaveBeenCalledTimes(1);
     });
@@ -334,7 +338,7 @@ describe("ReviewPage 卸载自动保存（metadata → translate 切换回归）
       expect(vi.mocked(fetchPerFileMetadata)).toHaveBeenCalledWith(PID, "filemeta", META_SRC);
     });
     await vi.waitFor(() => {
-      expect(document.querySelector(".meta-content-textarea")).not.toBeNull();
+      expect(document.querySelector(".meta-kv-value")).not.toBeNull();
     });
     // 切到译文文件：loadFile 应重置 metaLoadedFullPath，卸载快照回到译文分支
     setAppState({ activeFilePath: FILE });
@@ -383,7 +387,7 @@ describe("ReviewPage 元数据显式保存按钮", () => {
       expect(vi.mocked(fetchPerFileMetadata)).toHaveBeenCalledWith(PID, "filemeta", META_SRC);
     });
     await vi.waitFor(() => {
-      expect(document.querySelector(".meta-content-textarea")).not.toBeNull();
+      expect(document.querySelector(".meta-kv-value")).not.toBeNull();
     });
     return result;
   }
@@ -399,11 +403,13 @@ describe("ReviewPage 元数据显式保存按钮", () => {
   it("编辑后点击保存按钮 → 落盘并提示「已保存 文件名」", async () => {
     const infoSpy = vi.spyOn(toast, "info").mockImplementation(() => "t");
     const { unmount } = await renderMetaLoaded();
-    const ta = document.querySelector(".meta-content-textarea") as HTMLTextAreaElement;
-    ta.focus();
-    fireEvent.input(ta, {
-      target: { value: '{"id":"filemeta","content":"新内容"}' },
-    });
+    const ta = Array.from(document.querySelectorAll(".meta-kv-row")).find(
+      (r) => (r.querySelector(".meta-kv-key") as HTMLInputElement | null)?.value === "content",
+    );
+    expect(ta, "找不到 content 字段行").toBeTruthy();
+    const value = ta!.querySelector(".meta-kv-value") as HTMLTextAreaElement;
+    value.focus();
+    fireEvent.input(value, { target: { value: "新内容" } });
     fireEvent.click(saveButton());
     await vi.waitFor(() => {
       expect(vi.mocked(savePerFileMetadata)).toHaveBeenCalledWith(

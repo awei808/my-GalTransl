@@ -1838,10 +1838,42 @@ textarea {
   white-space: nowrap;
 }
 
-.meta-content-textarea {
+/* 元数据键值编辑器：每字段一行，键可改、值为 JSON 源文本 */
+.meta-kv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.meta-kv-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 200px) 1fr auto;
+  gap: var(--space-1);
+  align-items: start;
+}
+
+.meta-kv-key {
+  padding: 4px 6px;
+  font-size: var(--font-sm);
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  min-width: 0;
+}
+
+.meta-kv-value-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.meta-kv-value {
   width: 100%;
-  padding: 8px;
-  font-size: var(--font-base);
+  padding: 4px 6px;
+  font-size: var(--font-sm);
   font-family: var(--font-mono);
   line-height: 1.5;
   border: 1px solid var(--color-border-default);
@@ -1853,9 +1885,55 @@ textarea {
   tab-size: 2;
 }
 
-.meta-content-textarea:focus {
+.meta-kv-key:focus,
+.meta-kv-value:focus {
   outline: none;
   border-color: var(--color-border-focus);
+}
+
+.meta-kv-row--error .meta-kv-key {
+  border-color: var(--color-status-error);
+}
+
+.meta-kv-type-hint {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.meta-kv-error-text {
+  font-size: var(--font-xs);
+  color: var(--color-status-error);
+}
+
+.meta-kv-delete {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+.meta-kv-delete:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-status-error);
+}
+
+.meta-kv-add {
+  align-self: flex-start;
+  border: 1px dashed var(--color-border-default);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+.meta-kv-add:hover {
+  border-color: var(--color-border-focus);
+  color: var(--color-text-primary);
 }
 
 .review-list {

@@ -483,8 +483,8 @@ describe("场景 11：shouldYieldToNative 草稿态让出原生撤销", () => {
     expect(shouldYieldToNative(makeTextarea("3", ""), [])).toBe(false);
   });
 
-  it("元数据框：聚焦即让出原生逐字符撤销（方案 A：走原生，不入栈）", () => {
-    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-content-textarea"), committedEntries)).toBe(true);
+  it("元数据编辑器：聚焦即让出原生逐字符撤销（方案 A：走原生，不入栈）", () => {
+    expect(shouldYieldToNative(makeTextarea("3", "未提交", "meta-kv-value"), committedEntries)).toBe(true);
   });
 
   it("展开字段：草稿未提交 → 让出原生逐字符撤销", () => {
@@ -525,8 +525,8 @@ describe("shouldBlurBeforeUndo：撤销/重做前需 blur 提交草稿的输入�
     expect(shouldBlurBeforeUndo(makeTextarea("entry-dst-input"))).toBe(true);
   });
 
-  it("元数据框 → 不 blur（方案 A：走原生撤销，避免失焦破坏原生历史）", () => {
-    expect(shouldBlurBeforeUndo(makeTextarea("meta-content-textarea"))).toBe(false);
+  it("元数据编辑器 → 不 blur（方案 A：走原生撤销，避免失焦破坏原生历史）", () => {
+    expect(shouldBlurBeforeUndo(makeTextarea("meta-kv-value"))).toBe(false);
   });
 
   it("展开字段（field-value--editable）→ 需要先 blur 提交草稿（修复：此前漏掉导致撤销被旧草稿覆盖）", () => {

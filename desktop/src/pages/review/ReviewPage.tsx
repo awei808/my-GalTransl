@@ -28,6 +28,7 @@ import { fetchProblemTypes } from "../../lib/api/general";
 import { problemTypesOf } from "../../lib/problems";
 import { isDarkTheme, themeDark, themeVivid } from "../../lib/theme";
 import { PlotRoutePanel } from "./PlotRoutePanel";
+import { MetaKeyValueEditor } from "./MetaKeyValueEditor";
 import { ProblemTypeFilterDropdown } from "../../components/ProblemTypeFilterDropdown";
 
 /**
@@ -42,6 +43,14 @@ export function applyProblemTypeFilter(
   return list.filter((e) => types.every((t) => problemTypesOf(e.problem).includes(t)));
 }
 
+/** 元数据键值编辑器的输入元素（键 input / 值 textarea）：走纯原生撤销（方案 A） */
+export function isMetaKvEditorElement(el: Element | null): boolean {
+  return (
+    el !== null &&
+    (el.classList.contains("meta-kv-key") || el.classList.contains("meta-kv-value"))
+  );
+}
+
 /**
  * 判断当前是否应让出原生撤销/重做（草稿态）。
  * 主译文框/展开字段在内容未提交时、元数据框在聚焦时，让出原生实现逐字符撤销；
@@ -52,9 +61,9 @@ export function applyProblemTypeFilter(
  *   entries: 当前文件的翻译条目（用于比对主译文框已提交值）。
  */
 export function shouldYieldToNative(activeEl: Element | null, entries: CacheEntry[]): boolean {
+  // 元数据编辑器：纯原生撤销，聚焦即让出逐字符撤销（失焦自动保存后不再保留历史）
+  if (isMetaKvEditorElement(activeEl)) return true;
   if (!(activeEl instanceof HTMLTextAreaElement)) return false;
-  // 元数据框：纯原生撤销，聚焦即让出逐字符撤销（失焦自动保存后不再保留历史）
-  if (activeEl.classList.contains("meta-content-textarea")) return true;
   if (!activeEl.classList.contains("entry-dst-input") && !activeEl.classList.contains("field-value--editable")) {
     return false;
   }
@@ -632,8 +641,8 @@ export function EntryCard(props: {
   );
 }
 
-/* ── 单条元数据组件（FileMetaData / BatchMetadata）──
-   简化：一个 id 小文本框 + 一个记录其余内容的大文本框（JSON）。 */
+/* ── 单条元数据组件（FileMetaData / BatchMetadata / GlobalPrompt）──
+   id 只读展示，其余字段按「键值对应」逐行编辑（键、值均可改，见 MetaKeyValueEditor）。 */
 function MetadataCard(props: {
   entry: MetadataEntry;
   index: number;
@@ -641,25 +650,6 @@ function MetadataCard(props: {
   onDelete?: () => void;
   onBlur: () => void;
 }) {
-  let taRef: HTMLTextAreaElement | undefined;
-  const restJson = () => {
-    const { id: _id, ...rest } = props.entry as Record<string, unknown>;
-    try {
-      return JSON.stringify(rest, null, 2);
-    } catch {
-      return "{}";
-    }
-  };
-  const [content, setContent] = createSignal(restJson());
-  // 外部 entry 变更（如保存后 store 更新）且文本框未聚焦时，同步显示。
-  // 依赖固化：方案 A 下元数据走原生撤销，原生历史在元素失焦时（Chromium）已被清空；
-  // 此处程序化 setContent 会进一步重置 value 并清空聚焦中的原生 undo 栈——这是「失焦后不再保留
-  // 撤销历史」的预期行为。切勿在聚焦时重置 content，否则会破坏正在进行的逐字符撤销。
-  createEffect(() => {
-    void props.entry;
-    if (taRef && document.activeElement !== taRef) setContent(restJson());
-  });
-
   return (
     <div class="meta-card">
       <div class="meta-card-head">
@@ -683,28 +673,9 @@ function MetadataCard(props: {
           </button>
         </Show>
       </div>
-      <textarea
-        ref={taRef}
-        class="meta-content-textarea"
-        rows="20"
-        value={content()}
-        spellcheck={false}
-        onInput={(e) => {
-          setContent(e.currentTarget.value);
-          props.onContentChange(e.currentTarget.value);
-        }}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter") return;
-          e.preventDefault();
-          const ta = e.currentTarget as HTMLTextAreaElement;
-          const pos = ta.selectionStart;
-          const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
-          setContent(newVal);
-          props.onContentChange(newVal);
-          requestAnimationFrame(() => {
-            ta.selectionStart = ta.selectionEnd = pos + 1;
-          });
-        }}
+      <MetaKeyValueEditor
+        entry={props.entry as Record<string, unknown>}
+        onContentChange={props.onContentChange}
         onBlur={props.onBlur}
       />
     </div>
@@ -1172,9 +1143,9 @@ export function ReviewPage() {
   }
 
   function handleUndo() {
-    // 元数据框走原生撤销：聚焦时交由浏览器处理（键盘 Ctrl+Z 已由 shouldYieldToNative 让出；
+    // 元数据编辑器走原生撤销：聚焦时交由浏览器处理（键盘 Ctrl+Z 已由 shouldYieldToNative 让出；
     // 经菜单/事件触发且焦点仍在框内时提示，避免静默无反馈、也避免误触发跨文件撤销）
-    if (document.activeElement?.classList.contains("meta-content-textarea")) {
+    if (isMetaKvEditorElement(document.activeElement)) {
       toast.info("元数据编辑请在框内按 Ctrl+Z 撤销");
       return;
     }
@@ -1194,8 +1165,8 @@ export function ReviewPage() {
   }
 
   function handleRedo() {
-    // 元数据框走原生撤销：聚焦时交由浏览器处理（键盘 Ctrl+Y/Ctrl+Shift+Z 已由 shouldYieldToNative 让出）
-    if (document.activeElement?.classList.contains("meta-content-textarea")) {
+    // 元数据编辑器走原生撤销：聚焦时交由浏览器处理（键盘 Ctrl+Y/Ctrl+Shift+Z 已由 shouldYieldToNative 让出）
+    if (isMetaKvEditorElement(document.activeElement)) {
       toast.info("元数据编辑请在框内按 Ctrl+Y / Ctrl+Shift+Z 重做");
       return;
     }
