@@ -5,7 +5,7 @@ import logging, colorlog
 from GalTransl import LOGGER, DEBUG_LEVEL, TRANSLATOR_SUPPORTED, new_version, GALTRANSL_VERSION,NEED_OpenAITokenPool
 from GalTransl.ApiLogger import cleanup_api_log
 from GalTransl.GTPlugin import GTextPlugin, GFilePlugin
-from GalTransl.COpenAI import COpenAITokenPool, init_sakura_endpoint_queue
+from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.yapsy.PluginManager import PluginManager
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
 from GalTransl.Frontend.LLMTranslate import doLLMTranslate
@@ -312,12 +312,6 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
             _build_stage_token_pools(cfg, translator)
         else:
             OpenAITokenPool = None
-
-        # 废弃的 SakuraLLM 代码：translator 无 sakura/galtransl 名称，本分支不可达（Sakura 配置段已移除）
-        if "sakura" in translator or "galtransl" in translator:
-            _raise_if_stop_requested(stop_event)
-            sakura_endpoint_queue = await init_sakura_endpoint_queue(cfg)
-            cfg.endpointQueue = sakura_endpoint_queue
 
         # 检查更新
         if new_version and new_version[0] != GALTRANSL_VERSION:

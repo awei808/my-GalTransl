@@ -1,6 +1,7 @@
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from os import path
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl import LOGGER
@@ -57,6 +58,8 @@ class DictRow:
     cond_items: List[ConditionItem] = field(default_factory=list)
     spl_word: str = ""  # "and" / "or" / ""（仅 conditional 有值）
     note: str = ""  # 行内 // 注释内容（已剥离 // 前缀）
+    is_regex: bool = False  # 搜索词为 re: 正则词条
+    regex_error: str = ""  # 正则预校验错误（空串表示合法或非正则行）
 
 
 # 解析用的注释前缀：仅 //，且只在整行行首起效（与引擎各 load_dic 对齐）
@@ -70,6 +73,8 @@ _COND_PLACEHOLDERS = ("(同上)", "（同上）", "~")
 _COND_NEGATE_PREFIX = "!"
 _COND_STARTSWITH_PREFIX = ">"
 _COND_ENDSWITH_SUFFIX = "<"
+_REGEX_PREFIX = "re:"  # 搜索词正则前缀（在 ^^/1^ 剥离之后判定，可与二者组合）
+_PIPE_SENTINEL = "\x00"  # \| 转义竖线在分割阶段的哨兵字符
 
 
 def _safe_escape(text: str) -> str:
@@ -78,6 +83,28 @@ def _safe_escape(text: str) -> str:
         return process_escape(text)
     except (ValueError, UnicodeDecodeError):
         return text
+
+
+def _split_dict_line(line: str) -> List[str]:
+    """按 | 分割字典行；``\\|`` 还原为字面竖线（正则选择符等场景需要）。"""
+    parts = line.replace("\\|", _PIPE_SENTINEL).split("|")
+    return [p.replace(_PIPE_SENTINEL, "|") for p in parts]
+
+
+def _compile_dict_regex(pattern: str) -> Tuple[Optional[re.Pattern], str]:
+    """编译词条正则。返回 (pattern, error)。
+
+    error 为空串表示编译成功且非零宽；为 "zero-width" 表示模式可匹配空串
+    （调用方应丢弃词条，防 re.sub 零宽全文插入）；其余为编译错误信息
+    （调用方应回退字面量匹配）。
+    """
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        return None, str(e)
+    if compiled.match(""):
+        return None, "zero-width"
+    return compiled, ""
 
 
 def _parse_cond_items(cond: str) -> tuple[List[ConditionItem], str]:
@@ -136,6 +163,24 @@ def _serialize_cond_item(item: ConditionItem) -> str:
     return word
 
 
+def _regex_flag_of(raw_search: str) -> Tuple[bool, str]:
+    """按引擎口径判定搜索词是否正则词条（^^/1^ 剥离后 re: 前缀），并预校验编译。
+
+    Returns:
+        (is_regex, regex_error)：is_regex 表示引擎会按正则处理；regex_error
+        为空串表示合法，否则为错误说明（引擎侧会回退字面量或丢弃）。
+    """
+    body = raw_search
+    if body.startswith("^^") or body.startswith("1^"):
+        body = body[2:]
+    if not body.startswith(_REGEX_PREFIX):
+        return False, ""
+    _, err = _compile_dict_regex(body[len(_REGEX_PREFIX):])
+    if err == "zero-width":
+        return True, "正则可匹配空串"
+    return True, err
+
+
 def parse_dict_line(line: str, category: str) -> DictRow:
     """纯解析：单行字典文本 -> 结构化 DictRow，不做任何 IO / 翻译副作用。
 
@@ -159,7 +204,7 @@ def parse_dict_line(line: str, category: str) -> DictRow:
         return DictRow("comment", [line], raw_line)
     # 与引擎 load_dic 一致：Tab / 四空格转 | 后再分割（兼容旧版 Tab 分隔字典文件）
     line = line.replace("    ", "\t").replace("\t", "|")
-    parts = [_safe_escape(p) for p in line.split("|")]
+    parts = [_safe_escape(p) for p in _split_dict_line(line)]
     if category in ("gpt", "gpth", "gptnh", "forbiddenh", "forbiddennh"):
         # 禁用词字典 / h-非h GPT 字典与 gpt 字典同构：词|备注 或 原文|译文|解释
         # 禁用词不支持替换（仅词条+备注），故返回 forbidden；h/非h GPT 仍是 gpt 行类型
@@ -169,9 +214,11 @@ def parse_dict_line(line: str, category: str) -> DictRow:
         # gpt/禁用词备注列原样保留（不剥离 //），禁用词运行时剥离在 load_h_check_words
         note = rest
         row_type = "gpt" if category in ("gpt", "gpth", "gptnh") else "forbidden"
+        is_regex, regex_error = _regex_flag_of(src)
         return DictRow(
             row_type, [src, dst, rest], raw_line,
             target=None, cond_items=[], spl_word="", note=note,
+            is_regex=is_regex, regex_error=regex_error,
         )
     if len(parts) >= 4 and parts[0] in _CONDITIONAL_KEYS:
         target, cond, search, replace = parts[0], parts[1], parts[2], parts[3]
@@ -179,9 +226,11 @@ def parse_dict_line(line: str, category: str) -> DictRow:
         cond_items, spl_word = _parse_cond_items(cond)
         # 备注列原样保留（不剥离 //），仅供显示
         note = rest
+        is_regex, regex_error = _regex_flag_of(search)
         return DictRow(
             "conditional", [target, cond, search, replace, rest], raw_line,
             target=target, cond_items=cond_items, spl_word=spl_word, note=note,
+            is_regex=is_regex, regex_error=regex_error,
         )
     if len(parts) >= 3 and parts[0] in _SITUATION_KEYS:
         scene = parts[0]
@@ -189,18 +238,22 @@ def parse_dict_line(line: str, category: str) -> DictRow:
         # 与引擎 CNormalDic.load_dic 一致：第3列即 replace（不含 |）；多余列作为备注
         replace = parts[2] if len(parts) > 2 else ""
         note = "|".join(parts[3:]) if len(parts) > 3 else ""
+        is_regex, regex_error = _regex_flag_of(search)
         return DictRow(
             "situation", [scene, search, replace], raw_line,
             target=scene, cond_items=[], spl_word="", note=note,
+            is_regex=is_regex, regex_error=regex_error,
         )
     search = parts[0] if len(parts) > 0 else ""
     replace = parts[1] if len(parts) > 1 else ""
     rest = "|".join(parts[2:]) if len(parts) > 2 else ""
     # 备注列原样保留（不剥离 //），仅供显示，不影响替换逻辑
     note = rest
+    is_regex, regex_error = _regex_flag_of(search)
     return DictRow(
         "normal", [search, replace, rest], raw_line,
         target=None, cond_items=[], spl_word="", note=note,
+        is_regex=is_regex, regex_error=regex_error,
     )
 
 
@@ -221,6 +274,9 @@ class CBasicDicElement:
         "spl_word",  # if_word_list的连接关键字
         "note",  # For GPT
         "dic_name",  # 字典名
+        "is_regex",  # 是否为 re: 正则词条
+        "regex_pattern",  # 预编译正则（load 时编译，is_regex 为 True 且合法时非 None）
+        "regex_error",  # 正则错误说明（"zero-width" 表示可匹配空串，调用方应丢弃词条）
     ]
 
     def __init__(
@@ -242,6 +298,27 @@ class CBasicDicElement:
             self.search_word = search_word[2:]
         else:
             self.onetime_flag = False
+
+        # 正则词条：re: 前缀在 ^^/1^ 剥离之后判定，可与二者组合
+        # （编译失败回退字面量并 warning；可匹配空串保留标记，由 load 侧丢弃）
+        self.is_regex: bool = False
+        self.regex_pattern: Optional[re.Pattern] = None
+        self.regex_error: str = ""
+        if self.search_word.startswith(_REGEX_PREFIX):
+            pattern_body = self.search_word[len(_REGEX_PREFIX):]
+            self.search_word = pattern_body
+            compiled, err = _compile_dict_regex(pattern_body)
+            if err == "":
+                self.is_regex = True
+                self.regex_pattern = compiled
+            elif err == "zero-width":
+                self.is_regex = True
+                self.regex_error = "zero-width"
+            else:
+                self.regex_error = err
+                LOGGER.warning(
+                    f"[字典:{dic_name}] 正则编译失败，已按字面量匹配：{pattern_body}（{err}）"
+                )
 
         self.special_key: str = special_key  # 区分是否为特殊词典的关键字
 
@@ -307,6 +384,87 @@ class CBasicDicElement:
         return self
 
 
+def _dict_word_match(dic: CBasicDicElement, text: str) -> bool:
+    """词条搜索词命中判定：正则词条用 re.search，普通词条用子串包含。"""
+    if dic.is_regex:
+        return dic.regex_pattern is not None and dic.regex_pattern.search(text) is not None
+    return dic.search_word in text
+
+
+def _dict_word_consume(dic: CBasicDicElement, text: str) -> str:
+    """从文本中消费（删除）词条命中的内容，供注入/检查两侧统一去重口径。"""
+    if dic.is_regex:
+        return dic.regex_pattern.sub("", text) if dic.regex_pattern is not None else text
+    return text.replace(dic.search_word, "")
+
+
+def _sorted_by_len_desc(items: List[CBasicDicElement]) -> List[CBasicDicElement]:
+    """按搜索词长度降序排序（正则按模式串长度），供注入/检查两侧统一长词优先的消费顺序。"""
+    return sorted(items, key=lambda d: len(d.search_word), reverse=True)
+
+
+def _check_dic_element(elem: CBasicDicElement, dic_path: str) -> bool:
+    """词条入库校验：零宽正则、空搜索词、替换词非法转义的词条丢弃（warning），返回是否可用。"""
+    if elem.is_regex and elem.regex_pattern is None:
+        LOGGER.warning(f"字典 {dic_path} 词条正则可匹配空串，已跳过：{elem.search_word}")
+        return False
+    if not elem.search_word:
+        LOGGER.warning(f"字典 {dic_path} 存在空搜索词词条，已跳过")
+        return False
+    if elem.is_regex:
+        try:
+            # 预演一次替换：替换词含无效转义（如 \q）时 re.sub 会在翻译期抛错，提前拦截
+            elem.regex_pattern.sub(elem.replace_word, "")
+        except re.error as e:
+            LOGGER.warning(
+                f"字典 {dic_path} 替换词含无效转义，已跳过："
+                f"{elem.search_word} -> {elem.replace_word}（{e}）"
+            )
+            return False
+    return True
+
+
+class DictWordMatcher:
+    """词表检测词条目：支持普通词与 `re:` 前缀正则（load_h_check_words / find_problems 共用）。
+
+    编译失败或可匹配空串时回退字面量匹配：检测词表丢弃会静默降低检测覆盖，回退更稳妥。
+    """
+
+    __slots__ = ["word", "is_regex", "pattern"]
+
+    def __init__(self, raw: str) -> None:
+        self.is_regex: bool = raw.startswith(_REGEX_PREFIX)
+        self.word: str = raw[len(_REGEX_PREFIX):] if self.is_regex else raw
+        self.pattern: Optional[re.Pattern] = None
+        if self.is_regex:
+            compiled, err = _compile_dict_regex(self.word)
+            if err != "":
+                LOGGER.warning(f"检测词正则无效，已按字面量匹配：{raw}（{err}）")
+                self.is_regex = False
+            else:
+                self.pattern = compiled
+
+    def hit(self, text: str) -> bool:
+        """判定 text 是否命中该检测词。"""
+        if self.is_regex:
+            return self.pattern.search(text) is not None
+        return self.word in text
+
+    def __eq__(self, other: object) -> bool:
+        # 与 str 等价比较：混合 str/Matcher 的词表去重与断言行为与旧 list[str] 一致
+        if isinstance(other, DictWordMatcher):
+            return self.is_regex == other.is_regex and self.word == other.word
+        if isinstance(other, str):
+            return self.word == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.word)
+
+    def __repr__(self) -> str:
+        return self.word
+
+
 class CNormalDic:
     """
     :由多个BasicDic字典元素构成的大字典List（这个Dic不Normal但是懒得改名）
@@ -346,6 +504,7 @@ class CNormalDic:
         normalDic_count = 0
         conditionaDic_count = 0
         situationsDic_count = 0
+        regexDic_count = 0
         dic_name = path.basename(dic_path)
         dic_name = path.splitext(dic_name)[0]
 
@@ -360,13 +519,13 @@ class CNormalDic:
             line = line.replace("    ", "\t")
             line = line.replace("\t", "|")
 
-            sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
+            sp = _split_dict_line(line.rstrip("\r\n"))  # 去多余换行符，|分割（\| 为字面竖线）
             len_sp = len(sp)
             if len_sp < 2:  # 至少是2个元素
                 continue
-            # 处理转义字符
+            # 处理转义字符（非法转义回退原文，避免孤立反斜杠炸掉整个字典加载）
             for i in range(len_sp):
-                sp[i] = process_escape(sp[i])
+                sp[i] = _safe_escape(sp[i])
 
             is_conditionaDic_line = True if sp[0] in self.conditionaDic_key else False
             is_situationsDic_line = True if sp[0] in self.situationsDic_key else False
@@ -381,19 +540,29 @@ class CNormalDic:
                 # 初始化ifWord的list
                 if_word_list = [IfWord(w.strip()) for w in if_word.split(spl_word)]
                 con_dic = CBasicDicElement(sp[2], sp[3], sp[0], dic_name)
+                if not _check_dic_element(con_dic, dic_path):
+                    continue
                 con_dic.is_conditionaDic = True
                 con_dic.if_word_list = if_word_list
                 con_dic.spl_word = spl_word
                 self.dic_list.append(con_dic)
                 conditionaDic_count += 1
+                regexDic_count += 1 if con_dic.is_regex else 0
             elif is_situationsDic_line:
                 sit_dic = CBasicDicElement(sp[1], sp[2], sp[0], dic_name)
+                if not _check_dic_element(sit_dic, dic_path):
+                    continue
                 sit_dic.is_situationsDic = True
                 self.dic_list.append(sit_dic)
                 situationsDic_count += 1
+                regexDic_count += 1 if sit_dic.is_regex else 0
             else:
-                self.dic_list.append(CBasicDicElement(sp[0], sp[1], dic_name=dic_name))
+                nor_dic = CBasicDicElement(sp[0], sp[1], dic_name=dic_name)
+                if not _check_dic_element(nor_dic, dic_path):
+                    continue
+                self.dic_list.append(nor_dic)
                 normalDic_count += 1
+                regexDic_count += 1 if nor_dic.is_regex else 0
         LOGGER.info(
             "载入 普通字典："
             + path.basename(dic_path)
@@ -409,6 +578,7 @@ class CNormalDic:
                 if situationsDic_count != 0
                 else ""
             )
+            + (str(regexDic_count) + "正则词条" if regexDic_count != 0 else "")
         )
 
     def do_replace(
@@ -497,8 +667,19 @@ class CNormalDic:
             search_word = dic.search_word
             replace_word = dic.replace_word
 
+            if dic.is_regex:
+                # 正则词条：re.sub 替换；^^ 组合用 re.match 锚定开头（最左命中即开头）
+                if dic.startswith_flag:
+                    if dic.regex_pattern.match(input_text):
+                        input_text = dic.regex_pattern.sub(replace_word, input_text, count=1)
+                elif dic.onetime_flag:
+                    input_text = dic.regex_pattern.sub(replace_word, input_text, count=1)
+                elif not full_match:
+                    input_text = dic.regex_pattern.sub(replace_word, input_text)
+                elif dic.regex_pattern.fullmatch(input_text):
+                    input_text = replace_word
             # startwith情况，只替换开头的
-            if dic.startswith_flag:
+            elif dic.startswith_flag:
                 len_search_word = len(search_word)
                 len_input_text = len(input_text)
                 if len_search_word > len_input_text:
@@ -549,6 +730,7 @@ class CGptDict:
         dic_name = path.basename(dic_path)
         dic_name = path.splitext(dic_name)[0]
         normalDic_count = 0
+        regexDic_count = 0
 
         for line in dic_lines:
             if line.startswith("\n"):
@@ -564,16 +746,17 @@ class CGptDict:
             if "->" in line:
                 line = line.replace("->", "|")
 
-            sp = line.rstrip("\r\n").split("|")  # 去多余换行符，|分割
+            sp = _split_dict_line(line.rstrip("\r\n"))  # 去多余换行符，|分割（\| 为字面竖线）
             len_sp = len(sp)
 
             if len_sp < 2:  # 至少是2个元素
                 continue
 
-            search_word = sp[0]
-            replace_word = sp[1]
+            # 与 parse_dict_line gpt 分支对齐：各字段做转义处理
+            search_word = _safe_escape(sp[0])
+            replace_word = _safe_escape(sp[1])
             # 与 parse_dict_line gpt 分支一致：note 取第3列后全部（含 | 拼接）
-            note = "|".join(sp[2:]) if len_sp > 2 else ""
+            note = "|".join(_safe_escape(x) for x in sp[2:]) if len_sp > 2 else ""
 
             redundant_flag = False
             for d in self._dic_list:
@@ -586,11 +769,15 @@ class CGptDict:
                 continue
 
             dic = CBasicDicElement(search_word, replace_word, dic_name=dic_name)
+            if not _check_dic_element(dic, dic_path):
+                continue
             dic.note = note
             self._dic_list.append(dic)
             normalDic_count += 1
+            regexDic_count += 1 if dic.is_regex else 0
         LOGGER.info(
             f"载入 GPT字典: {path.basename(dic_path)} {normalDic_count}普通词条"
+            + (f"（含{regexDic_count}正则词条）" if regexDic_count else "")
         )
 
     def gen_prompt(
@@ -608,9 +795,10 @@ class CGptDict:
         """
         def _should_add_dic(dic: CBasicDicElement, input_text: str, input_text_copy: str, used_dic: list[str]) -> bool:
             """判断是否应该添加字典条目到提示中"""
-            if dic.search_word in input_text:
+            if _dict_word_match(dic, input_text):
                 return True
-            if dic.search_word in input_text_copy:
+            # 短词先被消费时的兜底注入：已用词 ⊂ 当前词条搜索词（仅普通词条，正则无此语义）
+            if not dic.is_regex and dic.search_word in input_text_copy:
                 for word in used_dic:
                     if word in dic.search_word:
                         return True
@@ -624,14 +812,6 @@ class CGptDict:
             entry += " |\n"
             return entry
         TITLE_GPT="# Glossary\n| Src | Dst(/Dst2/..) | Note |\n| --- | --- | --- |\n"
-        def _format_dic_entry_sakura(dic: CBasicDicElement) -> str:
-            """废弃的 SakuraLLM 代码：调用方从不传 type=="sakura"，本分支不可达（Sakura 配置段已移除）。"""
-            entry = f"{dic.search_word}->{dic.replace_word}"
-            if dic.note:
-                entry += f" #{dic.note}"
-            entry += "\n"
-            return entry
-        TITLE_SAKURA=""
         def _format_dic_entry_tsv(dic: CBasicDicElement) -> str:
             """格式化字典条目为提示所需的字符串"""
             entry = f"{dic.search_word}\t{dic.replace_word}"
@@ -648,15 +828,16 @@ class CGptDict:
         input_text_copy=input_text
         used_dic=[]
 
-        # scene 过滤与排序：nh 只取非 h；h 让 h 字典先遍历（h 优先），再补非 h
+        # scene 过滤与组内排序：nh 只取非 h；h 让 h 字典先遍历（h 优先）再补非 h；
+        # 组内按搜索词长度降序（正则按模式串长度），消除对调用方 sort_dic 的依赖
         if scene == "nh":
-            dic_iter = [d for d in self._dic_list if not self._is_h_dict(d)]
+            dic_iter = _sorted_by_len_desc([d for d in self._dic_list if not self._is_h_dict(d)])
         elif scene == "h":
-            dic_iter = [d for d in self._dic_list if self._is_h_dict(d)] + [
-                d for d in self._dic_list if not self._is_h_dict(d)
-            ]
+            dic_iter = _sorted_by_len_desc([d for d in self._dic_list if self._is_h_dict(d)]) + _sorted_by_len_desc(
+                [d for d in self._dic_list if not self._is_h_dict(d)]
+            )
         else:
-            dic_iter = self._dic_list
+            dic_iter = _sorted_by_len_desc(self._dic_list)
 
         h_hit: set[str] = set()  # scene=h 时已加入的 h 词条（用于重合词 h 优先）
         for dic in dic_iter:
@@ -666,19 +847,15 @@ class CGptDict:
             if _should_add_dic(dic, input_text, input_text_copy, used_dic):
                 if type=="gpt":
                     promt += _format_dic_entry_gpt(dic)
-                elif type=="sakura":  # 废弃的 SakuraLLM 代码：调用方从不传该 type（Sakura 配置段已移除）
-                    promt += _format_dic_entry_sakura(dic)
                 elif type=="tsv":
                     promt += _format_dic_entry_tsv(dic)
-                input_text = input_text.replace(dic.search_word, "")
+                input_text = _dict_word_consume(dic, input_text)
                 if scene == "h" and self._is_h_dict(dic):
                     h_hit.add(dic.search_word)
             used_dic.append(dic.search_word)
         if promt:
             if type=="gpt":
                 promt=TITLE_GPT+promt
-            elif type=="sakura":  # 废弃的 SakuraLLM 代码：调用方从不传该 type（Sakura 配置段已移除）
-                promt=TITLE_SAKURA+promt
             elif type=="tsv":
                 promt=TITLE_TSV+promt
 
@@ -686,7 +863,7 @@ class CGptDict:
         return promt
 
     def check_dic_use(
-        self, find_from_str: str, tran: CSentense, scene: str = "all"
+        self, find_from_str: str, tran: CSentense, scene: str = "all", skip_overlap: bool = True
     ) -> str:
         """检查译文是否使用了源词在 GPT 字典中的替换词，返回未使用词条的提示文本。
 
@@ -695,20 +872,59 @@ class CGptDict:
             tran: 当前句子（取 post_src 判定源词是否出现）。
             scene: 场景过滤，all 检查全部；h 检查 h 与 非 h（重合词条只按
                    h 检查，与 gen_prompt 注入侧一致）；nh 只检查非 h 字典。
+            skip_overlap: True 按长词优先消费检查——长词条命中后从原文副本消费其
+                覆盖范围，短的重叠词条不再重复检查（与注入侧 gen_prompt 口径一致）；
+                False 保留旧口径：每条词条独立对完整原文检查，重叠词会重复检查。
         """
+        if not skip_overlap:
+            return self._check_dic_use_legacy(find_from_str, tran, scene)
+
+        problem_list = []
+        remaining = tran.post_src  # 消费副本：长词命中后删除其覆盖范围
+        # h 组优先、组内长词降序（正则按模式串长度）：与注入侧 h 优先语义一致
+        h_part = [d for d in self._dic_list if self._is_h_dict(d)]
+        nh_part = [d for d in self._dic_list if not self._is_h_dict(d)]
+        if scene == "nh":
+            dic_iter = _sorted_by_len_desc(nh_part)
+        elif scene == "h":
+            dic_iter = _sorted_by_len_desc(h_part) + _sorted_by_len_desc(nh_part)
+        else:
+            dic_iter = _sorted_by_len_desc(self._dic_list)
+
+        for dic in dic_iter:
+            if not _dict_word_match(dic, remaining):
+                continue
+            replace_word_list = (
+                dic.replace_word.split("/")
+                if "/" in dic.replace_word
+                else [dic.replace_word]
+            )
+            if not any(replace_word in find_from_str for replace_word in replace_word_list):
+                problem_list.append(
+                    f"{dic.dic_name}未使用：{dic.search_word}---{dic.replace_word}"
+                )
+            # 无论是否判定未使用都消费：长词条报错时其覆盖范围不再由短词条重复报
+            remaining = _dict_word_consume(dic, remaining)
+
+        return ", ".join(problem_list)
+
+    def _check_dic_use_legacy(
+        self, find_from_str: str, tran: CSentense, scene: str = "all"
+    ) -> str:
+        """旧口径的字典使用检查（skipOverlapCheck=false 时启用）：逐条独立检查，重叠词会重复检查。"""
         problem_list = []
         # 与注入侧 gen_prompt(scene="h") 对齐：源词被 h 词条覆盖时，非 h 同源词条不参与
         h_hit = set()
         if scene == "h":
             for dic in self._dic_list:
-                if self._is_h_dict(dic) and dic.search_word in tran.post_src:
+                if self._is_h_dict(dic) and _dict_word_match(dic, tran.post_src):
                     h_hit.add(dic.search_word)
         for dic in self._dic_list:
             if scene == "nh" and self._is_h_dict(dic):
                 continue
             if scene == "h" and not self._is_h_dict(dic) and dic.search_word in h_hit:
                 continue
-            if dic.search_word not in tran.post_src:
+            if not _dict_word_match(dic, tran.post_src):
                 continue
 
             replace_word_list = (

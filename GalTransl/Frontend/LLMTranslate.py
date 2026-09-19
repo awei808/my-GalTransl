@@ -536,9 +536,6 @@ async def doLLMTranslate(
 
     # 获取待翻译文件列表
     file_list = get_file_list(projectConfig.getInputPath())
-    # 载入 gt_input 中的 FileMetaData.json
-    from GalTransl.Backend.metadata import load_file_metadata
-    projectConfig.file_metadata = load_file_metadata(projectConfig)
     if not file_list:
         # dump-name / GenDic 等仅基于输入文件的短路流程，空目录不算致命错误，友好返回
         if (
@@ -642,7 +639,7 @@ async def doLLMTranslate(
             )
             LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
 
-            # 交叉验证：检查 FileMetaData.json 条目数
+            # 交叉验证：检查 pass1_cache 元数据条目数
             from GalTransl.Backend.metadata import load_file_metadata_map
             try:
                 fm_map = load_file_metadata_map(projectConfig)
@@ -696,7 +693,7 @@ async def doLLMTranslate(
 
     if eng_type == "ForBatchMetaData":
         # 第二次启动后端：依据文件级剧情元数据将全文划分为翻译区间
-        # (批次)，标注视角/氛围/H/用词色彩，写入 transl_cache/pass2_cache/BatchMetadata.json
+        # (批次)，标注视角/氛围/H/用词色彩，写入 transl_cache/pass2_cache/ {filename}.batch.json
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
         gptapi = await init_gptapi(projectConfig)
@@ -731,7 +728,7 @@ async def doLLMTranslate(
             )
             LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
 
-            # 交叉验证：检查 BatchMetadata.json 条目数
+            # 交叉验证：检查 pass2_cache 批次元数据条目数
             from GalTransl.Backend.metadata import load_batch_metadata_map
             try:
                 bm_map = load_batch_metadata_map(projectConfig)
@@ -830,10 +827,6 @@ async def doLLMTranslate(
                     retran_key="",
                     eng_type=eng_type,
                 )
-                # 注入文件级元数据（供首轮修复）
-                file_metadata = getattr(projectConfig, "file_metadata", None)
-                if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
-                    gptapi.set_file_metadata(file_metadata, file_name)
                 _update_runtime(projectConfig, current_file=file_name)
                 await gptapi.batch_translate(
                     file_name,
@@ -970,10 +963,6 @@ async def doLLMTranslate(
                     retran_key="",
                     eng_type=eng_type,
                 )
-                # 注入文件级元数据（供首轮评估）
-                file_metadata = getattr(projectConfig, "file_metadata", None)
-                if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
-                    gptapi.set_file_metadata(file_metadata, file_name)
                 _update_runtime(projectConfig, current_file=file_name)
                 await gptapi.batch_translate(
                     file_name,
@@ -1911,7 +1900,7 @@ async def _run_full_pipeline(
             projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
         )
         try:
-            # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
+            # ForBatchMetaData 会写入 transl_cache/pass2_cache/ 的 {filename}.batch.json
             # 已存在的批次级元数据映射：用于「已存在则跳过」，避免覆盖用户手改/既有产物
             existing_bm_map = load_batch_metadata_map(projectConfig)
             force_regen_bm = projectConfig.getKey(
@@ -2338,14 +2327,6 @@ async def doLLMTranslSingleChunk(
         if len(translist_unhit) > 0:
             _check_stop_requested(projectConfig)
             await ensure_model_available_if_needed(projectConfig)
-            # 注入文件级元数据（仅支持 set_file_metadata 的后端，如 ForGal-json-multi-chat）
-            file_metadata = getattr(projectConfig, "file_metadata", None)
-            if file_metadata is not None and hasattr(gptapi, "set_file_metadata"):
-                # 待废弃：_file_index 后缀桶键由 splitter 分块驱动，未来随 BatchMetadata 语义段移除
-                _batch_file_name = file_name + (
-                    f"_{file_index}" if total_splits > 1 else ""
-                )
-                gptapi.set_file_metadata(file_metadata, _batch_file_name)
             # 执行翻译
             await gptapi.batch_translate(
                 file_name + (f"_{file_index}" if total_splits > 1 else ""),
@@ -2735,10 +2716,6 @@ async def _run_after_trans_single_file(
         else:
             LOGGER.warning(f"[后处理] 未知模式 '{mode}'，跳过")
             return
-        # 注入文件级元数据（与翻译轮一致）
-        _fm = getattr(projectConfig, "file_metadata", None)
-        if _fm is not None and hasattr(_api, "set_file_metadata"):
-            _api.set_file_metadata(_fm, orig_name)
         await _api.batch_translate(
             orig_name,
             orig_name + ".json",

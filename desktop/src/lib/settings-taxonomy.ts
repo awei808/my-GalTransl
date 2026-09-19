@@ -259,6 +259,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "dictionary.usePostDictInName",
           "dictionary.useGPTDictInName",
           "dictionary.sortDict",
+          "dictionary.skipOverlapCheck",
         ],
       },
     ],

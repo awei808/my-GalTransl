@@ -17,7 +17,8 @@ from GalTransl.Utils import (
     is_all_gbk,
     extract_control_substrings
 )
-from GalTransl.Dictionary import CGptDict, _COMMENT_PREFIXES
+from GalTransl.Dictionary import CGptDict, DictWordMatcher, _COMMENT_PREFIXES, _split_dict_line
+from GalTransl.Backend.utils import coerce_bool
 
 MONOLOGUE_MALE_HE_EXCLUDES = (
     "其他",
@@ -102,6 +103,18 @@ def _clean_text_len(s: str) -> int:
     return len(norm) - norm.count("\n")
 
 
+def _hit_display_words(words: list, *texts: str) -> list:
+    """检测词表命中筛选，返回命中词的显示文本（支持 str 与 DictWordMatcher 混合）。"""
+    hits = []
+    for word in words:
+        if isinstance(word, DictWordMatcher):
+            if any(word.hit(t) for t in texts):
+                hits.append(word.word)
+        elif any(word in t for t in texts):
+            hits.append(word)
+    return hits
+
+
 def load_h_check_words(dict_paths: list) -> list:
     """加载 H 场景用词不当检测词库（格式与 GPT 字典一致：词|备注）。
 
@@ -110,10 +123,11 @@ def load_h_check_words(dict_paths: list) -> list:
     取词后再防御一次：首列以 // 开头的行一律视为注释丢弃，避免模板注释
     （如「// 格式：词|备注」含 | 被当作词条）注入提示词。
     第二列备注仅作说明，加载时剥离（只取词）。
-    文件缺失或解析为空时返回空列表（检测自动降级为不触发）。
+    检测词支持 `re:` 前缀正则（编译失败或可匹配空串回退字面量），
+    返回 DictWordMatcher 列表；文件缺失或解析为空时返回空列表（检测自动降级）。
     """
-    words: list[str] = []
-    seen: set[str] = set()
+    words: list = []
+    seen: set = set()
     for dict_path in dict_paths:
         if not os.path.isfile(dict_path):
             LOGGER.warning(f"禁用词字典文件不存在：{dict_path}")
@@ -130,7 +144,7 @@ def load_h_check_words(dict_paths: list) -> list:
                     continue
                 # 与 parse_dict_line 对齐：Tab/四空格转 | 后再分割（兼容 Tab 分隔字典）
                 norm = stripped.replace("    ", "\t").replace("\t", "|")
-                word = norm.split("|", 1)[0].strip()
+                word = _split_dict_line(norm)[0].strip()
                 # 首列带注释前缀（即使整行含 |，如模板说明）一律丢弃，防注入提示词
                 if word.lstrip().startswith(_COMMENT_PREFIXES):
                     LOGGER.debug(f"禁用词字典跳过注释行：{stripped}")
@@ -139,7 +153,7 @@ def load_h_check_words(dict_paths: list) -> list:
                     continue
                 if word not in seen:
                     seen.add(word)
-                    words.append(word)
+                    words.append(DictWordMatcher(word))
                     count += 1
         LOGGER.info(f"载入 H 场景用词检测词库: {dict_path} {count}词条")
     return words
@@ -174,6 +188,14 @@ def find_problems(
     # 仅当 problemList 键未配置时才回退旧版 GPT35 段；配置为空列表则按"不检测"处理
     if not find_type and not projectConfig.hasProblemAnalyzeConfig("problemList"):
         find_type = projectConfig.getProblemAnalyzeConfig("GPT35")  # 兼容旧版
+
+    # 字典使用检查：是否跳过重叠词的重复检查（dictionary.skipOverlapCheck，默认开启）
+    try:
+        skip_overlap_check = coerce_bool(
+            projectConfig.getDictCfgSection().get("skipOverlapCheck", True), True
+        )
+    except Exception:
+        skip_overlap_check = True
 
     for tran in trans_list:
         if getattr(tran, "skip_check", False):
@@ -291,10 +313,10 @@ def find_problems(
                     f"比日文长：{round(len(post_dst)/max(len(pre_src),0.1),1)}倍({len(post_dst)-len(pre_src)}字符)"
 
                 )
-        if CProblemType.字典使用 in find_type:
+        if CProblemType.字典使用 in find_type and gpt_dict is not None:
             # h 场景检查 h 与 非 h（重合词条只按 h 检查）；非 h 场景只检查非 h 字典
             if val := gpt_dict.check_dic_use(
-                pre_dst, tran, scene="h" if is_h_scene else "nh"
+                pre_dst, tran, scene="h" if is_h_scene else "nh", skip_overlap=skip_overlap_check
             ):
                 problem_list.append(val)
         if CProblemType.用词不当 in find_type:
@@ -303,17 +325,15 @@ def find_problems(
                 merged_words = list(
                     dict.fromkeys([*(h_check_words or []), *(forbidden_words or [])])
                 )
-                if merged_words:
-                    hits = [w for w in merged_words if w in pre_dst or w in post_dst]
-                    if hits:
-                        problem_list.append("用词不当：" + "、".join(hits))
-                        LOGGER.debug(f"用词不当(h场景)：index={tran.index}, 命中={hits}")
+                hits = _hit_display_words(merged_words, pre_dst, post_dst)
+                if hits:
+                    problem_list.append("用词不当：" + "、".join(hits))
+                    LOGGER.debug(f"用词不当(h场景)：index={tran.index}, 命中={hits}")
             else:
-                if forbidden_words:
-                    hits = [w for w in forbidden_words if w in pre_dst or w in post_dst]
-                    if hits:
-                        problem_list.append("用词不当：" + "、".join(hits))
-                        LOGGER.debug(f"用词不当(非h场景)：index={tran.index}, 命中={hits}")
+                hits = _hit_display_words(list(forbidden_words or []), pre_dst, post_dst)
+                if hits:
+                    problem_list.append("用词不当：" + "、".join(hits))
+                    LOGGER.debug(f"用词不当(非h场景)：index={tran.index}, 命中={hits}")
         if CProblemType.引入英文 in find_type:
             if not contains_english(post_src) and contains_english(pre_dst):
                 eng_chars = contains_english(post_dst)

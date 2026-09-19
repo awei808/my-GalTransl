@@ -483,12 +483,17 @@ class CheckDicUseSceneTests(unittest.TestCase):
         self.assertNotIn("GPT字典_h未使用", out)
 
     def test_all_checks_both(self) -> None:
-        """scene='all'（默认）：h 与非 h 同源词都参与（不区分场景）"""
+        """scene='all'：默认 skip_overlap=True 时同源重叠词只报一次（先命中者消费源词）；
+        skip_overlap=False（旧口径）h 与非 h 同源词都独立检查、重复报告"""
         gd = CGptDictSceneTests()._make_gd()
         tran = self._make_tran("責め", "責め是啥")
         out = gd.check_dic_use(tran.post_dst, tran)
+        # 同长稳定排序保持 _dic_list 顺序：非 h 词条在前、先命中并消费，h 词条不再重复报
         self.assertIn("GPT字典_非h未使用：責め---责难", out)
-        self.assertIn("GPT字典_h未使用：責め---折磨/拷问/惩罚/调教", out)
+        self.assertNotIn("GPT字典_h未使用", out)
+        out_legacy = gd.check_dic_use(tran.post_dst, tran, skip_overlap=False)
+        self.assertIn("GPT字典_非h未使用：責め---责难", out_legacy)
+        self.assertIn("GPT字典_h未使用：責め---折磨/拷问/惩罚/调教", out_legacy)
 
 
 # ══════════════════════════════════════════════════════════

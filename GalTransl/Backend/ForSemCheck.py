@@ -152,7 +152,7 @@ class ForSemCheck(BaseImproveRound):
         total_batches = (total + num_per_request - 1) // num_per_request
         hit_count = 0
         # 文件级元数据：作为检测语境注入（每文件解析一次，供本文件各批复用），
-        # 无 FileMetaData.json 时返回 None → 不注入，行为与旧版一致。
+        # pass1_cache 无对应条目时返回 None → 不注入，行为与旧版一致。
         metadata = self._resolve_file_metadata(filename)
         metadata_block = (
             self._format_file_metadata_block(metadata) if metadata is not None else ""

@@ -533,10 +533,9 @@ async def _check_model_availability(
     """主动检测所选后端的模型 / token 可用性。
 
     复用与翻译任务相同的 tokenPool 构建逻辑：仅 OpenAI-Compatible 类后端
-    （translator 名称含 NEED_OpenAITokenPool 片段）需要 token 检测；本地 /
-    特殊端点（sakura、galtransl 等）走 endpointQueue，无需检测，返回
-    applicable=False。检测阶段 proxy 行为与真实翻译任务保持一致（不传 proxy）。
-    注：sakura/galtransl 端点队列为废弃的 SakuraLLM 代码（Sakura 配置段已移除）。
+    （translator 名称含 NEED_OpenAITokenPool 片段）需要 token 检测；本地
+    端点无需检测，返回 applicable=False。检测阶段 proxy 行为与真实翻译
+    任务保持一致（不传 proxy）。
     """
     # ── 配置名自动解析（与 cache/save 保持一致）──
     resolved_config = config_file_name
@@ -3032,46 +3031,6 @@ def build_handler(registry: JobRegistry) -> type:
                 output_dir = os.path.join(project_dir, OUTPUT_FOLDERNAME)
                 cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
                 cache_files = _build_cache_tree(cache_dir)
-                # 兼容：若 gt_input 下存在元数据文件而缓存树（pass1_cache/pass2_cache）中未包含，
-                # 则作为顶层节点追加，保证用户总能点开元数据文件。
-                def _tree_has(name: str) -> bool:
-                    def _walk(ns: list[dict[str, Any]]) -> bool:
-                        for n in ns:
-                            if n.get("is_file") and n.get("name") == name:
-                                return True
-                            if not n.get("is_file") and _walk(n.get("children", [])):
-                                return True
-                        return False
-                    return _walk(cache_files)
-
-                for _mname, _cand in {
-                    "FileMetaData.json": os.path.join(INPUT_FOLDERNAME, "FileMetaData.json"),
-                    "BatchMetadata.json": os.path.join(INPUT_FOLDERNAME, "BatchMetadata.json"),
-                }.items():
-                    if _tree_has(_mname):
-                        continue
-                    _full = os.path.join(project_dir, _cand)
-                    if not os.path.isfile(_full):
-                        continue
-                    _st = os.stat(_full)
-                    _count = 0
-                    try:
-                        with open(_full, "r", encoding="utf-8") as _f:
-                            _d = json.load(_f)
-                        _count = len(_d) if isinstance(_d, list) else (1 if isinstance(_d, dict) else 0)
-                    except Exception:
-                        pass
-                    cache_files.append(
-                        {
-                            "name": _mname,
-                            "path": _mname,
-                            "is_file": True,
-                            "size": _st.st_size,
-                            "modified": datetime.fromtimestamp(_st.st_mtime).isoformat(),
-                            "entry_count": _count,
-                            "is_metadata": True,
-                        }
-                    )
                 self._send_json({
                     "project_dir": project_dir,
                     "input_dir": input_dir,
@@ -3261,7 +3220,7 @@ def build_handler(registry: JobRegistry) -> type:
                         self._send_json({"error": f"invalid cache filename (empty)"}, status=HTTPStatus.BAD_REQUEST)
                         return
 
-                    # 允许相对子路径（如 pass1_cache/FileMetaData.json），与 GET 行为一致
+                    # 允许相对子路径（如 pass1_cache/文件名.meta.json），与 GET 行为一致
                     norm = os.path.normpath(raw_filename.replace("\\", "/"))
                     if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
                         self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
@@ -3619,7 +3578,7 @@ def build_handler(registry: JobRegistry) -> type:
                         if not rel:
                             not_found_files.append(rel)
                             continue
-                        # 允许相对缓存根的子目录路径（如 pass1_cache/FileMetaData.json），
+                        # 允许相对缓存根的子目录路径（如 pass1_cache/文件名.meta.json），
                         # 但禁止任何路径穿越（../、绝对路径等），确保只删除缓存目录内的文件。
                         file_path = os.path.join(cache_dir, rel)
                         abs_target = os.path.abspath(file_path)
@@ -3986,7 +3945,7 @@ def build_handler(registry: JobRegistry) -> type:
                 if not filename:
                     self._send_json({"error": "invalid cache filename"}, status=HTTPStatus.BAD_REQUEST)
                     return
-                # 允许相对子路径（如 pass1_cache/FileMetaData.json），但禁止路径穿越
+                # 允许相对子路径（如 pass1_cache/文件名.meta.json），但禁止路径穿越
                 norm = os.path.normpath(filename.replace("\\", "/"))
                 if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
                     self._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)

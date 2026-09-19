@@ -6,7 +6,7 @@
     （none / improve+brfix 组合），统一返回白名单内的有序 key 列表（保序、去重）；
     缺省回退 enableBetterTranslation（true→[improve]）、非法值回退空列表。
   - _run_after_trans_single_file：按 mode 实例化正确后端、调用 batch_translate、
-    注入 file_metadata、finally 内 shutdown；异常不泄漏连接。
+    finally 内 shutdown；异常不泄漏连接。
 """
 import asyncio
 import unittest
@@ -31,7 +31,6 @@ def _make_projectConfig(after=None, enable_better=False, enable_improve=None):
 
     return SimpleNamespace(
         getKey=getKey,
-        file_metadata={"name": "x"},
         proxyPool=None,
         tokenPool=None,
         gpt_dic={},
@@ -210,7 +209,6 @@ class ResolveOrderTests(unittest.TestCase):
 class RunAfterSingleFileTests(unittest.TestCase):
     def _fake_backend(self, mode):
         inst = MagicMock()
-        inst.set_file_metadata = MagicMock()
         inst.set_fix_params = MagicMock()
         inst.batch_translate = AsyncMock()
         inst.shutdown = AsyncMock()
@@ -238,7 +236,6 @@ class RunAfterSingleFileTests(unittest.TestCase):
             # 构造参数：projectConfig, eng_type, proxyPool, tokenPool
             args, _ = p_imp.call_args
             self.assertEqual(args[1], "ForImproveTranslation")
-            improve_inst.set_file_metadata.assert_called_once()
             self.assertTrue(improve_inst.shutdown.called)
 
     def test_brfix_instantiates_correct_backend(self):

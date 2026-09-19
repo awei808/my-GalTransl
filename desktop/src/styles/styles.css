@@ -4669,6 +4669,14 @@ a:hover {
   padding-left: 7px;
 }
 
+/* 非法正则词条（re: 前缀编译失败/可匹配空串）：整行警示，悬停显示错误原因 */
+.dict-row--regex-error td {
+  background: color-mix(in srgb, var(--color-bg-error) 55%, transparent);
+}
+.dict-row--regex-error td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-status-error);
+}
+
 .dict-cell-note {
   display: inline-block;
   max-width: 100%;

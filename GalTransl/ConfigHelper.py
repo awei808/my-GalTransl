@@ -209,7 +209,6 @@ class CProjectConfig:
         self.fPlugins = []  # 文件插件列表
         self.tokenPool = None  # 令牌池
         self.proxyPool = None  # 代理池
-        self.endpointQueue = None  # 端点队列
         # 大阶段独立 API（common.stageBackends）：Service 解析后注入 profile dict，
         # Runner 据此预建各阶段独立令牌池；未配置的阶段回退主池
         self.stage_profiles: dict = {}  # 阶段键 -> 全局后端配置 dict

@@ -63,7 +63,7 @@ class FileMetaData:
     用于在多轮对话的第一轮向 LLM 提供文件级的剧情上下文，
     帮助模型在后续轮次中保持人物译名、语气与剧情基调的一致性。
 
-    属性（与 gt_input 中的 ``FileMetaData.json`` 顶层键一一对应；
+    属性（与 pass1_cache 中 ``{filename}.meta.json`` 顶层键一一对应；
     类内使用英文属性名，JSON 数据键保持中文）：
 
         id          标识：文件级元数据的字符串标识（可空）

@@ -1311,6 +1311,10 @@ export function DictionaryPage() {
                                   fallback={
                                     <tr
                                       class={`dict-row dict-row--${rowSignal().type}`}
+                                      classList={{
+                                        "dict-row--regex-error": !!rowSignal().regexError,
+                                      }}
+                                      title={rowSignal().regexError || undefined}
                                       // data-row-index/type 为未来正则搜索的行定位/高亮预留，勿删
                                       data-row-index={ri}
                                       data-row-type={rowSignal().type}

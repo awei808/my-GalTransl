@@ -110,8 +110,6 @@ class ForBatchMetaData(BaseEngine):
         self._file_metadata_by_file: dict = {}
         self._file_metadata_loaded: bool = False
 
-        # FileMetaData 惰性载入已完成，不再需要跨文件合并锁
-
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
         self._global_prompt_loaded: bool = False
@@ -131,25 +129,25 @@ class ForBatchMetaData(BaseEngine):
 
     # 0. 文件级剧情元数据载入与格式化
     def _ensure_file_metadata_loaded(self) -> None:
-        """惰性载入 FileMetaData.json（仅执行一次）。"""
+        """惰性载入 pass1_cache 文件级元数据（仅执行一次）。"""
         if self._file_metadata_loaded:
             return
         self._file_metadata_loaded = True
         try:
             self._file_metadata_by_file = load_file_metadata_map(self.pj_config)
             LOGGER.info(
-                f"[BatchMetaData] 已载入 FileMetaData.json，"
+                f"[BatchMetaData] 已载入文件级元数据（pass1_cache），"
                 f"共 {len(self._file_metadata_by_file)} 个文件有元数据"
             )
         except Exception as e:
-            LOGGER.warning(f"[BatchMetaData] 载入 FileMetaData.json 失败，批次元数据将不含文件级背景：{e}")
+            LOGGER.warning(f"[BatchMetaData] 载入文件级元数据失败，批次元数据将不含文件级背景：{e}")
             self._file_metadata_by_file = {}
 
     def _build_file_metadata_block(self, filename: str) -> str:
         """取该文件的文件级剧情元数据，格式化为提示词背景块（<plot_metadata> 包裹版）。
 
         与翻译轮共用 metadata.format_file_metadata_block 的形态（不含翻译轮专属
-        指导语）；找不到对应条目（未生成 FileMetaData.json 或缺少该文件）时返回
+        指导语）；找不到对应条目（未生成文件级元数据或缺少该文件）时返回
         空串，对应模板中的 [plot_metadata] 会被替换为空。
         """
         self._ensure_file_metadata_loaded()
@@ -159,7 +157,7 @@ class ForBatchMetaData(BaseEngine):
             md = self._file_metadata_by_file.get(strip_chunk_suffix(filename))
         if md is None:
             LOGGER.debug(
-                f"[BatchMetaData] {filename} 在 FileMetaData.json 中无对应条目，"
+                f"[BatchMetaData] {filename} 在 pass1_cache 中无对应条目，"
                 f"该文件将不含文件级剧情背景"
             )
             return ""

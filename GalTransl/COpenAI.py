@@ -8,37 +8,10 @@ from GalTransl import LOGGER, TRANSLATOR_DEFAULT_ENGINE
 from GalTransl.ConfigHelper import CProjectConfig, CProxy, build_httpx_sync_proxy_kwargs
 from typing import Optional, Tuple
 from random import choice
-from asyncio import Queue
 from openai import OpenAI
 import re
 import httpx
 from GalTransl.TerminalOutput import should_print_translation_logs, terminal_progress
-
-
-def normalize_sakura_endpoints(section: dict, fallback_endpoint: str = "") -> list[str]:
-    """废弃的 SakuraLLM 代码：Sakura 后端配置段已移除，本函数仅被 init_sakura_endpoint_queue 引用，实际不可达。"""
-    raw_endpoints = section.get("endpoints", section.get("endpoint", []))
-    if isinstance(raw_endpoints, str):
-        raw_endpoints = [raw_endpoints]
-    elif not isinstance(raw_endpoints, list):
-        raw_endpoints = []
-
-    endpoints = []
-    for endpoint in raw_endpoints:
-        if not isinstance(endpoint, str):
-            continue
-        endpoint = endpoint.strip()
-        if endpoint and endpoint not in endpoints:
-            endpoints.append(endpoint)
-
-    fallback_endpoint = fallback_endpoint.strip() if isinstance(fallback_endpoint, str) else ""
-    if not endpoints and fallback_endpoint:
-        endpoints.append(fallback_endpoint)
-
-    if not endpoints:
-        endpoints.append("http://127.0.0.1:8501")
-
-    return endpoints
 
 
 class COpenAIToken:
@@ -394,29 +367,3 @@ class COpenAITokenPool:
         获取所有可用的token
         """
         return [token for available, token in self.tokens if available]
-
-
-async def init_sakura_endpoint_queue(projectConfig: CProjectConfig) -> Optional[Queue]:
-    """废弃的 SakuraLLM 代码：Sakura 后端配置段已移除，唯一调用方 Runner 中对应分支不可达。
-    初始化端点队列，用于Sakura或GalTransl引擎。
-
-    参数:
-    projectConfig: 项目配置对象
-    workersPerProject: 每个项目的工作线程数
-    eng_type: 引擎类型
-
-    返回:
-    初始化的端点队列，如果不需要则返回None
-    """
-
-    # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
-    workersPerProject = projectConfig.get_workers_per_project()
-    sakura_endpoint_queue = asyncio.Queue()
-    section_name = "SakuraLLM"
-    endpoints = normalize_sakura_endpoints(projectConfig.getBackendConfigSection(section_name))
-    repeated = (workersPerProject + len(endpoints) - 1) // len(endpoints)
-    for _ in range(repeated):
-        for endpoint in endpoints:
-            await sakura_endpoint_queue.put(endpoint)
-    LOGGER.info(f"当前使用 {workersPerProject} 个Sakura worker引擎")
-    return sakura_endpoint_queue

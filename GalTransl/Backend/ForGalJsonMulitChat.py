@@ -786,18 +786,18 @@ class ForGalJsonMulitChat(BaseTranslate):
         self._force_first_round_files: set[str] = set()
 
         # 文件名 -> 剧情元数据：由上层在翻译前通过 set_file_metadata 注入（显式覆盖，
-        # 优先级高于从 gt_input 自动载入的 FileMetaData.json）。
+        # 优先级高于从 pass1_cache 惰性载入的文件级元数据）。
         self.file_metadata_map: dict[str, FileMetaData] = {}
 
-        # 从 FileMetaData.json 自动载入的文件名->剧情元数据映射（惰性载入，供缺显式注入时使用）
+        # 从 pass1_cache/*.meta.json 惰性载入的文件名->剧情元数据映射（供缺显式注入时使用）
         self._file_metadata_by_file: dict[str, FileMetaData] = {}
         self._file_metadata_loaded: bool = False
-        # 保存项目配置以便惰性定位 gt_input 中的 FileMetaData.json
+        # 保存项目配置以便惰性定位 pass1_cache 中的文件级元数据
         self.project_config = config
 
         # 文件名 -> 批次级元数据：由上层显式注入（优先级高于自动载入）。
         self.batch_metadata_map: dict[str, BatchMetadata] = {}
-        # 从 BatchMetadata.json 自动载入的「文件名 -> 批次级元数据」映射（惰性一次）。
+        # 从 pass2_cache/*.batch.json 惰性载入的「文件名 -> 批次级元数据」映射（惰性一次）。
         self._batch_metadata_by_file: dict[str, BatchMetadata] = {}
         self._batch_metadata_loaded: bool = False
 
@@ -856,7 +856,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         self.file_metadata_map[filename] = file_metadata
 
     def _ensure_file_metadata_loaded(self) -> None:
-        """惰性载入 FileMetaData.json（仅执行一次）。"""
+        """惰性载入 pass1_cache 文件级元数据（仅执行一次）。"""
         if self._file_metadata_loaded:
             return
         self._file_metadata_loaded = True
@@ -865,11 +865,11 @@ class ForGalJsonMulitChat(BaseTranslate):
         try:
             self._file_metadata_by_file = load_file_metadata_map(self.project_config)
             LOGGER.info(
-                f"[ForGalJsonMulitChat] 已载入 FileMetaData.json，"
+                f"[ForGalJsonMulitChat] 已载入文件级元数据（pass1_cache），"
                 f"共 {len(self._file_metadata_by_file)} 个文件有文件级元数据"
             )
         except Exception as e:
-            LOGGER.warning(f"[ForGalJsonMulitChat] 载入 FileMetaData.json 失败，已跳过剧情元数据：{e}")
+            LOGGER.warning(f"[ForGalJsonMulitChat] 载入文件级元数据失败，已跳过剧情元数据：{e}")
             self._file_metadata_by_file = {}
 
     def _resolve_file_metadata(self, filename: str) -> Optional[FileMetaData]:
@@ -877,7 +877,7 @@ class ForGalJsonMulitChat(BaseTranslate):
 
         优先级：
             1. 显式注入：上层通过 set_file_metadata 为该文件（或空串默认）设置的元数据；
-            2. 自动载入：gt_input 的 FileMetaData.json 中 ``id`` 与该文件匹配的项。
+            2. 自动载入：pass1_cache 中 ``id`` 与该文件匹配的 {filename}.meta.json。
 
         文件名可能带分批后缀（如 ``file_0``），自动载入阶段会尝试剥离末尾 ``_<数字>``
         再与 ``id`` 匹配（例如 ``02_kar_god01.txt.json_0`` -> ``02_kar_god01.txt.json``）。
@@ -900,7 +900,7 @@ class ForGalJsonMulitChat(BaseTranslate):
         return self._file_metadata_by_file.get(strip_chunk_suffix(filename))
 
     def _ensure_batch_metadata_loaded(self) -> None:
-        """惰性载入 BatchMetadata.json（仅执行一次）。"""
+        """惰性载入 pass2_cache 批次级元数据（仅执行一次）。"""
         if self._batch_metadata_loaded:
             return
         self._batch_metadata_loaded = True
@@ -909,11 +909,11 @@ class ForGalJsonMulitChat(BaseTranslate):
         try:
             self._batch_metadata_by_file = load_batch_metadata_map(self.project_config)
             LOGGER.info(
-                f"[ForGalJsonMulitChat] 已载入 BatchMetadata.json，"
+                f"[ForGalJsonMulitChat] 已载入批次级元数据（pass2_cache），"
                 f"共 {len(self._batch_metadata_by_file)} 个文件有批次元数据"
             )
         except Exception as e:
-            LOGGER.warning(f"[ForGalJsonMulitChat] 载入 BatchMetadata.json 失败，已跳过批次元数据：{e}")
+            LOGGER.warning(f"[ForGalJsonMulitChat] 载入批次级元数据失败，已跳过批次元数据：{e}")
             self._batch_metadata_by_file = {}
 
     def _resolve_batch_metadata(self, filename: str) -> Optional[BatchMetadata]:

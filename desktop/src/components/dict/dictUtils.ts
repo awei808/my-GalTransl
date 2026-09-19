@@ -24,6 +24,9 @@ export type DictRow = {
   condItems?: ConditionItem[];
   splWord?: "and" | "or" | "";
   note?: string;
+  // 正则词条标记（re: 前缀）：isRegex 为引擎是否按正则处理；regexError 非空表示非法正则
+  isRegex?: boolean;
+  regexError?: string;
 };
 
 function snakeToCamelKey(k: string): string {

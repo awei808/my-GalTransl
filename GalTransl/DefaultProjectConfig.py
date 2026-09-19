@@ -162,6 +162,7 @@ dictionary:
   usePostDictInName: false # 将译后字典用在name字段，可用于翻译name字段[True/False]
   useGPTDictInName: true # 将GPT字典用在name字段，可用于翻译name字段[True/False]
   sortDict: true # 将所有字典按查找词长度重排序。[True/False]
+  skipOverlapCheck: true # 字典使用检查时，长词条命中后跳过被其覆盖的重叠短词条，避免重复检查/误报。[True/False]
   # 译前字典
   preDict:
     - 01H字典_矫正_译前.txt # 用于口齿不清的矫正

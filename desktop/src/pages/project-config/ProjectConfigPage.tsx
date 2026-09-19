@@ -121,7 +121,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "internals.pipeline.enableFileMeta": {
     label: "开启阶段 4：文件级元数据",
-    hint: "关闭后不生成/不更新 FileMetaData.json，翻译时无文件级剧情背景。",
+    hint: "关闭后不生成/不更新文件级元数据（pass1_cache），翻译时无文件级剧情背景。",
   },
   "internals.pipeline.enableBatchMeta": {
     label: "开启阶段 5：批次级元数据",
@@ -268,6 +268,10 @@ const FIELD_UI: Record<string, FieldUI> = {
   "dictionary.usePostDictInName": { label: "译后字典用于 name 字段" },
   "dictionary.useGPTDictInName": { label: "GPT 字典用于 name 字段" },
   "dictionary.sortDict": { label: "字典按词长排序" },
+  "dictionary.skipOverlapCheck": {
+    label: "字典检查跳过重叠词",
+    hint: "字典使用检查时，长词条命中后跳过被其覆盖的重叠短词条，避免重复检查/误报。关闭后回退旧口径（重叠词重复检查）。",
+  },
 };
 
 /**

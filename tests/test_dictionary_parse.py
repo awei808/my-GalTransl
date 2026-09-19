@@ -58,11 +58,12 @@ class ParseDictLineTests(unittest.TestCase):
         self.assertEqual(r.values, ["onlysearch", "", ""])
 
     def test_dictrow_shape(self) -> None:
-        # 字典行序列化字段：基础三件套 + 4 个结构化字段（target/cond_items/spl_word/note）
+        # 字典行序列化字段：基础三件套 + 4 个结构化字段 + 2 个正则标记字段
         d = asdict(parse_dict_line("a|b", "pre"))
         self.assertEqual(
             set(d.keys()),
-            {"type", "values", "raw", "target", "cond_items", "spl_word", "note"},
+            {"type", "values", "raw", "target", "cond_items", "spl_word", "note",
+             "is_regex", "regex_error"},
         )
 
     def test_comment_with_pipe_treated_as_comment(self) -> None:
@@ -89,10 +90,14 @@ class ParseDictLineTests(unittest.TestCase):
         self.assertEqual(r.values[1], "狗")
 
     def test_escape_lone_backslash_fallback(self) -> None:
-        # 孤立反斜杠转义失败应回退原文而非抛异常
-        r = parse_dict_line("a\\|b", "pre")
-        self.assertEqual(r.values[0], "a\\")
-        self.assertEqual(r.values[1], "b")
+        # 孤立反斜杠转义失败应回退原文而非抛异常（行尾孤立反斜杠）
+        r = parse_dict_line("abc\\", "pre")
+        self.assertEqual(r.values[0], "abc\\")
+
+    def test_escaped_pipe_is_literal_pipe(self) -> None:
+        # \| 为字面竖线（正则选择符等场景），不作为字段分隔符
+        r = parse_dict_line("a\\|b|c", "pre")
+        self.assertEqual(r.values, ["a|b", "c", ""])
 
     def test_conditional_with_tab_separator(self) -> None:
         # 旧版 Tab 分隔的条件字典行应归一化为 | 后正确解析（与引擎 load_dic 一致）
@@ -288,6 +293,7 @@ class ParseEndpointTests(_Base):
             {
                 "type": "normal", "values": ["搜索", "替换", ""], "raw": "搜索|替换",
                 "target": None, "cond_items": [], "spl_word": "", "note": "",
+                "is_regex": False, "regex_error": "",
             },
         )
         self.assertEqual(rows[1]["type"], "conditional")
@@ -313,6 +319,7 @@ class ParseEndpointTests(_Base):
                 "type": "gpt", "values": ["src", "dst", "note"], "raw": "src|dst|note",
                 # gpt 后端不剥离：备注列原样作为 note
                 "target": None, "cond_items": [], "spl_word": "", "note": "note",
+                "is_regex": False, "regex_error": "",
             },
         )
 
@@ -330,7 +337,8 @@ class ParseEndpointTests(_Base):
         self.assertEqual(
             body["rows"],
             [{"type": "blank", "values": [], "raw": "",
-              "target": None, "cond_items": [], "spl_word": "", "note": ""}],
+              "target": None, "cond_items": [], "spl_word": "", "note": "",
+              "is_regex": False, "regex_error": ""}],
         )
 
     def test_parse_bad_json(self) -> None:
