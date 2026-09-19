@@ -543,7 +543,8 @@ class GenDic(BaseEngine):
         self.system_prompt = GENDIC_SYSTEM
         self.init_chatbot(eng_type, config)
         self._apply_internal_prompt_template_overrides()
-        backend_cfg = config.getBackendConfigSection("OpenAI-Compatible")
+        # 与 init_chatbot 同口径：token 池携带 profile 段时实例级优先（大阶段独立 API）
+        backend_cfg = self._effective_backend_section()
         raw_retry = backend_cfg.get("genDicMaxApiRetries", 6)
         self.gendic_max_api_retries = self._coerce_positive_int(raw_retry, 6)
         # terms/segments 模式配置（设计文档第七~九节）：非法值回退默认，0 表示不截断。

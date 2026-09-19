@@ -76,7 +76,9 @@ def load_global_prompt(projectConfig: CProjectConfig) -> Optional[dict]:
     return data
 
 
-def _format_global_prompt_as_context(gp: dict, annotate_plot: bool = False) -> str:
+def _format_global_prompt_as_context(
+    gp: dict, annotate_plot: bool = False, characters: Optional[List[dict]] = None
+) -> str:
     """
     将 GlobalPrompt 字典格式化为可供其他后端注入提示词的文本块。
 
@@ -86,6 +88,8 @@ def _format_global_prompt_as_context(gp: dict, annotate_plot: bool = False) -> s
     Args:
         annotate_plot: 为 True 时在「剧情概述」标题处附加标注，说明该剧情
             为游戏全局剧情、可能与当前文件不完全对应。
+        characters: 按需注入的角色条目子集（None=全量渲染「角色列表」）。
+            传入空列表时省略角色段。
     """
     if not gp or not isinstance(gp, dict):
         return ""
@@ -105,7 +109,7 @@ def _format_global_prompt_as_context(gp: dict, annotate_plot: bool = False) -> s
         parts.append(f"{heading}\n{plot.strip()}")
 
     # 角色列表
-    characters = gp.get("角色列表", [])
+    characters = characters if characters is not None else gp.get("角色列表", [])
     if isinstance(characters, list) and characters:
         char_lines = ["# 角色设定"]
         for ch in characters:

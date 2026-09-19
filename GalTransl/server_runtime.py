@@ -147,7 +147,7 @@ PIPELINE_STAGE_NAMES: list[str] = [
     "生成文件级元数据",
     "划分翻译区间",
     "翻译执行中",
-    "译文质量改进",
+    "AI初步处理",
 ]
 PIPELINE_STAGE_TOTAL: int = len(PIPELINE_STAGE_NAMES)
 
@@ -160,6 +160,9 @@ def _compute_stage_index(stage: str) -> int:
     for idx, name in enumerate(PIPELINE_STAGE_NAMES):
         if stage.startswith(name) or name in stage:
             return idx
+    # 别名：旧版阶段7显示名 / 独立改进轮运行态 / 大阶段独立 API 预检
+    if "译文质量改进" in stage or "后处理-" in stage or "AI初步处理-" in stage:
+        return 7
     # 兜底："完整流水线启动" → 阶段 0，"流水线完成" → 阶段 7，"检查模型可用性" → 阶段 0
     if "启动" in stage or "模型可用性" in stage:
         return 0

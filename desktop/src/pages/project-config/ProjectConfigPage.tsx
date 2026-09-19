@@ -1,10 +1,11 @@
-import { createSignal, For, Show, Switch, Match, createEffect, onCleanup } from "solid-js";
+import { createSignal, For, Show, Switch, Match, createEffect, onCleanup, onMount } from "solid-js";
 import { appState, setAppState, getActiveConfigFileName, navigateTo } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { runPageAutosave } from "../../lib/usePageAutosave";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
 import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../../lib/api/general";
+import { fetchBackendProfiles, BACKEND_PROFILES_CHANGE_EVENT } from "../../lib/api/preferences";
 import type { ProblemTypeInfo } from "../../lib/api/types";
 import { classifyKeys } from "../../lib/settings-taxonomy";
 import type { FixedCardKind } from "../../lib/settings-taxonomy";
@@ -38,6 +39,18 @@ const DYNAMIC_MAX_KEY = "common.gpt.dynamicNumPerRequestTranslate.max";
 // BaseTranslate 用 getKey("gpt.translation_guideline") 加载规范（见 GalTransl/Backend/BaseTranslate.py），
 // 因此此处必须用带 common. 前缀的扁平键，否则选择会被后端忽略。
 const GUIDELINE_KEY = "common.gpt.translation_guideline";
+// 大阶段独立 API 卡片的字段清单（与后端 ConfigHelper.STAGE_BACKEND_KEYS 对应；顺序即渲染顺序）
+const STAGE_BACKEND_FIELDS: {
+  key: string;
+  label: string;
+  desc: string;
+  reserved?: boolean;
+}[] = [
+  { key: "metadata", label: "元数据阶段", desc: "全局分析 / 术语表 / 文件级元数据 / 剧情路线图 / 批次划分" },
+  { key: "translate", label: "翻译执行", desc: "多轮对话翻译（阶段 6）" },
+  { key: "afterTrans", label: "AI 初步（批量）处理", desc: "阶段 7 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）" },
+  { key: "proofread", label: "人工校对时 AI 精修", desc: "功能预留，当前版本未实现", reserved: true },
+];
 const HIDDEN_CONFIG_KEYS = new Set<string>([
   "common.gpt.dynamicNumPerRequestTranslate.min",
   "common.gpt.dynamicNumPerRequestTranslate.max",
@@ -280,6 +293,8 @@ function isOmittedFromList(key: string): boolean {
   if (REMOVED_CONFIG_KEYS.has(key)) return true;
   if (LIST_OMITTED_KEYS.has(key)) return true;
   if (key === GUIDELINE_KEY) return true;
+  // 大阶段独立 API：由「翻译后端总设置」的专用卡片渲染（common.stageBackends 嵌套对象展平后的各键）
+  if (key.startsWith("common.stageBackends.")) return true;
   return false;
 }
 
@@ -470,6 +485,48 @@ export function ProjectConfigPage() {
   const [filePlugins, setFilePlugins] = createSignal<string[]>([]);
   // 当前翻译规范值（响应式读取，供固定卡片展示）
   const guidelineCurrent = () => String(getValue(GUIDELINE_KEY) ?? "");
+
+  // ── 大阶段独立 API（stageBackends）：全局后端配置名下拉选项 ──
+  const [backendProfileNames, setBackendProfileNames] = createSignal<string[]>([]);
+
+  onMount(() => {
+    void loadBackendProfileNames();
+  });
+
+  async function loadBackendProfileNames() {
+    try {
+      const data = await fetchBackendProfiles();
+      setBackendProfileNames(Object.keys(data.profiles || {}).sort());
+    } catch {
+      setBackendProfileNames([]);
+    }
+  }
+
+  // 「后端配置」页增删改名后刷新本页下拉选项（与配置编辑互不影响）
+  createEffect(() => {
+    const handler = () => void loadBackendProfileNames();
+    window.addEventListener(BACKEND_PROFILES_CHANGE_EVENT, handler);
+    onCleanup(() => window.removeEventListener(BACKEND_PROFILES_CHANGE_EVENT, handler));
+  });
+
+  /** 读取 common.stageBackends 对象（缺省/类型异常时按空对象处理） */
+  const stageBackendsValue = (): Record<string, string> => {
+    const v = getValue("common.stageBackends");
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const rec = v as Record<string, ConfigValue>;
+      const out: Record<string, string> = {};
+      for (const [k, val] of Object.entries(rec)) {
+        if (typeof val === "string") out[k] = val;
+      }
+      return out;
+    }
+    return {};
+  };
+
+  /** 写入单个阶段的后端配置名（空串 = 跟随任务主配置） */
+  function setStageBackend(stage: string, name: string) {
+    setValue("common.stageBackends", { ...stageBackendsValue(), [stage]: name });
+  }
 
   // ── 大分组折叠状态（localStorage 持久化，版本化 key 便于后续增删分区自动失效） ──
   const PC_COLLAPSE_STORAGE_KEY = "galtransl.project-config.collapse.v1";
@@ -1152,6 +1209,59 @@ export function ProjectConfigPage() {
             value={order()}
             onChange={(o) => setValue("common.gpt.afterTranslation", o)}
           />
+        </div>
+      );
+    }
+    // kind === "stageBackends"：每大阶段独立 API（元数据/翻译/AI初步处理/预留校对精修）
+    if (kind === "stageBackends") {
+      const stageValue = () => stageBackendsValue();
+      return (
+        <div class="pc-external-info">
+          <div class="pc-row-label">
+            <span class="pc-label">大阶段独立 API 接入</span>
+            <div class="pc-key-hint">
+              <code class="pc-key">common.stageBackends</code>
+            </div>
+            <p class="pc-desc">
+              四个大阶段（元数据、翻译执行、AI 初步批量处理、人工校对 AI 精修）可各自使用不同的
+              全局后端配置（「后端配置」页创建）。默认全部跟随任务主配置（翻译控制台所选）；
+              阶段配置里的 proxy 不生效，统一使用任务级代理。引用的配置被删除后任务将启动失败，
+              请同步更新此处。
+            </p>
+          </div>
+          <For each={STAGE_BACKEND_FIELDS}>
+            {(f) => {
+              const current = () => stageValue()[f.key] ?? "";
+              return (
+                <div class="pc-row" classList={{ "pc-row--reserved": f.reserved }}>
+                  <div class="pc-row-label">
+                    <label class="pc-label" for={`stage-backend-${f.key}`}>
+                      {f.label}
+                      {f.reserved && <span class="pc-key-hint">（预留）</span>}
+                    </label>
+                    <p class="pc-desc">{f.desc}</p>
+                  </div>
+                  <div class="pc-row-control">
+                    <select
+                      id={`stage-backend-${f.key}`}
+                      class="field__input pc-input pc-select"
+                      disabled={f.reserved}
+                      value={current()}
+                      onChange={(e) => setStageBackend(f.key, e.currentTarget.value)}
+                    >
+                      <option value="">（跟随任务主配置）</option>
+                      <Show when={current() && !backendProfileNames().includes(current())}>
+                        <option value={current()}>{current()}</option>
+                      </Show>
+                      <For each={backendProfileNames()}>
+                        {(name) => <option value={name}>{name}</option>}
+                      </For>
+                    </select>
+                  </div>
+                </div>
+              );
+            }}
+          </For>
         </div>
       );
     }

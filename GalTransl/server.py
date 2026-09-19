@@ -56,6 +56,8 @@ from GalTransl.Backend.Prompts import (
     FORTRANS_SYSTEM,
     FORGAL_JSON_BANFIX_PROMPT,
     FORFIXROUND_SYSTEM,
+    FORWORDTONE_SYSTEM,
+    FORGAL_JSON_FORWORDTONE_PROMPT,
     build_fix_round_prompt,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
@@ -308,6 +310,7 @@ def _rebuild_trans_list_with_postprocess(
         # bool 归一化：请求体/缓存里非 bool 值（如 "false"）不误判为真
         s.skip_check = bool(e.get("skip_check", False))
         s.suspected_error = e.get("suspected_error", "")
+        s.tone_issue = e.get("tone_issue", "")
         trans_list.append(s)
 
     for i, s in enumerate(trans_list):
@@ -635,7 +638,7 @@ async def _check_model_availability(
         }
     await token_pool.checkTokenAvailablity()
     available = len(token_pool.tokens)
-    return {
+    result = {
         "ok": available > 0,
         "applicable": True,
         "available": available,
@@ -647,6 +650,114 @@ async def _check_model_availability(
             else f"所有 {total} 个 token 均不可用（endpoint 无响应或 key 无效）"
         ),
     }
+    stages = await _check_stage_model_availability(
+        cfg, translator, backend_profile if (using_profile and backend_profile) else ""
+    )
+    if stages:
+        result["stages"] = stages
+    return result
+
+
+_STAGE_CHECK_SKIP_MESSAGE = "与已检测的后端配置相同，跳过重复检测"
+
+
+async def _check_stage_model_availability(
+    cfg: "CProjectConfig", translator: str, main_profile_name: str
+) -> list[dict[str, Any]]:
+    """逐个检测 common.stageBackends 引用的阶段后端配置可用性。
+
+    与主配置同名的 profile 跳过重复检测；返回列表为空表示项目未配置阶段独立 API。
+    """
+    from GalTransl.ConfigHelper import STAGE_BACKEND_KEYS
+
+    stage_map = cfg.keyValues.get("stageBackends")
+    if not isinstance(stage_map, dict) or not stage_map:
+        return []
+    profiles = _read_backend_profiles().get("profiles", {})
+    results: list[dict[str, Any]] = []
+    checked_names = {main_profile_name} if main_profile_name else set()
+
+    def _stage_result(stage: str, profile: str, ok: bool, message: str,
+                      available: int = 0, total: int = 0) -> dict[str, Any]:
+        return {
+            "stage": stage,
+            "profile": profile,
+            "ok": ok,
+            "applicable": True,
+            "available": available,
+            "total": total,
+            "message": message,
+        }
+
+    for stage_key, profile_name in stage_map.items():
+        profile_name = str(profile_name or "").strip()
+        if not profile_name:
+            continue
+        if stage_key not in STAGE_BACKEND_KEYS:
+            results.append(_stage_result(
+                stage_key, profile_name, False,
+                f"未知阶段键 '{stage_key}'（可用：{', '.join(STAGE_BACKEND_KEYS)}）",
+            ))
+            continue
+        if profile_name in checked_names:
+            results.append(_stage_result(
+                stage_key, profile_name, True, _STAGE_CHECK_SKIP_MESSAGE,
+                available=-1, total=-1,
+            ))
+            continue
+        candidate = profiles.get(profile_name)
+        section = candidate.get("OpenAI-Compatible") if isinstance(candidate, dict) else None
+        if not isinstance(section, dict):
+            results.append(_stage_result(
+                stage_key, profile_name, False,
+                f"后端配置 '{profile_name}' 不存在或缺少 OpenAI-Compatible 段",
+            ))
+            continue
+        raw_tokens = section.get("tokens") or []
+        example_count = sum(
+            1 for t in raw_tokens if "-example-" in (t.get("token") or "")
+        )
+        real_count = len(raw_tokens) - example_count
+        if not raw_tokens:
+            results.append(_stage_result(
+                stage_key, profile_name, False, f"后端配置 '{profile_name}' 中没有 token",
+            ))
+            continue
+        if real_count == 0:
+            results.append(_stage_result(
+                stage_key, profile_name, False,
+                f"后端配置 '{profile_name}' 中 {example_count} 个 token 均为示例 key",
+                available=0, total=example_count,
+            ))
+            continue
+        try:
+            pool = COpenAITokenPool(cfg, translator, section=section)
+        except Exception as exc:
+            results.append(_stage_result(
+                stage_key, profile_name, False,
+                f"后端配置 '{profile_name}' 令牌池构建失败: {exc}",
+            ))
+            continue
+        total = len(pool.tokens)
+        if total == 0:
+            results.append(_stage_result(
+                stage_key, profile_name, False,
+                f"后端配置 '{profile_name}' 令牌池构建结果为空",
+            ))
+            continue
+        await pool.checkTokenAvailablity()
+        available = len(pool.tokens)
+        checked_names.add(profile_name)
+        results.append(_stage_result(
+            stage_key, profile_name, available > 0,
+            (
+                f"模型可用，可用 token {available}/{total}"
+                if available > 0
+                else f"所有 {total} 个 token 均不可用（endpoint 无响应或 key 无效）"
+            ),
+            available=available, total=total,
+        ))
+    return results
 
 
 def _read_yaml_file(path: str) -> dict:
@@ -1756,6 +1867,12 @@ def _collect_common_dict_payload() -> dict[str, Any]:
 
 # Global backend profiles helpers
 
+# 全局后端配置持久化文件（程序目录下），「后端配置」页与任务提交共同使用
+_BACKEND_PROFILES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "backend_profiles.yaml",
+)
+
 
 _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForGal-json-multi-chat": {
@@ -1793,6 +1910,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForFixRound": {
         "system_prompt": FORFIXROUND_SYSTEM,
         "user_prompt": build_fix_round_prompt(""),
+    },
+    "ForToneCheck": {
+        "system_prompt": FORWORDTONE_SYSTEM,
+        "user_prompt": FORGAL_JSON_FORWORDTONE_PROMPT,
     },
     "ForPlotRouteMap": {
         "system_prompt": FORPLOTROUTE_SYSTEM,
@@ -1866,6 +1987,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "状语过长", "description": "译文出现「在……中/里」或「……地」状语且中间长度超过「状语最大长度」阈值。"},
     {"name": "频繁换行", "description": "译文有效字符数不足却切出过多小句（<20字符且≥3小句，或<10字符且≥2小句），短译文却频繁断句。（测试中，可能误检）"},
     {"name": "疑似错误", "description": "AI 语义检测（ForSemCheck）判定原文与译文语义存在极大差异（疑似错译/漏译/译文串行），可由 ForSemCheckAgain 二次复核确认/撤销。"},
+    {"name": "词语色彩不一致", "description": "AI 词语色彩检查（ForToneCheck）判定译文用词色彩与批次区间标注的用词色彩明显不符，标记不改译文；可由统一问题修复按标注方向调整。"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)

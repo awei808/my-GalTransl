@@ -77,22 +77,32 @@ class COpenAITokenPool:
     OpenAI 令牌池
     """
 
-    def __init__(self, config: CProjectConfig, eng_type: str) -> None:
+    def __init__(
+        self,
+        config: CProjectConfig,
+        eng_type: str,
+        section: Optional[dict] = None,
+    ) -> None:
+        """构建令牌池。
 
+        Args:
+            config: 项目配置对象。
+            eng_type: 引擎类型标识。
+            section: 后端配置段（backendSpecific["OpenAI-Compatible"] 同构 dict）。
+                传入时令牌池从该段读取 tokens/stream/apiTimeout 等（供大阶段独立
+                API 使用），未传时读项目配置的 backendSpecific 段。
+        """
         token_list: list[COpenAIToken] = []
         self.pj_config = config
         defaultEndpoint = "https://api.openai.com"
-        section_name = "OpenAI-Compatible"
+        self._section_override = section if isinstance(section, dict) else None
         self.tokens: list[tuple[bool, COpenAIToken]] = []
-        self.force_eng_name = config.getBackendConfigSection(section_name).get(
-            "rewriteModelName", ""
-        )
-        self.stream = config.getBackendConfigSection(section_name).get("stream", False)
-        self.timeout = config.getBackendConfigSection(section_name).get(
-            "apiTimeout", 300
-        )
+        backend_cfg = self.backend_section
+        self.force_eng_name = backend_cfg.get("rewriteModelName", "")
+        self.stream = backend_cfg.get("stream", False)
+        self.timeout = backend_cfg.get("apiTimeout", 300)
 
-        if all_tokens := config.getBackendConfigSection(section_name).get("tokens"):
+        if all_tokens := backend_cfg.get("tokens"):
             for tokenEntry in all_tokens:
                 token = tokenEntry["token"]
                 if "-example-" in token:
@@ -131,6 +141,14 @@ class COpenAITokenPool:
 
         for token in token_list:
             self.tokens.append((True, token))
+
+    @property
+    def backend_section(self) -> dict:
+        """本池生效的后端配置段：优先构造时传入的 profile 段，否则读项目配置。"""
+        override = getattr(self, "_section_override", None)
+        if override is not None:
+            return override
+        return self.pj_config.getBackendConfigSection("OpenAI-Compatible")
 
     def _raise_if_stop_requested(self) -> None:
         stop_event = getattr(self.pj_config, "stop_event", None)
@@ -273,10 +291,7 @@ class COpenAITokenPool:
         """
         检测令牌有效性
         """
-        section_name = "OpenAI-Compatible"
-        raw_concurrency = self.pj_config.getBackendConfigSection(section_name).get(
-            "checkAvailableConcurrency", 4
-        )
+        raw_concurrency = self.backend_section.get("checkAvailableConcurrency", 4)
         try:
             check_concurrency = max(1, min(16, int(raw_concurrency)))
         except (TypeError, ValueError):

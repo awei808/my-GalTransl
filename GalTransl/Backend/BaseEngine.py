@@ -143,6 +143,7 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForFixRound": "GalTransl.Backend.ForFixRound",
     "ForSemCheck": "GalTransl.Backend.ForSemCheck",
     "ForSemCheckAgain": "GalTransl.Backend.ForSemCheckAgain",
+    "ForToneCheck": "GalTransl.Backend.ForToneCheck",
     "GenDic": "GalTransl.Backend.GenDic",
     "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
     "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",
@@ -400,11 +401,32 @@ class BaseEngine:
         self._apply_internal_prompt_template_overrides()
         self.init_chatbot(eng_type, config)
 
+    def _effective_backend_section(
+        self, section_name: str = "OpenAI-Compatible", config: Optional[CProjectConfig] = None
+    ) -> dict:
+        """解析本引擎生效的后端配置段。
+
+        大阶段独立 API：token 池携带其来源 profile 的配置段（backend_section）时，
+        实例级配置优先于项目全局 backendSpecific；未携带时行为与旧版一致。
+        任务级参数（如 globalRequestRPM）仍读主配置，不经此方法覆盖。
+
+        config 缺省时回退 self.pj_config（真实引擎均已由 __init__ 赋值）。
+        """
+        if section_name == "OpenAI-Compatible":
+            token_provider = getattr(self, "tokenProvider", None)
+            pool_section = getattr(token_provider, "backend_section", None)
+            if isinstance(pool_section, dict):
+                return pool_section
+        cfg = config if config is not None else getattr(self, "pj_config", None)
+        if cfg is None:
+            raise AttributeError("无可用配置源（config 参数与 self.pj_config 均缺失）")
+        return cfg.getBackendConfigSection(section_name)
+
     def init_chatbot(self, eng_type: str, config: CProjectConfig) -> None:
         # 废弃的 SakuraLLM 代码：eng_type 无 sakura 名称，SakuraLLM 分支实际不可达（Sakura 配置段已移除）。
         # 各后端在 config.inc.yaml 的 backendSpecific 下独立配置，互不影响。
         section_name = "SakuraLLM" if "sakura" in (eng_type or "").lower() else "OpenAI-Compatible"
-        backend_cfg = config.getBackendConfigSection(section_name)
+        backend_cfg = self._effective_backend_section(section_name, config)
 
         # API 调用限制（后端级、可独立配置）：错误率上限 / 最小请求间隔 / 请求次数上限。
         # 默认值为 0 表示「不限制」，需用户在 config.inc.yaml 的 backendSpecific 段显式配置才启用，
@@ -422,31 +444,21 @@ class BaseEngine:
         self.api_timeout = backend_cfg.get(
             "apiTimeout", 300
         )
-        self.apiErrorWait = config.getBackendConfigSection(section_name).get(
-            "apiErrorWait", "auto"
-        )
+        self.apiErrorWait = backend_cfg.get("apiErrorWait", "auto")
         # 规范化 apiErrorWait："auto"/非法值->-1（指数退避），数字->float（固定退避，支持亚秒）
         self.apiErrorWait = self._coerce_error_wait(self.apiErrorWait)
-        self.tokenStrategy = config.getBackendConfigSection(section_name).get(
-            "tokenStrategy", "random"
-        )
-        self.stream = config.getBackendConfigSection(section_name).get("stream", True)
+        self.tokenStrategy = backend_cfg.get("tokenStrategy", "random")
+        self.stream = backend_cfg.get("stream", True)
         # 单次 LLM 调用的最大尝试预算（不含 429 限流重试）：默认 6，
         # 死端点不再无限重试，耗尽后由上层失败兜底（跳批/留待下次运行）
         self.max_api_retries = coerce_positive_int_strict(
-            config.getBackendConfigSection(section_name).get("maxApiRetries", 6), 6
+            backend_cfg.get("maxApiRetries", 6), 6
         )
         # 思考相关配置（profile 级，缺省时零发送，向后兼容）
-        self.provider = config.getBackendConfigSection(section_name).get("provider", "auto")
-        self.thinking_mode = config.getBackendConfigSection(section_name).get(
-            "thinking_mode", "default"
-        )
-        self.reasoning_effort = config.getBackendConfigSection(section_name).get(
-            "reasoning_effort", ""
-        )
-        self.extra_body_raw = config.getBackendConfigSection(section_name).get(
-            "extra_body", ""
-        )
+        self.provider = backend_cfg.get("provider", "auto")
+        self.thinking_mode = backend_cfg.get("thinking_mode", "default")
+        self.reasoning_effort = backend_cfg.get("reasoning_effort", "")
+        self.extra_body_raw = backend_cfg.get("extra_body", "")
 
         self.trans_prompt = _apply_change_prompt(config, self.trans_prompt)
 

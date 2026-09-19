@@ -83,6 +83,28 @@ def _raise_if_stop_requested(stop_event: threading.Event | None) -> None:
         raise JobCancelledError()
 
 
+def _build_stage_token_pools(cfg: CProjectConfig, translator: str) -> None:
+    """按大阶段独立 API 配置（common.stageBackends）预建各阶段令牌池。
+
+    池在任务启动期构建（无并发）；profile 存在性与结构已由 Service 校验，
+    此处构建失败属 tokens 配置畸形，直接中止任务而非静默回退主池。
+    池对象携带来源 profile 的配置段（backend_section），引擎构造时实例级生效。
+    """
+    stage_profiles = getattr(cfg, "stage_profiles", None) or {}
+    for stage_key, profile in stage_profiles.items():
+        section = profile.get("OpenAI-Compatible") if isinstance(profile, dict) else None
+        if not isinstance(section, dict):
+            LOGGER.warning(
+                "[stage] 阶段 %s 的后端配置缺少 OpenAI-Compatible 段，回退主池", stage_key
+            )
+            continue
+        pool = COpenAITokenPool(cfg, translator, section=section)
+        cfg.stage_token_pools[stage_key] = pool
+        LOGGER.info(
+            f"[stage] 阶段独立 API 已启用 stage={stage_key} 可用token数={len(pool.tokens)}"
+        )
+
+
 CONSOLE_FORMAT = colorlog.ColoredFormatter(
     "[%(asctime)s]%(log_color)s[%(levelname)s]%(reset)s%(message)s",
     datefmt="%m-%d %H:%M:%S",
@@ -287,6 +309,7 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
         # OpenAITokenPool初始化
         if any(x in translator for x in NEED_OpenAITokenPool):
             OpenAITokenPool = COpenAITokenPool(cfg, translator)
+            _build_stage_token_pools(cfg, translator)
         else:
             OpenAITokenPool = None
 

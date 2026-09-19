@@ -11,10 +11,51 @@ from typing import Any
 
 from GalTransl import LOGGER
 from GalTransl.Cache import compact_cache_append_logs
-from GalTransl.ConfigHelper import CProjectConfig
+from GalTransl.ConfigHelper import CProjectConfig, STAGE_BACKEND_KEYS
 from GalTransl.Runner import run_galtransl
 from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.AppSettings import load_app_settings
+
+
+def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
+    """解析 common.stageBackends 映射为「阶段键 -> 全局后端配置 dict」。
+
+    空映射/留空值跳过；未知阶段键、引用不存在的配置名、配置缺
+    OpenAI-Compatible 段一律抛 ValueError（fail-fast，由调用方在任务
+    加载配置阶段失败并透出原因，避免运行期静默回退主配置）。
+
+    Args:
+        stage_map: common.stageBackends 原始配置（dict，键为阶段键）。
+        profiles: 全局后端配置表（backend_profiles.yaml 的 profiles 段）。
+
+    Returns:
+        阶段键 -> profile dict；无有效配置时返回空 dict。
+    """
+    if not isinstance(stage_map, dict) or not stage_map:
+        return {}
+    resolved: dict[str, dict[str, Any]] = {}
+    for stage_key, profile_name in stage_map.items():
+        profile_name = str(profile_name or "").strip()
+        if not profile_name:
+            continue
+        if stage_key not in STAGE_BACKEND_KEYS:
+            raise ValueError(
+                f"stageBackends 含未知阶段键 '{stage_key}'，"
+                f"可用键：{', '.join(STAGE_BACKEND_KEYS)}"
+            )
+        candidate = profiles.get(profile_name)
+        if not isinstance(candidate, dict):
+            raise ValueError(
+                f"stageBackends.{stage_key} 引用的后端配置 '{profile_name}' 不存在，"
+                f"请在「后端配置」页检查（当前可用：{', '.join(sorted(profiles)) or '无'}）"
+            )
+        if not isinstance(candidate.get("OpenAI-Compatible"), dict):
+            raise ValueError(
+                f"stageBackends.{stage_key} 引用的后端配置 '{profile_name}' "
+                f"缺少 OpenAI-Compatible 配置段"
+            )
+        resolved[stage_key] = candidate
+    return resolved
 
 
 class JobCancelledError(Exception):
@@ -212,6 +253,24 @@ async def run_job_async(
                 cfg.projectConfig["proxy"] = profile["proxy"]
                 cfg.refreshProxyEnabledFlag()
             LOGGER.info("Applied backend profile: %s", spec.backend_profile or "inline")
+
+        # 解析大阶段独立 API 配置（common.stageBackends，值为全局后端配置名）。
+        # 引用不存在 / 未知阶段键 / 配置段缺失由 _resolve_stage_backend_profiles
+        # 抛 ValueError（fail-fast），在 load_config 阶段失败任务并透出原因。
+        stage_map = cfg.keyValues.get("stageBackends")
+        if isinstance(stage_map, dict) and stage_map:
+            from GalTransl.server import _read_backend_profiles
+
+            profiles_data = _read_backend_profiles()
+            resolved = _resolve_stage_backend_profiles(
+                stage_map, profiles_data.get("profiles", {})
+            )
+            if resolved:
+                cfg.stage_profiles = resolved
+                LOGGER.info(
+                    "Applied stage backends: %s",
+                    ", ".join(f"{k}={stage_map.get(k)}" for k in resolved),
+                )
 
         # Apply prompt template overrides from job spec
         prompt_overrides = spec.prompt_template_overrides or {}

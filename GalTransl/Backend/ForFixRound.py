@@ -120,6 +120,11 @@ _FIX_SPECS: dict = {
         instruction="对照 src 与 dst，仅修复明显的语义错译、漏译、译文串行；"
         "拿不准是否属于误报时保留原译文不动。",
     ),
+    CProblemType.词语色彩不一致: FixSpec(
+        mode=MODE_SRC_DST,
+        instruction="对照 problem 标注的期望色彩方向（来自批次区间的用词色彩标注），"
+        "调整译文措辞风格使其与该区间色彩一致；仅修改色彩明显不符的表达，不改变句意与信息量。",
+    ),
 }
 
 

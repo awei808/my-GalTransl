@@ -11,10 +11,10 @@ _plot_route_map* 属性。这样：
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from GalTransl import LOGGER
-from GalTransl.Backend.utils import strip_chunk_suffix
+from GalTransl.Backend.utils import coerce_bool, strip_chunk_suffix
 
 
 def ensure_global_prompt_loaded(engine: Any, tag: str) -> None:
@@ -59,11 +59,71 @@ def ensure_plot_route_map_loaded(engine: Any, tag: str) -> None:
         engine._plot_route_map = None
 
 
+def _selective_characters(engine: Any, tag: str, filename: str) -> Optional[list]:
+    """按文件元数据角色名单筛选全局分析角色（翻译轮/修复轮按需注入）。
+
+    Returns:
+        命中的角色条目列表；None 表示不筛选（回退全量）：开关关闭、无法解析
+        文件元数据、文件无角色名单或与全局名单零命中（防译名漂移导致角色
+        形象整体丢失）。
+    """
+    from GalTransl.Backend.metadata import select_global_characters
+
+    if not coerce_bool(
+        engine.pj_config.getKey("internals.globalprompt.selective_characters", True),
+        default=True,
+    ):
+        LOGGER.debug(f"[{tag}] 按需角色注入已关闭，全局角色全量注入")
+        return None
+    resolve = getattr(engine, "_resolve_file_metadata", None)
+    if resolve is None:
+        return None
+    try:
+        meta = resolve(filename)
+    except Exception as e:
+        LOGGER.debug(f"[{tag}] {filename} 解析文件元数据失败，角色回退全量：{e}")
+        return None
+    if meta is None:
+        LOGGER.debug(f"[{tag}] {filename} 无文件级元数据，全局角色全量注入")
+        return None
+
+    gp_chars = (engine._global_prompt or {}).get("角色列表", [])
+    total = sum(
+        1
+        for ch in gp_chars
+        if isinstance(ch, dict) and str(ch.get("名称", "") or "").strip()
+    )
+    file_roles = getattr(meta, "character", None) or []
+    if isinstance(file_roles, str):
+        file_roles = [file_roles]
+    if not [r for r in file_roles if str(r).strip()]:
+        LOGGER.debug(f"[{tag}] {filename} 文件元数据无角色名单，全局角色全量注入")
+        return None
+    selected = select_global_characters(gp_chars, meta)
+    if selected is None:
+        LOGGER.warning(
+            f"[{tag}] {filename} 文件元数据角色名单与全局分析零命中，"
+            f"回退全量注入 {total} 个角色"
+        )
+        return None
+    names = []
+    for ch in selected:
+        name = ch.get("名称", "")
+        names.append(
+            "、".join(str(x) for x in name) if isinstance(name, (list, tuple)) else str(name)
+        )
+    LOGGER.debug(
+        f"[{tag}] {filename} 按需注入角色 {len(selected)}/{total}：{'、'.join(names)}"
+    )
+    return selected
+
+
 def _format_gp_with_route_common(
     engine: Any,
     tag: str,
     filename: str,
     route_block_provider: Any,
+    selective: bool = False,
 ) -> str:
     """format_global_prompt_*_with_route 的公共骨架。
 
@@ -73,14 +133,17 @@ def _format_gp_with_route_common(
         filename: 当前文件名
         route_block_provider: callable(engine, tag, filename) -> str，按调用方选择
             惰性或非惰性路线上下文实现
+        selective: 为 True 时按文件元数据角色名单筛选「角色列表」（按需注入），
+            仅翻译轮/修复轮的 lazy 链路启用；批次划分等保持全量。
     """
     route_block = route_block_provider(engine, tag, filename)
     ensure_global_prompt_loaded(engine, tag)
     if not engine._global_prompt:
         return route_block
+    characters = _selective_characters(engine, tag, filename) if selective else None
     from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
     gp_block = _format_global_prompt_as_context(
-        engine._global_prompt, annotate_plot=bool(route_block)
+        engine._global_prompt, annotate_plot=bool(route_block), characters=characters
     )
     if route_block and gp_block:
         LOGGER.debug(f"[{tag}] {filename} 注入路线剧情 + 带标注的全局提示词")
@@ -101,19 +164,22 @@ def format_global_prompt_only(engine: Any, tag: str) -> str:
 
 
 def format_global_prompt_with_route_lazy(engine: Any, tag: str, filename: str) -> str:
-    """filename + 惰性路线剧情 + 带标注的 GlobalPrompt。
+    """filename + 惰性路线剧情 + 带标注的 GlobalPrompt（角色按文件元数据按需注入）。
 
     对应原 ForGalJsonMulitChat._format_global_prompt_block 行为。
+    翻译轮与修复轮（继承同一方法）均走此链路，因此按需筛选同时作用于两者。
     """
     def _route_block_lazy(e, t, fn):
         return format_route_context_for_file_lazy(e, t, fn)
-    return _format_gp_with_route_common(engine, tag, filename, _route_block_lazy)
+    return _format_gp_with_route_common(
+        engine, tag, filename, _route_block_lazy, selective=True
+    )
 
 
 def format_global_prompt_with_route_direct(engine: Any, tag: str, filename: str) -> str:
     """filename + 非惰性路线剧情（每次都重新加载）+ 带标注的 GlobalPrompt。
 
-    对应原 ForBatchMetaData._build_global_prompt_block 行为。
+    对应原 ForBatchMetaData._build_global_prompt_block 行为（保持角色全量注入）。
     """
     def _route_block_direct(e, t, fn):
         return format_route_context_for_file_direct(e, t, fn)

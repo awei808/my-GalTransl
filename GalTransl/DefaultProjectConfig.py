@@ -65,13 +65,19 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
-  gpt.afterTranslation: [] # 完整流水线翻译完成后追加的后处理后端（阶段 7）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮；brfix换行修复；jpfix残留日文修复；banfix禁用词修复；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，需先跑过semcheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/fix]
+  gpt.afterTranslation: [] # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 7）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，需先跑过semcheck）；tonecheck词语色彩一致性检查（对照批次区间的用词色彩标注，标记色彩明显不符的句子写入tone_issue并标记"词语色彩不一致"问题，不改译文，需先跑过流水线批次划分）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/fix]
   gpt.enableBetterTranslation: false # [已废弃] 由 gpt.afterTranslation 取代。旧项目兼容：true 等价于 afterTranslation=improve。[True/False]
   gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
   gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
   gpt.swapFixToCurrent: false # 修复轮（brfix/jpfix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
+  gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
+  stageBackends: # 每大阶段独立API：值为「后端配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
+    metadata: "" # 元数据阶段：全局分析/术语表/文件级元数据/剧情路线图/批次划分
+    translate: "" # 翻译执行
+    afterTrans: "" # AI初步（批量）处理：阶段7 全部后处理引擎
+    proofread: "" # 人工校对时AI精修（功能预留，当前版本未实现）
   # 调试日志
   loggingLevel: info # 日志输出级别：debug详细，info常规，warning仅警告。[debug/info/warning]
   saveLog: false # 是否将日志写入文件。[True/False]
@@ -145,6 +151,7 @@ problemAnalyze:
     #- 单句过长 # 译文平均分句长度超过 avgSentenceLengthThreshold，单句过长（疑似丢失应有换行）
     #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）、空格、Tab、emoji 或颜文字之后
     - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
+    #- 词语色彩不一致 # AI词语色彩检查：译文用词与批次区间标注的用词色彩明显不符，由 ForToneCheck 后端标注 tone_issue 后认领（需先跑过流水线批次划分）
   avgSentenceLengthThreshold: 17 # 单句过长的分句长度阈值，默认17，建议范围15~25
   avgSentenceLengthThresholdH: 24 # 单句过长的H场景专用分句长度阈值，默认24，建议范围20~30
 

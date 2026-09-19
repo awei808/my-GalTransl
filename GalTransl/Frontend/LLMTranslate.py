@@ -158,19 +158,36 @@ def _pass3_cache_dir(projectConfig: CProjectConfig) -> str:
     return joinpath(projectConfig.getCachePath(), PASS3_CACHE_DIR)
 
 
-async def ensure_model_available_if_needed(projectConfig: CProjectConfig) -> None:
-    """在真正需要调用模型前，按需执行一次可用性检查。"""
+def _stage_pool(projectConfig: CProjectConfig, stage: str):
+    """返回大阶段独立令牌池（common.stageBackends 配置）；未配置时回退任务主池。"""
+    pool = getattr(projectConfig, "stage_token_pools", {}).get(stage)
+    return pool if pool is not None else getattr(projectConfig, "tokenPool", None)
+
+
+async def ensure_model_available_if_needed(
+    projectConfig: CProjectConfig, stage: str = ""
+) -> None:
+    """在真正需要调用模型前，按需执行一次可用性检查。
+
+    stage 非空时检查该大阶段（metadata/translate/afterTrans）的独立令牌池；
+    可用性标志挂在池对象上，主池与各阶段池分别检查、互不误跳。
+    checkAvailable 开关读池携带的后端配置段（阶段 profile），未配置时回退主配置。
+    """
     translator = getattr(projectConfig, "select_translator", "")
     if not any(x in translator for x in NEED_OpenAITokenPool):
         return
 
-    check_available = projectConfig.getBackendConfigSection("OpenAI-Compatible").get(
-        "checkAvailable", True
-    )
-    if not check_available:
+    token_pool = _stage_pool(projectConfig, stage) if stage else getattr(projectConfig, "tokenPool", None)
+    if token_pool is None:
         return
 
-    if getattr(projectConfig, "_model_availability_checked", False):
+    check_section = getattr(token_pool, "backend_section", None)
+    if not isinstance(check_section, dict):
+        check_section = projectConfig.getBackendConfigSection("OpenAI-Compatible")
+    if not check_section.get("checkAvailable", True):
+        return
+
+    if getattr(token_pool, "_availability_checked", False):
         return
 
     model_check_lock = getattr(projectConfig, "_model_check_lock", None)
@@ -179,11 +196,7 @@ async def ensure_model_available_if_needed(projectConfig: CProjectConfig) -> Non
         setattr(projectConfig, "_model_check_lock", model_check_lock)
 
     async with model_check_lock:
-        if getattr(projectConfig, "_model_availability_checked", False):
-            return
-
-        token_pool = getattr(projectConfig, "tokenPool", None)
-        if token_pool is None:
+        if getattr(token_pool, "_availability_checked", False):
             return
 
         _check_stop_requested(projectConfig)
@@ -195,7 +208,7 @@ async def ensure_model_available_if_needed(projectConfig: CProjectConfig) -> Non
                 translator,
             )
             token_pool.getToken()
-            setattr(projectConfig, "_model_availability_checked", True)
+            token_pool._availability_checked = True
         finally:
             _update_runtime(projectConfig, stage="")
 
@@ -1645,9 +1658,10 @@ async def _run_full_pipeline(
             )
             success = True
         else:
+            await ensure_model_available_if_needed(projectConfig, stage="metadata")
             gptapi_global = ForGlobalPrompt(
                 projectConfig, "ForGlobalPrompt",
-                projectConfig.proxyPool, projectConfig.tokenPool,
+                projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
             )
             try:
                 external_info = projectConfig.getKey("externals.gameInfo", "") or ""
@@ -1718,9 +1732,10 @@ async def _run_full_pipeline(
             )
             from GalTransl.Backend.GenDic import GenDic
 
+            await ensure_model_available_if_needed(projectConfig, stage="metadata")
             gptapi_dic = GenDic(
                 projectConfig, "GenDic",
-                projectConfig.proxyPool, projectConfig.tokenPool,
+                projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
             )
             try:
                 all_jsons = []
@@ -1766,9 +1781,10 @@ async def _run_full_pipeline(
         from GalTransl.Backend.ForFileMetaData import ForFileMetaData
         from GalTransl.Backend.metadata import load_file_metadata_map
 
+        await ensure_model_available_if_needed(projectConfig, stage="metadata")
         gptapi_filemeta = ForFileMetaData(
             projectConfig, "ForFileMetaData",
-            projectConfig.proxyPool, projectConfig.tokenPool,
+            projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
         )
         try:
             # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
@@ -1852,8 +1868,9 @@ async def _run_full_pipeline(
         else:
             gptapi_plotroute = ForPlotRouteMap(
                 projectConfig, "ForPlotRouteMap",
-                projectConfig.proxyPool, projectConfig.tokenPool,
+                projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
             )
+            await ensure_model_available_if_needed(projectConfig, stage="metadata")
             try:
                 structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
                 user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
@@ -1888,9 +1905,10 @@ async def _run_full_pipeline(
         from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
         from GalTransl.Backend.metadata import load_batch_metadata_map
 
+        await ensure_model_available_if_needed(projectConfig, stage="metadata")
         gptapi_batchmeta = ForBatchMetaData(
             projectConfig, "ForBatchMetaData",
-            projectConfig.proxyPool, projectConfig.tokenPool,
+            projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
         )
         try:
             # ForBatchMetaData 会写入 transl_cache/pass2_cache/BatchMetadata.json
@@ -2095,7 +2113,10 @@ async def _run_translation_phase(
     saved_translator = projectConfig.select_translator
     projectConfig.select_translator = "ForGal-json-multi-chat"
     try:
-        gptapi = await init_gptapi(projectConfig)
+        await ensure_model_available_if_needed(projectConfig, stage="translate")
+        gptapi = await init_gptapi(
+            projectConfig, token_pool=_stage_pool(projectConfig, "translate")
+        )
     finally:
         projectConfig.select_translator = saved_translator
 
@@ -2448,6 +2469,7 @@ async def postprocess_results(
                 f"跳过 {len(_after_order)} 个后处理后端：{'+'.join(_after_order)}"
             )
         else:
+            await ensure_model_available_if_needed(projectConfig, stage="afterTrans")
             merged_trans = []
             for _chunk in resultChunks:
                 merged_trans.extend(_chunk.trans_list)
@@ -2464,7 +2486,7 @@ async def postprocess_results(
             # 按配置数组顺序依次执行（数组顺序即执行顺序）
             for _m in _after_order:
                 _display = _m if isinstance(_m, str) else "fix"
-                _update_runtime(projectConfig, stage=f"后处理-{_display}")
+                _update_runtime(projectConfig, stage=f"AI初步处理-{_display}")
                 LOGGER.info(
                     f"[后处理] 开始：{_display}，文件={_orig_name}"
                 )
@@ -2547,7 +2569,7 @@ async def postprocess_results(
 def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 
-    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain）或
+    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck）或
     统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}；
     输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文），
     配置中残留的 mode 字段直接忽略。同 key 条目去重保序（fix 条目仅保留第一个）。旧字符串格式
@@ -2556,7 +2578,7 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """
     allowed = {
         "improve", "brfix", "jpfix", "banfix",
-        "semcheck", "semcheckagain", "fix",
+        "semcheck", "semcheckagain", "tonecheck", "fix",
     }
     raw = projectConfig.getKey("gpt.afterTranslation")
 
@@ -2610,13 +2632,13 @@ async def _run_after_trans_single_file(
     projectConfig: CProjectConfig,
     num_better: int,
 ) -> None:
-    """对单个文件执行一种后处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复）。
+    """对单个文件执行一种 AI 初步处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复 / tonecheck 色彩检查等）。
 
     mode 可为字符串 key 或统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}。
-    直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/tokenPool/
-    pre_dic/post_dic/gpt_dic/file_metadata，不重新 initDictList、不调
-    ensure_model_available、不碰 select_translator）。用完 shutdown 释放连接。
-    异常 caller 负责捕获：JobCancelledError 上抛，其余由 caller 记录。
+    直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/pre_dic/post_dic/
+    gpt_dic/file_metadata，不重新 initDictList、不调 ensure_model_available、
+    不碰 select_translator）；令牌池用 afterTrans 大阶段独立池（未配置回退主池）。
+    用完 shutdown 释放连接。异常 caller 负责捕获：JobCancelledError 上抛，其余由 caller 记录。
     """
     # JobCancelledError 必须在函数内 import：GalTransl.Service 会反向 import 本模块
     # （Service→Runner→LLMTranslate），模块级 import 会触发循环依赖。
@@ -2627,8 +2649,10 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForBanWordFix import ForBanWordFix
     from GalTransl.Backend.ForSemCheck import ForSemCheck
     from GalTransl.Backend.ForSemCheckAgain import ForSemCheckAgain
+    from GalTransl.Backend.ForToneCheck import ForToneCheck
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
 
+    _after_pool = _stage_pool(projectConfig, "afterTrans")
     _api = None
     try:
         if isinstance(mode, dict):
@@ -2649,7 +2673,7 @@ async def _run_after_trans_single_file(
                 projectConfig,
                 "ForFixRound",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
             )
             include_src = _api.set_fix_params(coerced_types, inject_problem=inject_problem)
             LOGGER.info(
@@ -2661,7 +2685,7 @@ async def _run_after_trans_single_file(
                 projectConfig,
                 "ForImproveTranslation",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
             )
         elif mode == "brfix":
             # 旧字符串格式兼容入口：实例化薄包装子类（单类型语义与旧版一致），
@@ -2671,35 +2695,42 @@ async def _run_after_trans_single_file(
                 projectConfig,
                 "ForBRStation",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
             )
         elif mode == "jpfix":
             _api = ForJPResidue(
                 projectConfig,
                 "ForJPResidue",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
             )
         elif mode == "banfix":
             _api = ForBanWordFix(
                 projectConfig,
                 "ForBanWordFix",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
             )
         elif mode == "semcheck":
             _api = ForSemCheck(
                 projectConfig,
                 "ForSemCheck",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
             )
         elif mode == "semcheckagain":
             _api = ForSemCheckAgain(
                 projectConfig,
                 "ForSemCheckAgain",
                 projectConfig.proxyPool,
-                projectConfig.tokenPool,
+                _after_pool,
+            )
+        elif mode == "tonecheck":
+            _api = ForToneCheck(
+                projectConfig,
+                "ForToneCheck",
+                projectConfig.proxyPool,
+                _after_pool,
             )
         else:
             LOGGER.warning(f"[后处理] 未知模式 '{mode}'，跳过")
@@ -2723,12 +2754,14 @@ async def _run_after_trans_single_file(
 
 async def init_gptapi(
     projectConfig: CProjectConfig,
+    token_pool: Any = None,
 ) -> "BaseEngine":
     """
     根据引擎类型获取相应的API实例（延迟导入后端模块以避免不必要依赖）。
 
     参数:
     projectConfig: 项目配置对象
+    token_pool: 指定令牌池（大阶段独立 API）；缺省用任务主池
     eng_type: 引擎类型
     endpoint: API端点（如果适用）
     proxyPool: 代理池（如果适用）
@@ -2738,7 +2771,7 @@ async def init_gptapi(
     相应的API实例
     """
     proxyPool = projectConfig.proxyPool
-    tokenPool = projectConfig.tokenPool
+    tokenPool = token_pool if token_pool is not None else projectConfig.tokenPool
     eng_type = projectConfig.select_translator
 
     import importlib

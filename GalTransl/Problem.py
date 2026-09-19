@@ -362,6 +362,16 @@ def find_problems(
             if getattr(tran, "suspected_error", "") != "":
                 problem_list.append("疑似错误")
 
+        # AI 词语色彩检查标记（ForToneCheck 产出）：字段非空即标"词语色彩不一致"。
+        # reason 非"1"时附进问题文案，供校对者与统一修复后端获知期望色彩方向。
+        if CProblemType.词语色彩不一致 in find_type:
+            tone_issue = getattr(tran, "tone_issue", "")
+            if tone_issue != "":
+                if tone_issue != "1":
+                    problem_list.append(f"词语色彩不一致：{tone_issue}")
+                else:
+                    problem_list.append("词语色彩不一致")
+
         # 定语/状语过长：只检测最终成品 post_dst（无校对时即 pre_dst），与旧分支对齐避免重复
         if CProblemType.定语过长 in find_type or CProblemType.状语过长 in find_type:
             if post_dst:

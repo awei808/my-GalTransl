@@ -51,7 +51,7 @@ PROGRAM_SPLASH4 = r"""
 ALL_BANNERS = [PROGRAM_SPLASH1, PROGRAM_SPLASH2, PROGRAM_SPLASH3, PROGRAM_SPLASH4]
 PROGRAM_SPLASH = ALL_BANNERS[localtime().tm_mday % 4]
 
-GALTRANSL_VERSION = "0.4.2"
+GALTRANSL_VERSION = "0.4.5"
 AUTHOR = "awei808"
 CONTRIBUTORS = "xd2333 (原作者), ryank231231, PiDanShouRouZhouXD, Noriverwater, Isotr0py, adsf0427, pipixia244, gulaodeng, sakura-umi, lifegpc, natsumerinchan, szyzbg"
 
@@ -99,6 +99,10 @@ TRANSLATOR_SUPPORTED = {
     "ForSemCheckAgain": {
         "zh-cn": "对已标记为「疑似错误」的句子逐句复核。",
         "en": "Second-pass confirmation for 'suspected error' flags: re-checks each flagged sentence and keeps only confirmed mistranslations, dismissing acceptable translations (false positives)."
+    },
+    "ForToneCheck": {
+        "zh-cn": "词语色彩一致性检查：对照批次级元数据的「用词色彩」标注，标记用词色彩明显偏离所属区间的句子（tone_issue 标记，不改译文）；需先在流水线中生成批次级元数据。",
+        "en": "Word-tone consistency check: flags sentences whose wording tone clearly deviates from the per-interval tone annotations in BatchMetadata (tone_issue flag, translation untouched); requires batch metadata from the pipeline."
     },
     "ForFixRound": {
         "zh-cn": "统一问题修复：按所选问题类型组合修复译文（多类可并行处理），每类按对应修复指令生成备选译文；输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文）。",
@@ -160,7 +164,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

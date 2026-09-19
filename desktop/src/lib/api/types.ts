@@ -27,6 +27,18 @@ export type ModelCheckResult = {
   engine: string;
   /** 给用户看的状态说明 */
   message: string;
+  /** 大阶段独立 API（stageBackends）分阶段检测结果；未配置阶段独立 API 时缺省 */
+  stages?: ModelCheckStageResult[];
+};
+
+/** 大阶段独立 API 的单阶段检测结果 */
+export type ModelCheckStageResult = {
+  stage: string;
+  profile: string;
+  ok: boolean;
+  available: number;
+  total: number;
+  message: string;
 };
 
 /** 批次划分预检结果（POST /api/projects/:id/check-batch-size 返回） */

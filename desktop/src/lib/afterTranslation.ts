@@ -1,5 +1,5 @@
 /**
- * 修复/改进后端（阶段 7 后处理）清单与有序数组配置的解析辅助。
+ * AI 初步处理（阶段 7 后处理）后端清单与有序数组配置的解析辅助。
  *
  * gpt.afterTranslation 配置形态：有序数组（[improve, brfix]），数组顺序即执行顺序；
  * 空数组 = 不执行。旧字符串格式（none / improve+brfix）仍兼容读取，统一解析为数组。
@@ -8,7 +8,13 @@
  * 后端运行直接跳过且不执行（见 LLMTranslate._run_after_trans_single_file）。
  * 前后端解析口径一致（后端见 GalTransl/Frontend/LLMTranslate.py 的
  * _resolve_after_translation_order），避免显示与执行不一致。
+ *
+ * 分组仅为编辑器展示（四个 AI 初步处理子分组），不影响执行顺序：执行顺序仍由
+ * 数字框（数组顺序）决定；推荐顺序为 基本问题 → 风格修正 → 色彩检查 → 疑似错误标注 → 复核。
  */
+
+/** AI 初步处理分组（仅编辑器分组展示用） */
+export type AfterTranslationGroup = "basic" | "style" | "tone" | "semcheck";
 
 export interface AfterTranslationBackend {
   /** 配置数组元素值，与后端白名单 key 一致 */
@@ -17,42 +23,69 @@ export interface AfterTranslationBackend {
   label: string;
   /** 面向零基础用户的说明 */
   hint: string;
+  /** 所属分组（编辑器分组标题） */
+  group: AfterTranslationGroup;
 }
+
+/** 分组标题与说明（顺序即编辑器展示顺序） */
+export const AFTER_TRANSLATION_GROUPS: {
+  key: AfterTranslationGroup;
+  label: string;
+  hint: string;
+}[] = [
+  { key: "basic", label: "基本问题处理", hint: "换行位置、残留日文、禁用词等基本问题修复。" },
+  { key: "style", label: "修正翻译风格", hint: "整文件评估译文质量，对可改进句给出备选译文。" },
+  { key: "tone", label: "词语色彩一致性检查", hint: "对照批次区间的用词色彩标注检查译文。" },
+  { key: "semcheck", label: "标注疑似错误", hint: "AI 判定错译/漏译/串行并标记，供人工复核。" },
+];
 
 export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
   {
-    key: "improve",
-    label: "改进轮",
-    hint: "AI 评估整文件译文质量，对可改进的句子给出备选译文（可在校对页一键交换）。",
-  },
-  {
     key: "brfix",
     label: "换行修复",
+    group: "basic",
     hint: "针对译文内换行位置异常（未紧跟中文标点）的句子生成备选译文。",
   },
   {
     key: "jpfix",
     label: "残留日文修复",
+    group: "basic",
     hint: "对照原文清除译文残留的日文假名，生成备选译文。",
   },
   {
     key: "banfix",
     label: "禁用词修复",
+    group: "basic",
     hint: "针对标注「用词不当」的译文重新翻译，生成备选译文。",
   },
   {
     key: "fix",
     label: "统一问题修复",
+    group: "basic",
     hint: "按所选问题类型组合修复译文（可多选），每类问题按对应修复指令处理，生成备选译文。",
+  },
+  {
+    key: "improve",
+    label: "改进轮",
+    group: "style",
+    hint: "AI 评估整文件译文质量，对可改进的句子给出备选译文（可在校对页一键交换）。",
+  },
+  {
+    key: "tonecheck",
+    label: "词语色彩一致性检查",
+    group: "tone",
+    hint: "对照批次划分标注的「用词色彩」（视角/氛围），标记用词色彩明显不符的句子（不改译文）。需先在完整流水线中生成批次级元数据。",
   },
   {
     key: "semcheck",
     label: "语义差异检测",
+    group: "semcheck",
     hint: "用 AI 判定疑似错译、漏译、译文串行，标记「疑似错误」问题（不生成备选译文）。",
   },
   {
     key: "semcheckagain",
     label: "命中句二次复核",
+    group: "semcheck",
     hint: "对语义差异检测标记的「疑似错误」句子逐句二次复核，撤销可接受译文的误报标记（不生成备选译文）。需先执行语义差异检测（semcheck）产生标记，否则无待复核句。",
   },
 ];

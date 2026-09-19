@@ -3401,6 +3401,27 @@ a:hover {
   max-height: 300px;
 }
 
+.after-trans-group-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 2px 4px;
+  border-bottom: 1px solid var(--color-border-default);
+  margin-bottom: 4px;
+}
+
+.after-trans-group-head__label {
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.after-trans-group-head__hint {
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  opacity: 0.8;
+}
+
 .after-trans-item {
   justify-content: flex-start;
 }

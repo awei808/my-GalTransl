@@ -561,13 +561,21 @@ export function TranslateConsole() {
     const r = modelCheckResult();
     if (s === "checking") return "检测中…";
     if (s === "na") return "本地 / 特殊端点，无需检测";
-    if (s === "ok") return r ? `可用 ${r.available}/${r.total}` : "可用";
+    // 大阶段独立 API（stageBackends）检测失败摘要：附在主检测结果后提醒用户（跳过重复检测的不算失败）
+    const stageFail = () => {
+      const failed = (r?.stages ?? []).filter((x) => !x.ok && x.available >= 0);
+      return failed.length
+        ? `；阶段检测失败：${failed.map((x) => `${x.stage}(${x.profile})`).join("、")}`
+        : "";
+    };
+    if (s === "ok") return (r ? `可用 ${r.available}/${r.total}` : "可用") + stageFail();
     if (s === "error") {
       const base = r ? r.message : "检测失败";
+      const stagePart = stageFail();
       if (autoRetryCount > 0 && autoRetryCount < MAX_AUTO_RETRIES) {
-        return `${base} · ${10}s 后自动重试 (${autoRetryCount}/${MAX_AUTO_RETRIES})`;
+        return `${base}${stagePart} · ${10}s 后自动重试 (${autoRetryCount}/${MAX_AUTO_RETRIES})`;
       }
-      return base;
+      return base + stagePart;
     }
     return "";
   };
@@ -969,7 +977,7 @@ export function TranslateConsole() {
                     <li><b>文件级元数据</b>：AI 分析每个文件的剧情和角色身份，生成文件级提示词。可使用后端ForFileMetaData完成或人工创建</li>
                     <li><b>划分区间</b>：把文件按剧情拆成几个批次并生成批次级提示词。跳过本步将按照项目设置的每次请求句数来进行下步。可使用后端ForBatchMetaData完成或人工创建</li>
                     <li><b>翻译执行</b>：逐文件、逐批次交给 AI 翻译，注入全局、文件级、批次级提示词提高翻译效果（若有）。使用后端ForGalJsonMulitChat完成</li>
-                    <li><b>翻译后处理（修复和改进译文）</b>：完整流水线翻译完成后，按项目设置「翻译后处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行改进轮（给出备选译文）、换行修复（修复异常换行）、残留日文修复、禁用词修复、语义差异检测（semcheck，标记疑似错译/漏译/串行）或命中句二次复核（semcheckagain，撤销误报，需先执行 semcheck 产生标记）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck / ForSemCheckAgain 手动执行。</li>
+                    <li><b>翻译后处理（AI 初步批量处理）</b>：完整流水线翻译完成后，按项目设置「AI 初步处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行：基本问题处理（换行修复、残留日文修复、禁用词修复、统一问题修复）、修正翻译风格（改进轮，给出备选译文）、词语色彩一致性检查（tonecheck，对照批次区间的用词色彩标注标记色彩不符句，不改译文）、标注疑似错误（semcheck，标记疑似错译/漏译/串行）与命中句二次复核（semcheckagain，撤销误报，需先执行 semcheck 产生标记）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck / ForSemCheckAgain / ForToneCheck 手动执行。元数据、翻译执行、AI 初步处理三个大阶段还可在项目设置中各自接入不同的后端配置（common.stageBackends）。</li>
                     <li><b>校对审核</b>：你在界面里逐条检查、修改译文。</li>
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>

@@ -135,6 +135,7 @@ class CProblemType(Enum):
     h场景用词不当 = 17  # 旧配置兼容别名：老项目 problemList 仍写 h场景用词不当
     频繁换行 = 18
     疑似错误 = 19  # 本地/外部 AI 语义差异检测：原文与译文语义极大差异（疑似错译/漏译/串行）
+    词语色彩不一致 = 20  # AI 词语色彩检查：译文用词色彩与批次区间标注的用词色彩明显不符（ForToneCheck 产出）
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
@@ -148,6 +149,11 @@ def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
         else:
             result[full] = v
     return result
+
+
+# 大阶段独立 API 配置键（common.stageBackends）：值为全局后端配置名。
+# proofread 为「人工校对时 AI 精修」预留（功能未实现，仅解析保存，供后续版本消费）。
+STAGE_BACKEND_KEYS: tuple = ("metadata", "translate", "afterTrans", "proofread")
 
 
 class CProjectConfig:
@@ -204,6 +210,10 @@ class CProjectConfig:
         self.tokenPool = None  # 令牌池
         self.proxyPool = None  # 代理池
         self.endpointQueue = None  # 端点队列
+        # 大阶段独立 API（common.stageBackends）：Service 解析后注入 profile dict，
+        # Runner 据此预建各阶段独立令牌池；未配置的阶段回退主池
+        self.stage_profiles: dict = {}  # 阶段键 -> 全局后端配置 dict
+        self.stage_token_pools: dict = {}  # 阶段键 -> COpenAITokenPool
         self.input_splitter = None  # 输入分割器
         self.active_workers: int=0
         self.target_lang=""
@@ -290,6 +300,15 @@ class CProjectConfig:
             return max(1, int(raw))
         except (TypeError, ValueError):
             return 1
+
+    def get_stage_token_pool(self, stage: str):
+        """返回大阶段独立令牌池（common.stageBackends 配置）；未配置时回退任务主池。
+
+        阶段池对象携带来源 profile 的配置段（backend_section），引擎构造时
+        实例级生效（stream/apiTimeout/thinking 等随阶段 profile）。
+        """
+        pool = self.stage_token_pools.get(stage)
+        return pool if pool is not None else self.tokenPool
 
     def getProblemAnalyzeConfig(self, backendName: str) -> list[CProblemType]:
         problem_analyze = self.projectConfig.get("problemAnalyze", {})

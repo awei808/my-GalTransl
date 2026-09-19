@@ -32,7 +32,8 @@ export type FixedCardKind =
   | "translationGuideline"
   | "externalInfo"
   | "problemAnalyze"
-  | "afterTranslation";
+  | "afterTranslation"
+  | "stageBackends";
 
 /** 项目设置页：一级分类（section） */
 export interface TaxonomySection {
@@ -88,6 +89,8 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
     ],
+    // 大阶段独立 API 卡片：元数据/翻译/AI初步处理 各自接入不同后端配置
+    fixedCards: ["stageBackends"],
   },
   {
     title: "翻译后端-全局提示词",
@@ -141,9 +144,10 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
       {
-        title: "语义差异检测/二次复核（ForSemCheck / ForSemCheckAgain）",
+        title: "语义差异检测/二次复核/色彩检查（ForSemCheck / ForSemCheckAgain / ForToneCheck）",
         keys: [
           "common.gpt.numPerRequestSemCheck",
+          "common.gpt.numPerRequestToneCheck",
         ],
       },
     ],

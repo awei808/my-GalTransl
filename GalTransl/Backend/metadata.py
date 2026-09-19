@@ -198,6 +198,55 @@ def _format_address_map_block(address_map: list) -> str:
     return "称呼映射:\n" + "\n".join(lines) + "\n"
 
 
+def select_global_characters(
+    gp_characters: list, file_meta: "FileMetaData"
+) -> Optional[list]:
+    """按文件级元数据的角色名单筛选全局分析的角色条目（按需注入）。
+
+    匹配三级递进：精确（strip+casefold，名称为别名 list 时任一命中即算）
+    → 零命中时的双向子串兜底（双方长度均 ≥2，防「春」误匹配「春子」类单字误伤）。
+
+    Returns:
+        命中的角色条目列表（保持 GlobalPrompt 原始顺序）；无法确定相关集时
+        返回 None（文件无角色名单 / 全局角色列表无效 / 零命中），调用方应
+        回退全量注入，避免译名漂移导致角色形象整体丢失。
+    """
+    file_roles = file_meta.character if file_meta is not None else None
+    if isinstance(file_roles, str):
+        file_roles = [file_roles]
+    wanted = {str(r).strip().casefold() for r in (file_roles or []) if str(r).strip()}
+    if not wanted or not isinstance(gp_characters, list):
+        return None
+
+    entries = [
+        ch
+        for ch in gp_characters
+        if isinstance(ch, dict) and str(ch.get("名称", "") or "").strip()
+    ]
+    if not entries:
+        return None
+
+    def _name_variants(ch: dict) -> set:
+        name = ch.get("名称", "")
+        raw = name if isinstance(name, (list, tuple)) else [name]
+        return {str(x).strip().casefold() for x in raw if str(x).strip()}
+
+    # 精确/别名命中
+    matched = [ch for ch in entries if _name_variants(ch) & wanted]
+    if not matched:
+        # 子串兜底：全局名包含文件名或反之
+        for ch in entries:
+            for nv in _name_variants(ch):
+                if len(nv) < 2:
+                    continue
+                if any(
+                    nv in w or w in nv for w in wanted if len(w) >= 2
+                ):
+                    matched.append(ch)
+                    break
+    return matched or None
+
+
 def build_glossary_prompt_text(
     json_list: list, projectConfig: "CProjectConfig", tag: str
 ) -> str:

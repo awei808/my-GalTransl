@@ -1,7 +1,8 @@
-import { createEffect, createSignal, For, onMount } from "solid-js";
+import { createEffect, createSignal, onMount } from "solid-js";
 import { toast } from "../stores/toastStore";
 import {
   AFTER_TRANSLATION_BACKENDS,
+  AFTER_TRANSLATION_GROUPS,
   AfterTranslationEntry,
   FixConfig,
   createFixEntry,
@@ -16,8 +17,10 @@ interface AfterTranslationOrderEditorProps {
 }
 
 /**
- * 「修复和改进译文」后处理顺序编辑器：样式参考流水线阶段列表，
+ * 「AI 初步处理」后处理顺序编辑器：样式参考流水线阶段列表，
  * 但勾选框换成数字框——数字几就代表该后端在第几步执行，留空则不执行。
+ * 后端按四个分组展示（基本问题处理/修正翻译风格/词语色彩一致性检查/标注疑似错误），
+ * 分组仅为视觉分区，跨组编号连续、数组顺序即执行顺序。
  *
  * 交互约定（与需求确认一致）：
  * - 点击（聚焦）数字框：若该后端未入选，追加到末尾（数组始终紧凑无空洞，
@@ -125,13 +128,22 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
         lastScrollTop = e.currentTarget.scrollTop;
       }}
     >
-      <For each={AFTER_TRANSLATION_BACKENDS}>
-        {(b) => {
-          const idx = orderIndex(b.key);
-          const entry = idx >= 0 ? props.value[idx] : undefined;
-          const fixEntry = entry !== undefined && isFixEntry(entry) ? entry : undefined;
+      {/* 清单为静态常量：按分组顺序渲染，组头在分组切换处插入 */}
+      {AFTER_TRANSLATION_BACKENDS.map((b, i) => {
+        const prev = i > 0 ? AFTER_TRANSLATION_BACKENDS[i - 1] : undefined;
+        const groupHead = prev === undefined || prev.group !== b.group;
+        const idx = orderIndex(b.key);
+        const entry = idx >= 0 ? props.value[idx] : undefined;
+        const fixEntry = entry !== undefined && isFixEntry(entry) ? entry : undefined;
+        const groupMeta = AFTER_TRANSLATION_GROUPS.find((g) => g.key === b.group);
         return (
           <div>
+            {groupHead && groupMeta && (
+              <div class="after-trans-group-head">
+                <span class="after-trans-group-head__label">{groupMeta.label}</span>
+                <span class="after-trans-group-head__hint">{groupMeta.hint}</span>
+              </div>
+            )}
             <div class="pipeline-stage-item after-trans-item">
               <div class="after-trans-item__num-wrap">
                 <input
@@ -185,8 +197,7 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
             )}
           </div>
         );
-        }}
-      </For>
+      })}
     </div>
   );
 }
