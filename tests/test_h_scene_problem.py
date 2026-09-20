@@ -11,7 +11,8 @@ from unittest import mock
 
 import yaml
 
-from GalTransl import server as _server_mod
+from GalTransl import server as _server_mod  # noqa: F401  （保留：验证 re-export 面）
+from GalTransl import server_dict
 
 
 def _start_server(workspace_root: str):
@@ -34,7 +35,9 @@ class _Base(unittest.TestCase):
         cls.server, cls.port = _start_server(cls.tmp)
         cls.root = cls.tmp
         # 隔离公共字典兜底：模拟公共字典目录不存在，避免测试项目 config 被自动补全
-        _server_mod._common_dict_directory = lambda: os.path.join(
+        # 0.4.10 起 _common_dict_directory 位于 server_dict（与其调用方同模块），
+        # 故直接赋值必须打到该模块命名空间，否则会被静默忽略。
+        server_dict._common_dict_directory = lambda: os.path.join(
             cls.tmp, "_no_common_dict"
         )
 
@@ -365,8 +368,9 @@ class ForbiddenWordProblemTests(unittest.TestCase):
             from GalTransl.server import _load_rebuild_deps
 
             # 隔离公共字典兜底，仅验证项目自身配置的禁用词加载
+            # 0.4.10 起 patch 目标改到 server_dict（与调用方同模块）
             with mock.patch(
-                "GalTransl.server._common_dict_directory",
+                "GalTransl.server_dict._common_dict_directory",
                 return_value=os.path.join(pdir, "_no_common_dict"),
             ):
                 deps = _load_rebuild_deps(pdir, "config.yaml")

@@ -30,7 +30,7 @@ class JobSubmitOverridesTests(unittest.TestCase):
 
         registry = JobRegistry(max_workers=1)
         try:
-            with mock.patch("GalTransl.server.run_job", side_effect=fake_run_job):
+            with mock.patch("GalTransl.server_jobs.run_job", side_effect=fake_run_job):
                 registry.submit(payload)
                 self.assertTrue(called.wait(5), "run_job 未被调用")
         finally:

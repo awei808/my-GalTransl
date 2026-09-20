@@ -68,22 +68,22 @@ class PostprocessHRangesPassTests(unittest.TestCase):
             captured["h_ranges"] = h_ranges
 
         with patch(
-            "GalTransl.Frontend.LLMTranslate._resolve_file_h_ranges",
+            "GalTransl.Frontend.llm_postprocess._resolve_file_h_ranges",
             return_value=[(0, 10)],
         ), patch(
-            "GalTransl.Frontend.LLMTranslate.find_problems",
+            "GalTransl.Frontend.llm_postprocess.find_problems",
             side_effect=_fake_find_problems,
         ), patch(
-            "GalTransl.Frontend.LLMTranslate._resolve_after_translation_order",
+            "GalTransl.Frontend.llm_postprocess._resolve_after_translation_order",
             return_value=[],
         ), patch(
-            "GalTransl.Frontend.LLMTranslate._update_runtime",
+            "GalTransl.Frontend.llm_postprocess._update_runtime",
             return_value=None,
         ), patch(
-            "GalTransl.Frontend.LLMTranslate.save_transCache_to_json",
+            "GalTransl.Frontend.llm_postprocess.save_transCache_to_json",
             new=AsyncMock(),
         ), patch(
-            "GalTransl.Frontend.LLMTranslate.DictionaryCombiner.combine",
+            "GalTransl.Frontend.llm_postprocess.DictionaryCombiner.combine",
             return_value=([], []),
         ):
             # 用 asyncio.run 驱动 async 函数
@@ -102,22 +102,22 @@ class PostprocessHRangesPassTests(unittest.TestCase):
             captured["h_ranges"] = h_ranges
 
         with patch(
-            "GalTransl.Frontend.LLMTranslate._resolve_file_h_ranges",
+            "GalTransl.Frontend.llm_postprocess._resolve_file_h_ranges",
             return_value=[],
         ), patch(
-            "GalTransl.Frontend.LLMTranslate.find_problems",
+            "GalTransl.Frontend.llm_postprocess.find_problems",
             side_effect=_fake_find_problems,
         ), patch(
-            "GalTransl.Frontend.LLMTranslate._resolve_after_translation_order",
+            "GalTransl.Frontend.llm_postprocess._resolve_after_translation_order",
             return_value=[],
         ), patch(
-            "GalTransl.Frontend.LLMTranslate._update_runtime",
+            "GalTransl.Frontend.llm_postprocess._update_runtime",
             return_value=None,
         ), patch(
-            "GalTransl.Frontend.LLMTranslate.save_transCache_to_json",
+            "GalTransl.Frontend.llm_postprocess.save_transCache_to_json",
             new=AsyncMock(),
         ), patch(
-            "GalTransl.Frontend.LLMTranslate.DictionaryCombiner.combine",
+            "GalTransl.Frontend.llm_postprocess.DictionaryCombiner.combine",
             return_value=([], []),
         ):
             import asyncio

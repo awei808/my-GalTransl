@@ -21,7 +21,8 @@ import urllib.request
 from unittest.mock import patch
 
 from GalTransl import ReviewAssist
-from GalTransl import server as _server_mod
+from GalTransl import server as _server_mod  # noqa: F401  （保留：验证 re-export 面）
+from GalTransl import server_backend
 
 _ENTRIES = [
     {"index": 1, "name": "創", "pre_src": "……そんな目で見るなよ", "pre_dst": "……别用那种眼神看我啊"},
@@ -153,7 +154,10 @@ class ReviewAiSuggestHttpTests(unittest.TestCase):
         body = self._suggest_body()
         body.pop("backend_profile_data")
         # 隔离机器上的真实全局 profiles：置空后兜底链无任何可用后端 → 400
-        with patch.object(_server_mod, "_read_backend_profiles", return_value={"profiles": {}}):
+        # 0.4.10 起 _read_backend_profiles 位于 server_backend，patch 目标随之迁移
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value={"profiles": {}}
+        ):
             status, data = self._post(body)
         self.assertEqual(status, 400)
         self.assertTrue(data.get("error", ""))
@@ -164,7 +168,8 @@ class ReviewAiSuggestHttpTests(unittest.TestCase):
         self.assertEqual(status, 502)
 
     def test_busy_lock_returns_409(self) -> None:
-        with _server_mod._REVIEW_SUGGEST_LOCK:
+        # 0.4.10 起单飞锁位于 server_backend（与 _resolve_suggest_backend 同模块）
+        with server_backend._REVIEW_SUGGEST_LOCK:
             status, data = self._post(self._suggest_body())
         self.assertEqual(status, 409)
 

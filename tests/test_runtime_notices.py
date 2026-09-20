@@ -134,8 +134,10 @@ class NonEmptyGptDictTests(unittest.TestCase):
         # 手写字典被 gpt.dict 配置引用（initDictList 返回其路径）且含有效条目 → True
         manual = os.path.join(self.tmp, "项目GPT字典.txt")
         self._write("项目GPT字典.txt", "魔法\tまほう\n")
+        # 0.4.10 起 _has_nonempty_gpt_dict 位于 llm_prepost，其内部按该模块命名空间
+        # 解析 initDictList，故 patch 目标须随之迁移（打 LLMTranslate 会静默打空）。
         with mock.patch(
-            "GalTransl.Frontend.LLMTranslate.initDictList",
+            "GalTransl.Frontend.llm_prepost.initDictList",
             return_value=[manual],
         ):
             self.assertTrue(_has_nonempty_gpt_dict(self.cfg))

@@ -141,11 +141,14 @@ class RecheckEngineTests(unittest.TestCase):
                 getCachePath=lambda: cache_dir,
                 config_name="config.yaml",
             )
+            # _load_rebuild_deps 由 UtilityEngines 经 `from GalTransl.server import` 调用
+            # → patch 打 server 命名空间；_run_problem_detection 由 server_cache 内的
+            # recheck_pass3_cache_files 调用 → patch 必须打 server_cache（否则静默打空）。
             with patch(
                 "GalTransl.server._load_rebuild_deps",
                 return_value=(SimpleNamespace(), None, None, None, [], [], []),
             ), patch(
-                "GalTransl.server._run_problem_detection",
+                "GalTransl.server_cache._run_problem_detection",
                 return_value=(detection, True),
             ):
                 run_utility_engine(cfg, "recheck")

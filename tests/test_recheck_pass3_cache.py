@@ -52,7 +52,7 @@ class RecheckPass3CacheFilesTests(unittest.TestCase):
                 }
             ]
             with patch(
-                "GalTransl.server._run_problem_detection", return_value=(results, True)
+                "GalTransl.server_cache._run_problem_detection", return_value=(results, True)
             ):
                 n = recheck_pass3_cache_files(cache_dir, fake_cfg, None, None, None, [])
 
@@ -77,7 +77,7 @@ class RecheckPass3CacheFilesTests(unittest.TestCase):
                 }
             ]
             with patch(
-                "GalTransl.server._run_problem_detection", return_value=(results, False)
+                "GalTransl.server_cache._run_problem_detection", return_value=(results, False)
             ):
                 n = recheck_pass3_cache_files(cache_dir, fake_cfg, None, None, None, [])
 
@@ -101,7 +101,7 @@ class RecheckPass3CacheFilesTests(unittest.TestCase):
                 }
             ]
             with patch(
-                "GalTransl.server._run_problem_detection", return_value=(results, True)
+                "GalTransl.server_cache._run_problem_detection", return_value=(results, True)
             ):
                 n = recheck_pass3_cache_files(cache_dir, fake_cfg, None, None, None, [])
 
@@ -142,7 +142,7 @@ class RecheckPass3CacheFilesTests(unittest.TestCase):
                 }
             ]
             with patch(
-                "GalTransl.server._run_problem_detection", return_value=(results, True)
+                "GalTransl.server_cache._run_problem_detection", return_value=(results, True)
             ):
                 n = recheck_pass3_cache_files(
                     cache_dir, fake_cfg, None, None, None, [], target_files=[file_a]
