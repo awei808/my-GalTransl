@@ -1,7 +1,6 @@
 import { For, Show, Portal } from "solid-js/web";
 import { getToastItems, toast, ToastEntry } from "../../stores/toastStore";
 import { Icon } from "../icons";
-import { themeVivid } from "../../lib/theme";
 
 function ToastItem(props: { entry: ToastEntry }) {
   const toneClass = () => `toast-item toast--${props.entry.tone}`;
@@ -31,21 +30,17 @@ function ToastItem(props: { entry: ToastEntry }) {
         }}
         aria-label="关闭"
       >
-        {themeVivid() ? (
-          <span class="icon-unicode" aria-hidden="true">✕</span>
-        ) : (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
-        )}
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <line x1="6" y1="6" x2="18" y2="18" />
+          <line x1="18" y1="6" x2="6" y2="18" />
+        </svg>
       </button>
     </div>
   );

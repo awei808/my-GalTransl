@@ -14,7 +14,7 @@ ForGlobalPrompt — 全局提示词(GlobalPrompt)生成后端（全流程翻译�
 "生成"流程，完全绕开翻译模型的输入/输出契约（不写 gt_output）。
 
 上游：TextCompressor 的压缩输出
-下游：ForFileMetaData、ForBatchMetaData、ForGalJsonMulitChat 可注入此全局上下文
+下游：ForFileMetaData、ForBatchMetaData、ForGalJsonTranslate 可注入此全局上下文
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def load_global_prompt(projectConfig: CProjectConfig) -> Optional[dict]:
     """
     从 transl_cache/pass0_cache/GlobalPrompt.json 加载全局提示词。
 
-    用于流水线后续阶段（ForFileMetaData、ForBatchMetaData、ForGalJsonMulitChat）
+    用于流水线后续阶段（ForFileMetaData、ForBatchMetaData、ForGalJsonTranslate）
     在需要时读取全局分析结果。
 
     Returns:

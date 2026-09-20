@@ -47,7 +47,7 @@ export interface TaxonomySection {
   keys?: string[];
   /** 该 section 内要渲染的固定卡片（有序）。如游戏外部信息、翻译规范文件等专用控件 */
   fixedCards?: FixedCardKind[];
-  /** 即便没有任何实际字段/卡片，也始终渲染该 section（用于占位分区，如「多轮对话翻译」） */
+  /** 即便没有任何实际字段/卡片，也始终渲染该 section（用于占位分区，如「对话翻译」） */
   alwaysShow?: boolean;
 }
 
@@ -57,7 +57,7 @@ export interface TaxonomySection {
  *
  * 分区顺序（用户 2026-08-05 指定）：
  *   目标语言 → 翻译规范文件 → 翻译后端总设置 → 翻译后端-全局提示词（含游戏外部信息）
- *   → 翻译后端-文件/批次元数据提取 → 翻译后端-多轮对话翻译（占位）
+ *   → 翻译后端-文件/批次元数据提取 → 翻译后端-对话翻译（占位）
  *   → 翻译后端-修复改进 → 问题检测 → 代理 → 缓存与日志 → 字典 → 后端专属 → 其他设置
  */
 export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
@@ -124,10 +124,15 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
     ],
   },
   {
-    // 占位分区：当前无对应字段，未来由修复类/改进类后端接管
-    title: "翻译后端-多轮对话翻译",
-    desc: "用于配置多轮对话翻译后端（当前暂无对应设置项，预留分区）。",
-    subsections: [],
+    // 翻译后端对话模式：多轮/单轮选择
+    title: "翻译后端-对话翻译",
+    desc: "翻译后端的对话模式（多轮/单轮对话可选）。",
+    subsections: [
+      {
+        title: "",
+        keys: ["common.gpt.chatMode"],
+      },
+    ],
     alwaysShow: true,
   },
   {

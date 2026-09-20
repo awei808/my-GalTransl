@@ -93,7 +93,7 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
 class TokenPoolSectionTests(unittest.TestCase):
     def test_pool_without_section_reads_main_config(self) -> None:
         cfg = _FakeBackendConfig(MAIN_SECTION)
-        pool = COpenAITokenPool(cfg, "ForGal-json-multi-chat")
+        pool = COpenAITokenPool(cfg, "ForGal-json-translate")
         self.assertEqual(len(pool.tokens), 1)
         self.assertEqual(pool.tokens[0][1].token, "sk-main")
         self.assertEqual(pool.backend_section, MAIN_SECTION)
@@ -102,7 +102,7 @@ class TokenPoolSectionTests(unittest.TestCase):
     def test_pool_with_section_reads_profile(self) -> None:
         cfg = _FakeBackendConfig(MAIN_SECTION)
         profile = _profile([{"token": "sk-stage", "endpoint": "https://s.example.com"}])
-        pool = COpenAITokenPool(cfg, "ForGal-json-multi-chat", section=profile["OpenAI-Compatible"])
+        pool = COpenAITokenPool(cfg, "ForGal-json-translate", section=profile["OpenAI-Compatible"])
         self.assertEqual(len(pool.tokens), 1)
         self.assertEqual(pool.tokens[0][1].token, "sk-stage")
         self.assertIs(pool.backend_section, profile["OpenAI-Compatible"])

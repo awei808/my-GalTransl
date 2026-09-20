@@ -1,0 +1,1152 @@
+/* part07c.css — 字典表格模式（Markdown 式表头 + 内容）（0.4.10 从 styles.css 拆分） */
+
+/* ── 字典表格模式（Markdown 式表头 + 内容） ── */
+.dict-table-wrap {
+  flex: 1;
+  overflow: auto;
+  /* 无顶部内距：sticky 表头需贴住滚动口顶边，否则滚动时上方漏出内容带 */
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.dict-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: var(--font-base);
+}
+
+.dict-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-hover);
+  padding: 6px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 列分隔线：半透明，弱于行底线 */
+.dict-table th + th,
+.dict-table td + td {
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+}
+
+.dict-table tbody td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--color-border-default);
+  vertical-align: middle;
+}
+
+/* 斑马纹：偶数行次级底色；必须置于 hover 规则之前，同级特异性下后者覆盖 */
+.dict-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-bg-subtle) 55%, transparent);
+}
+
+.dict-table tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+
+.dict-row--conditional td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-brand-primary);
+}
+
+/* 条件/场景行首列类型徽标：绝对定位于输入框左侧，不影响列宽 */
+.dict-row td[data-type-label]:first-child {
+  position: relative;
+  padding-left: 58px;
+}
+
+.dict-row td[data-type-label]:first-child::before {
+  content: attr(data-type-label);
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-xs);
+  font-style: normal;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.dict-row--conditional td[data-type-label]:first-child::before {
+  color: var(--color-status-info);
+  background: color-mix(in srgb, var(--color-bg-info) 80%, transparent);
+}
+
+.dict-row--situation td[data-type-label]:first-child::before {
+  color: var(--color-status-warning);
+  background: color-mix(in srgb, var(--color-bg-warning) 80%, transparent);
+}
+
+.dict-cell-comment {
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--color-bg-subtle) 60%, transparent);
+}
+
+/* 分区线注释行（//==== 等）：渲染为标题条，视觉分段长表格 */
+.dict-row--divider td.dict-cell-comment {
+  font-style: normal;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-info) 65%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--color-brand-primary) 55%, transparent);
+  /* 补偿左边框 3px，保持文字与普通行对齐 */
+  padding-left: 7px;
+}
+
+/* 非法正则词条（re: 前缀编译失败/可匹配空串）：整行警示，悬停显示错误原因 */
+.dict-row--regex-error td {
+  background: color-mix(in srgb, var(--color-bg-error) 55%, transparent);
+}
+.dict-row--regex-error td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-status-error);
+}
+
+.dict-cell-note {
+  display: inline-block;
+  max-width: 100%;
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.dict-cell-empty {
+  display: inline-block;
+  min-height: 20px;
+}
+
+.dict-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: var(--font-base);
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+  padding: 2px 4px;
+}
+
+.dict-cell-input:focus {
+  background: var(--color-bg-input);
+  border-radius: var(--radius-sm);
+}
+
+.dict-cell-input--cond {
+  width: auto;
+  min-width: 48px;
+  max-width: 120px;
+  flex: 0 1 auto;
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+
+.dict-cell-input--cond:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.dict-cell-select {
+  font-size: var(--font-base);
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  min-width: 48px;
+  max-width: 100px;
+  cursor: pointer;
+  padding-right: 14px;
+}
+
+.dict-cell-select--connector {
+  min-width: 40px;
+  max-width: 56px;
+}
+
+.dict-cell-select:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.dict-cell-conds,
+.dict-cell-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.dict-cell-fixed {
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.dict-table-add {
+  margin-top: var(--space-1);
+  width: 100%;
+  border-style: dashed;
+}
+
+.name-entry-arrow {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-base);
+  padding: 0 4px;
+}
+
+.name-entry-dst {
+  color: var(--color-brand-primary);
+}
+
+.name-input {
+  width: 100%;
+  padding: 3px 6px;
+  font-size: var(--font-base);
+  font-family: var(--font-sans);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.name-input:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+  background: var(--color-bg-input);
+}
+
+.name-col-count-val {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-base);
+  text-align: right;
+}
+
+.name-dict-static {
+  padding: var(--space-2);
+}
+
+.dict-name-hint {
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+/* ==========================================
+   后端配置页面
+   ========================================== */
+
+.page-backend-profiles {
+  overflow-y: auto;
+}
+
+.bp-toolbar {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.bp-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.bp-empty {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-base);
+  text-align: center;
+  padding: var(--space-3);
+}
+
+.bp-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+}
+
+.bp-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.bp-card-name {
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-base);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.bp-default-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+  font-weight: var(--weight-medium);
+}
+
+.bp-card-meta {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bp-editor-panel,
+.bp-new-dialog {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  margin-bottom: var(--space-2);
+  overflow: visible;
+}
+
+.bp-editor-header,
+.bp-new-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.bp-editor-header h3,
+.bp-new-header h3 {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+}
+
+.bp-editor-body,
+.bp-new-body {
+  padding: var(--space-2);
+}
+
+.bp-json-editor {
+  width: 100%;
+  min-height: 180px;
+  padding: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  resize: vertical;
+  outline: none;
+}
+
+.bp-json-editor:focus {
+  border-color: var(--color-border-focus);
+}
+
+.bp-json-hint {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+}
+
+.bp-json-hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.bp-editor-footer,
+.bp-new-footer {
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--color-border-default);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 后端配置：结构化字段表单 */
+.bp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--space-1);
+}
+.bp-field__label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+.bp-type-field {
+  margin-bottom: var(--space-1);
+}
+.bp-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-1) 0;
+}
+.bp-token-row {
+  display: flex;
+  gap: var(--space-1);
+  align-items: flex-start;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+}
+.bp-token-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.bp-model-field {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.bp-model-field .field__input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 模型名称：自定义下拉（替代原生 datalist，确保拉取后实时刷新） */
+.bp-model-input-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.bp-model-input-wrap .field__input {
+  flex: 1;
+  min-width: 0;
+}
+.bp-model-toggle {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 8px;
+  height: 28px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-input);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.bp-model-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bp-model-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+.bp-model-option {
+  padding: 6px 10px;
+  font-size: var(--font-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bp-model-option:hover {
+  background: var(--color-bg-hover);
+}
+.bp-dropdown-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+.bp-row-del {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel);
+  color: var(--color-text-tertiary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.bp-row-del:hover {
+  border-color: var(--color-status-error);
+  color: var(--color-status-error);
+  background: var(--color-bg-error);
+}
+.bp-add-btn {
+  align-self: flex-start;
+}
+
+/* 后端配置页按钮加大一档：字号 12→14px、内边距 +2px（仅本页，不影响全局 .btn--sm） */
+.page-backend-profiles .btn--sm {
+  padding: 5px 12px;
+  font-size: var(--font-md);
+}
+.bp-raw {
+  margin-top: var(--space-1);
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+.bp-raw summary {
+  cursor: pointer;
+  user-select: none;
+}
+.bp-raw .bp-json-editor {
+  margin-top: var(--space-1);
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* ==========================================
+   插件管理页面
+   ========================================== */
+
+.page-plugins {
+  overflow-y: auto;
+}
+
+.plugin-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.plugin-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-2);
+}
+
+.plugin-empty {
+  grid-column: 1 / -1;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-3);
+}
+
+.plugin-card {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  background: var(--color-bg-panel);
+  cursor: pointer;
+  transition: border-color var(--duration-fast);
+}
+
+.plugin-card:hover {
+  border-color: var(--color-brand-primary);
+}
+
+.plugin-card-name {
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-base);
+  margin-bottom: 2px;
+}
+
+.plugin-card-version {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.plugin-card-author {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.plugin-card-desc {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-card-type {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  display: inline-block;
+}
+
+.plugin-detail {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  margin-bottom: var(--space-2);
+  overflow: hidden;
+}
+
+.plugin-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.plugin-detail-header h3 {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+}
+
+.plugin-detail-body {
+  padding: var(--space-2);
+}
+
+.plugin-detail-row {
+  display: flex;
+  padding: 4px 0;
+  font-size: var(--font-base);
+}
+
+.plugin-detail-row span:first-child {
+  width: 80px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.plugin-detail-desc {
+  margin-top: var(--space-1);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+/* ==========================================
+   提示词模板页面
+   ========================================== */
+
+.page-prompt-templates {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.pt-layout {
+  flex: 1;
+  display: flex;
+  gap: var(--space-2);
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 左侧模板列表 */
+.pt-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  overflow-y: auto;
+}
+
+.pt-sidebar-title {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.pt-sidebar-item {
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border-default);
+  transition: background var(--duration-fast);
+}
+
+.pt-sidebar-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.pt-sidebar-item.active {
+  background: var(--color-bg-selected);
+}
+
+.pt-sidebar-name {
+  font-weight: var(--weight-medium);
+  font-size: var(--font-base);
+}
+
+.pt-sidebar-desc {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+.pt-override-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--color-bg-warning);
+  color: var(--color-status-warning);
+  display: inline-block;
+  margin-top: 4px;
+}
+
+/* 右侧编辑器 */
+.pt-editor {
+  flex: 1;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.pt-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-tertiary);
+}
+
+.pt-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+}
+
+.pt-editor-title {
+  font-weight: var(--weight-semibold);
+}
+
+.pt-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.pt-modified-indicator {
+  font-size: var(--font-sm);
+  color: var(--color-status-warning);
+}
+
+.pt-field {
+  padding: var(--space-2);
+}
+
+.pt-label {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.pt-textarea {
+  width: 100%;
+  min-height: 360px;
+  padding: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  resize: vertical;
+  outline: none;
+}
+
+/* 系统提示词：缩小至原先约 1/3 */
+.pt-textarea--system {
+  min-height: 120px;
+}
+
+/* 用户提示词：增高 */
+.pt-textarea--user {
+  min-height: 400px;
+}
+
+.pt-textarea:focus {
+  border-color: var(--color-border-focus);
+}
+
+/* ==========================================
+   项目配置页面
+   ========================================== */
+
+.page-project-config {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.pc-status {
+  padding: var(--space-3);
+  color: var(--color-text-tertiary);
+}
+
+.pc-desc {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* 条件板块的直接说明文字与兄弟元素保持统一缩进 */
+.pc-group > .pc-desc {
+  padding: var(--space-1) var(--space-2);
+}
+
+.pc-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pc-group {
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  /* 作为快捷跳转锚点时避免贴顶 */
+  scroll-margin-top: var(--space-3);
+}
+
+.pc-group-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-app);
+  color: var(--color-text-primary);
+}
+
+/* 可折叠的大分组标题（项目设置页专用；后端配置页标题为静态文本，不受此影响） */
+.pc-group-title--toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.pc-group-title-text {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+/* 大分组标题旁的二级说明（折叠时仍可见，方便识别分区） */
+.pc-group-desc {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-secondary);
+  margin: 2px 0 0;
+}
+
+/* 大分组折叠指示箭头 */
+.pc-group-chevron {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.pc-group-title:hover .pc-group-chevron {
+  color: var(--color-text-primary);
+}
+
+/* 折叠状态：隐藏分区内容（display:none，无过渡） */
+/* 项目设置页专用 */
+.pc-group-body--collapsed {
+  display: none;
+}
+
+/* 项目设置二级子分组（如「翻译处理 → 接口与并发」） */
+.pc-subsection {
+  margin: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.pc-subsection-title {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-2);
+  margin: 0;
+  border-bottom: 1px solid var(--color-border-muted);
+  color: var(--color-text-secondary);
+}
+
+/* 全局后端配置接管提示横幅（项目设置中 OpenAI 兼容组） */
+.pc-global-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg-info);
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.pc-global-banner__text {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.pc-global-banner__text strong {
+  color: var(--color-text-primary);
+}
+
+.pc-row {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  gap: var(--space-2);
+}
+
+.pc-row:last-child {
+  border-bottom: none;
+}
+
+.pc-row-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.pc-label {
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* 待实现/待验证配置项的 TODO 徽标（与 .pc-label 同行展示） */
+.pc-todo-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #8a6d1a;
+  background: #fdf3d0;
+  border: 1px solid #e6cf8a;
+  border-radius: 4px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.pc-row--todo {
+  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.02));
+}
+
+.pc-desc--todo {
+  color: #a16207;
+}
+
+/* 包裹控件用：去掉 fieldset 默认边框，保持 flex 布局（disabled 时统一禁用内部控件） */
+.pc-fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.pc-key-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: 2px;
+}
+
+.pc-key {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.pc-allowed {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.pc-row-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.pc-input {
+  width: 280px;
+}
+
+.pc-input--readonly {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+/* 游戏外部信息（ForGlobalPrompt 外部信息接口）专用多行输入框 */
+.pc-external-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+}
+
+.pc-external-info__textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-input, var(--color-bg-app));
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.pc-external-info__textarea:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.pc-external-info__textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.pc-select {
+  appearance: auto; /* 恢复浏览器原生下拉箭头 */
+  cursor: pointer;
+  padding-right: var(--space-1);
+}
+
+/* 混合控件：下拉 + 数字框并列（如 apiErrorWait 选 auto 或填 0–120） */
+.pc-hybrid {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.pc-select--sm {
+  width: 160px;
+}
+
+.pc-input--num {
+  width: 96px;
+}
+
+/* 项目设置：通用列表内的多行文本输入（如剧情路线图用户大纲） */
+.pc-textarea-multiline {
+  width: 280px;
+  min-height: 96px;
+  resize: vertical;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-input, var(--color-bg-app));
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.pc-textarea-multiline:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+/* 后端配置页 API 调用设置：checkbox 着色与对齐 */
+.pc-row-control input[type="checkbox"] {
+  accent-color: var(--color-brand-primary);
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  cursor: pointer;
+}
+

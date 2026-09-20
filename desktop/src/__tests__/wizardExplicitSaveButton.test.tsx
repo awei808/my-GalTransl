@@ -76,7 +76,7 @@ beforeEach(() => {
     { name: "file_galtransl_json", type: "file", display_name: "GALTRANSL JSON" },
     { name: "text_common_normalfix", type: "text", display_name: "通用修复" },
   ] as never);
-  vi.mocked(fetchTranslationGuidelines).mockResolvedValue(["日译中_增强", "通用"]);
+  vi.mocked(fetchTranslationGuidelines).mockResolvedValue(["日译中_增强v2.md", "日译中_增强.md", "Basic.md"]);
   vi.mocked(fetchProjectConfig).mockResolvedValue({
     config: {
       common: {},
@@ -128,6 +128,17 @@ async function goToSettingsStep() {
 }
 
 describe("NewProjectWizard 显式保存按钮", () => {
+  it("翻译规范默认选中 日译中_增强v2.md（按 v2 → v1 → 列表首位退让）", async () => {
+    await goToSettingsStep();
+    await vi.waitFor(() => {
+      const select = Array.from(document.querySelectorAll("select")).find((s) =>
+        Array.from(s.options).some((o) => o.value === "日译中_增强v2.md"),
+      );
+      expect(select, "第 4 步应有翻译规范下拉").toBeTruthy();
+      expect(select!.value).toBe("日译中_增强v2.md");
+    });
+  });
+
   it("进入设置步骤后出现「保存设置」按钮，点击 → 落盘并反馈「设置已保存」", async () => {
     await goToSettingsStep();
     const saveBtn = document.querySelector<HTMLButtonElement>(

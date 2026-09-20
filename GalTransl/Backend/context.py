@@ -1,7 +1,7 @@
 """全局提示词 / 路线图上下文装配（共享给 4 个后端类）。
 
 历史实现中 _ensure_global_prompt_loaded / _format_global_prompt_block /
-_format_route_context_for_file 等函数在 4 个类中各重复一遍（ForGalJsonMulitChat、
+_format_route_context_for_file 等函数在 4 个类中各重复一遍（ForGalJsonTranslate、
 ForFileMetaData、ForBatchMetaData、ForPlotRouteMap）。本模块把这些共享逻辑收口为
 模块级函数，调用方传入引擎实例，函数读写实例的 pj_config / _global_prompt* /
 _plot_route_map* 属性。这样：
@@ -22,7 +22,7 @@ def ensure_global_prompt_loaded(engine: Any, tag: str) -> None:
 
     Args:
         engine: 后端实例，读取 pj_config、写 _global_prompt_loaded / _global_prompt
-        tag: 日志标签（如 "ForGalJsonMulitChat"），用于 LOGGER.debug 标识调用方
+        tag: 日志标签（如 "ForGalJsonTranslate"），用于 LOGGER.debug 标识调用方
     """
     if engine._global_prompt_loaded:
         return
@@ -166,7 +166,7 @@ def format_global_prompt_only(engine: Any, tag: str) -> str:
 def format_global_prompt_with_route_lazy(engine: Any, tag: str, filename: str) -> str:
     """filename + 惰性路线剧情 + 带标注的 GlobalPrompt（角色按文件元数据按需注入）。
 
-    对应原 ForGalJsonMulitChat._format_global_prompt_block 行为。
+    对应原 ForGalJsonTranslate._format_global_prompt_block 行为。
     翻译轮与修复轮（继承同一方法）均走此链路，因此按需筛选同时作用于两者。
     """
     def _route_block_lazy(e, t, fn):
@@ -189,7 +189,7 @@ def format_global_prompt_with_route_direct(engine: Any, tag: str, filename: str)
 def format_route_context_for_file_lazy(engine: Any, tag: str, filename: str) -> str:
     """惰性版：按当前文件所属路线返回剧情上下文块；先 ensure_plot_route_map_loaded 一次。
 
-    对应原 ForGalJsonMulitChat._format_route_context_for_file 行为（惰性 IO）。
+    对应原 ForGalJsonTranslate._format_route_context_for_file 行为（惰性 IO）。
     """
     from GalTransl.Backend.ForPlotRouteMap import _format_route_context
     try:

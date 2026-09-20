@@ -539,7 +539,7 @@ def set_live_snippets(
 ) -> None:
     """在翻译循环中设置当前提示词和译文预览的实时快照。
 
-    由 ForGalJsonMulitChat.translate() 与 BaseTranslate.ask_chatbot() 调用。
+    由 ForGalJsonTranslate.translate() 与 BaseTranslate.ask_chatbot() 调用。
     worker_id 为空时回退到 contextvars 中的 worker 标识（-1 表示非 worker 上下文），
     此时仅更新 latest_prompt_preview 兼容元数据生成阶段。
 

@@ -1,6 +1,6 @@
 import base64
 
-# 默认系统角色声明（兼容常量）：历史上作为 ForGal-json-multi-chat 的 system_prompt，
+# 默认系统角色声明（兼容常量）：历史上作为翻译后端（ForGal-json-translate，旧名 ForGal-json-multi-chat）的 system_prompt，
 # 现已被 FORTRANS_SYSTEM 取代。保留供外部配置（如 prompt_template.system_prompt_override）
 # 或历史项目引用其字符串值，请勿删除。
 
@@ -101,6 +101,17 @@ _TRANS_TASK = """<process_requirements>
 """
 
 FORGAL_JSON_TRANS_PROMPT = _build_json_round_prompt(_TRANS_TASK, with_info=True, with_batch_metadata=True)
+
+# 单轮模式任务段：与多轮任务段仅「历史上下文」语义不同——单轮每次请求独立完整，
+# 已译上下文经 <history_result> 注入；多轮历史由对话携带（程序会剥除该段），其余规则完全一致。
+_TRANS_TASK_SINGLE = _TRANS_TASK.replace(
+    """### 历史上下文
+历史翻译见 <history_result>。若行 ID 连续，先预览历史翻译与新剧情，确保语义衔接。""",
+    """### 历史上下文
+每次请求独立完整，不含此前对话。<history_result> 给出紧邻上文已翻译的句子（可能为空），仅作衔接参考：称谓、语气、术语须与之一致，自然承接剧情；不要在输出中复述或续写历史内容。""",
+)
+
+FORGAL_JSON_TRANS_PROMPT_SINGLE = _build_json_round_prompt(_TRANS_TASK_SINGLE, with_info=True, with_batch_metadata=True)
 
 
 _IMPROVE_TASK = """<process_requirements>

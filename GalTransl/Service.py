@@ -9,8 +9,8 @@ import time
 import traceback
 from typing import Any
 
-from GalTransl import LOGGER
-from GalTransl.Cache import compact_cache_append_logs
+from GalTransl import LOGGER, resolve_translator_alias
+from GalTransl.Cache import cleanup_stale_cache_temp_files, compact_cache_append_logs
 from GalTransl.ConfigHelper import CProjectConfig, STAGE_BACKEND_KEYS
 from GalTransl.Runner import run_galtransl
 from GalTransl.i18n import get_text, GT_LANG
@@ -274,7 +274,10 @@ async def run_job_async(
 
         # Apply prompt template overrides from job spec
         prompt_overrides = spec.prompt_template_overrides or {}
+        # 提示词覆盖按 translator 键控：先精确匹配，未命中再按别名解析（兼容旧引擎名键）
         template_override = prompt_overrides.get(spec.translator)
+        if template_override is None:
+            template_override = prompt_overrides.get(resolve_translator_alias(spec.translator))
         if isinstance(template_override, dict):
             system_prompt_override = template_override.get("system_prompt")
             user_prompt_override = template_override.get("user_prompt")
@@ -295,6 +298,13 @@ async def run_job_async(
 
     try:
         update_runtime_status(spec.project_dir, workers_active=0, workers_configured=cfg.get_workers_per_project())
+        # 启动前扫掉上次中断留下的 <缓存>.json.tmp：这一刻本项目确定没有写入者，残留只会误导缓存列表
+        try:
+            stale = cleanup_stale_cache_temp_files(cfg.getCachePath())
+            if stale:
+                LOGGER.info(f"[cache]启动前清理了 {stale} 个残留临时文件（*.json.tmp）")
+        except Exception as ex:  # 清理失败不该挡住翻译
+            LOGGER.warning(f"[cache]清理残留临时文件失败：{str(ex)}")
         await run_galtransl(cfg, spec.translator, stop_event=stop_event)
         current_state.status = "completed"
         current_state.success = True

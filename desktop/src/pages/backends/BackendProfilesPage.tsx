@@ -16,6 +16,8 @@ interface TokenEntry {
   endpoint?: string;
   modelName?: string;
   token?: string;
+  /** 模型上下文窗口（token）：数字，或后端能解析的写法（如 "128k"）；留空表示用默认窗口 */
+  contextWindow?: number | string;
 }
 interface OpenAICompatConfig {
   tokens?: TokenEntry[];
@@ -34,6 +36,16 @@ interface ProfileEntry {
 }
 
 type ProfileType = "OpenAI-Compatible";
+
+/** 留空时的上下文窗口：这里只负责把"留空等于多少"显示给人看，真正的默认由后端兜底。 */
+export const DEFAULT_CONTEXT_WINDOW = 128000;
+
+/** 「上下文大小」输入 → 配置值：纯数字落成 number，"128k" 原样留给后端解析，清空删键走默认。 */
+export function parseContextWindowInput(raw: string): number | string | undefined {
+  const text = raw.trim();
+  if (!text) return undefined;
+  return /^\d+$/.test(text) ? Number(text) : text;
+}
 
 function getProfileType(_config: Record<string, unknown>): ProfileType {
   return "OpenAI-Compatible";
@@ -116,7 +128,8 @@ export function BackendProfilesPage() {
     setTokens(tokens);
   }
   function addToken() {
-    setTokens([...getTokens(), { endpoint: "", modelName: "", token: "" }]);
+    // 新令牌带上默认上下文窗口（128000），免得留空让人以为没生效
+    setTokens([...getTokens(), { endpoint: "", modelName: "", token: "", contextWindow: DEFAULT_CONTEXT_WINDOW }]);
   }
   function removeToken(idx: number) {
     const tokens = getTokens().slice();
@@ -369,6 +382,22 @@ export function BackendProfilesPage() {
                               onInput={(e) => updateToken(i, { token: e.currentTarget.value })}
                               placeholder="sk-..."
                             />
+                          </label>
+                          <label class="bp-field">
+                            <span class="bp-field__label">上下文大小 (contextWindow)</span>
+                            <input
+                              class="field__input"
+                              inputMode="numeric"
+                              value={t().contextWindow == null ? "" : String(t().contextWindow)}
+                              onInput={(e) =>
+                                updateToken(i, { contextWindow: parseContextWindowInput(e.currentTarget.value) })
+                              }
+                              placeholder={`${DEFAULT_CONTEXT_WINDOW}（默认）`}
+                            />
+                            <span class="field__hint">
+                              模型上下文窗口（token）。当前版本仅保存配置，预留给后续版本的上下文压缩/用量显示；
+                              留空按 {DEFAULT_CONTEXT_WINDOW} 处理，也可写 128k 这类写法。
+                            </span>
                           </label>
                         </div>
                         <button

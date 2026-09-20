@@ -47,7 +47,7 @@ const STAGE_BACKEND_FIELDS: {
   reserved?: boolean;
 }[] = [
   { key: "metadata", label: "元数据阶段", desc: "全局分析 / 术语表 / 文件级元数据 / 剧情路线图 / 批次划分" },
-  { key: "translate", label: "翻译执行", desc: "多轮对话翻译（阶段 6）" },
+  { key: "translate", label: "翻译执行", desc: "翻译后端：多轮/单轮对话可选（阶段 6）" },
   { key: "afterTrans", label: "AI 初步（批量）处理", desc: "阶段 7 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）" },
   { key: "proofread", label: "人工校对时 AI 精修", desc: "功能预留，当前版本未实现", reserved: true },
 ];
@@ -224,6 +224,10 @@ const FIELD_UI: Record<string, FieldUI> = {
     hint: "位于 translation_guidelines 目录，影响文风与措辞。",
   },
   "common.gpt.enhance_jailbreak": { label: "抗拒答增强" },
+  "common.gpt.chatMode": {
+    label: "对话模式",
+    hint: "multi=多轮对话（默认，历史由对话携带）；single=单轮独立请求（每批携带全量提示词与 contextNum 句上下文，token 消耗更高）。",
+  },
   "common.gpt.change_prompt": {
     label: "提示词修改模式",
     hint: "no：不改；AdditionalPrompt：追加；OverwritePrompt：覆盖默认提示词。",
@@ -464,6 +468,9 @@ const KEYWORD_LABELS: Record<string, string> = {
   "有向无环图": "有向无环图（DAG）",
   "有向有环图": "有向有环图（含循环）",
   混合: "混合",
+  // 翻译后端对话模式（gpt.chatMode）
+  multi: "多轮对话（multi）",
+  single: "单轮独立请求（single）",
 };
 
 // 待实现/待验证的配置项：设置页渲染 TODO 徽标并禁用编辑（防止误改），

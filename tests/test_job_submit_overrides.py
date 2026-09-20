@@ -11,7 +11,7 @@ from unittest import mock
 from GalTransl.server import JobRegistry
 
 _PAYLOAD_OVERRIDES = {
-    "ForGal-json-multi-chat": {
+    "ForGal-json-translate": {
         "system_prompt": "覆盖系统提示词",
         "user_prompt": "覆盖用户提示词",
     }
@@ -40,7 +40,7 @@ class JobSubmitOverridesTests(unittest.TestCase):
     def test_submit_passes_prompt_template_overrides_to_job_spec(self) -> None:
         spec = self._submit_and_capture({
             "project_dir": r"C:\tmp\proj",
-            "translator": "ForGal-json-multi-chat",
+            "translator": "ForGal-json-translate",
             "prompt_template_overrides": _PAYLOAD_OVERRIDES,
         })
         self.assertEqual(spec.prompt_template_overrides, _PAYLOAD_OVERRIDES)
@@ -48,7 +48,7 @@ class JobSubmitOverridesTests(unittest.TestCase):
     def test_submit_ignores_invalid_overrides_type(self) -> None:
         spec = self._submit_and_capture({
             "project_dir": r"C:\tmp\proj",
-            "translator": "ForGal-json-multi-chat",
+            "translator": "ForGal-json-translate",
             "prompt_template_overrides": "not-a-dict",
         })
         self.assertEqual(spec.prompt_template_overrides, {})
@@ -56,7 +56,7 @@ class JobSubmitOverridesTests(unittest.TestCase):
     def test_submit_without_overrides_defaults_to_empty(self) -> None:
         spec = self._submit_and_capture({
             "project_dir": r"C:\tmp\proj",
-            "translator": "ForGal-json-multi-chat",
+            "translator": "ForGal-json-translate",
         })
         self.assertEqual(spec.prompt_template_overrides, {})
 

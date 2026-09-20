@@ -4,7 +4,7 @@ import { getThemeModePreference, THEME_MODE_CHANGE_EVENT } from "./api/preferenc
 
 /* 主题应用与监听：统一管理两个根属性，供 App 启动与设置页调用
    - data-theme="light|dark"：深浅（CSS 既有暗色覆盖全部基于它）
-   - data-theme-style="flat|vivid"：扁平/鲜艳风格（vivid 为配色与图标覆盖块）
+   - data-theme-style="flat|vivid"：扁平/鲜艳风格（vivid 为配色与装饰覆盖块）
    正交组合避免复制整套深浅覆盖规则 */
 
 const systemDarkQuery = (): MediaQueryList | null =>
@@ -19,7 +19,7 @@ export function isDarkTheme(): boolean {
   return systemDarkQuery()?.matches ?? false;
 }
 
-/** 当前是否为鲜艳风格（vivid：配色更饱和、语义图标换 emoji） */
+/** 当前是否为鲜艳风格（vivid：配色与装饰取上游观感） */
 export function isVividTheme(): boolean {
   if (typeof document === "undefined") return false;
   return document.documentElement.getAttribute("data-theme-style") === "vivid";

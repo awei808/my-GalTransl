@@ -15,6 +15,7 @@ from GalTransl.Utils import fix_quotes
 from GalTransl.Backend.Prompts import (
     FORTRANS_SYSTEM,
     FORGAL_JSON_TRANS_PROMPT,
+    FORGAL_JSON_TRANS_PROMPT_SINGLE,
     H_WORDS_LIST,
     H_BATCH_GUIDE,
     H_INTIMATE_GUIDE,
@@ -25,6 +26,7 @@ from GalTransl.Backend.Prompts import (
 )
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.BaseEngine import register_engine
+from GalTransl.Backend.Conversation import MultiRoundChatMixin
 from GalTransl.Backend.metadata import (
     FileMetaData,
     BatchMetadata,
@@ -44,11 +46,13 @@ from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
 from GalTransl.Service import JobCancelledError
 
 
-"""ForGalJsonMulitChat - 基于 JSON-line 格式的多轮对话视觉小说脚本翻译后端
+"""ForGalJsonTranslate - 基于 JSON-line 格式的视觉小说脚本翻译后端
 
-与单轮对话翻译后端的核心差异：
-本后端采用「多轮对话（multi-round chat）」模式对接 API
-每次 API 调用都会把完整的 messages 历史（system + 之前各轮 user/assistant）一并发出，由模型自行维持上下文。
+对话模式（gpt.chatMode）：
+- multi（默认）：多轮对话（multi-round chat）模式对接 API，每次 API 调用都会把完整的
+  messages 历史（system + 之前各轮 user/assistant）一并发出，由模型自行维持上下文。
+- single：单轮模式，每批请求独立完整（全量提示词 + 元数据 + 术语表），已译上下文经
+  restore_context 取 contextNum 句注入 [history_result]；无会话状态，token 消耗更高。
 
 数据流程（类内方法亦按此顺序排列）：
 1. 输入内容处理、拼接
@@ -78,18 +82,22 @@ def _h_level(h_val: float) -> str:
     return "normal"
 
 
-@register_engine("ForGal-json-multi-chat")
-class ForGalJsonMulitChat(BaseTranslate):
+@register_engine("ForGal-json-translate")
+class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
     """
-    ForGalJsonMulitChat - 基于 JSON-line 格式、采用多轮对话的视觉小说脚本翻译后端
+    ForGalJsonTranslate - 基于 JSON-line 格式的视觉小说脚本翻译后端
 
     核心流程：
     1. 将 CTransList 中的每个 CSentense 编码为 "3位随机签名|JSON对象" 的 jsonline 行
-    2. 第一轮对话把 jsonline + 翻译提示词 + 剧情元数据(FileMetaData) 写入 user 消息，后续轮次仅发送 jsonline，借助多轮上下文保持前后一致
+    2. 多轮模式：第一轮对话把 jsonline + 翻译提示词 + 剧情元数据(FileMetaData) 写入 user
+       消息，后续轮次仅发送 jsonline，借助多轮上下文保持前后一致；
+       单轮模式（gpt.chatMode=single）：每批请求独立携带完整提示词，已译上下文经
+       [history_result] 注入
     3. 解析 LLM 返回的 jsonline 结果，校验签名/id/字段完整性
     4. 将翻译结果写回 CSentense.pre_dst
 
-    继承自 BaseTranslate，复用客户端构建、API 调用、缓存读写、动态句数调节等通用逻辑。
+    继承 BaseTranslate（客户端构建、API 调用、缓存读写、动态句数调节等翻译流水线
+    通用逻辑），并混入 MultiRoundChatMixin（多轮对话状态管理，与翻译流程解耦）。
     """
 
     # 用于生成 jsonline 签名的字符集，每个句子分配 3 位随机签名用于防串行校验
@@ -372,6 +380,90 @@ class ForGalJsonMulitChat(BaseTranslate):
         )
         return user_content
 
+    def _build_single_round_user_content(
+        self,
+        trans_list: CTransList,
+        input_src: str,
+        gptdict: str,
+        filename: str,
+        batch_metadata_block: str = "",
+    ) -> str:
+        """单轮模式：构建独立完整的 user 提示词（每个请求都携带全部上下文）。
+
+        与多轮首轮的差异仅在历史来源：多轮由对话历史携带，单轮经 restore_context
+        取 contextNum 句已翻译上下文注入 [history_result]。文件级/批次级元数据、
+        全局提示词、术语表每个请求都注入。
+
+        Args:
+            trans_list: 本批评句（restore_context 据其向前回溯已译句）
+            input_src: 拼接后的待译 jsonline 文本
+            gptdict: 术语表
+            filename: 文件名
+            batch_metadata_block: 已格式化的批次级元数据段
+
+        Returns:
+            本次要发送的 user 消息内容
+        """
+        if self.restore_context_mode:
+            self.restore_context(trans_list, self.contextNum, filename)
+        else:
+            self.last_translations[filename] = ""
+
+        metadata = self._resolve_file_metadata(filename)
+        metadata_block = (
+            self._format_file_metadata_block(metadata)
+            if metadata is not None
+            else ""
+        )
+        global_prompt_block = self._format_global_prompt_block(filename)
+        prompt_req = self._build_prompt_request(
+            input_src,
+            gptdict,
+            plot_metadata=metadata_block,
+            batch_metadata=batch_metadata_block,
+            global_prompt=global_prompt_block,
+        )
+        prompt_req = self._apply_history_result(prompt_req, filename)
+        # 自定义模板没有 [history_result] 占位符时历史无法注入：警告一次，避免静默丢上下文
+        if (
+            not self._history_placeholder_warned
+            and self.last_translations.get(filename)
+            and "history_result" not in self.trans_prompt
+        ):
+            self._history_placeholder_warned = True
+            LOGGER.warning(
+                f"[翻译后端][{filename}]当前提示词模板不含 [history_result] 占位符，"
+                f"单轮模式的上下文历史无法注入（请检查模板或关闭 gpt.restoreContextMode）"
+            )
+        history_text = self.last_translations.get(filename, "")
+        LOGGER.debug(
+            f"[{filename}] 单轮翻译 | backend={self.eng_type} | "
+            f"history={len(history_text.splitlines()) if history_text else 0}行 | "
+            f"guideline={self.pj_config.getKey('gpt.translation_guideline') or '-'} | "
+            f"global={'✓' if self._global_prompt else '✗'} | "
+            f"filemeta={'✓' if filename in self._file_metadata_by_file else '✗'} | "
+            f"batchmeta={'✓' if filename in self._batch_metadata_by_file else '✗'} | "
+            f"gptdict={'✗' if not gptdict else f'{gptdict.count(chr(124))}条'}"
+        )
+        return prompt_req
+
+    def _format_restore_context_line(self, current_tran: CSentense) -> str:
+        """单轮上下文恢复的单行格式：sig 固定为 "old" 的 jsonline（id/name/dst）。"""
+        speaker_name = current_tran.get_speaker_name()
+        speaker = speaker_name if speaker_name else "null"
+        tmp_obj = {
+            "id": current_tran.index,
+            "name": speaker,
+            "dst": current_tran.pre_dst,
+        }
+        if speaker == "null":
+            del tmp_obj["name"]
+        return self._encode_sig_jsonline("old", tmp_obj)
+
+    def _format_restore_context_payload(self, lines: List[str]) -> str:
+        """历史上下文整体包装为 jsonline 代码块，与 <history_result> 段语义呼应。"""
+        return "```jsonline\n" + "\n".join(lines) + "\n```"
+
     # 3. 调 API
 
     async def _call_llm(
@@ -614,12 +706,14 @@ class ForGalJsonMulitChat(BaseTranslate):
         proofread: bool,
         call_messages: list,
         prefill_used: bool,
+        persist_conversation: bool = True,
     ) -> tuple:
         """
         解析结果处理（流程第 4 步收尾）。
 
         根据流式/非流式路径统一判定是否解析成功，失败时记录运行时错误并做
-        失败兜底（标 (Failed)）；成功时将本轮 assistant 回复追加进多轮对话历史。
+        失败兜底（标 (Failed)）；成功且 persist_conversation 时将本轮 assistant
+        回复追加进多轮对话历史。
 
         Args:
             raw_resp: API 原始返回文本
@@ -632,6 +726,7 @@ class ForGalJsonMulitChat(BaseTranslate):
             idx_tip / filename / proofread: 上下文
             call_messages: 本轮完整 messages
             prefill_used: 是否使用了 jailbreak 预填充
+            persist_conversation: 是否回写多轮对话历史（单轮模式为 False）
 
         Returns:
             (success_count, result_trans_list)
@@ -732,17 +827,19 @@ class ForGalJsonMulitChat(BaseTranslate):
             )
 
         # 回写对话历史：将本轮 assistant 回复追加进多轮对话，供后续轮次复用上下文
-        assistant_reply = raw_resp or ""
-        if prefill_used:
-            # 用真实回复替换第一轮中的 assistant 预填充，避免出现连续的 assistant 消息
-            new_conv = call_messages[:-1] + [
-                {"role": "assistant", "content": assistant_reply}
-            ]
-        else:
-            new_conv = call_messages + [
-                {"role": "assistant", "content": assistant_reply}
-            ]
-        self.conversations[filename] = self._trim_conversation(new_conv)
+        # （单轮模式无对话可回写，跳过）
+        if persist_conversation:
+            assistant_reply = raw_resp or ""
+            if prefill_used:
+                # 用真实回复替换第一轮中的 assistant 预填充，避免出现连续的 assistant 消息
+                new_conv = call_messages[:-1] + [
+                    {"role": "assistant", "content": assistant_reply}
+                ]
+            else:
+                new_conv = call_messages + [
+                    {"role": "assistant", "content": assistant_reply}
+                ]
+            self.conversations[filename] = self._trim_conversation(new_conv)
 
         # 翻译完成
         return success_count, result_trans_list, success_count
@@ -757,10 +854,10 @@ class ForGalJsonMulitChat(BaseTranslate):
         token_pool: COpenAITokenPool,
     ) -> None:
         """
-        初始化 ForGalJsonMulitChat 翻译器实例
+        初始化 ForGalJsonTranslate 翻译器实例
 
-        加载 jsonline 格式专用的 Prompt 模板与多轮对话相关配置，
-        初始化 OpenAI 兼容客户端，并为每个文件维护独立的对话历史。
+        加载 jsonline 格式专用的 Prompt 模板与对话模式（gpt.chatMode）相关配置，
+        初始化 OpenAI 兼容客户端；多轮模式下为每个文件维护独立的对话历史。
 
         Args:
             config: 项目配置对象，包含 gpt.enhance_jailbreak 等翻译参数
@@ -769,21 +866,32 @@ class ForGalJsonMulitChat(BaseTranslate):
             token_pool: API Token 池，管理多个 API 密钥的轮换
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
-        self.trans_prompt = FORGAL_JSON_TRANS_PROMPT
+        # 对话模式：multi=多轮对话（默认，历史由对话携带）；single=单轮（每批请求独立，
+        # 全量提示词 + [history_result] 注入 contextNum 句滚动上下文，token 消耗更高）
+        mode = config.getKey("gpt.chatMode")
+        self.chat_mode = mode if mode in ("multi", "single") else "multi"
+        if mode not in (None, "multi", "single"):
+            LOGGER.warning(f"[翻译后端] gpt.chatMode 配置值无效：{mode!r}，已回退 multi")
+        # 提示词按模式选择：单轮用专用任务段（历史经 [history_result] 注入的语义）；
+        # 用户模板 override 在其后应用，对两种模式同等生效
+        self.trans_prompt = (
+            FORGAL_JSON_TRANS_PROMPT if self.chat_mode == "multi" else FORGAL_JSON_TRANS_PROMPT_SINGLE
+        )
         self.system_prompt = FORTRANS_SYSTEM
         self._apply_internal_prompt_template_overrides()
+        # 单轮模式的上下文恢复载体（restore_context 写、_apply_history_result 读）
+        self.last_translations: dict[str, str] = {}
+        # [history_result] 占位符缺失告警只发一次，避免每批刷屏
+        self._history_placeholder_warned = False
         # 读取增强 jailbreak 配置：当模型拒绝翻译时，通过在 assistant 角色
-        # 预输出 ```jsonline 来引导模型输出正确格式（仅在第一轮使用）
+        # 预输出 ```jsonline 来引导模型输出正确格式（多轮仅第一轮；单轮每请求独立可用）
         if val := config.getKey("gpt.enhance_jailbreak"):
             self.enhance_jailbreak = val
         else:
             self.enhance_jailbreak = False
 
-        # 多轮对话历史：按文件名隔离，messages[0]=system，其后 user/assistant 交替
-        self.conversations: dict[str, list] = {}
-
-        # 标记下一批次须以首轮方式构建（失败重试耗尽后设置，恢复多轮连续性）
-        self._force_first_round_files: set[str] = set()
+        # 多轮对话状态（conversations/裁剪/强制首轮标记）由 MultiRoundChatMixin 统一管理
+        self._init_multi_round_chat(config)
 
         # 文件名 -> 剧情元数据：由上层在翻译前通过 set_file_metadata 注入（显式覆盖，
         # 优先级高于从 pass1_cache 惰性载入的文件级元数据）。
@@ -804,18 +912,11 @@ class ForGalJsonMulitChat(BaseTranslate):
         # H 场景用词不当词库（hCheckDict）惰性加载缓存：None=未加载，[]=加载结果为空
         self._h_check_words: Optional[list] = None
 
-        # 多轮历史最大保留轮次数（0=不裁剪）；单独解析避免 _coerce_positive_int 把 0 抬为 1
-        raw_multi_round = config.getKey("gpt.multiRoundMaxHistory")
-        if raw_multi_round is None:
-            self.multi_round_max_history = 0
-        else:
-            try:
-                self.multi_round_max_history = int(raw_multi_round)
-            except (TypeError, ValueError):
-                self.multi_round_max_history = 0
-
         self.last_file_name = ""
         self.init_chatbot(eng_type=eng_type, config=config)
+        LOGGER.info(
+            f"[翻译后端] 对话模式：{'多轮对话' if self.chat_mode == 'multi' else '单轮独立请求'}"
+        )
 
         # 惰性载入的全局提示词（GlobalPrompt）
         self._global_prompt: Optional[dict] = None
@@ -828,19 +929,19 @@ class ForGalJsonMulitChat(BaseTranslate):
 
     def _ensure_global_prompt_loaded(self) -> None:
         from GalTransl.Backend.context import ensure_global_prompt_loaded
-        ensure_global_prompt_loaded(self, "ForGalJsonMulitChat")
+        ensure_global_prompt_loaded(self, "ForGalJsonTranslate")
 
     def _format_global_prompt_block(self, filename: str = "") -> str:
         from GalTransl.Backend.context import format_global_prompt_with_route_lazy
-        return format_global_prompt_with_route_lazy(self, "ForGalJsonMulitChat", filename)
+        return format_global_prompt_with_route_lazy(self, "ForGalJsonTranslate", filename)
 
     def _ensure_plot_route_map_loaded(self) -> None:
         from GalTransl.Backend.context import ensure_plot_route_map_loaded
-        ensure_plot_route_map_loaded(self, "ForGalJsonMulitChat")
+        ensure_plot_route_map_loaded(self, "ForGalJsonTranslate")
 
     def _format_route_context_for_file(self, filename: str) -> str:
         from GalTransl.Backend.context import format_route_context_for_file_lazy
-        return format_route_context_for_file_lazy(self, "ForGalJsonMulitChat", filename)
+        return format_route_context_for_file_lazy(self, "ForGalJsonTranslate", filename)
 
     def set_file_metadata(self, file_metadata: FileMetaData, filename: str = "") -> None:
         """
@@ -865,11 +966,11 @@ class ForGalJsonMulitChat(BaseTranslate):
         try:
             self._file_metadata_by_file = load_file_metadata_map(self.project_config)
             LOGGER.info(
-                f"[ForGalJsonMulitChat] 已载入文件级元数据（pass1_cache），"
+                f"[ForGalJsonTranslate] 已载入文件级元数据（pass1_cache），"
                 f"共 {len(self._file_metadata_by_file)} 个文件有文件级元数据"
             )
         except Exception as e:
-            LOGGER.warning(f"[ForGalJsonMulitChat] 载入文件级元数据失败，已跳过剧情元数据：{e}")
+            LOGGER.warning(f"[ForGalJsonTranslate] 载入文件级元数据失败，已跳过剧情元数据：{e}")
             self._file_metadata_by_file = {}
 
     def _resolve_file_metadata(self, filename: str) -> Optional[FileMetaData]:
@@ -909,11 +1010,11 @@ class ForGalJsonMulitChat(BaseTranslate):
         try:
             self._batch_metadata_by_file = load_batch_metadata_map(self.project_config)
             LOGGER.info(
-                f"[ForGalJsonMulitChat] 已载入批次级元数据（pass2_cache），"
+                f"[ForGalJsonTranslate] 已载入批次级元数据（pass2_cache），"
                 f"共 {len(self._batch_metadata_by_file)} 个文件有批次元数据"
             )
         except Exception as e:
-            LOGGER.warning(f"[ForGalJsonMulitChat] 载入批次级元数据失败，已跳过批次元数据：{e}")
+            LOGGER.warning(f"[ForGalJsonTranslate] 载入批次级元数据失败，已跳过批次元数据：{e}")
             self._batch_metadata_by_file = {}
 
     def _resolve_batch_metadata(self, filename: str) -> Optional[BatchMetadata]:
@@ -1122,78 +1223,15 @@ class ForGalJsonMulitChat(BaseTranslate):
             )
             if self._h_check_words:
                 LOGGER.info(
-                    f"[ForGalJsonMulitChat] 已载入 H 场景用词不当词库，"
+                    f"[ForGalJsonTranslate] 已载入 H 场景用词不当词库，"
                     f"{len(self._h_check_words)} 词"
                 )
         except Exception as e:
             LOGGER.warning(
-                f"[ForGalJsonMulitChat] 加载 H 场景用词不当词库失败，跳过：{e}"
+                f"[ForGalJsonTranslate] 加载 H 场景用词不当词库失败，跳过：{e}"
             )
             self._h_check_words = []
         return self._h_check_words
-
-    def _ensure_conversation(self, filename: str) -> list:
-        """
-        获取（或初始化）指定文件的对话历史。
-
-        初始化时仅包含 system 消息；真正的第一轮 user 消息在 translate 中构建。
-
-        Args:
-            filename: 文件名
-
-        Returns:
-            该文件对应的 messages 列表（会被原地修改/替换）
-        """
-        if filename not in self.conversations:
-            self.conversations[filename] = [
-                {"role": "system", "content": self.system_prompt}
-            ]
-        return self.conversations[filename]
-
-    def _trim_conversation(self, messages: List[dict]) -> List[dict]:
-        """
-        裁剪过长的对话历史以控制 token 消耗。
-
-        始终保留 system 消息（index 0）与第一轮 user 消息（index 1，含剧情元数据），
-        仅裁剪中间的历史轮次，保留最近的若干轮。
-        裁剪轮数由配置 gpt.multiRoundMaxHistory 控制（0=不裁剪，默认 0）。
-
-        Args:
-            messages: 完整 messages 列表
-
-        Returns:
-            裁剪后的 messages 列表
-        """
-        max_turns = self.multi_round_max_history
-        if max_turns <= 0:
-            return messages
-        # system + 第一轮 user 必须保留
-        if len(messages) <= 3:
-            return messages
-        head = messages[:2]
-        tail = messages[2:]
-        keep = max_turns * 2  # 每轮 = user + assistant
-        if len(tail) > keep:
-            tail = tail[-keep:]
-        return head + tail
-
-    def reset_conversation(self, filename: str = "") -> None:
-        """
-        重置会话上下文。
-
-        清空指定文件的多轮对话历史；filename 为空时清空全部。
-        注：剧情元数据（file_metadata_map）默认保留，避免重复注入；
-        若需一并清除可手动 del。
-
-        Args:
-            filename: 要重置的文件名，为空时重置所有
-        """
-        if filename == "":
-            self.conversations = {}
-            self._force_first_round_files = set()
-        else:
-            self.conversations.pop(filename, None)
-            self._force_first_round_files.discard(filename)
 
     # 对外入口
 
@@ -1230,28 +1268,38 @@ class ForGalJsonMulitChat(BaseTranslate):
         force_first_round = filename in self._force_first_round_files
 
         while True:
-            # 流程 2：提示词拼接
-            conv = self._ensure_conversation(filename)
-            if force_first_round:
-                # 失败后续首批：丢弃旧历史，从 [system] 起以首轮重建
-                # （完整提示词 + 剧情元数据 + 本批 jsonline），恢复多轮连续性
-                self.conversations[filename] = [
-                    {"role": "system", "content": self.system_prompt}
-                ]
-                conv = self.conversations[filename]
-                self._force_first_round_files.discard(filename)
-                force_first_round = False
+            # 流程 2：提示词拼接（按对话模式分派）
+            if self.chat_mode == "single":
+                # 单轮模式：每批请求独立，全量提示词 + 滚动上下文注入
+                user_content = self._build_single_round_user_content(
+                    trans_list,
+                    input_src,
+                    gptdict,
+                    filename,
+                    batch_metadata_block=batch_metadata_block,
+                )
+            else:
+                conv = self._ensure_conversation(filename)
+                if force_first_round:
+                    # 失败后续首批：丢弃旧历史，从 [system] 起以首轮重建
+                    # （完整提示词 + 剧情元数据 + 本批 jsonline），恢复多轮连续性
+                    self.conversations[filename] = [
+                        {"role": "system", "content": self.system_prompt}
+                    ]
+                    conv = self.conversations[filename]
+                    self._force_first_round_files.discard(filename)
+                    force_first_round = False
 
-            is_first_round = len(conv) <= 1
+                is_first_round = len(conv) <= 1
 
-            user_content = self._build_round_user_content(
-                conv,
-                input_src,
-                gptdict,
-                filename,
-                is_first_round,
-                batch_metadata_block=batch_metadata_block,
-            )
+                user_content = self._build_round_user_content(
+                    conv,
+                    input_src,
+                    gptdict,
+                    filename,
+                    is_first_round,
+                    batch_metadata_block=batch_metadata_block,
+                )
 
             # 实时推送当前提示词预览（前端翻译控制台左栏"当前提示词"，多 worker 时按 worker 分板块）
             _project_dir = self.pj_config.getProjectDir()
@@ -1268,22 +1316,38 @@ class ForGalJsonMulitChat(BaseTranslate):
             except Exception as e:
                 LOGGER.warning(f"[prompt-preview] set_live_snippets 调用失败: {e}")
 
-            # 组装本次调用的 messages（历史 + 本轮 user）
-            call_messages = conv + [{"role": "user", "content": user_content}]
+            if self.chat_mode == "single":
+                # 单轮：messages 独立完整（system + user）；无多轮历史，
+                # assistant 预填充不会产生连续 assistant 消息，可每个请求使用
+                call_messages = [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_content},
+                ]
+                prefill_used = False
+                if self.enhance_jailbreak:
+                    call_messages.append({"role": "assistant", "content": "```jsonline"})
+                    prefill_used = True
+            else:
+                # 组装本次调用的 messages（历史 + 本轮 user）
+                call_messages = conv + [{"role": "user", "content": user_content}]
 
-            # 增强 jailbreak 预填充：仅在「第一轮」使用，避免与多轮历史产生连续
-            # 两条 assistant 消息（OpenAI 不允许）。第一轮成功后将以真实回复替换该预填充。
-            prefill_used = False
-            if self.enhance_jailbreak and is_first_round:
-                call_messages.append({"role": "assistant", "content": "```jsonline"})
-                prefill_used = True
+                # 增强 jailbreak 预填充：仅在「第一轮」使用，避免与多轮历史产生连续
+                # 两条 assistant 消息（OpenAI 不允许）。第一轮成功后将以真实回复替换该预填充。
+                prefill_used = False
+                if self.enhance_jailbreak and is_first_round:
+                    call_messages.append({"role": "assistant", "content": "```jsonline"})
+                    prefill_used = True
 
             self._check_stop_requested()
 
             # 单 worker 模式下打印翻译上下文摘要，方便调试
             if self.pj_config.active_workers == 1:
                 _label = '校对' if proofread else '翻译'
-                _round = '首轮' if is_first_round else '续轮'
+                _round = (
+                    '单轮'
+                    if self.chat_mode == "single"
+                    else ('首轮' if is_first_round else '续轮')
+                )
                 _retry = f' 重试{attempt}' if attempt > 0 else ''
                 _global = '✓' if self._global_prompt else '✗'
                 _fm = '✓' if filename in self._file_metadata_by_file else '✗'
@@ -1361,6 +1425,7 @@ class ForGalJsonMulitChat(BaseTranslate):
                 proofread=proofread,
                 call_messages=call_messages,
                 prefill_used=prefill_used,
+                persist_conversation=(self.chat_mode == "multi"),
             )
 
             # 实时推送译文预览（前端翻译控制台右栏"译文预览"）
@@ -1384,11 +1449,19 @@ class ForGalJsonMulitChat(BaseTranslate):
                 LOGGER.error(
                     f"[重试耗尽][{filename}:{idx_tip}]已重试 {MAX_RETRIES} 次仍失败，放弃本批翻译"
                 )
-                # 标记后续批次以首轮重建：本次失败已破坏多轮连续性
-                self._force_first_round_files.add(filename)
+                if self.chat_mode == "multi":
+                    # 标记后续批次以首轮重建：本次失败已破坏多轮连续性
+                    self._force_first_round_files.add(filename)
                 return success_count, result_trans_list
 
-            # 重试：重置会话为仅 [system]，以首轮方式重建
+            if self.chat_mode == "single":
+                # 单轮模式无会话状态可破坏，直接重试
+                LOGGER.warning(
+                    f"[重试 {attempt}/{MAX_RETRIES}][{filename}:{idx_tip}]解析失败，单轮模式直接重试"
+                )
+                continue
+
+            # 重试（多轮）：重置会话为仅 [system]，以首轮方式重建
             LOGGER.warning(
                 f"[重试 {attempt}/{MAX_RETRIES}][{filename}:{idx_tip}]解析失败，"
                 f"重置上下文为本批首轮（仅含完整提示词+剧情元数据+本批）后重试"

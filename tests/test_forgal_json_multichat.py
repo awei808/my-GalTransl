@@ -1,5 +1,5 @@
 """
-ForGalJsonMulitChat 单元测试
+ForGalJsonTranslate 单元测试
 
 覆盖：
   - 模块级 detect_line_break_symbol
@@ -14,7 +14,7 @@ ForGalJsonMulitChat 单元测试
   - translate 集成（非流式成功 / 流式成功 / 校对模式 / 整批失败兜底）
 
 为绕过重量级 BaseTranslate.__init__ 与 OpenAI 客户端初始化，统一使用
-ForGalJsonMulitChat.__new__ 创建实例并手动打桩所需属性；网络调用通过
+ForGalJsonTranslate.__new__ 创建实例并手动打桩所需属性；网络调用通过
 替换 translator.ask_chatbot 进行 mock。
 """
 
@@ -25,7 +25,7 @@ from types import SimpleNamespace, MethodType
 from unittest.mock import AsyncMock, patch
 
 from GalTransl.Backend.BaseTranslate import BaseTranslate
-from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.metadata import FileMetaData
 from GalTransl.Backend.utils import detect_line_break_symbol
 from GalTransl.Backend.Prompts import FORGAL_JSON_TRANS_PROMPT
@@ -41,7 +41,7 @@ def make_translator(proofread_target_lang="English"):
     通过 __new__ 创建实例并打桩 translate 流程所需的全部属性，
     不触发 BaseTranslate.__init__ / init_chatbot（避免网络与配置依赖）。
     """
-    t = ForGalJsonMulitChat.__new__(ForGalJsonMulitChat)
+    t = ForGalJsonTranslate.__new__(ForGalJsonTranslate)
     t.pj_config = SimpleNamespace(
         active_workers=0,
         stop_event=None,
@@ -49,7 +49,7 @@ def make_translator(proofread_target_lang="English"):
         getProjectDir=lambda: "",
         getKey=lambda key, default=None: default,
     )
-    t.eng_type = "ForGal-json-multi-chat"
+    t.eng_type = "ForGal-json-translate"
     t.enhance_jailbreak = False
     t.system_prompt = "SYSTEM_PROMPT"
     t.trans_prompt = "[translation_guideline]\n[Glossary]\n[plot_metadata]\n[Input]"
@@ -63,6 +63,11 @@ def make_translator(proofread_target_lang="English"):
     t._file_metadata_loaded = False
     t.project_config = None
     t.multi_round_max_history = 0
+    t.chat_mode = "multi"
+    t.restore_context_mode = True
+    t.contextNum = 8
+    t.last_translations = {}
+    t._history_placeholder_warned = False
     t.last_file_name = ""
     t._last_chatbot_was_stream = False
     t._last_chatbot_model_name = ""
@@ -839,9 +844,9 @@ class InitMultiRoundTests(unittest.TestCase):
         token_pool = SimpleNamespace(get_available_token=lambda: [])
         with patch.object(BaseTranslate, "__init__", lambda self, *a, **k: None), \
              patch.object(BaseTranslate, "init_chatbot", lambda self, *a, **k: None), \
-             patch.object(ForGalJsonMulitChat, "_apply_internal_prompt_template_overrides",
+             patch.object(ForGalJsonTranslate, "_apply_internal_prompt_template_overrides",
                           lambda self: None):
-            t = ForGalJsonMulitChat(config, "eng", None, token_pool)
+            t = ForGalJsonTranslate(config, "eng", None, token_pool)
         return t
 
     def test_missing_key_defaults_to_no_trim(self):

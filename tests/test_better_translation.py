@@ -18,7 +18,7 @@ from types import SimpleNamespace, MethodType
 import orjson
 
 from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
-from GalTransl.Backend.ForGalJsonMulitChat import FileMetaData
+from GalTransl.Backend.ForGalJsonTranslate import FileMetaData
 from GalTransl.Cache import _build_cache_obj, get_transCache_from_json
 from GalTransl.CSentense import CSentense
 

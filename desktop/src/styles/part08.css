@@ -1,0 +1,160 @@
+/* part08.css — 校对审核页：备选译文交换按钮（AI 改进轮） 等 2 个分节（0.4.10 从 styles.css 拆分） */
+
+/* ── 校对审核页：备选译文交换按钮（AI 改进轮）── */
+.entry-btn--swap {
+  color: #b061e8;
+  border-color: rgba(176, 97, 232, 0.45);
+}
+.entry-btn--swap:hover {
+  background: rgba(176, 97, 232, 0.12);
+  border-color: #b061e8;
+}
+
+/* ── 鲜艳风格装饰层（仅 data-theme-style=vivid 生效）── */
+
+/* 页面底：双色光晕 + 纵向三段渐变（上游 body 的招牌处理） */
+[data-theme-style="vivid"] body {
+  background:
+    radial-gradient(circle at top left, var(--vivid-bg-glow-primary), transparent 28%),
+    radial-gradient(circle at top right, var(--vivid-bg-glow-success), transparent 24%),
+    linear-gradient(180deg, var(--vivid-bg-gradient-top) 0%, var(--color-bg-app) 44%, var(--vivid-bg-gradient-bottom) 100%);
+}
+
+/* 外壳容器半透明 + 背景模糊，让渐变底透出来 */
+[data-theme-style="vivid"] .activitybar,
+[data-theme-style="vivid"] .sidebar-panel {
+  background: color-mix(in srgb, var(--color-bg-panel) 86%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* 按钮：中圆角 + 主色渐变与三档投影（对齐上游 button 样式） */
+[data-theme-style="vivid"] .btn {
+  border-radius: var(--radius-md);
+  transition:
+    background var(--duration-fast) var(--ease-default),
+    border-color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-normal) var(--ease-default),
+    transform var(--duration-fast) var(--ease-default);
+}
+
+[data-theme-style="vivid"] .btn--primary {
+  background: linear-gradient(180deg, #5b8ef0, var(--color-brand-primary));
+  box-shadow: var(--shadow-btn);
+}
+
+[data-theme-style="vivid"] .btn--primary:hover {
+  background: linear-gradient(180deg, #6a98f2, var(--color-brand-primary-hover));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-btn-hover);
+}
+
+[data-theme-style="vivid"] .btn--primary:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-btn-active);
+}
+
+/* 滚动条：鲜艳模式下加粗描边透明轨道（对齐上游观感） */
+[data-theme-style="vivid"] ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* 深色-扁平：校对页原文对比度调高（text-secondary 的 #b0b8c4 在暗底上偏灰）。
+   取接近 primary 的亮度但略低一档，保持原文弱于译文输入框的层级；
+   仅作用于扁平深色，鲜艳深色沿用上游 text-muted 值。 */
+[data-theme="dark"][data-theme-style="flat"] .entry-src {
+  color: #d8dee7;
+}
+
+/* AI 建议面板：双击条目空白处发起，采纳后写入备选译文 */
+.suggest-panel {
+  margin-top: var(--space-1);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle, var(--color-bg-panel));
+  padding: var(--space-1) var(--space-2);
+}
+
+.suggest-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.suggest-panel-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.suggest-panel-model {
+  font-size: var(--font-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.suggest-panel-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.suggest-panel-close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.suggest-panel-body {
+  margin-top: 4px;
+  font-size: var(--font-base);
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.suggest-panel-body--loading {
+  color: var(--color-text-tertiary);
+}
+
+.suggest-panel-body--error {
+  color: var(--color-status-error);
+}
+
+.suggest-panel-foot {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: 6px;
+  align-items: center;
+}
+
+.suggest-panel-instruction {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: var(--font-sm);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+}
+
+.suggest-panel-instruction:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.entry-btn--suggest-accept {
+  border-color: var(--color-status-success);
+  color: var(--color-status-success);
+}
+
+.entry-btn--suggest-accept:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -135,7 +135,9 @@ class RequestHealthMetrics:
 # 模块加载时 @register_engine 装饰器运行，把「name -> 构造工厂」写入 ENGINE_REGISTRY。
 ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForGlobalPrompt": "GalTransl.Backend.ForGlobalPrompt",
-    "ForGal-json-multi-chat": "GalTransl.Backend.ForGalJsonMulitChat",
+    "ForGal-json-translate": "GalTransl.Backend.ForGalJsonTranslate",
+    # 旧引擎名别名：兼容旧配置/旧任务，指向同一模块
+    "ForGal-json-multi-chat": "GalTransl.Backend.ForGalJsonTranslate",
     "ForImproveTranslation": "GalTransl.Backend.ForImproveTranslation",
     "ForBRStation": "GalTransl.Backend.ForBRStation",
     "ForJPResidue": "GalTransl.Backend.ForJPResidue",
@@ -164,7 +166,7 @@ def register_engine(name: str):
     name 必须已声明于 ENGINE_MODULE_PATHS，且类所在模块与之匹配，否则报错提示。
 
     Args:
-        name: 引擎类型标识（eng_type），如 "ForGal-json-multi-chat"。
+        name: 引擎类型标识（eng_type），如 "ForGal-json-translate"。
     """
     def _deco(cls):
         _module = cls.__module__
@@ -648,7 +650,7 @@ class BaseEngine:
         ForBatchMetaData / ForGlobalPrompt），对应配置键按引擎命名空间隔离：
         internals.forfilemeta.inject_guideline / internals.forbatchmeta.inject_guideline /
         internals.forglobalprompt.inject_guideline。该开关**不作用于翻译轮与修复轮**
-        （ForGalJsonMulitChat、ForImproveTranslation、ForBRStation、ForJPResidue、
+        （ForGalJsonTranslate、ForImproveTranslation、ForBRStation、ForJPResidue、
         ForBanWordFix），它们由 _build_prompt_request 默认裸替换
         pj_config.translation_guideline（无条件注入，无此开关）。
         """
@@ -996,7 +998,7 @@ class BaseEngine:
         # 实时推送「当前提示词」预览，使翻译控制台的提示词面板
         # 在执行任何后端时都能显示（不再局限于多轮对话后端）。
         # 取最后一条 user 消息内容作为“当前提示词”；多轮对话后端已在
-        # ForGalJsonMulitChat 中显式推送同一内容，此处为其他后端补齐。
+        # ForGalJsonTranslate 中显式推送同一内容，此处为其他后端补齐。
         try:
             _runtime_dir = getattr(self.pj_config, "runtime_project_dir", None) or getattr(
                 self.pj_config, "getProjectDir", lambda: ""

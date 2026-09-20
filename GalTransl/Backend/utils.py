@@ -1,6 +1,6 @@
 """翻译/元数据后端共用的纯工具函数。
 
-与具体后端无耦合，可被 ForGalJsonMulitChat、ForBatchMetaData、ForFileMetaData 等自由复用。
+与具体后端无耦合，可被 ForGalJsonTranslate、ForBatchMetaData、ForFileMetaData 等自由复用。
 """
 
 from __future__ import annotations
@@ -151,7 +151,7 @@ def build_script_text(
 
 
 # ── 共享区间工具（批次级元数据生成与多轮翻译分组复用）──
-# 历史实现中，ForBatchMetaData 与 ForGalJsonMulitChat 各自重复实现区间解析，
+# 历史实现中，ForBatchMetaData 与 ForGalJsonTranslate 各自重复实现区间解析，
 # 对脏数据（非整数、长度不足、lo>hi 写反）的处理方式不一致且均静默丢弃。
 # 下方函数统一收口，确保两模块对 LLM 产出区间的处理行为一致。
 

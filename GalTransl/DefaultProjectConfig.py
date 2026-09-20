@@ -5,6 +5,7 @@ backendSpecific:
       - token: sk-example-key1
         endpoint: https://api.deepseek.com # 请求地址，加不加v1都可以
         modelName: deepseek-chat
+        contextWindow: 128000 # 模型上下文窗口(token)，留空按128000；也可写128k这类写法
       - token: sk-example-key2
         endpoint: https://openrouter.ai/api/v1/chat/completions # /chat/completions结尾则不自动补v1
         modelName: deepseek/deepseek-chat-v3-0324:free
@@ -60,6 +61,7 @@ common:
     #- "残留日文" # 启动时重翻命中“残留日文”的句子
 
   gpt.contextNum: 8 # 每次请求附带的前文句数；值越大上下文更强、成本更高（常用8）。[0-32]
+  gpt.chatMode: multi # 翻译后端对话模式：multi=多轮对话（历史由对话携带，token省）；single=单轮独立请求（每批携带全量提示词与contextNum句上下文，token消耗更高）。[multi/single]
   # ForGal/ForGal-json/ForNovel
   gpt.translation_guideline: "Basic.md" # 使用的翻译规范文件名（位于translation_guidelines），会影响文风与措辞。
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]

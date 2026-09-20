@@ -16,7 +16,7 @@ from GalTransl.Backend.ForGlobalPrompt import _format_global_prompt_as_context
 from GalTransl.Backend.ForJPResidue import ForJPResidue
 from GalTransl.Backend.context import format_global_prompt_with_route_direct
 from GalTransl.Backend.metadata import FileMetaData, select_global_characters
-from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.CSentense import CSentense
 
 
@@ -106,7 +106,7 @@ class FormatGlobalPromptCharactersParamTests(unittest.TestCase):
 
 def make_engine():
     """打桩翻译后端实例：不触发真实初始化，GlobalPrompt/路线图预置为已加载。"""
-    t = ForGalJsonMulitChat.__new__(ForGalJsonMulitChat)
+    t = ForGalJsonTranslate.__new__(ForGalJsonTranslate)
     t.pj_config = SimpleNamespace(
         active_workers=0,
         stop_event=None,
@@ -115,7 +115,7 @@ def make_engine():
         getProjectDir=lambda: "",
         getKey=lambda key, default=None: default,
     )
-    t.eng_type = "ForGal-json-multi-chat"
+    t.eng_type = "ForGal-json-translate"
     t.system_prompt = "SYSTEM"
     t.trans_prompt = "[global_prompt]\n[plot_metadata]\n[Input]"
     t.source_lang = "Japanese"

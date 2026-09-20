@@ -336,7 +336,7 @@ def _try_parse_jsonline(
         if line in ("```jsonline", "```json", "```"):
             continue
 
-        # 允许 sig| 前缀（ForGal-json-multi-chat 格式）
+        # 允许 sig| 前缀（ForGal-json-translate 格式，旧名 ForGal-json-multi-chat）
         if "|" in line and re.match(r"^[a-z0-9]{3}\|", line):
             _, json_part = line.split("|", 1)
         else:

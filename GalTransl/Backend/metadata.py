@@ -1,7 +1,7 @@
 """文件级 / 批次级元数据实体与缓存加载器。
 
 FileMetaData / BatchMetadata 数据类与对应的 *.meta.json / *.batch.json 加载器，
-与具体后端无耦合。被 ForGalJsonMulitChat、ForFileMetaData、ForBatchMetaData、
+与具体后端无耦合。被 ForGalJsonTranslate、ForFileMetaData、ForBatchMetaData、
 ForPlotRouteMap、LLMTranslate 等自由复用。
 """
 
@@ -119,7 +119,7 @@ def format_file_metadata_block(
 ) -> str:
     """把文件级元数据格式化为提示词附加段落（<plot_metadata> 包裹版）。
 
-    供 ForGalJsonMulitChat（翻译轮首轮）与 ForBatchMetaData（批次划分提示词）
+    供 ForGalJsonTranslate（翻译轮首轮）与 ForBatchMetaData（批次划分提示词）
     共用同一形态，避免「文件级元数据」在两条提示词链里的口径漂移。
 
     Args:

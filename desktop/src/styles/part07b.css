@@ -1,0 +1,8 @@
+/* part07b.css — 字典卡片模式（0.4.10 从 styles.css 拆分） */
+
+/* ── 字典卡片模式 ── */
+.dict-editor-actions {
+  display: flex;
+  gap: 4px;
+}
+

@@ -2,7 +2,7 @@ import os, time, sys, datetime, threading
 from os.path import exists as isPathExists
 from os import makedirs as mkdir
 import logging, colorlog
-from GalTransl import LOGGER, DEBUG_LEVEL, TRANSLATOR_SUPPORTED, new_version, GALTRANSL_VERSION,NEED_OpenAITokenPool
+from GalTransl import LOGGER, DEBUG_LEVEL, TRANSLATOR_SUPPORTED, new_version, GALTRANSL_VERSION,NEED_OpenAITokenPool, resolve_translator_alias
 from GalTransl.ApiLogger import cleanup_api_log
 from GalTransl.GTPlugin import GTextPlugin, GFilePlugin
 from GalTransl.COpenAI import COpenAITokenPool
@@ -123,7 +123,8 @@ File_FORMAT = logging.Formatter(
 
 async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: threading.Event | None = None) -> None:
     PROJECT_DIR = cfg.getProjectDir()
-    cfg.select_translator = translator
+    # 旧引擎名（别名）在此统一解析为现行名，后续引擎加载/可用性检查均用现行名
+    cfg.select_translator = resolve_translator_alias(translator)
     cfg.stop_event = stop_event
 
     def get_pluginInfo_path(name: str) -> str:

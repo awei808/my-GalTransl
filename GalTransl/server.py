@@ -24,11 +24,12 @@ import sys
 from datetime import datetime
 from yaml import safe_load, safe_dump
 
-from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, AUTHOR, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR
+from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, AUTHOR, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR, resolve_translator_alias
 from GalTransl import ReviewAssist
 from GalTransl.Dictionary import parse_dict_line, DictRow, _COMMENT_PREFIXES
 from GalTransl.Utils import get_n_symbol
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
+from GalTransl.Cache import CACHE_TEMP_SUFFIX
 from GalTransl.AppSettings import load_app_settings, save_app_settings
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
 from GalTransl.COpenAI import COpenAITokenPool
@@ -1463,12 +1464,23 @@ def _check_batch_size(project_dir: str, config_name: str) -> dict[str, Any]:
     }
 
 
-def _list_dir_entries(dir_path: str, *, count_json_entries: bool = False) -> list[dict[str, Any]]:
-    """List files in a directory with basic metadata."""
+def _list_dir_entries(
+    dir_path: str,
+    *,
+    count_json_entries: bool = False,
+    skip_suffixes: tuple = (),
+) -> list[dict[str, Any]]:
+    """List files in a directory with basic metadata.
+
+    skip_suffixes 用于过滤不该露面的中间文件：缓存目录传 (CACHE_TEMP_SUFFIX,)，
+    免得界面把 <缓存>.json.tmp 这种快照残留当成一个缓存文件（没有条目数、读不全）。
+    """
     entries = []
     if not os.path.isdir(dir_path):
         return entries
     for name in sorted(os.listdir(dir_path)):
+        if skip_suffixes and name.endswith(tuple(skip_suffixes)):
+            continue
         full = os.path.join(dir_path, name)
         stat = os.stat(full) if os.path.isfile(full) else None
         entry = {
@@ -1500,6 +1512,9 @@ def _build_cache_tree(dir_path: str, prefix: str = "", count_entries: bool = Tru
     if not os.path.isdir(dir_path):
         return nodes
     for name in sorted(os.listdir(dir_path)):
+        if name.endswith(CACHE_TEMP_SUFFIX):
+            # 快照中间文件残留：没有条目数、读不全，不作为缓存文件展示
+            continue
         full = os.path.join(dir_path, name)
         rel = os.path.join(prefix, name) if prefix else name
         rel = rel.replace(os.sep, "/")
@@ -1938,7 +1953,7 @@ _BACKEND_PROFILES_PATH = os.path.join(
 
 
 _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
-    "ForGal-json-multi-chat": {
+    "ForGal-json-translate": {
         "system_prompt": FORTRANS_SYSTEM,
         "user_prompt": FORGAL_JSON_TRANS_PROMPT,
     },
@@ -2935,7 +2950,7 @@ def build_handler(registry: JobRegistry) -> type:
 
             # POST /api/projects/:id/check-model
             # 主动检测所选后端的模型 / token 可用性。请求体:
-            #   {"translator": "GPT-Free-ForGal-json-multi-chat",
+            #   {"translator": "ForGal-json-translate",
             #    "config_file_name": "config.yaml"}
             if sub_path == "/check-model":
                 if self.command != "POST":
@@ -2945,7 +2960,8 @@ def build_handler(registry: JobRegistry) -> type:
                     )
                     return
                 payload = self._read_json_body()
-                translator = str(payload.get("translator", "")).strip()
+                # 旧引擎名别名解析，保证旧客户端的可用性检测口径与真实任务一致
+                translator = resolve_translator_alias(str(payload.get("translator", "")).strip())
                 config_file_name = (
                     str(payload.get("config_file_name", "config.yaml")).strip()
                     or "config.yaml"
@@ -3244,7 +3260,9 @@ def build_handler(registry: JobRegistry) -> type:
                 self._send_json({
                     "project_dir": project_dir,
                     "cache_dir": cache_dir,
-                    "files": _list_dir_entries(cache_dir, count_json_entries=True),
+                    "files": _list_dir_entries(
+                        cache_dir, count_json_entries=True, skip_suffixes=(CACHE_TEMP_SUFFIX,)
+                    ),
                 })
                 return
 

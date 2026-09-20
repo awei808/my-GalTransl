@@ -20,7 +20,7 @@ from time import time
 import asyncio
 from dataclasses import dataclass
 
-from GalTransl import LOGGER, NEED_OpenAITokenPool
+from GalTransl import LOGGER, NEED_OpenAITokenPool, resolve_translator_alias
 from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.Cache import get_transCache_from_json
 from GalTransl.ConfigHelper import initDictList, CProjectConfig
@@ -1504,7 +1504,7 @@ async def _run_full_pipeline(
       3. GenDic 构建术语表（可跳过，如果已有）
       4. ForFileMetaData 逐文件生成文件级元数据（可跳过，如果已有）
       5. ForBatchMetaData 逐文件划分翻译区间（可跳过，如果已有）
-      6. ForGalJsonMulitChat 翻译（按 chunk 缓存命中跳过）
+      6. ForGalJsonTranslate 翻译（按 chunk 缓存命中跳过）
     """
     import os
 
@@ -1947,7 +1947,7 @@ async def _run_full_pipeline(
             if hasattr(gptapi_batchmeta, "shutdown"):
                 await gptapi_batchmeta.shutdown()
 
-    # ── 阶段 6：翻译（ForGalJsonMulitChat）──
+    # ── 阶段 6：翻译（ForGalJsonTranslate）──
     LOGGER.info("[流水线] 阶段 6/6：翻译执行")
     record_runtime_notice(projectConfig.getProjectDir(), "阶段 6/6：开始翻译")
     _update_runtime(projectConfig, stage="翻译执行中")
@@ -2098,9 +2098,9 @@ async def _run_translation_phase(
             total_chunks, projectConfig,
         )
 
-    # 初始化 gptapi：流水线翻译阶段固定用 ForGal-json-multi-chat
+    # 初始化 gptapi：流水线翻译阶段固定用 ForGal-json-translate
     saved_translator = projectConfig.select_translator
-    projectConfig.select_translator = "ForGal-json-multi-chat"
+    projectConfig.select_translator = "ForGal-json-translate"
     try:
         await ensure_model_available_if_needed(projectConfig, stage="translate")
         gptapi = await init_gptapi(
@@ -2749,7 +2749,8 @@ async def init_gptapi(
     """
     proxyPool = projectConfig.proxyPool
     tokenPool = token_pool if token_pool is not None else projectConfig.tokenPool
-    eng_type = projectConfig.select_translator
+    # 旧引擎名别名兜底：即使调用方未走 Runner 解析也能加载引擎
+    eng_type = resolve_translator_alias(projectConfig.select_translator)
 
     import importlib
 

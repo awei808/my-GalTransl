@@ -1,6 +1,6 @@
 """单元测试：批次级元数据「按段划分 + 分批次注入」。
 
-验证点（对应 ForGalJsonMulitChat 的改动）：
+验证点（对应 ForGalJsonTranslate 的改动）：
 1. _group_by_batch_metadata：按语义段边界分组，段不跨组；空段跳过；段外句入尾组；
    无元数据时退化为单组（保持原固定切片行为）。
 2. _format_batch_metadata_block：仅注入与给定行号区间相交的段，且文案已改为
@@ -23,9 +23,9 @@ REPO_ROOT = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, REPO_ROOT)
 
 from GalTransl.Backend.BaseTranslate import BaseTranslate  # noqa: E402
-from GalTransl.Backend.ForGalJsonMulitChat import (  # noqa: E402
+from GalTransl.Backend.ForGalJsonTranslate import (  # noqa: E402
     BatchMetadata,
-    ForGalJsonMulitChat,
+    ForGalJsonTranslate,
     H_WORDS_LIST,
 )
 
@@ -47,7 +47,7 @@ class _NoIdx:
 
 def _make_inst(bm: BatchMetadata):
     """构造一个只实现了 _resolve_batch_metadata 的替身实例。"""
-    inst = MagicMock(spec=ForGalJsonMulitChat)
+    inst = MagicMock(spec=ForGalJsonTranslate)
     inst.last_file_name = None  # batch_translate 访问的动态属性，spec 不含
     inst._resolve_batch_metadata = lambda filename: bm
     return inst
@@ -65,7 +65,7 @@ class TestGroupByBatchMetadata(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 11)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 3)
         self.assertEqual([t.runtime_index for t in groups[0]], [1, 2, 3, 4])
         self.assertEqual([t.runtime_index for t in groups[1]], [5, 6, 7])
@@ -74,7 +74,7 @@ class TestGroupByBatchMetadata(unittest.TestCase):
     def test_no_metadata_falls_back_to_single_group(self) -> None:
         inst = _make_inst(None)  # 无元数据
         trans = [_FakeTrans(i) for i in range(1, 21)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 20)
 
@@ -89,7 +89,7 @@ class TestGroupByBatchMetadata(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in [1, 2, 3, 4, 8, 9]]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         # 段[5,7] 为空被跳过；尾组 [8,9]
         self.assertEqual(len(groups), 2)
         self.assertEqual([t.runtime_index for t in groups[0]], [1, 2, 3, 4])
@@ -105,7 +105,7 @@ class TestGroupByBatchMetadata(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 31)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 30)
 
@@ -122,7 +122,7 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 21)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 2)
         self.assertEqual([t.runtime_index for t in groups[0]], list(range(1, 11)))
         self.assertEqual([t.runtime_index for t in groups[1]], list(range(11, 21)))
@@ -135,7 +135,7 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 11)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual([t.runtime_index for t in groups[0]], list(range(1, 11)))
 
@@ -147,7 +147,7 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 11)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual([t.runtime_index for t in groups[0]], list(range(1, 11)))
 
@@ -159,14 +159,14 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 5)] + [_NoIdx() for _ in range(3)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 2)
         self.assertEqual(len(groups[0]), 4)
         self.assertEqual(len(groups[1]), 3)
 
     def test_empty_translist_returns_single_empty_group(self) -> None:
         inst = _make_inst(None)
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, [], "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, [], "f")
         self.assertEqual(groups, [[]])
 
     def test_all_ungrouped_single_unit_no_split(self) -> None:
@@ -177,7 +177,7 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 51)]  # 50 行全尾组
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 50)
 
@@ -193,7 +193,7 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)  # _resolve_batch_metadata 直接返回整文件 bm（等价剥后缀后命中）
         trans = [_FakeTrans(i) for i in range(17, 33)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f_2")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f_2")
         self.assertEqual(len(groups), 1)
         self.assertEqual([t.runtime_index for t in groups[0]], list(range(17, 33)))
 
@@ -202,7 +202,7 @@ class TestEdgeCases(unittest.TestCase):
         bm = BatchMetadata(id="f", batches=[])
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 11)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 10)
 
@@ -214,7 +214,7 @@ class TestEdgeCases(unittest.TestCase):
         )
         inst = _make_inst(bm)
         trans = [_FakeTrans(i) for i in range(1, 11)]
-        groups = ForGalJsonMulitChat._group_by_batch_metadata(inst, trans, "f")
+        groups = ForGalJsonTranslate._group_by_batch_metadata(inst, trans, "f")
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 10)
 
@@ -230,7 +230,7 @@ class TestFormatBatchMetadataBlock(unittest.TestCase):
             ],
         )
         inst = _make_inst(bm)
-        block = ForGalJsonMulitChat._format_batch_metadata_block(inst, bm, 1, 16)
+        block = ForGalJsonTranslate._format_batch_metadata_block(inst, bm, 1, 16)
         self.assertIn("<batch_metadata>", block)
         # 仅相交段 [1,8] 与 [9,38] 出现；[39,45] 不出现
         self.assertIn("区间[1-8]", block)
@@ -243,7 +243,7 @@ class TestFormatBatchMetadataBlock(unittest.TestCase):
 
 class TestBuildRoundUserContentSubseqInject(unittest.TestCase):
     def test_subseq_round_injects_batch_metadata(self) -> None:
-        inst = MagicMock(spec=ForGalJsonMulitChat)
+        inst = MagicMock(spec=ForGalJsonTranslate)
         inst.eng_type = "gpt4"
         inst.pj_config = MagicMock()
         inst.pj_config.getKey.return_value = "-"
@@ -251,7 +251,7 @@ class TestBuildRoundUserContentSubseqInject(unittest.TestCase):
         inst._file_metadata_by_file = {}
         inst._batch_metadata_by_file = {"f": True}
         block = "<batch_metadata>\n区间[1-8] 视角:创\n</batch_metadata>\n"
-        out = ForGalJsonMulitChat._build_round_user_content(
+        out = ForGalJsonTranslate._build_round_user_content(
             inst,
             conv=[{"role": "system", "content": "x"}],  # len>1 → 续轮
             input_src="SRC_LINES",
@@ -271,7 +271,7 @@ class TestBatchTranslateGrouping(unittest.IsolatedAsyncioTestCase):
         inst = _make_inst(None)
         inst._batch_translate_common = AsyncMock(return_value=["A", "B"])
 
-        res = await ForGalJsonMulitChat.batch_translate(
+        res = await ForGalJsonTranslate.batch_translate(
             inst,
             filename="f",
             cache_file_path="",
@@ -299,7 +299,7 @@ class TestBatchTranslateGrouping(unittest.IsolatedAsyncioTestCase):
             side_effect=lambda **kw: list(kw["translist_unhit"])
         )
 
-        res = await ForGalJsonMulitChat.batch_translate(
+        res = await ForGalJsonTranslate.batch_translate(
             inst,
             filename="f",
             cache_file_path="",
@@ -331,7 +331,7 @@ class TestBatchTranslateGrouping(unittest.IsolatedAsyncioTestCase):
         inst = _make_inst(bm)
         inst._batch_translate_common = AsyncMock(return_value=["a"])
         inst._group_by_batch_metadata.return_value = [["a", "b"]]
-        await ForGalJsonMulitChat.batch_translate(
+        await ForGalJsonTranslate.batch_translate(
             inst,
             filename="f",
             cache_file_path="",
@@ -346,7 +346,7 @@ class TestBatchTranslateGrouping(unittest.IsolatedAsyncioTestCase):
         # 无批次元数据 → 退化分支应带 force_static=False（保留动态模式）
         inst = _make_inst(None)
         inst._batch_translate_common = AsyncMock(return_value=["a"])
-        await ForGalJsonMulitChat.batch_translate(
+        await ForGalJsonTranslate.batch_translate(
             inst,
             filename="f",
             cache_file_path="",
@@ -363,7 +363,7 @@ class TestBatchTranslateGrouping(unittest.IsolatedAsyncioTestCase):
 class TestDynamicModeOnlyWithoutMetadata(unittest.IsolatedAsyncioTestCase):
     def _make_common_inst(self, dynamic: bool, dmax: int = 4, dmin: int = 1):
         # 构造可真实调用 _batch_translate_common 的替身（绑定基类真实动态逻辑）
-        inst = MagicMock(spec=ForGalJsonMulitChat)
+        inst = MagicMock(spec=ForGalJsonTranslate)
         inst.dynamic_num_per_request = dynamic
         inst.dynamic_num_per_request_max = dmax
         inst.dynamic_num_per_request_min = dmin

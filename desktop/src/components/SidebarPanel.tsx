@@ -1,5 +1,5 @@
 import { Match, Switch, createSignal, createEffect, createMemo, onCleanup, Show, For } from "solid-js";
-import { themeVivid } from "../lib/theme";
+
 import { Icon } from "./icons";
 import { appState, setAppState, getActiveConfigFileName } from "../stores/appStore";
 import type { AppState } from "../stores/appStore";
@@ -818,26 +818,22 @@ function ProblemList() {
                     onClick={() => toggleFile(filename)}
                   >
                       {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
-                      {themeVivid() ? (
-                        <span class="icon-unicode problem-toggle-icon" aria-hidden="true">▼</span>
-                      ) : (
-                        <svg
-                          class="problem-toggle-icon"
-                          viewBox="0 0 16 16"
-                          width="14"
-                          height="14"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M4 6l4 4 4-4"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.6"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          />
-                        </svg>
-                      )}
+                      <svg
+                        class="problem-toggle-icon"
+                        viewBox="0 0 16 16"
+                        width="14"
+                        height="14"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M4 6l4 4 4-4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
                     </button>
                   </div>
                   <Show when={expandedFiles().has(filename)}>
@@ -947,26 +943,22 @@ function AltList() {
                     onClick={() => toggleFile(filename)}
                   >
                     {/* chevron-down：展开朝下，收起经 CSS rotate(-90deg) 平滑变为朝右 */}
-                    {themeVivid() ? (
-                      <span class="icon-unicode problem-toggle-icon" aria-hidden="true">▼</span>
-                    ) : (
-                      <svg
-                        class="problem-toggle-icon"
-                        viewBox="0 0 16 16"
-                        width="14"
-                        height="14"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M4 6l4 4 4-4"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.6"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    )}
+                    <svg
+                      class="problem-toggle-icon"
+                      viewBox="0 0 16 16"
+                      width="14"
+                      height="14"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M4 6l4 4 4-4"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
                   </button>
                 </div>
                 <Show when={expandedFiles().has(filename)}>

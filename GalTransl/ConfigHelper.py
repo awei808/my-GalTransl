@@ -377,7 +377,7 @@ class CProjectConfig:
 
         作用：
         - 字典管理界面（读取 gpt.dict 列表）能显示该字典；
-        - 同一次流水线后续的翻译阶段（ForGalJsonMulitChat）会从内存中的
+        - 同一次流水线后续的翻译阶段（ForGalJsonTranslate）会从内存中的
           projectConfig["dictionary"]["gpt.dict"] 读取并加载该字典。
 
         仅在确实新增条目时才写回磁盘，避免无谓重写。与 server 端

@@ -1,4 +1,4 @@
-"""ForGalJsonMulitChat 批次级元数据按 h 强度分档的差异化指导测试。
+"""ForGalJsonTranslate 批次级元数据按 h 强度分档的差异化指导测试。
 
 覆盖：
   - explicit（h>=0.75）→ H_BATCH_GUIDE + 词库禁用提示
@@ -10,7 +10,7 @@
   - 无相交区间 → 返回空串
   - _resolve_h_check_words 从项目配置 hCheckDict 惰性加载
 
-使用 ForGalJsonMulitChat.__new__ 打桩，不触发 BaseTranslate.__init__。
+使用 ForGalJsonTranslate.__new__ 打桩，不触发 BaseTranslate.__init__。
 """
 
 import json
@@ -20,9 +20,9 @@ import unittest
 
 import yaml
 
-from GalTransl.Backend.ForGalJsonMulitChat import (
+from GalTransl.Backend.ForGalJsonTranslate import (
     BatchMetadata,
-    ForGalJsonMulitChat,
+    ForGalJsonTranslate,
 )
 from GalTransl.Backend.Prompts import (
     H_BATCH_GUIDE,
@@ -34,7 +34,7 @@ from GalTransl.Backend.Prompts import (
 
 def make_translator(h_words=None, project_config=None):
     """通过 __new__ 打桩批次元数据渲染所需属性。"""
-    t = ForGalJsonMulitChat.__new__(ForGalJsonMulitChat)
+    t = ForGalJsonTranslate.__new__(ForGalJsonTranslate)
     t._h_check_words = h_words  # 直接注入词库缓存（None 时走 project_config 加载）
     t.project_config = project_config
     return t
@@ -98,7 +98,7 @@ class BatchMetadataHGuideTests(unittest.TestCase):
 
     def test_h_level_boundaries(self) -> None:
         # 档位边界（左闭右开）：0.25→tension，0.5→intimate，0.75→explicit
-        from GalTransl.Backend.ForGalJsonMulitChat import _h_level
+        from GalTransl.Backend.ForGalJsonTranslate import _h_level
         self.assertEqual(_h_level(0.0), "normal")
         self.assertEqual(_h_level(0.249), "normal")
         self.assertEqual(_h_level(0.25), "tension")
@@ -173,7 +173,7 @@ class ResolveHCheckWordsTests(unittest.TestCase):
             f.write("攀上顶峰\n攀上了顶峰\n")
 
     def _make_cfg(self):
-        # 只打桩 ForGalJsonMulitChat 需要访问的 project_config 接口
+        # 只打桩 ForGalJsonTranslate 需要访问的 project_config 接口
         return SimpleNamespaceWithDict(self.pdir)
 
     def test_lazy_load_from_project_config(self) -> None:

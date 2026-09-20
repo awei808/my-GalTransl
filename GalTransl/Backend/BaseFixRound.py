@@ -1,7 +1,7 @@
 """稀疏修复轮 / 改进轮共享基类。
 
 设计目标：
-- 从多轮对话翻译后端 ForGalJsonMulitChat 继承底层对话、术语表、元数据、API 调用能力；
+- 从多轮对话翻译后端 ForGalJsonTranslate 继承底层对话、术语表、元数据、API 调用能力；
 - 把“筛选目标句子 → 分桶 → 构建首轮内容 → 调用 LLM → 稀疏解析 better → 错误上报”的公共流程收口；
 - 按业务差异拆出两个基类：
     * BaseProblemFixRound：ForJPResidue / ForBanWordFix / ForBRStation 这类“按问题类型修复译文”的后端；
@@ -15,7 +15,7 @@ from typing import Any, List, Optional
 from GalTransl import LOGGER
 from GalTransl.CSentense import CTransList
 from GalTransl.Service import JobCancelledError
-from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.Prompts import FAILED_PREFIX
 from GalTransl.Backend.utils import (
     decode_json_line_part,
@@ -23,7 +23,7 @@ from GalTransl.Backend.utils import (
 )
 
 
-class BaseSparseFixRound(ForGalJsonMulitChat):
+class BaseSparseFixRound(ForGalJsonTranslate):
     """稀疏 better 输出修复轮的公共基类。
 
     子类需实现：
@@ -63,7 +63,7 @@ class BaseSparseFixRound(ForGalJsonMulitChat):
             return False
         if not self._problem_types:
             return True
-        kept = ForGalJsonMulitChat._filter_problem_by_types(
+        kept = ForGalJsonTranslate._filter_problem_by_types(
             tran.problem, self._problem_types
         )
         return bool(kept)

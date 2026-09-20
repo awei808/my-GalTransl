@@ -8,7 +8,7 @@ from unittest import mock
 
 from GalTransl.CSentense import CSentense
 from GalTransl.Dictionary import CGptDict, CNormalDic, CBasicDicElement
-from GalTransl.Backend.ForGalJsonMulitChat import BatchMetadata, ForGalJsonMulitChat
+from GalTransl.Backend.ForGalJsonTranslate import BatchMetadata, ForGalJsonTranslate
 from GalTransl.Backend.ForFileMetaData import ForFileMetaData
 from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
 from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
@@ -500,11 +500,11 @@ class CheckDicUseSceneTests(unittest.TestCase):
 # _group_is_h_scene — 批次 h 场景判定
 # ══════════════════════════════════════════════════════════
 class GroupIsHSceneTests(unittest.TestCase):
-    """ForGalJsonMulitChat._group_is_h_scene 按批次元数据 h 标记判定场景"""
+    """ForGalJsonTranslate._group_is_h_scene 按批次元数据 h 标记判定场景"""
 
     @staticmethod
     def _make_inst(bm):
-        inst = ForGalJsonMulitChat.__new__(ForGalJsonMulitChat)
+        inst = ForGalJsonTranslate.__new__(ForGalJsonTranslate)
         inst._resolve_batch_metadata = lambda filename: bm
         return inst
 

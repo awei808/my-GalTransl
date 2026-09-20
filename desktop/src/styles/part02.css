@@ -1,0 +1,719 @@
+/* part02.css — Sidebar Resize Handle 等 14 个分节（0.4.10 从 styles.css 拆分） */
+
+/* ── Sidebar Resize Handle ── */
+.sidebar-resize-handle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: var(--z-resize);
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.active {
+  background: var(--color-brand-primary);
+  opacity: 0.3;
+}
+
+/* ── StatusBar ── */
+.statusbar {
+  height: var(--statusbar-height);
+  background: var(--color-bg-panel);
+  border-top: 1px solid var(--color-border-default);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-2);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.statusbar-left,
+.statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status-project {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-view {
+  font-size: var(--font-sm);
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-indicator::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-online::before {
+  background: var(--color-status-success);
+}
+.status-connecting::before,
+.status-reconnecting::before {
+  background: var(--color-status-warning);
+}
+.status-offline::before {
+  background: var(--color-status-error);
+}
+
+/* ── Main Area ── */
+.main-area {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.page {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+
+/* ── Page Title ── */
+.page-title {
+  font-size: var(--font-xl);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-1);
+}
+
+.page-description {
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
+}
+
+/* ── Home Page ── */
+.page-home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.home-welcome {
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.home-logo {
+  font-size: var(--font-2xl);
+  font-weight: var(--weight-bold);
+  color: var(--color-brand-primary);
+  margin-bottom: var(--space-1);
+}
+
+.home-subtitle {
+  font-size: var(--font-lg);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.home-version {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-3);
+}
+
+.home-info {
+  font-size: var(--font-base);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+.home-cta {
+  margin-top: var(--space-2);
+}
+
+/* ── 首页面板列 ── */
+.home-panels {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 800px;
+}
+
+.home-panel {
+  flex: 1;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  overflow: hidden;
+}
+
+.home-panel-title {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  color: var(--color-text-primary);
+}
+
+.home-panel-empty {
+  padding: var(--space-3);
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.home-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.home-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  font-size: var(--font-sm);
+}
+
+.home-list-item:last-child {
+  border-bottom: none;
+}
+
+.home-list-item.clickable {
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.home-list-item.clickable:hover {
+  background: var(--color-bg-hover);
+}
+
+.home-list-name {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+.home-list-meta {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-job-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-job-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.job-status--running {
+  background: var(--color-bg-info);
+  color: var(--color-brand-primary);
+}
+.job-status--completed {
+  background: var(--color-bg-success);
+  color: var(--color-status-success);
+}
+.job-status--failed {
+  background: var(--color-bg-error);
+  color: var(--color-status-error);
+}
+.job-status--cancelled {
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+}
+.job-status--pending {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+/* ── Translate Console ── */
+.page-translate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  height: 100%;
+}
+
+.translate-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-lg);
+}
+
+.translate-header {
+  display: flex;
+  align-items: stretch;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-3);
+  min-height: 25%;
+  max-height: 30%;
+  flex-shrink: 0;
+}
+
+.translate-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-bottom: var(--space-1);
+}
+
+.translate-title-label {
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.translate-title-name {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.translate-stats {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  justify-content: center;
+}
+
+/* ── 统计网格 ── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-1);
+}
+
+.stat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.stat-value {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.stat-value--error {
+  color: var(--color-status-error);
+}
+
+.stats-row-secondary {
+  display: flex;
+  gap: var(--space-3);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.current-file {
+  color: var(--color-text-link);
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  min-width: 0; /* 允许 flex 子项收缩 */
+}
+
+/* 多文件模式：两行高度 + 超出省略号，hover 由 title 展示完整列表 */
+.current-file--multi {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.5;
+  max-height: calc(1.5em * 2); /* 两行固定高度 */
+  word-break: break-all; /* 长文件名强制断行，避免撑破 */
+  cursor: help;
+}
+
+/* ── 多 worker 并发指示 ── */
+.worker-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.worker-bar {
+  display: inline-block;
+  width: 48px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-hover);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.worker-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-brand-primary);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+.worker-info b {
+  color: var(--color-brand-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 进度条 ── */
+.progress-bar-container {
+  width: 100%;
+  height: 6px;
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-brand-primary), var(--color-progress-complete));
+  border-radius: var(--radius-full);
+  transition: width 0.5s ease;
+}
+
+/* ── 步骤指示器 ── */
+.step-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.step-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.step-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.step-dot--done {
+  background: var(--color-progress-complete);
+}
+
+.step-dot--current {
+  background: var(--color-brand-primary);
+  box-shadow: 0 0 6px var(--color-brand-primary);
+  transform: scale(1.2);
+}
+
+.step-dot--pending {
+  background: var(--color-progress-pending);
+}
+
+.step-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-left: var(--space-1);
+}
+
+/* ── 后端选择器 ── */
+.translate-actions {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.backend-selector {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+/* 模型可用性检测 */
+.model-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.model-check__btn {
+  padding: 4px 12px;
+  font-size: var(--font-sm);
+}
+
+.model-check__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-sm);
+  line-height: 1;
+}
+
+.model-check__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-text-tertiary, #9ca3af);
+}
+
+.model-check__status--checking .model-check__dot {
+  background: var(--color-status-info);
+  animation: model-check-pulse 1s ease-in-out infinite;
+}
+
+.model-check__status--ok .model-check__dot {
+  background: var(--color-status-success);
+}
+
+.model-check__status--ok .model-check__text {
+  color: var(--color-status-success);
+}
+
+.model-check__status--error .model-check__dot {
+  background: var(--color-status-error);
+}
+
+.model-check__status--error .model-check__text {
+  color: var(--color-status-error);
+}
+
+.model-check__status--na .model-check__dot {
+  background: var(--color-text-tertiary);
+}
+
+.model-check__status--na .model-check__text {
+  color: var(--color-text-tertiary);
+}
+
+.model-check__goto-config {
+  margin-left: var(--space-1);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+}
+
+/* 模型检测状态文字 */
+.model-check__text {
+  font-size: var(--font-sm);
+  line-height: 1;
+}
+
+@keyframes model-check-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.backend-select-wrapper {
+  position: relative;
+  width: 200px;
+}
+
+.backend-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: var(--font-base);
+  cursor: pointer;
+  user-select: none;
+}
+
+.backend-select-trigger:hover {
+  border-color: var(--color-border-hover);
+}
+
+.backend-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-dropdown);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.backend-option {
+  padding: 6px 10px;
+  font-size: var(--font-base);
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+
+.backend-option:hover,
+.backend-option.active {
+  background: var(--color-bg-hover);
+  color: var(--color-brand-primary);
+}
+
+.backend-option__name {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+.backend-option__hint {
+  font-size: var(--font-xs, 11px);
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ── 翻译主体两栏 ── */
+.translate-body {
+  flex: 1;
+  display: flex;
+  gap: var(--space-2);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.translate-panel {
+  flex: 1;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.translate-divider {
+  width: 6px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.translate-divider:hover {
+  background: var(--color-border-default);
+}
+
+.panel-header {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+}
+
+.panel-content {
+  flex: 1;
+  padding: var(--space-2);
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 面板标签栏（左上角切换按钮）── */
+.panel-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.panel-tab {
+  position: relative;
+  padding: 4px var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 6px);
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+}
+
+.panel-tab:hover {
+  color: var(--color-brand-primary);
+  background: var(--color-bg-hover);
+}
+
+.panel-tab--active {
+  color: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  background: var(--color-bg-panel);
+}
+
+.panel-tab-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+  font-weight: var(--weight-semibold);
+}
+

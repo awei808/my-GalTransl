@@ -487,7 +487,15 @@ export function NewProjectWizard() {
         .then((list: string[]) => {
           setGuidelines(list);
           if (!translationGuideline() && list.length > 0) {
-            setTranslationGuideline(list.includes("日译中_增强") ? "日译中_增强" : list[0]);
+            // 默认挑「日译中_增强v2」：先首选、再退上一代增强、最后列表首位。
+            // 名字要带 .md——接口给的是文件名，少写扩展名会一个都匹配不上，静默落到 list[0]。
+            for (const preferred of ["日译中_增强v2.md", "日译中_增强.md"]) {
+              if (list.includes(preferred)) {
+                setTranslationGuideline(preferred);
+                break;
+              }
+            }
+            if (!translationGuideline()) setTranslationGuideline(list[0]);
           }
         })
         .catch(() => {});

@@ -447,7 +447,7 @@ class BaseTranslate(BaseEngine):
         proofread: bool = False,
         filename: str = "",
     ) -> tuple[int, CTransList]:
-        """批量翻译单批句子；子类（如 ForGalJsonMulitChat）须实现并返回 (成功句数, 结果列表)。
+        """批量翻译单批句子；子类（如 ForGalJsonTranslate）须实现并返回 (成功句数, 结果列表)。
 
         基类签名与实际契约对齐（异步、携带 proofread/filename，供
         _batch_translate_common 以关键字调用）。本方法保留空实现（非
@@ -473,7 +473,7 @@ class BaseTranslate(BaseEngine):
 
         retry_failed / retran_key 为历史签名遗留参数，委托路径不使用。
         skipH 过滤由 _batch_translate_common 的 h_words_list 参数处理（与
-        ForGalJsonMulitChat 主路径一致），此处不再重复告警。
+        ForGalJsonTranslate 主路径一致），此处不再重复告警。
         """
         return await self._batch_translate_common(
             filename,

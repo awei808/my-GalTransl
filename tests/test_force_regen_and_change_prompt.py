@@ -28,7 +28,7 @@ if ROOT not in sys.path:
 from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.Backend.ForFileMetaData import ForFileMetaData
 from GalTransl.Backend.ForBatchMetaData import ForBatchMetaData
-from GalTransl.Backend.ForGalJsonMulitChat import ForGalJsonMulitChat
+from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.ForJPResidue import ForJPResidue
 from GalTransl.Backend.ForBRStation import ForBRStation
 from GalTransl.ConfigHelper import CProblemType
@@ -137,7 +137,7 @@ class ForceRegenEngineTests(unittest.IsolatedAsyncioTestCase):
 
 
 class _KeyValueConfig:
-    """最小配置桩：仅提供 ForGalJsonMulitChat.__init__ 需要的 getKey。"""
+    """最小配置桩：仅提供 ForGalJsonTranslate.__init__ 需要的 getKey。"""
 
     def __init__(self, values: dict) -> None:
         self._values = values

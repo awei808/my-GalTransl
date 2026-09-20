@@ -1,0 +1,725 @@
+/* part01.css — CSS Reset 等 14 个分节（0.4.10 从 styles.css 拆分） */
+
+/* ── CSS Reset ── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: var(--font-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 不再全局禁用文本选择：翻译工具需要复制原文/译文，
+     选择能力默认开启，仅 UI 外壳（标题栏/活动栏/按钮）单独关闭。 */
+  user-select: text;
+}
+
+/* 编辑框始终可选中文本（不受祖先 user-select 影响） */
+input,
+textarea {
+  user-select: text;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--color-bg-selected);
+  color: var(--color-text-primary);
+}
+
+/* ── Focus ── */
+:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+/* ── TitleBar ── */
+.titlebar {
+  height: var(--topbar-height);
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border-default);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+  -webkit-app-region: drag;
+  user-select: none; /* 拖窗区不可选，避免与窗口拖拽冲突 */
+  flex-shrink: 0;
+}
+
+.titlebar-menu {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-menuitem {
+  position: relative;
+  padding: 4px 10px;
+  font-size: var(--font-md);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  user-select: none;
+}
+
+.titlebar-menuitem-wrapper {
+  position: relative;
+}
+
+.titlebar-menuitem:hover,
+.titlebar-menuitem.open {
+  background: var(--color-bg-hover);
+}
+
+.titlebar-title {
+  margin-left: auto;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  -webkit-app-region: drag;
+}
+
+/* ── TitleBar Dropdown ── */
+.titlebar-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-dropdown);
+  padding: 4px 0;
+  animation: dropdown-fade-in 0.15s ease-out;
+}
+
+@keyframes dropdown-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.titlebar-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.titlebar-dropdown-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.titlebar-dropdown-item .shortcut {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+  margin-left: 32px;
+}
+
+/* 快捷键提示（独立使用） */
+.shortcut {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+}
+
+.titlebar-dropdown-item.disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.titlebar-dropdown-item.disabled:hover {
+  background: transparent;
+}
+
+.titlebar-dropdown-separator {
+  height: 1px;
+  background: var(--color-border-default);
+  margin: 4px 8px;
+}
+
+/* ── ActivityBar（左侧按钮栏）── */
+.activitybar {
+  width: var(--sidebar-width);
+  background: var(--color-bg-panel);
+  border-right: 1px solid var(--color-border-default);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: var(--space-1);
+  gap: 2px;
+  overflow-y: auto;
+  user-select: none; /* 图标+标签不应被选中 */
+  flex-shrink: 0;
+}
+
+.activitybar-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 底部快捷入口：贴底显示，上方为「快捷入口」标注 */
+.activitybar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: var(--space-1);
+  width: 100%;
+}
+
+.activitybar-section-label {
+  font-size: var(--font-xs);
+  line-height: 1.2;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-05) 0 var(--space-05);
+  user-select: none;
+}
+
+.activitybar-btn {
+  width: 100%;
+  min-height: 48px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-default);
+}
+
+.activitybar-label {
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  color: inherit;
+  word-break: break-word;
+}
+
+.activitybar-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.activitybar-btn.active {
+  color: var(--color-brand-primary);
+}
+
+.activitybar-btn.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 3px;
+  height: 24px;
+  background: var(--color-brand-primary);
+  border-radius: 0 2px 2px 0;
+}
+
+/* ── App Body Layout ── */
+.app-body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) var(--sidebar-expanded-width) 1fr;
+  height: calc(100vh - var(--topbar-height) - var(--statusbar-height));
+  flex: 1;
+}
+
+.sidebar-column {
+  overflow: hidden;
+  position: relative;
+}
+
+.app-body.sidebar-collapsed {
+  grid-template-columns: var(--sidebar-width) 0px 1fr;
+}
+
+/* 翻译控制台等无需侧边栏的视图：仅保留 ActivityBar + 主区，铺满宽度 */
+.app-body.no-sidebar {
+  grid-template-columns: var(--sidebar-width) 1fr;
+}
+
+/* ── Sidebar Panel ── */
+.sidebar-panel {
+  background: var(--color-bg-app);
+  border-right: 1px solid var(--color-border-default);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* overflow 不设：剪裁由外层 .sidebar-column 的 overflow:hidden 负责，
+     子元素 .sidebar-content 需要 overflow-y:auto 来显示垂直滚动条，
+     父级设 overflow:hidden 会剪裁掉滚动条。 */
+}
+
+/* SidebarPanel 拖拽 wrapper：继承父级 .sidebar-column 的高度，
+   否则 .sidebar-panel 的 height:100% 会失效导致子元素无法滚动。 */
+.sidebar-wrapper {
+  height: 100%;
+}
+
+.sidebar-header {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+}
+
+/* 带操作按钮的 header：标题与按钮分列两端 */
+.sidebar-header--with-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 问题检测侧栏：全缓存重检按钮 */
+.problem-recheck-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.problem-recheck-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.15));
+}
+
+.problem-recheck-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.problem-recheck-icon {
+  display: block;
+}
+
+.problem-recheck-icon--spin {
+  animation: problem-recheck-spin 0.8s linear infinite;
+}
+
+@keyframes problem-recheck-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sidebar-content {
+  padding: var(--space-1);
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* ── 校对页快捷筛选栏 ── */
+.review-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  flex-wrap: wrap;
+}
+.review-filter-chip {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.review-filter-chip--active {
+  background: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+}
+.review-filter-select {
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+}
+/* 视图筛选多选下拉（问题句/备选/H场景） */
+.review-filter-dropdown {
+  position: relative;
+  display: inline-block;
+}
+.review-filter-dropdown-trigger {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.review-filter-dropdown-trigger--active {
+  border-color: var(--color-brand-primary);
+  color: var(--color-brand-primary);
+}
+.review-filter-dropdown-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.review-filter-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 140px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  background: var(--color-bg-panel, var(--color-bg-input));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.review-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.review-filter-option:hover {
+  background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+}
+.review-filter-option input {
+  margin: 0;
+  accent-color: var(--color-brand-primary);
+}
+.review-filter-count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.review-filter-clear {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: var(--color-brand-primary);
+  cursor: pointer;
+}
+
+/* ── 问题检测侧栏：统计条 / 类型筛选 / 色标 ── */
+/* 侧栏内复用的类型多选下拉：样式与审核页一致，仅补充布局间距 */
+.sidebar-panel .review-filter-dropdown {
+  margin: 8px 10px;
+}
+.problem-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border-default);
+  font-size: 12px;
+}
+.problem-stats-total {
+  font-weight: var(--weight-semibold);
+}
+.problem-stat-chip {
+  cursor: pointer;
+  font-size: 12px;
+  /* 胶囊结构参考 .entry-name-badge，背景用各自字体色调的低饱和度色（currentColor 混合） */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+  user-select: none;
+}
+.problem-colorbar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── 文件树（类 VSCode） ── */
+.file-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 8px 4px 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  transition: background var(--duration-fast);
+  user-select: none;
+}
+
+.tree-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.tree-row.selected {
+  background: var(--color-bg-selected);
+  color: var(--color-brand-primary);
+}
+
+.tree-row--meta .tree-name {
+  color: var(--color-brand-primary);
+}
+
+/* 文件树节点容器 */
+.tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-twisty {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.tree-icon {
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-count {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-1);
+}
+
+/* 未保存修改指示圆点（译文条目模式，dirtyFiles 中的文件） */
+.file-tree-dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-status-warning);
+  flex-shrink: 0;
+  margin-left: var(--space-1);
+  align-self: center;
+}
+
+/* 元数据文件标记（与平铺译文缓存不在同目录，点开即进入元数据模式） */
+.file-tree-tag {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
+  flex-shrink: 0;
+}
+
+/* ── 文件右键菜单 ── */
+.ctx-menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  min-width: 160px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+  font-size: var(--font-sm);
+  user-select: none;
+}
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.ctx-menu__item:hover {
+  background: var(--color-bg-hover);
+}
+.ctx-menu__item--danger {
+  color: var(--color-status-error);
+}
+.ctx-menu__item--danger:hover {
+  background: var(--color-bg-error);
+}
+
+/* ── 问题检测 ── */
+.problem-group {
+  margin-bottom: var(--space-1);
+}
+
+.problem-filename-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border-default);
+  margin-bottom: 2px;
+}
+.problem-filename {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.problem-filename-count {
+  margin-left: 6px;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+.problem-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+.problem-toggle:hover {
+  color: var(--color-brand-primary);
+}
+.problem-toggle-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+.problem-toggle[data-open="false"] .problem-toggle-icon {
+  transform: rotate(-90deg);
+}
+
+.problem-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+.problem-entry:hover {
+  background: var(--color-bg-hover);
+}
+
+.problem-index {
+  color: var(--color-text-link);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.problem-desc {
+  color: var(--color-status-error);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-placeholder {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+  padding: var(--space-2);
+  text-align: center;
+}
+

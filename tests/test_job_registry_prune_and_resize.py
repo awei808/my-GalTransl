@@ -10,7 +10,7 @@ from GalTransl.server import JobSpec
 
 
 def _finished_state(job_id: str, created_at: str, status: str = "completed") -> object:
-    spec = JobSpec(job_id=job_id, project_dir=r"C:\tmp\p", translator="ForGal-json-multi-chat")
+    spec = JobSpec(job_id=job_id, project_dir=r"C:\tmp\p", translator="ForGal-json-translate")
     state = create_job_state(spec)
     state.status = status
     state.created_at = created_at
@@ -69,7 +69,7 @@ class JobRegistryResizeTests(unittest.TestCase):
             captured = {}
             self._capture_spec_and_submit(
                 registry,
-                {"project_dir": r"C:\tmp\p1", "translator": "ForGal-json-multi-chat"},
+                {"project_dir": r"C:\tmp\p1", "translator": "ForGal-json-translate"},
                 called,
                 captured,
             )
@@ -87,7 +87,7 @@ class JobRegistryResizeTests(unittest.TestCase):
             captured = {}
             self._capture_spec_and_submit(
                 registry,
-                {"project_dir": r"C:\tmp\p2", "translator": "ForGal-json-multi-chat"},
+                {"project_dir": r"C:\tmp\p2", "translator": "ForGal-json-translate"},
                 called,
                 captured,
             )

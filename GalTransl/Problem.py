@@ -349,16 +349,13 @@ def find_problems(
                     if non_gbk_chars !="":
                         problem_list.append(f"语言不通-非GBK：{non_gbk_chars}")
         if CProblemType.缺控制符 in find_type:
-            control_list_src = extract_control_substrings(pre_src)
-            control_list_pre_dst = extract_control_substrings(pre_dst)
-            control_list_post_dst = extract_control_substrings(post_dst)
-            lost_list=[]
-            for control_src in control_list_src:
-                if (
-                    control_src not in control_list_pre_dst
-                    and control_src not in control_list_post_dst
-                ):
-                    lost_list.append(control_src)
+            # 用「子串包含」而非 token 精确相等判断是否保留：extract_control_substrings 按
+            # ASCII 连续段切词，[汉字/罗马字] 注音会把 [ / ] 并进一个 token，精确比较就误报。
+            lost_list = [
+                control_src
+                for control_src in extract_control_substrings(pre_src)
+                if control_src not in pre_dst and control_src not in post_dst
+            ]
             if lost_list:
                 problem_list.append(f"缺控制符：{' '.join(lost_list)}")
         if CProblemType.独白男他 in find_type:

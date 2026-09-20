@@ -1,0 +1,892 @@
+/* part06.css — 剧情路线图编辑面板（PlotRoutePanel） 等 6 个分节（0.4.10 从 styles.css 拆分） */
+
+/* ── 剧情路线图编辑面板（PlotRoutePanel）── */
+.plotroute-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.plotroute-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.plotroute-tb-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plotroute-tb-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.plotroute-tb-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+
+.plotroute-tb-btn:hover {
+  border-color: var(--color-brand-primary);
+  color: var(--color-brand-primary);
+}
+
+.plotroute-tb-btn.active {
+  background: var(--color-brand-primary);
+  color: #fff;
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-zoom-level {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.plotroute-layout {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 单栏模式：隐藏另一面板 */
+.plotroute-view-source .plotroute-panel-preview {
+  display: none;
+}
+
+.plotroute-view-preview .plotroute-panel-src {
+  display: none;
+}
+
+.plotroute-panel-src,
+.plotroute-panel-preview {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  padding: 10px;
+  overflow: hidden;
+}
+
+.plotroute-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.plotroute-panel-title .plotroute-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+.plotroute-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.plotroute-source {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.plotroute-source:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.plotroute-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.plotroute-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.plotroute-panel-preview {
+  overflow: hidden;
+}
+
+.plotroute-viewer {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* SVG 保持原始渲染尺寸：超出容器由 .plotroute-viewer 产生滚动条 */
+.plotroute-graph {
+  width: 100%;
+  height: 100%;
+}
+
+.plotroute-graph svg {
+  min-width: 100%;
+  min-height: 100%;
+  max-width: none !important;
+  max-height: none !important;
+  display: block;
+}
+
+.plotroute-error {
+  color: var(--color-status-error);
+  padding: 16px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* hover tooltip */
+.plotroute-tooltip {
+  position: fixed;
+  max-width: 320px;
+  background: var(--color-bg-inverse, #2d3436);
+  color: var(--color-text-inverse, #fff);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  z-index: 300;
+}
+
+.plotroute-tooltip-file {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+  word-break: break-all;
+}
+
+.plotroute-tooltip-body {
+  word-break: break-word;
+}
+
+/* 编辑弹窗 */
+.plotroute-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+}
+
+.plotroute-modal {
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  width: 380px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--color-border-default);
+}
+
+.plotroute-modal h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.plotroute-modal label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 10px 0 4px;
+}
+
+.plotroute-modal input,
+.plotroute-modal select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  outline: none;
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+}
+
+.plotroute-modal input:focus,
+.plotroute-modal select:focus {
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-modal-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.plotroute-btn {
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.plotroute-btn-primary {
+  background: var(--color-brand-primary);
+  color: #fff;
+  border-color: var(--color-brand-primary);
+}
+
+.plotroute-btn-danger {
+  color: var(--color-status-error);
+  border-color: var(--color-status-error);
+}
+
+/* ── 文本插件多选芯片 ── */
+.text-plugins-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.text-plugin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.text-plugin-chip:hover {
+  border-color: var(--color-brand-primary);
+}
+
+.text-plugin-chip input[type="checkbox"] {
+  accent-color: var(--color-brand-primary);
+}
+
+.wizard-path-preview {
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+}
+
+.wizard-path-preview__label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.wizard-path-preview__path {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  padding: var(--space-1);
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-sm);
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.wizard-path-preview__meta {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.wizard-actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.wizard-feedback {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  margin-top: var(--space-1);
+}
+
+.wizard-feedback--success {
+  background: var(--color-bg-success);
+  color: var(--color-status-success);
+}
+
+.wizard-feedback--error {
+  background: var(--color-bg-error);
+  color: var(--color-status-error);
+}
+
+.wizard-feedback--info {
+  background: var(--color-bg-info);
+  color: var(--color-status-info);
+}
+
+/* ── Drop Zone ── */
+.drop-zone {
+  border: 2px dashed var(--color-border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.drop-zone:hover,
+.drop-zone--over {
+  border-color: var(--color-brand-primary);
+  background: var(--color-bg-hover);
+}
+
+.drop-zone__icon {
+  margin-bottom: var(--space-1);
+  color: var(--color-text-tertiary);
+}
+
+.drop-zone--over .drop-zone__icon {
+  color: var(--color-brand-primary);
+}
+
+.drop-zone__text {
+  font-size: var(--font-base);
+  color: var(--color-text-secondary);
+}
+
+/* ── File List ── */
+.wizard-file-list {
+  list-style: none;
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.wizard-file-list__item {
+  padding: 2px 8px;
+  font-size: var(--font-sm);
+  font-family: var(--font-mono);
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ── Field ── */
+.field {
+  margin-bottom: var(--space-1);
+}
+
+.field__label {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.field__row {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.field__row .field__input {
+  flex: 1;
+}
+
+.field__input {
+  padding: 6px 10px;
+  font-size: var(--font-base);
+  font-family: var(--font-sans);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  width: 100%;
+}
+
+.field__input:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.field__hint {
+  display: block;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+
+/* ── Wizard Messages ── */
+.wizard-message {
+  padding: var(--space-2);
+  font-size: var(--font-base);
+  border-radius: var(--radius-md);
+}
+
+.wizard-message--success {
+  background: var(--color-bg-success);
+  color: var(--color-status-success);
+}
+
+.wizard-message--error {
+  background: var(--color-bg-error);
+  color: var(--color-status-error);
+}
+
+.wizard-message__hint {
+  font-size: var(--font-sm);
+  opacity: 0.8;
+}
+
+.wizard-progress {
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.wizard-progress__bar {
+  height: 6px;
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: var(--space-2);
+}
+
+.wizard-progress__fill {
+  height: 100%;
+  width: 60%;
+  background: var(--color-brand-primary);
+  border-radius: var(--radius-full);
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+.wizard-progress__text {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ==========================================
+   字典页面
+   ========================================== */
+
+.page-dict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  overflow: hidden;
+}
+
+.dict-tabs {
+  display: inline-flex;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 3px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+}
+
+.dict-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  font-size: var(--font-base);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+  white-space: nowrap;
+}
+
+.dict-tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.dict-tab.active {
+  color: #fff;
+  background: var(--color-brand-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.dict-tab-label {
+  line-height: 1;
+}
+
+.dict-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  font-size: var(--font-base);
+  line-height: 1;
+  border-radius: 8px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+}
+
+.dict-tab.active .dict-tab-count {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.dict-body {
+  flex: 1;
+  display: flex;
+  gap: var(--space-2);
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 左侧文件列表 */
+.dict-file-list {
+  width: 220px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dict-file-header {
+  padding: var(--space-2);
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dict-file-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dict-file-group-label {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+  border-bottom: 1px dashed var(--color-border-default);
+}
+
+.dict-scene-hint {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-base);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+}
+
+.dict-scene-hint code {
+  font-family: var(--font-mono, monospace);
+  color: var(--color-accent);
+}
+
+.dict-file-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.dict-file-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.dict-file-item.selected {
+  background: var(--color-bg-selected);
+}
+
+.dict-file-name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--font-base);
+  overflow: hidden;
+}
+
+.dict-file-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.dict-file-item.selected .dict-file-name-text {
+  color: var(--color-brand-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.dict-file-badge {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 5px;
+  font-size: var(--font-base);
+  line-height: 1.6;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+}
+
+.dict-file-count {
+  flex-shrink: 0;
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+}
+
+.dict-file-del {
+  width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-base);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: all var(--duration-fast);
+}
+
+.dict-file-item:hover .dict-file-del,
+.dict-file-item.selected .dict-file-del {
+  opacity: 1;
+}
+
+.dict-file-del:hover {
+  color: var(--color-status-error);
+  background: var(--color-bg-error);
+  border-color: var(--color-status-error);
+}
+
+.dict-empty {
+  padding: var(--space-3) var(--space-2);
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  border: 1px dashed var(--color-border-default);
+  border-radius: var(--radius-md);
+  margin: var(--space-1);
+}
+
+.dict-create {
+  display: flex;
+  gap: 4px;
+  padding: var(--space-1);
+  border-top: 1px solid var(--color-border-default);
+  margin-top: auto;
+}
+
+.dict-create .find-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dict-create .find-select {
+  width: 56px;
+  height: 30px;
+  padding: 0 4px;
+  font-size: var(--font-base);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+/* 右侧编辑器 */
+.dict-editor {
+  flex: 1;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dict-editor-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-base);
+  padding: var(--space-3);
+  text-align: center;
+  line-height: 1.8;
+}
+
+.dict-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+  gap: var(--space-2);
+}
+
+.dict-editor-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.dict-editor-filename {
+  font-family: var(--font-mono);
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dict-editor-stats {
+  flex-shrink: 0;
+  font-size: var(--font-base);
+  color: var(--color-text-tertiary);
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-hover);
+}
+
+.dict-view-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-panel);
+}
+
+.dict-view-btn {
+  padding: 3px 12px;
+  font-size: var(--font-base);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.dict-view-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.dict-view-btn.active {
+  color: #fff;
+  background: var(--color-brand-primary);
+}
+
+.dict-dirty-mark {
+  font-size: var(--font-base);
+  color: var(--color-status-warning);
+}
+
+.dict-textarea {
+  flex: 1;
+  width: 100%;
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-base);
+  line-height: 1.6;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  resize: none;
+  outline: none;
+  tab-size: 2;
+}
+

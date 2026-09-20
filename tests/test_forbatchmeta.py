@@ -405,7 +405,7 @@ class TestForBatchMetaData(unittest.TestCase):
     # ----------------------------------------------------------------
     def test_file_metadata_block_format(self):
         """文件级元数据应格式化为角色/服装/剧情/标签的文本块。"""
-        from GalTransl.Backend.ForGalJsonMulitChat import FileMetaData
+        from GalTransl.Backend.ForGalJsonTranslate import FileMetaData
         md = FileMetaData(id="s.json", character=["爱丽丝", "波波"],
                           costume="日常服", plot="冒险", tags=["奇幻"])
         block = self.backend._build_file_metadata_block("s.json")

@@ -26,7 +26,7 @@
 
 1. **前端界面完全重构**：采用 Tauri 2 + SolidJS 重写桌面端，界面风格与原项目存在巨大差异，重新划分界面。
 2. **更多流水线与更丰富的提示词**：在翻译流程中加入更多阶段，并在提示词中注入更多信息与规范（如全局分析、文件剧情元数据、剧情路线图，**所有阶段均可跳过和人工编辑缓存文件**），以追求更好的翻译质量。
-3. **翻译后端采用多轮对话形式**：不再沿用原项目的单轮对话形式，采用多轮对话形式以获得更全面的上下文，打造更好的译文。
+3. **翻译后端对话模式可选**：默认多轮对话形式（历史由对话携带，获得更全面的上下文，打造更好的译文），也可经 `gpt.chatMode` 切换为单轮独立请求（每批携带全量提示词与 `contextNum` 句上下文注入）。
 4. **翻译后 AI 改善译文**：翻译流程完成后，支持按 `gpt.afterTranslation` 有序数组依次执行多个后处理引擎：译文改进（improve）、换行修复（brfix）、残留日文修复（jpfix）、禁用词修复（banfix）、语义检测（semcheck）、命中句二次复核（semcheckagain）。
 5. **新增问题检测项并可跳过检查**：在原问题检测基础上新增 **长句丢失换行**、**换行位置异常**、**定语/状语过长**、**H 场景用词不当**、**疑似错误**（AI 语义检测）等多项，并且允许为译文打上跳过检测标记，不再被记录问题。
 6. **h与非h区间不同检测阀值与处理方法**：H 场景（批次元数据中标注的 H 区间）与非 H 场景在检测与翻译处理上采用差异化策略——**长句丢失换行** 使用 H 场景专用分句阈值（`avgSentenceLengthThresholdH`，默认 24，非 H 场景为 17）；**用词不当** 检测在 H 场景内命中 H 词库、非 H 场景内命中禁用词库；**GPT 字典拆分为 H/非H 双库**，按剧情场景分流注入翻译提示词，避免 H 词汇污染普通剧情翻译。
@@ -178,7 +178,7 @@
 <details>
 <summary>④-详解：翻译流水线各阶段与文件流向</summary>
 
-&nbsp;&nbsp;&nbsp;&nbsp;"启动流程"默认走 `ForGal-full-pipeline`，按固定顺序执行：**输入校验 → 文本压缩 → 全局剧情/角色分析 → 术语表构建 → 文件级剧情元数据 → 剧情路线图 → 批次划分 → 多轮对话翻译 →（可选）阶段七 译后改进/修复/语义检测**。各阶段中间产物写入 `transl_cache` 下 `pass0~pass3` 四个文件夹。切换"启动流程"上方的后端选择框，可单独运行某一阶段或改用其它后端。
+&nbsp;&nbsp;&nbsp;&nbsp;"启动流程"默认走 `ForGal-full-pipeline`，按固定顺序执行：**输入校验 → 文本压缩 → 全局剧情/角色分析 → 术语表构建 → 文件级剧情元数据 → 剧情路线图 → 批次划分 → 翻译 →（可选）阶段七 译后改进/修复/语义检测**。各阶段中间产物写入 `transl_cache` 下 `pass0~pass3` 四个文件夹。切换"启动流程"上方的后端选择框，可单独运行某一阶段或改用其它后端。
 
 &nbsp;&nbsp;&nbsp;&nbsp;**通用规则：缓存命中跳过（所有阶段通用）**
 &nbsp;&nbsp;&nbsp;&nbsp;每一阶段在调用模型前先查自身缓存，**缓存存在则跳过该阶段、直接复用旧产物**，支持断点续翻。
@@ -202,10 +202,10 @@
 &nbsp;&nbsp;&nbsp;&nbsp;基于各文件剧情摘要与用户设置的**剧情结构类型**（线性/树/有向无环图/有向有环图/混合）与**剧情大纲**，生成全作剧情路线图：mermaid 图 + 文件→路线归属 + 路线→剧情摘要，写入 `transl_cache/pass0_cache/PlotRouteMap.json`（存在即跳过，`forceRegenPlotRoute=true` 强制重新生成）。下游批次划分与翻译会注入**当前文件所属路线**的剧情上下文；路线图生成失败或未配置时自动回退为全量全局分析。依赖阶段四（文件级元数据）产物，阶段四被禁用时本阶段自动跳过。
 
 &nbsp;&nbsp;&nbsp;&nbsp;**阶段五 · 批次划分（ForBatchMetaData）**
-&nbsp;&nbsp;&nbsp;&nbsp;依据文件级元数据与路线归属，将每个剧本切成若干**连续区间（批次）**，标注视角/氛围/H 场景/用词色彩，写入缓存 `transl_cache/pass2_cache/{文件名}.batch.json`（存在即跳过）。批次是多轮对话的上下文边界：同批内模型可见前文，跨批则上下文重置。
+&nbsp;&nbsp;&nbsp;&nbsp;依据文件级元数据与路线归属，将每个剧本切成若干**连续区间（批次）**，标注视角/氛围/H 场景/用词色彩，写入缓存 `transl_cache/pass2_cache/{文件名}.batch.json`（存在即跳过）。批次是对话的上下文边界：多轮模式下同批内模型可见前文，跨批则上下文重置。
 
-&nbsp;&nbsp;&nbsp;&nbsp;**阶段六 · 多轮对话翻译（ForGal-json-multi-chat）**
-&nbsp;&nbsp;&nbsp;&nbsp;按批次以多轮对话逐句翻译，保留批次内上下文，并注入 GPT 字典与预处理（译前）字典。返回结果写入 `transl_cache/pass3_cache/{文件名}.append.jsonl`（逐句追加、已翻译句命中缓存则跳过），每句含 `pre_jp`(原文)、`post_jp`(清洗后日文)、`pre_zh`(初译)、`proofread_zh`(校对后)、`trans_by`、`problem` 等字段。文件全部句子译完后，生成 `transl_cache/pass3_cache/{文件名}.json`
+&nbsp;&nbsp;&nbsp;&nbsp;**阶段六 · 翻译（ForGal-json-translate，翻译后端）**
+&nbsp;&nbsp;&nbsp;&nbsp;按批次逐句翻译并注入 GPT 字典与预处理（译前）字典。对话模式经 `gpt.chatMode` 选择：`multi`（默认）多轮对话，历史由对话携带保留批次内上下文；`single` 单轮独立请求，每批携带全量提示词并注入 `contextNum` 句已译上下文（token 消耗更高）。返回结果写入 `transl_cache/pass3_cache/{文件名}.append.jsonl`（逐句追加、已翻译句命中缓存则跳过），每句含 `pre_jp`(原文)、`post_jp`(清洗后日文)、`pre_zh`(初译)、`proofread_zh`(校对后)、`trans_by`、`problem` 等字段。文件全部句子译完后，生成 `transl_cache/pass3_cache/{文件名}.json`
 
 &nbsp;&nbsp;&nbsp;&nbsp;**（可选）阶段七 · 译后改进/修复/语义检测（`gpt.afterTranslation`）**
 &nbsp;&nbsp;&nbsp;&nbsp;整文件译完后，按 `gpt.afterTranslation` 有序数组依次执行后处理后端（元素顺序即执行顺序，空数组 `[]` 表示不执行；`internals.pipeline.enableImprove=false` 可整体关闭阶段七）：`improve` 译文改进、`brfix` 换行修复、`jpfix` 残留日文修复、`banfix` 禁用词修复、`semcheck` 语义差异检测（AI 判定疑似错译/漏译/串行，写入 `suspected_error` 并标记"疑似错误"问题）、`semcheckagain` 命中句二次复核（对 semcheck 标记句逐句确认/撤销误报，需先执行 semcheck）。前四个引擎对可改进句生成备选译文写入缓存的 `alt_dst` 字段，可在"校对审核"页替换为正文。

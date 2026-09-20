@@ -12,8 +12,6 @@ export interface IconDef {
   d: string | string[];
   /** If true, use fill instead of stroke (for solid icons like play/square) */
   fill?: boolean;
-  /** 鲜艳模式（data-theme-style=vivid）下替代 svg 的 emoji；仅限审批过的语义图标 */
-  emoji?: string;
 }
 
 export const ICON_PATHS: Record<string, IconDef> = {
@@ -31,17 +29,14 @@ export const ICON_PATHS: Record<string, IconDef> = {
       // 中心圆（描边圆环）
       "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z",
     ],
-    emoji: "⚙️",
   },
 
   // ── File / Folder ──
   folder: {
     d: "M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z",
-    emoji: "📁",
   },
   "folder-open": {
     d: "M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V10M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M3 7l1.5 5h17",
-    emoji: "📂",
   },
   // 文件管理器右键菜单「在文件管理器中打开」：文件夹+外指箭头
   "open-in-folder": {
@@ -49,7 +44,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
       "M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z",
       "M2 12h13M13 9l3 3-3 3",
     ],
-    emoji: "📂",
   },
   "file-text": {
     d: "M6 2h8l4 4v16H6V2Zm8 0v4h4M8 10h8M8 14h8M8 18h5",
@@ -61,7 +55,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   book: {
     d: "M4 4v16h7a2 2 0 0 1 2-2 2 2 0 0 1 2 2h7V4h-7a2 2 0 0 0-2 2 2 2 0 0 0-2-2H4Zm9 2v14",
-    emoji: "📖",
   },
   library: {
     d: "M5 3v18M9 3v18M13 3v18M17 3v18M21 3v18",
@@ -78,7 +71,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   server: {
     d: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm0 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3ZM7 8h.01M7 15h.01",
-    emoji: "💻",
   },
 
   // ── Status / Action ──
@@ -103,7 +95,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   "play-stroke": {
     d: "M7 4.5 19 12 7 19.5V4.5Z",
-    emoji: "🌐",
   },
   square: {
     d: "M6 6h12v12H6V6Z",
@@ -117,7 +108,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   "alert-circle": {
     d: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8v5M12 16h.01",
-    emoji: "❓",
   },
   "alert-triangle": {
     d: "M12 4 2.5 19h19L12 4Zm0 6v4M12 16h.01",
@@ -126,33 +116,26 @@ export const ICON_PATHS: Record<string, IconDef> = {
     // 实心感叹号：竖线 + 圆点，视觉中心在 SVG 中心，左右天然对称
     d: "M10.5 3.5h3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM12 16.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z",
     fill: true,
-    emoji: "❗",
   },
 
   // ── Config / Tools ──
-  // ── Toast 语气图标（鲜艳模式换 emoji）──
   "tone-success": {
     d: ["M22 11.1V12a10 10 0 1 1-6-9.2", "M22 4 12 14.01l-3-3"],
-    emoji: "✅",
   },
   "tone-error": {
     d: ["M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20Z", "M12 8v4", "M12 16h.01"],
-    emoji: "❌",
   },
   "tone-warning": {
     d: ["M12 2 2 21h20L12 2Z", "M12 9v4", "M12 17h.01"],
-    emoji: "⚠️",
   },
   "tone-info": {
     d: ["M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20Z", "M12 16v-4", "M12 8h.01"],
-    emoji: "ℹ️",
   },
   puzzle: {
     d: "M9 3a2 2 0 0 0-2 2v2H4v5h3a2 2 0 0 1 0 4H4v5h5v-3a2 2 0 0 1 4 0v3h5v-5h3a2 2 0 0 0 0-4h-3V7h-3V5a2 2 0 0 0-4 0v2H9V5a2 2 0 0 0-2-2Z",
   },
   search: {
     d: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM16 16l4 4",
-    emoji: "🔍",
   },
   refresh: {
     d: "M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5",
@@ -172,7 +155,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
   // ── Misc ──
   "chevron-down": {
     d: "M5 9 12 16 19 9",
-    emoji: "▼",
   },
   "chevron-right": {
     d: "M9 5 16 12 9 19",
@@ -194,14 +176,12 @@ export const ICON_PATHS: Record<string, IconDef> = {
   },
   edit: {
     d: "M4 20h4L18 10l-4-4L4 16v4ZM14 6l4 4",
-    emoji: "📝",
   },
   swap: {
     d: [
       "M7 16V4m0 0L3 8m4-4l4 4",
       "M17 8v12m0 0l4-4m-4 4l-4-4",
     ],
-    emoji: "🔀",
   },
   copy: {
     d: "M8 4h10a2 2 0 0 1 2 2v10M6 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z",
@@ -213,7 +193,6 @@ export const ICON_PATHS: Record<string, IconDef> = {
   // ── Terminal / Build ──
   terminal: {
     d: "M4 17l6-6-6-6M13 19h7",
-    emoji: "🖥️",
   },
 };
 

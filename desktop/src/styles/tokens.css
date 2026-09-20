@@ -252,7 +252,8 @@
    上游 --color-neutral-soft → 本地 bg-subtle。
    本地特有变量（hover/active/selected 由主色派生透明度；tertiary 由
    secondary 加深一档；progress/diff 为翻译专用色，沿用本地值）。
-   圆角/间距/阴影系统不随鲜艳风格变化，保持本地布局身份。 */
+   阴影/圆角在鲜艳下取上游对应档：上游 radius control/card/panel → 本地 md/lg/xl；
+   上游 shadow-panel/button（含 hover/active 档）→ 本地 shadow-lg/shadow-btn*。 */
 [data-theme-style="vivid"] {
   --color-brand-primary: #2f6feb;
   --color-brand-primary-hover: #1d5fe0;
@@ -290,6 +291,9 @@
   --color-bg-error: #fdecea;
   --color-bg-info: #edf3ff;
   --color-bg-subtle: #eef2f7;
+
+  /* 上游浅色 shadow-panel */
+  --shadow-lg: 0 18px 48px rgba(16, 24, 40, 0.08);
 }
 
 [data-theme="dark"][data-theme-style="vivid"] {
@@ -346,12 +350,15 @@
   --vivid-bg-glow-success: rgba(15, 157, 88, 0.08);
   --vivid-bg-gradient-top: #f8fbff;
   --vivid-bg-gradient-bottom: #edf2f8;
+  /* 上游主按钮三档投影：base / hover / active */
   --shadow-btn: 0 10px 24px rgba(47, 111, 235, 0.2);
-  /* 圆角整体上调一档（对齐上游 24/18/14 的宽松观感，按本地尺度折算） */
+  --shadow-btn-hover: 0 4px 12px rgba(47, 111, 235, 0.22);
+  --shadow-btn-active: 0 1px 3px rgba(47, 111, 235, 0.18);
+  /* 圆角取上游 control/card/panel → md/lg/xl（sm 无上游对应，保持本地值） */
   --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
 }
 
 [data-theme="dark"][data-theme-style="vivid"] {
@@ -360,4 +367,6 @@
   --vivid-bg-gradient-top: #101824;
   --vivid-bg-gradient-bottom: #0a0f16;
   --shadow-btn: 0 12px 30px rgba(54, 122, 255, 0.35);
+  --shadow-btn-hover: 0 6px 16px rgba(54, 122, 255, 0.4);
+  --shadow-btn-active: 0 1px 3px rgba(54, 122, 255, 0.3);
 }

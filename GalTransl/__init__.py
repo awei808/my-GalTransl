@@ -51,7 +51,7 @@ PROGRAM_SPLASH4 = r"""
 ALL_BANNERS = [PROGRAM_SPLASH1, PROGRAM_SPLASH2, PROGRAM_SPLASH3, PROGRAM_SPLASH4]
 PROGRAM_SPLASH = ALL_BANNERS[localtime().tm_mday % 4]
 
-GALTRANSL_VERSION = "0.4.7"
+GALTRANSL_VERSION = "0.4.9"
 AUTHOR = "awei808"
 CONTRIBUTORS = "xd2333 (原作者), ryank231231, PiDanShouRouZhouXD, Noriverwater, Isotr0py, adsf0427, pipixia244, gulaodeng, sakura-umi, lifegpc, natsumerinchan, szyzbg"
 
@@ -65,16 +65,16 @@ PASS2_CACHE_DIR = "pass2_cache"  # 批次级元数据缓存
 PASS3_CACHE_DIR = "pass3_cache"  # 翻译缓存
 TRANSLATOR_SUPPORTED = {
     "ForGal-full-pipeline": {
-        "zh-cn": "完整翻译流水线：自动执行压缩→全局分析→术语表→文件元数据→批次划分→多轮翻译，全自动串联。",
-        "en": "Full translation pipeline: compression → global analysis → glossary → file metadata → batch division → multi-round translation, fully automated."
+        "zh-cn": "完整翻译流水线：自动执行压缩→全局分析→术语表→文件元数据→批次划分→翻译，全自动串联。",
+        "en": "Full translation pipeline: compression → global analysis → glossary → file metadata → batch division → translation, fully automated."
     },
     "ForGlobalPrompt": {
         "zh-cn": "由压缩后全文+游戏信息生成全局剧情概要、角色档案、行文风格。结果写入 transl_cache/pass0_cache/GlobalPrompt.json。",
         "en": "Generate global plot summary, character profiles, writing style from compressed full text + game info. Writes GlobalPrompt.json."
     },
-    "ForGal-json-multi-chat": {
-        "zh-cn": "翻译Gal时使用，json格式输入，多轮对话以保留上下文，可注入文件级元数据(FileMetaData)和批次级元数据(BatchMetadata)。",
-        "en": "Customized template for Gal translation, json input, multi-turn chat to keep context, supports FileMetaData and BatchMetadata injection."
+    "ForGal-json-translate": {
+        "zh-cn": "翻译后端：翻译Gal时使用，json格式输入，对话模式可选（多轮/单轮），可注入文件级元数据(FileMetaData)和批次级元数据(BatchMetadata)。",
+        "en": "Translation backend for Gal translation, json input, selectable multi-turn/single-turn chat mode, supports FileMetaData and BatchMetadata injection."
     },
     "ForImproveTranslation": {
         "zh-cn": "整文件翻译完成后评估译文，对可改进的句子生成备选译文，",
@@ -158,13 +158,24 @@ TRANSLATOR_SUPPORTED = {
 TRANSLATOR_DEFAULT_ENGINE = {
     "ForGal-full-pipeline": "deepseek-chat",
     "ForGlobalPrompt": "deepseek-chat",
-    "ForGal-json-multi-chat": "gpt-4.1",
+    "ForGal-json-translate": "gpt-4.1",
     "ForFileMetaData": "deepseek-chat",
     "ForBatchMetaData": "deepseek-chat",
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-multi-chat", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+
+# 引擎名别名：引擎改名后的兼容映射，旧配置/旧任务提交旧名时解析到现行名
+TRANSLATOR_ALIASES = {
+    "ForGal-json-multi-chat": "ForGal-json-translate",
+}
+
+
+def resolve_translator_alias(translator: str) -> str:
+    """把旧引擎名解析为现行名；非别名原样返回。"""
+    return TRANSLATOR_ALIASES.get(translator, translator)
+
 LANG_SUPPORTED = {
     "zh-cn": "Simplified_Chinese",
     "zh-tw": "Traditional_Chinese",

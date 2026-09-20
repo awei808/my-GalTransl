@@ -39,7 +39,7 @@ ForBatchMetaData - 批次级元数据(BatchMetadata)生成后端（高质量翻�
   - 用词色彩：对本区间译文用词风格的具体指导
 
 解析后按文件名写入 transl_cache/pass2_cache/{filename}.batch.json（per-file 存储）。
-第三次启动翻译后端（ForGal-json-multi-chat）时，会按每批句子所处的全局行号
+第三次启动翻译后端（ForGal-json-translate）时，会按每批句子所处的全局行号
 区间，将对应区间的批次级元数据注入首轮提示词（[batch_metadata] 占位符）。
 
 设计与 ForFileMetaData 一致：通过覆盖 batch_translate 走独立的"生成"流程，

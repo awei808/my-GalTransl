@@ -7,10 +7,14 @@ from typing import Any, Optional, Union
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl import LOGGER
 import orjson
-import os,shutil
+import os
 import asyncio
 from GalTransl.i18n import get_text,GT_LANG
 import aiofiles
+
+# 整文件重写的中间文件后缀：先写 <缓存>.json.tmp 再替换到 <缓存>.json，
+# 缓存目录里见到它就是上次中断或被占用留下的遗物（启动时扫掉，见 cleanup_stale_cache_temp_files）
+CACHE_TEMP_SUFFIX = ".json.tmp"
 
 # 缓存JSON key映射：新key -> 旧key（用于兼容读取旧缓存）
 _CACHE_KEY_COMPAT = {
@@ -38,6 +42,39 @@ def _cache_has(cache_obj: dict, key: str) -> bool:
     if old_key and old_key in cache_obj:
         return True
     return False
+
+
+def _replace_cache_file(temp_file_path: str, cache_file_path: str) -> None:
+    """把写好的临时文件换到正式位置（原子替换）。
+
+    用 os.replace 而不是 shutil.move：Windows 上 shutil.move 覆盖已存在文件会退化成
+    copy2+unlink 的原地截断重写，写一半崩了就把正式缓存毁成半截 JSON；
+    os.replace 读到的要么是旧完整文件要么是新完整文件，失败时正式文件一字不动。
+    """
+    os.replace(temp_file_path, cache_file_path)
+
+
+def cleanup_stale_cache_temp_files(cache_dir: str) -> int:
+    """删掉缓存目录里残留的 <缓存>.json.tmp，返回删掉几个。
+
+    只在任务启动时调用：那一刻本项目没有写入者，看到的 .json.tmp 必然是上次中断留下的。
+    只认 .json.tmp——同一目录里的缓存本身、.append.jsonl 一概不碰。
+    """
+    if not cache_dir or not os.path.isdir(cache_dir):
+        return 0
+    removed = 0
+    for name in os.listdir(cache_dir):
+        if not name.endswith(CACHE_TEMP_SUFFIX):
+            continue
+        path = os.path.join(cache_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError as exc:  # 被占用等：留着，下次再说
+            LOGGER.warning(f"[cache]清理残留临时文件失败：{path}: {exc}")
+    return removed
 
 
 def _prev_nonempty_index(cache_list: list, i: int) -> int:
@@ -246,7 +283,7 @@ async def _compact_cache_from_append(cache_file_path: str, append_file_path: str
     temp_file_path = cache_file_path + ".tmp"
     async with aiofiles.open(temp_file_path, mode="wb") as f:
         await f.write(orjson.dumps(merged_cache, option=orjson.OPT_INDENT_2))
-    shutil.move(temp_file_path, cache_file_path)
+    _replace_cache_file(temp_file_path, cache_file_path)
 
     if os.path.exists(append_file_path):
         os.remove(append_file_path)
@@ -323,7 +360,7 @@ async def save_transCache_to_json(trans_list: CTransList, cache_file_path: str, 
             async with aiofiles.open(temp_file_path, mode="wb") as f:
                 json_data = orjson.dumps(cache_json, option=orjson.OPT_INDENT_2)
                 await f.write(json_data)
-            shutil.move(temp_file_path, cache_file_path)
+            _replace_cache_file(temp_file_path, cache_file_path)
             if os.path.exists(append_file_path):
                 try:
                     os.remove(append_file_path)
@@ -489,7 +526,9 @@ async def get_transCache_from_json(
                 LOGGER.error(f"[cache]message未命中缓存: {line_now}")
             continue
 
-        no_proofread = _cache_get(cache_dict[cache_key], "proofread_dst") == ""
+        # 取默认 ""：字段整个缺失（很老的缓存/手改缓存）应视为"没校对过"，该走的检查一步不能少——
+        # 否则 None == "" 为 False，会被当成有校对稿，跳过 post_src/pre_dst 等检查而静默误命中
+        no_proofread = _cache_get(cache_dict[cache_key], "proofread_dst", "") == ""
 
         if no_proofread:
             # post_src被改变
