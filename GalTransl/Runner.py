@@ -84,13 +84,16 @@ def _raise_if_stop_requested(stop_event: threading.Event | None) -> None:
 
 
 def _build_stage_token_pools(cfg: CProjectConfig, translator: str) -> None:
-    """按大阶段独立 API 配置（common.stageBackends）预建各阶段令牌池。
+    """按阶段独立 API 配置（common.stageBackends）预建各阶段令牌池。
 
     池在任务启动期构建（无并发）；profile 存在性与结构已由 Service 校验，
     此处构建失败属 tokens 配置畸形，直接中止任务而非静默回退主池。
     池对象携带来源 profile 的配置段（backend_section），引擎构造时实例级生效。
+
+    多个阶段引用同一 profile 时复用同一个池实例（避免重复建池与重复可用性检测）。
     """
     stage_profiles = getattr(cfg, "stage_profiles", None) or {}
+    pools_by_profile: dict[int, COpenAITokenPool] = {}  # profile 对象 id -> 已建池
     for stage_key, profile in stage_profiles.items():
         section = profile.get("OpenAI-Compatible") if isinstance(profile, dict) else None
         if not isinstance(section, dict):
@@ -98,7 +101,17 @@ def _build_stage_token_pools(cfg: CProjectConfig, translator: str) -> None:
                 "[stage] 阶段 %s 的后端配置缺少 OpenAI-Compatible 段，回退主池", stage_key
             )
             continue
+        cache_key = id(profile)
+        shared = pools_by_profile.get(cache_key)
+        if shared is not None:
+            cfg.stage_token_pools[stage_key] = shared
+            LOGGER.info(
+                f"[stage] 阶段 {stage_key} 复用同一后端配置的令牌池"
+                f"（可用token数={len(shared.tokens)}）"
+            )
+            continue
         pool = COpenAITokenPool(cfg, translator, section=section)
+        pools_by_profile[cache_key] = pool
         cfg.stage_token_pools[stage_key] = pool
         LOGGER.info(
             f"[stage] 阶段独立 API 已启用 stage={stage_key} 可用token数={len(pool.tokens)}"

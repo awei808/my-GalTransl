@@ -4,12 +4,13 @@ import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { runPageAutosave } from "../../lib/usePageAutosave";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
-import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../../lib/api/general";
+import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes, fetchPipelineStages } from "../../lib/api/general";
 import { fetchBackendProfiles, BACKEND_PROFILES_CHANGE_EVENT } from "../../lib/api/preferences";
-import type { ProblemTypeInfo } from "../../lib/api/types";
+import type { ProblemTypeInfo, PipelineStageInfo } from "../../lib/api/types";
 import { classifyKeys } from "../../lib/settings-taxonomy";
 import type { FixedCardKind } from "../../lib/settings-taxonomy";
 import { parseAfterTranslation, validateAfterTranslation } from "../../lib/afterTranslation";
+import { buildStageBackendFields } from "../../lib/stageBackendFields";
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
@@ -39,18 +40,8 @@ const DYNAMIC_MAX_KEY = "common.gpt.dynamicNumPerRequestTranslate.max";
 // BaseTranslate 用 getKey("gpt.translation_guideline") 加载规范（见 GalTransl/Backend/BaseTranslate.py），
 // 因此此处必须用带 common. 前缀的扁平键，否则选择会被后端忽略。
 const GUIDELINE_KEY = "common.gpt.translation_guideline";
-// 大阶段独立 API 卡片的字段清单（与后端 ConfigHelper.STAGE_BACKEND_KEYS 对应；顺序即渲染顺序）
-const STAGE_BACKEND_FIELDS: {
-  key: string;
-  label: string;
-  desc: string;
-  reserved?: boolean;
-}[] = [
-  { key: "metadata", label: "元数据阶段", desc: "全局分析 / 术语表 / 文件级元数据 / 剧情路线图 / 批次划分" },
-  { key: "translate", label: "翻译执行", desc: "翻译后端：多轮/单轮对话可选（阶段 6）" },
-  { key: "afterTrans", label: "AI 初步（批量）处理", desc: "阶段 7 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）" },
-  { key: "proofread", label: "人工校对时 AI 精修", desc: "功能预留，当前版本未实现", reserved: true },
-];
+// 大阶段独立 API 卡片的字段清单：由后端阶段清单（/api/pipeline-stages）派生，顺序即阶段顺序。
+// 派生逻辑见 lib/stageBackendFields.ts（后端不可达时退回旧 4 键，保证界面可用）。
 const HIDDEN_CONFIG_KEYS = new Set<string>([
   "common.gpt.dynamicNumPerRequestTranslate.min",
   "common.gpt.dynamicNumPerRequestTranslate.max",
@@ -502,7 +493,18 @@ export function ProjectConfigPage() {
 
   onMount(() => {
     void loadBackendProfileNames();
+    void loadPipelineStages();
   });
+
+  async function loadPipelineStages() {
+    try {
+      const data = await fetchPipelineStages();
+      setPipelineStages(data.stages ?? []);
+    } catch {
+      // 后端不可达时保持空数组 → stageBackendFields 退回旧 4 键，界面仍可用
+      setPipelineStages([]);
+    }
+  }
 
   async function loadBackendProfileNames() {
     try {
@@ -583,6 +585,9 @@ export function ProjectConfigPage() {
   }
 
   // ── 问题检测（problemAnalyze）：已移回项目设置，随「保存配置」按钮统一写回 YAML ──
+  // ── 阶段清单：大阶段独立 API 卡片的字段来源（后端不可达时退回旧 4 键，保证界面可用） ──
+  const [pipelineStages, setPipelineStages] = createSignal<PipelineStageInfo[]>([]);
+  const stageBackendFields = () => buildStageBackendFields(pipelineStages());
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   const [enabledProblemTypes, setEnabledProblemTypes] = createSignal<string[]>([]);
   const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
@@ -1234,13 +1239,14 @@ export function ProjectConfigPage() {
               <code class="pc-key">common.stageBackends</code>
             </div>
             <p class="pc-desc">
-              四个大阶段（元数据、翻译执行、AI 初步批量处理、人工校对 AI 精修）可各自使用不同的
-              全局后端配置（「后端配置」页创建）。默认全部跟随任务主配置（翻译控制台所选）；
+              各阶段可各自使用不同的全局后端配置（「后端配置」页创建）。默认跟随任务主配置
+              （翻译控制台所选）；元数据类子阶段（全局分析/术语表/文件级元数据/剧情路线图/批次划分）
+              未单独指定时回退到「元数据阶段（旧键）」，旧键也为空则跟随任务主配置。
               阶段配置里的 proxy 不生效，统一使用任务级代理。引用的配置被删除后任务将启动失败，
               请同步更新此处。
             </p>
           </div>
-          <For each={STAGE_BACKEND_FIELDS}>
+          <For each={stageBackendFields()}>
             {(f) => {
               const current = () => stageValue()[f.key] ?? "";
               return (

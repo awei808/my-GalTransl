@@ -11,7 +11,7 @@ from typing import Any
 
 from GalTransl import LOGGER, resolve_translator_alias
 from GalTransl.Cache import cleanup_stale_cache_temp_files, compact_cache_append_logs
-from GalTransl.ConfigHelper import CProjectConfig, STAGE_BACKEND_KEYS
+from GalTransl.ConfigHelper import ALL_STAGE_BACKEND_KEYS, CProjectConfig
 from GalTransl.Runner import run_galtransl
 from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.AppSettings import load_app_settings
@@ -38,10 +38,10 @@ def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
         profile_name = str(profile_name or "").strip()
         if not profile_name:
             continue
-        if stage_key not in STAGE_BACKEND_KEYS:
+        if stage_key not in ALL_STAGE_BACKEND_KEYS:
             raise ValueError(
                 f"stageBackends 含未知阶段键 '{stage_key}'，"
-                f"可用键：{', '.join(STAGE_BACKEND_KEYS)}"
+                f"可用键：{', '.join(ALL_STAGE_BACKEND_KEYS)}"
             )
         candidate = profiles.get(profile_name)
         if not isinstance(candidate, dict):

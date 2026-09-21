@@ -259,7 +259,7 @@ async def _check_stage_model_availability(
 
     与主配置同名的 profile 跳过重复检测；返回列表为空表示项目未配置阶段独立 API。
     """
-    from GalTransl.ConfigHelper import STAGE_BACKEND_KEYS
+    from GalTransl.ConfigHelper import ALL_STAGE_BACKEND_KEYS
 
     stage_map = cfg.keyValues.get("stageBackends")
     if not isinstance(stage_map, dict) or not stage_map:
@@ -284,10 +284,10 @@ async def _check_stage_model_availability(
         profile_name = str(profile_name or "").strip()
         if not profile_name:
             continue
-        if stage_key not in STAGE_BACKEND_KEYS:
+        if stage_key not in ALL_STAGE_BACKEND_KEYS:
             results.append(_stage_result(
                 stage_key, profile_name, False,
-                f"未知阶段键 '{stage_key}'（可用：{', '.join(STAGE_BACKEND_KEYS)}）",
+                f"未知阶段键 '{stage_key}'（可用：{', '.join(ALL_STAGE_BACKEND_KEYS)}）",
             ))
             continue
         if profile_name in checked_names:

@@ -75,11 +75,18 @@ common:
   gpt.swapFixToCurrent: false # 修复轮（brfix/jpfix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
-  stageBackends: # 每大阶段独立API：值为「后端配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
-    metadata: "" # 元数据阶段：全局分析/术语表/文件级元数据/剧情路线图/批次划分
-    translate: "" # 翻译执行
-    afterTrans: "" # AI初步（批量）处理：阶段7 全部后处理引擎
+  stageBackends: # 每阶段独立API：值为「后端配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
+    validate: "" # 阶段0 输入数据校验（一般无需独立后端）
+    compress: "" # 阶段1 文本无损压缩（一般无需独立后端）
+    global_prompt: "" # 阶段2 全局游戏分析；留空时回退下方 metadata（旧键）
+    gen_dic: "" # 阶段3 术语表构建；留空时回退下方 metadata（旧键）
+    file_meta: "" # 阶段4 文件级元数据；留空时回退下方 metadata（旧键）
+    plot_route: "" # 阶段5 剧情路线图；留空时回退下方 metadata（旧键）
+    batch_meta: "" # 阶段6 批次级元数据；留空时回退下方 metadata（旧键）
+    translate: "" # 阶段7 翻译执行
+    afterTrans: "" # 阶段8 修复和改进译文（全部后处理引擎）
     proofread: "" # 人工校对时AI精修（功能预留，当前版本未实现）
+    metadata: "" # [旧键] 元数据域统一后端：被上面 5 个元数据阶段作为回退目标，仅兼容旧项目保留
   # 调试日志
   loggingLevel: info # 日志输出级别：debug详细，info常规，warning仅警告。[debug/info/warning]
   saveLog: false # 是否将日志写入文件。[True/False]

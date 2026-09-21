@@ -146,9 +146,22 @@ def _pass3_cache_dir(projectConfig: CProjectConfig) -> str:
 
 
 def _stage_pool(projectConfig: CProjectConfig, stage: str):
-    """返回大阶段独立令牌池（common.stageBackends 配置）；未配置时回退任务主池。"""
-    pool = getattr(projectConfig, "stage_token_pools", {}).get(stage)
-    return pool if pool is not None else getattr(projectConfig, "tokenPool", None)
+    """返回阶段独立令牌池（common.stageBackends 配置）；未配置时回退任务主池。
+
+    回退链：阶段自身槽位 → STAGE_BACKEND_FALLBACKS 指定的槽位（元数据域各阶段
+    回退到旧 "metadata" 键，使旧项目配置无需迁移）→ 任务主池。
+    """
+    pools = getattr(projectConfig, "stage_token_pools", {}) or {}
+    resolver = getattr(projectConfig, "resolve_stage_pool_key", None)
+    pool_key = resolver(stage) if callable(resolver) else stage
+    pool = pools.get(pool_key)
+    if pool is None:
+        return getattr(projectConfig, "tokenPool", None)
+    if pool_key != stage:
+        LOGGER.debug(
+            "[stage] 阶段 %s 未单独配置后端，回退槽位 %s", stage, pool_key
+        )
+    return pool
 
 
 async def ensure_model_available_if_needed(

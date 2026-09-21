@@ -9,11 +9,22 @@
   - BaseEngine._effective_backend_section：池携带段实例级优先，Sakura 分支不覆盖
   - CProjectConfig.get_stage_token_pool：未配置阶段回退主池
   - server_runtime._compute_stage_index：阶段 7 新旧命名与别名映射
+
+0.5.0 批次 2（每阶段独立后端）补充：
+  - STAGE_BACKEND_KEYS 扩为 10 阶段键，旧 4 键降为 LEGACY，ALL 为并集
+  - STAGE_BACKEND_FALLBACKS：6 个元数据域阶段回退旧 metadata 槽位
+  - CProjectConfig.resolve_stage_pool_key：三级回退链（自身 → 回退槽位 → 自身）
+  - _build_stage_token_pools：同一 profile 对象跨阶段共享同一池实例
 """
 import unittest
 
 from GalTransl.Service import _resolve_stage_backend_profiles
-from GalTransl.ConfigHelper import STAGE_BACKEND_KEYS
+from GalTransl.ConfigHelper import (
+    ALL_STAGE_BACKEND_KEYS,
+    LEGACY_STAGE_BACKEND_KEYS,
+    STAGE_BACKEND_FALLBACKS,
+    STAGE_BACKEND_KEYS,
+)
 from GalTransl.Runner import _build_stage_token_pools
 from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.COpenAI import COpenAITokenPool
@@ -85,9 +96,86 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
         self.assertEqual(set(resolved), {"proofread"})
 
     def test_stage_keys_declared(self) -> None:
+        # 0.5.0：阶段级键扩为 10（9 流水线阶段 + afterTrans），旧 4 键降为兼容键
         self.assertEqual(
-            set(STAGE_BACKEND_KEYS), {"metadata", "translate", "afterTrans", "proofread"}
+            set(STAGE_BACKEND_KEYS),
+            {
+                "validate", "compress", "global_prompt", "gen_dic", "file_meta",
+                "plot_route", "batch_meta", "translate", "afterTrans", "proofread",
+            },
         )
+        self.assertEqual(
+            set(LEGACY_STAGE_BACKEND_KEYS),
+            {"metadata", "translate", "afterTrans", "proofread"},
+        )
+        self.assertEqual(set(ALL_STAGE_BACKEND_KEYS), set(STAGE_BACKEND_KEYS) | {"metadata"})
+
+    def test_new_metadata_substage_keys_accepted(self) -> None:
+        # 6 个元数据域子阶段键均可写入并解析
+        resolved = _resolve_stage_backend_profiles(
+            {
+                "global_prompt": "pA",
+                "gen_dic": "pA",
+                "file_meta": "pB",
+                "plot_route": "pB",
+                "batch_meta": "pA",
+            },
+            {"pA": _profile(), "pB": _profile()},
+        )
+        self.assertEqual(
+            set(resolved), {"global_prompt", "gen_dic", "file_meta", "plot_route", "batch_meta"}
+        )
+
+    def test_legacy_metadata_key_still_accepted(self) -> None:
+        # 旧项目 config.yaml 仍写 metadata：必须继续可用（批次 2 验收：旧配置仍生效）
+        resolved = _resolve_stage_backend_profiles({"metadata": "pA"}, {"pA": _profile()})
+        self.assertEqual(set(resolved), {"metadata"})
+
+
+class StageBackendFallbackTests(unittest.TestCase):
+    def test_metadata_domain_stages_fall_back_to_legacy_slot(self) -> None:
+        for key in ("global_prompt", "gen_dic", "file_meta", "plot_route", "batch_meta"):
+            with self.subTest(key=key):
+                self.assertEqual(STAGE_BACKEND_FALLBACKS.get(key), "metadata")
+
+    def test_non_metadata_stages_have_no_fallback(self) -> None:
+        # translate/afterTrans/proofread 为独立域：无回退槽位，未配置即跟随主配置
+        for key in ("validate", "compress", "translate", "afterTrans", "proofread"):
+            with self.subTest(key=key):
+                self.assertEqual(STAGE_BACKEND_FALLBACKS.get(key), "")
+
+    def test_every_stage_key_has_fallback_entry(self) -> None:
+        self.assertEqual(set(STAGE_BACKEND_FALLBACKS), set(STAGE_BACKEND_KEYS))
+
+    def _proj(self, pools: dict):
+        from GalTransl.ConfigHelper import CProjectConfig
+
+        proj = object.__new__(CProjectConfig)
+        proj.tokenPool = object()
+        proj.stage_token_pools = pools
+        return proj
+
+    def test_resolve_prefers_own_stage_pool(self) -> None:
+        proj = self._proj({"global_prompt": object(), "metadata": object()})
+        self.assertEqual(proj.resolve_stage_pool_key("global_prompt"), "global_prompt")
+
+    def test_resolve_falls_back_to_legacy_slot(self) -> None:
+        proj = self._proj({"metadata": object()})
+        self.assertEqual(proj.resolve_stage_pool_key("global_prompt"), "metadata")
+        self.assertEqual(proj.resolve_stage_pool_key("plot_route"), "metadata")
+
+    def test_resolve_returns_stage_when_nothing_configured(self) -> None:
+        proj = self._proj({})
+        self.assertEqual(proj.resolve_stage_pool_key("global_prompt"), "global_prompt")
+
+    def test_get_stage_token_pool_uses_fallback_chain(self) -> None:
+        legacy = object()
+        proj = self._proj({"metadata": legacy})
+        self.assertIs(proj.get_stage_token_pool("file_meta"), legacy)
+
+    def test_get_stage_token_pool_main_when_all_empty(self) -> None:
+        proj = self._proj({})
+        self.assertIs(proj.get_stage_token_pool("file_meta"), proj.tokenPool)
 
 
 class TokenPoolSectionTests(unittest.TestCase):
@@ -143,6 +231,35 @@ class BuildStageTokenPoolsTests(unittest.TestCase):
         cfg = _FakeRunnerConfig({})
         _build_stage_token_pools(cfg, "ForGal-full-pipeline")
         self.assertEqual(cfg.stage_token_pools, {})
+
+    def test_same_profile_object_shares_one_pool(self) -> None:
+        # 多个阶段引用同一 profile 对象 → 复用一个池实例，避免重复建池与令牌重复计数
+        shared = _profile([{"token": "sk-shared", "endpoint": "https://s.example.com"}])
+        cfg = _FakeRunnerConfig({"global_prompt": shared, "gen_dic": shared, "file_meta": shared})
+        _build_stage_token_pools(cfg, "ForGal-full-pipeline")
+        self.assertEqual(
+            set(cfg.stage_token_pools), {"global_prompt", "gen_dic", "file_meta"}
+        )
+        self.assertIs(
+            cfg.stage_token_pools["global_prompt"], cfg.stage_token_pools["gen_dic"]
+        )
+        self.assertIs(
+            cfg.stage_token_pools["gen_dic"], cfg.stage_token_pools["file_meta"]
+        )
+
+    def test_distinct_profiles_get_distinct_pools(self) -> None:
+        cfg = _FakeRunnerConfig(
+            {
+                "global_prompt": _profile([{"token": "sk-a", "endpoint": "https://a.example.com"}]),
+                "gen_dic": _profile([{"token": "sk-b", "endpoint": "https://b.example.com"}]),
+            }
+        )
+        _build_stage_token_pools(cfg, "ForGal-full-pipeline")
+        self.assertIsNot(
+            cfg.stage_token_pools["global_prompt"], cfg.stage_token_pools["gen_dic"]
+        )
+        self.assertEqual(cfg.stage_token_pools["global_prompt"].tokens[0][1].token, "sk-a")
+        self.assertEqual(cfg.stage_token_pools["gen_dic"].tokens[0][1].token, "sk-b")
 
 
 class EffectiveBackendSectionTests(unittest.TestCase):

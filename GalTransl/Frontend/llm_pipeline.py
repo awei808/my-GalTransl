@@ -187,10 +187,10 @@ async def _run_stage_global_prompt(
         record_runtime_notice(projectConfig.getProjectDir(), "全局分析已存在，跳过")
         success = True
     else:
-        await ensure_model_available_if_needed(projectConfig, stage="metadata")
+        await ensure_model_available_if_needed(projectConfig, stage="global_prompt")
         gptapi_global = ForGlobalPrompt(
             projectConfig, "ForGlobalPrompt",
-            projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
+            projectConfig.proxyPool, _stage_pool(projectConfig, "global_prompt"),
         )
         try:
             external_info = projectConfig.getKey("externals.gameInfo", "") or ""
@@ -255,10 +255,10 @@ async def _run_stage_gen_dic(
     record_runtime_notice(projectConfig.getProjectDir(), "开始生成术语表")
     from GalTransl.Backend.GenDic import GenDic
 
-    await ensure_model_available_if_needed(projectConfig, stage="metadata")
+    await ensure_model_available_if_needed(projectConfig, stage="gen_dic")
     gptapi_dic = GenDic(
         projectConfig, "GenDic",
-        projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
+        projectConfig.proxyPool, _stage_pool(projectConfig, "gen_dic"),
     )
     try:
         all_jsons = []
@@ -311,10 +311,10 @@ async def _run_stage_file_meta(
     from GalTransl.Backend.ForFileMetaData import ForFileMetaData
     from GalTransl.Backend.metadata import load_file_metadata_map
 
-    await ensure_model_available_if_needed(projectConfig, stage="metadata")
+    await ensure_model_available_if_needed(projectConfig, stage="file_meta")
     gptapi_filemeta = ForFileMetaData(
         projectConfig, "ForFileMetaData",
-        projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
+        projectConfig.proxyPool, _stage_pool(projectConfig, "file_meta"),
     )
     try:
         # ForFileMetaData 会通过 projectConfig.global_prompt 自动使用全局分析
@@ -395,9 +395,9 @@ async def _run_stage_plot_route(
 
     gptapi_plotroute = ForPlotRouteMap(
         projectConfig, "ForPlotRouteMap",
-        projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
+        projectConfig.proxyPool, _stage_pool(projectConfig, "plot_route"),
     )
-    await ensure_model_available_if_needed(projectConfig, stage="metadata")
+    await ensure_model_available_if_needed(projectConfig, stage="plot_route")
     try:
         structure_type = projectConfig.getKey("internals.plotroute.structureType", "树")
         user_outline = projectConfig.getKey("internals.plotroute.userOutline", "")
@@ -439,10 +439,10 @@ async def _run_stage_batch_meta(
     # 总文件数在文件级元数据阶段已算过；该阶段可能被禁用，此处兜底重算
     total_files = stage_ctx.get("total_files") or len(file_json_lists)
 
-    await ensure_model_available_if_needed(projectConfig, stage="metadata")
+    await ensure_model_available_if_needed(projectConfig, stage="batch_meta")
     gptapi_batchmeta = ForBatchMetaData(
         projectConfig, "ForBatchMetaData",
-        projectConfig.proxyPool, _stage_pool(projectConfig, "metadata"),
+        projectConfig.proxyPool, _stage_pool(projectConfig, "batch_meta"),
     )
     try:
         # ForBatchMetaData 会写入 transl_cache/pass2_cache/ 的 {filename}.batch.json

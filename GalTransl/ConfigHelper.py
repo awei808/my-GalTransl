@@ -151,9 +151,43 @@ def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
     return result
 
 
-# 大阶段独立 API 配置键（common.stageBackends）：值为全局后端配置名。
-# proofread 为「人工校对时 AI 精修」预留（功能未实现，仅解析保存，供后续版本消费）。
-STAGE_BACKEND_KEYS: tuple = ("metadata", "translate", "afterTrans", "proofread")
+# 阶段独立 API 配置键（common.stageBackends）：值为全局后端配置名。
+# 每键对应一个流水线阶段，使「全局分析」「剧情路线图」等可各接不同后端。
+STAGE_BACKEND_KEYS: tuple = (
+    "validate",
+    "compress",
+    "global_prompt",
+    "gen_dic",
+    "file_meta",
+    "plot_route",
+    "batch_meta",
+    "translate",
+    "afterTrans",
+    "proofread",
+)
+
+# 旧版 4 键槽位（0.5.0 之前）：仍可写入并生效，作为新阶段键的回退目标。
+LEGACY_STAGE_BACKEND_KEYS: tuple = ("metadata", "translate", "afterTrans", "proofread")
+
+# 写入 config.yaml 时允许的键 = 新键 ∪ 旧键（旧键仅作兼容读取，不再主动生成）
+ALL_STAGE_BACKEND_KEYS: tuple = tuple(
+    dict.fromkeys((*STAGE_BACKEND_KEYS, *LEGACY_STAGE_BACKEND_KEYS))
+)
+
+# 阶段键 -> 回退槽位：该阶段未单独配置后端时，先看此槽位是否有配置。
+# 元数据域的各阶段统一回退到旧 "metadata" 键，使旧项目配置无需迁移即可继续生效。
+STAGE_BACKEND_FALLBACKS: dict = {
+    "validate": "",
+    "compress": "",
+    "global_prompt": "metadata",
+    "gen_dic": "metadata",
+    "file_meta": "metadata",
+    "plot_route": "metadata",
+    "batch_meta": "metadata",
+    "translate": "",
+    "afterTrans": "",
+    "proofread": "",
+}
 
 
 class CProjectConfig:
@@ -300,13 +334,27 @@ class CProjectConfig:
         except (TypeError, ValueError):
             return 1
 
+    def resolve_stage_pool_key(self, stage: str) -> str:
+        """把阶段键解析为实际有配置的槽位键，供令牌池回退链使用。
+
+        回退顺序：阶段自身 → STAGE_BACKEND_FALLBACKS 指定的槽位（通常为旧
+        "metadata"）。两者都无配置时返回阶段键自身（调用方据此回退主池）。
+        """
+        if stage in self.stage_token_pools:
+            return stage
+        fallback = STAGE_BACKEND_FALLBACKS.get(stage, "")
+        if fallback and fallback in self.stage_token_pools:
+            return fallback
+        return stage
+
     def get_stage_token_pool(self, stage: str):
-        """返回大阶段独立令牌池（common.stageBackends 配置）；未配置时回退任务主池。
+        """返回阶段独立令牌池（common.stageBackends 配置）；未配置时回退任务主池。
 
         阶段池对象携带来源 profile 的配置段（backend_section），引擎构造时
         实例级生效（stream/apiTimeout/thinking 等随阶段 profile）。
+        阶段自身未配置时，按 STAGE_BACKEND_FALLBACKS 回退到旧槽位（如 metadata）。
         """
-        pool = self.stage_token_pools.get(stage)
+        pool = self.stage_token_pools.get(self.resolve_stage_pool_key(stage))
         return pool if pool is not None else self.tokenPool
 
     def getProblemAnalyzeConfig(self, backendName: str) -> list[CProblemType]:
