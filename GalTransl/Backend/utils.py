@@ -179,10 +179,53 @@ def parse_interval(raw: object) -> Optional[Tuple[int, int]]:
     return lo, hi
 
 
-# h 值语义档位（左闭右开，兼容口径：h >= 0.5 视为 h 区间）：
-#   [0, 0.25) 标准非h；[0.25, 0.5) 少量h氛围对话/描述；
-#   [0.5, 0.75) h氛围浓厚但无性行为；[0.75, 1] h氛围浓厚且伴性行为
-_H_THRESHOLD = 0.5
+# h 值语义档位（左闭右开，默认：h >= 0.5 视为 h 区间；阈值可经 internals.hLevels 配置）：
+# [0,0.25) 标准非h / [0.25,0.5) 少量h氛围 / [0.5,0.75) h浓厚无性行为 / [0.75,1] h浓厚伴性行为
+DEFAULT_H_THRESHOLDS: Tuple[float, float, float] = (0.25, 0.5, 0.75)
+# H 场景判定默认线（即 intimate 档位；与默认阈值同源，避免两处硬编码漂移）
+_H_THRESHOLD = DEFAULT_H_THRESHOLDS[1]
+
+# H 档位阈值配置项名（internals.hLevels.<名>，以整数百分比 0-100 书写）
+H_LEVEL_PERCENT_KEYS: Tuple[str, str, str] = ("tension", "intimate", "explicit")
+
+
+def resolve_h_thresholds(pj_config: object = None) -> Tuple[float, float, float]:
+    """从项目配置读取 H 档位阈值（0-1 三点），缺失或非法时整组回退默认。
+
+    配置键 internals.hLevels.{tension,intimate,explicit} 以整数百分比（0-100）
+    书写，未配置某项时取该项默认值。三项须同时满足 0-100 且
+    tension <= intimate <= explicit，否则**整组**回退默认并告警
+    （避免半截生效造成档位错乱）。与既有配置读取约定一致：桩对象无 getKey
+    时直接回退默认。
+    """
+    get_key = getattr(pj_config, "getKey", None)
+    if get_key is None:
+        return DEFAULT_H_THRESHOLDS
+    percents: List[float] = []
+    for name, default in zip(H_LEVEL_PERCENT_KEYS, DEFAULT_H_THRESHOLDS):
+        raw = get_key(f"internals.hLevels.{name}", default * 100)
+        try:
+            pct = float(raw)
+        except (TypeError, ValueError):
+            LOGGER.warning(
+                f"[h-levels] internals.hLevels.{name} 不是数字（{raw!r}），"
+                "H 档位阈值整组回退默认"
+            )
+            return DEFAULT_H_THRESHOLDS
+        if pct < 0 or pct > 100:
+            LOGGER.warning(
+                f"[h-levels] internals.hLevels.{name} 超出 0-100（{pct}），"
+                "H 档位阈值整组回退默认"
+            )
+            return DEFAULT_H_THRESHOLDS
+        percents.append(pct)
+    if not percents[0] <= percents[1] <= percents[2]:
+        LOGGER.warning(
+            f"[h-levels] H 档位阈值须满足 tension <= intimate <= explicit，"
+            f"当前 {percents}，整组回退默认 {DEFAULT_H_THRESHOLDS}"
+        )
+        return DEFAULT_H_THRESHOLDS
+    return (percents[0] / 100.0, percents[1] / 100.0, percents[2] / 100.0)
 
 
 def coerce_h_value(value: object, default: float = 0.0) -> float:
@@ -208,9 +251,13 @@ def coerce_h_value(value: object, default: float = 0.0) -> float:
     return default
 
 
-def is_h_value(value: object) -> bool:
-    """判断区间 h 值是否应视为 h 场景（兼容口径：h >= 0.5）。"""
-    return coerce_h_value(value) >= _H_THRESHOLD
+def is_h_value(value: object, threshold: Optional[float] = None) -> bool:
+    """判断区间 h 值是否应视为 h 场景（默认口径：h >= 0.5）。
+
+    threshold 可显式传入项目配置解析出的判定线（resolve_h_thresholds 的
+    intimate 项），不传时沿用固定默认 0.5（旧行为不变）。
+    """
+    return coerce_h_value(value) >= (_H_THRESHOLD if threshold is None else threshold)
 
 
 

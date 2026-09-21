@@ -126,6 +126,16 @@ internals:
     plotMetadata: true            # 注入文件级元数据（剧情/角色/服装）[True/False]
     batchMetadata: true           # 注入批次级元数据（剧情区间指导）[True/False]
     globalPrompt: true            # 注入全局游戏分析（剧情概述/角色设定等）[True/False]
+  # H 档位阈值（整数百分比 0-100，内部按 /100 换算为 0-1 的 h 值）：
+  # 三项须满足 tension <= intimate <= explicit，否则整组回退默认 25/50/75。
+  hLevels:
+    tension: 25                   # h >= 此值进入「少量h氛围」档 [0-100]
+    intimate: 50                  # h >= 此值进入「h浓厚（无性行为）」档，同时作为 H 场景判定线 [0-100]
+    explicit: 75                  # h >= 此值进入「h浓厚（有性行为）」档 [0-100]
+  # H 禁用词表注入开关与词数上限（词库文件本身在「禁用词字典」中配置）
+  hForbiddenWords:
+    enabled: true                 # 是否在 H 档位（intimate/explicit）注入禁用词表 [True/False]
+    limit: 20                     # 注入词数上限，超出时截断为省略提示 [1-200]
   forbatchmeta:
     max_batches: 20 # 翻译区间（批次）最大数量，超过此数将自动合并相邻区间；设大模型输出不稳可调大。[1-200]
     min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间会尽量与相邻区间合并。[1-1000]

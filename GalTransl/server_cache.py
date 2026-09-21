@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 from GalTransl import (
     LOGGER,
@@ -38,7 +38,7 @@ from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
 from GalTransl.CSerialize import save_json
 from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
 from GalTransl.Utils import get_n_symbol
-from GalTransl.Backend.utils import coerce_h_value, is_h_value
+from GalTransl.Backend.utils import coerce_h_value, is_h_value, resolve_h_thresholds
 from GalTransl.server_config_schema import _read_yaml_file
 from GalTransl.server_dict import (
     _ensure_common_dicts_in_config,
@@ -706,12 +706,49 @@ def _resolve_cache_row_offset(
     return offset
 
 
+# 项目 H 档位阈值进程级缓存：project_dir -> (配置文件 mtime, 阈值或 None)
+_PROJECT_H_THRESHOLD_CACHE: dict[str, Tuple[float, Optional[float]]] = {}
+
+
+def _project_h_threshold(project_dir: str) -> Optional[float]:
+    """读取项目配置的 H 场景判定阈值（internals.hLevels.intimate 百分比 / 100）。
+
+    仅做轻量配置读取（不载入字典），以配置文件 mtime 为签名做进程级缓存，
+    使校对界面的 H 区间与该项目的提示词注入侧阈值保持一致。
+    无配置文件 / 读取失败 / 阈值非法时返回 None，调用方回退默认 0.5。
+    """
+    config_path = ""
+    for cand in ("config.inc.yaml", "config.yaml"):
+        p = os.path.join(project_dir, cand)
+        if os.path.isfile(p):
+            config_path = p
+            break
+    if not config_path:
+        return None
+    try:
+        mtime = os.path.getmtime(config_path)
+    except OSError:
+        return None
+    cached = _PROJECT_H_THRESHOLD_CACHE.get(project_dir)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    threshold: Optional[float] = None
+    try:
+        from GalTransl.ConfigHelper import CProjectConfig
+        cfg = CProjectConfig(project_dir, os.path.basename(config_path))
+        threshold = resolve_h_thresholds(cfg)[1]
+    except Exception as exc:
+        LOGGER.debug(f"[h-ranges] 读取项目 H 档位阈值失败，回退默认：{exc}")
+    _PROJECT_H_THRESHOLD_CACHE[project_dir] = (mtime, threshold)
+    return threshold
+
+
 def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]:
     """计算给定翻译缓存文件中的 H 剧情区间（换算为缓存条目 index 口径）。
 
     数据源：transl_cache/pass2_cache/{输入名}.batch.json 的「批次」数组中
-    h >= 0.5（is_h_value）的区间。相邻 h 批次（下一区间 lo <= 上一区间 hi + 1）
-    合并为一条，故多个分散 H 段各自成区间。区间的 lo/hi 已换算为该缓存文件
+    h 达到项目判定线（internals.hLevels.intimate，默认 0.5）的区间。相邻 h 批次
+    （下一区间 lo <= 上一区间 hi + 1）合并为一条，故多个分散 H 段各自成区间。区间的 lo/hi 已换算为该缓存文件
     条目 index 的口径（splitFile 分片时含偏移），前端可直接按条目 index 匹配画线。
     每个区间额外带 h（合并段内的峰值强度），供前端展示 H 强度分级。
 
@@ -759,13 +796,16 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
         return {"batch_exists": True, "has_h": False, "h_ranges": []}
 
     batches = batch_data.get("批次", []) if isinstance(batch_data, dict) else []
+    # H 场景判定线取项目配置（internals.hLevels.intimate），与该项目的提示词注入侧
+    # 口径一致；配置缺失时回退默认 0.5。
+    h_threshold = _project_h_threshold(project_dir)
     # h_global 每项为 [lo, hi, h_value]（h 值经 coerce_h_value 归一，旧布尔兼容）
     h_global: list[list] = []
     for b in batches:
         if not isinstance(b, dict):
             continue
         h_val = coerce_h_value(b.get("h", b.get("H", False)))
-        if not is_h_value(h_val):
+        if not is_h_value(h_val, h_threshold):
             continue
         seg = b.get("区间")
         if not isinstance(seg, list) or len(seg) < 2:

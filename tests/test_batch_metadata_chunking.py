@@ -23,6 +23,7 @@ REPO_ROOT = str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, REPO_ROOT)
 
 from GalTransl.Backend.BaseTranslate import BaseTranslate  # noqa: E402
+from GalTransl.Backend.utils import DEFAULT_H_THRESHOLDS  # noqa: E402
 from GalTransl.Backend.ForGalJsonTranslate import (  # noqa: E402
     BatchMetadata,
     ForGalJsonTranslate,
@@ -50,6 +51,8 @@ def _make_inst(bm: BatchMetadata):
     inst = MagicMock(spec=ForGalJsonTranslate)
     inst.last_file_name = None  # batch_translate 访问的动态属性，spec 不含
     inst._resolve_batch_metadata = lambda filename: bm
+    # H 档位阈值须返回真实三元组：MagicMock 属性会被 _h_level 当可迭代对象解包而报错
+    inst._h_thresholds = lambda: DEFAULT_H_THRESHOLDS
     return inst
 
 

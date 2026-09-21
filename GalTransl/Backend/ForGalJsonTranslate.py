@@ -4,7 +4,7 @@ import json
 import asyncio
 import re
 from random import choice
-from typing import Any, Optional, List, Set
+from typing import Any, Optional, List, Set, Tuple
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
@@ -35,11 +35,14 @@ from GalTransl.Backend.metadata import (
     load_batch_metadata_map,
 )
 from GalTransl.Backend.utils import (
+    DEFAULT_H_THRESHOLDS,
+    coerce_bool,
     coerce_h_value,
     detect_batch_line_break_symbol,
     is_h_value,
     parse_interval,
     preprocess_jsonline_response,
+    resolve_h_thresholds,
     strip_chunk_suffix,
 )
 from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
@@ -67,17 +70,26 @@ from GalTransl.Service import JobCancelledError
 """
 
 
-def _h_level(h_val: float) -> str:
-    """按 h 强度把区间归类到档位（与需求左闭右开一致）。
+# H 禁用词注入的词数上限默认值（可经 internals.hForbiddenWords.limit 配置）
+_H_FORBIDDEN_DEFAULT_LIMIT = 20
 
-    [0,0.25) normal / [0.25,0.5) tension / [0.5,0.75) intimate / [0.75,1] explicit。
-    入参应为 coerce_h_value 归一后的 0-1 浮点。
+
+def _h_level(
+    h_val: float, thresholds: Optional[Tuple[float, float, float]] = None
+) -> str:
+    """按 h 强度把区间归类到档位（左闭右开）。
+
+    默认阈值下： [0,0.25) normal / [0.25,0.5) tension / [0.5,0.75) intimate /
+    [0.75,1] explicit。thresholds 为 (tension, intimate, explicit) 三点 0-1 阈值，
+    不传时用 DEFAULT_H_THRESHOLDS（旧行为不变）。入参应为 coerce_h_value 归一
+    后的 0-1 浮点。
     """
-    if h_val >= 0.75:
+    tension, intimate, explicit = thresholds or DEFAULT_H_THRESHOLDS
+    if h_val >= explicit:
         return "explicit"
-    if h_val >= 0.5:
+    if h_val >= intimate:
         return "intimate"
-    if h_val >= 0.25:
+    if h_val >= tension:
         return "tension"
     return "normal"
 
@@ -913,6 +925,10 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
 
         # H 场景用词不当词库（hCheckDict）惰性加载缓存：None=未加载，[]=加载结果为空
         self._h_check_words: Optional[list] = None
+        # H 档位阈值缓存（internals.hLevels，惰性解析一次；见 _h_thresholds）
+        self._h_thresholds_cache: Optional[Tuple[float, float, float]] = None
+        # H 禁用词注入开关/上限缓存（internals.hForbiddenWords；见 _h_forbidden_cfg）
+        self._h_forbidden_cfg_cache: Optional[dict] = None
 
         self.last_file_name = ""
         self.init_chatbot(eng_type=eng_type, config=config)
@@ -1111,16 +1127,18 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
     ) -> str:
         """把与本批行号区间 [lo, hi] 相交的批次级元数据格式化为提示词附加段落。
 
-        按 h 强度分 4 档渲染，各档分别给出差异化翻译指导：
+        按 h 强度分 4 档渲染，各档分别给出差异化翻译指导（默认阈值下）：
         [0,0.25) 标准非h / [0.25,0.5) 少量h氛围 / [0.5,0.75) h浓厚无性行为 /
-        [0.75,1] h浓厚有性行为。h >= 0.5 的档位额外注入项目 hCheckDict 禁用词表
-        （词数 ≤ 20 全量，超出截断）。仅注入相关区间，避免整份区间表膨胀提示词。
-        无相交区间时返回空串。
+        [0.75,1] h浓厚有性行为。档位阈值可经 internals.hLevels 配置（整数百分比），
+        H 档位（intimate/explicit）额外注入项目 hCheckDict 禁用词表
+        （词数上限可经 internals.hForbiddenWords 配置）。仅注入相关区间，避免整份
+        区间表膨胀提示词。无相交区间时返回空串。
         """
         segments = batch_metadata.segments_in_range(lo, hi)
         if not segments:
             return ""
 
+        thresholds = self._h_thresholds()
         # 按档位聚合区间行，档位顺序即渲染顺序
         grouped: dict[str, list[str]] = {"normal": [], "tension": [], "intimate": [], "explicit": []}
         for b in segments:
@@ -1136,7 +1154,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
                 f"- 区间[{b_lo}-{b_hi}] 视角:{view} 氛围:{atmos} "
                 f"H:{h_val:.1f} 用词色彩:{tone}"
             )
-            grouped[_h_level(h_val)].append(line)
+            grouped[_h_level(h_val, thresholds)].append(line)
 
         _GUIDE_BY_LEVEL = {
             "normal": NORMAL_BATCH_GUIDE,
@@ -1144,6 +1162,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
             "intimate": H_INTIMATE_GUIDE,
             "explicit": H_BATCH_GUIDE,
         }
+        forbidden_cfg = self._h_forbidden_cfg()
         blocks: list[str] = []
         for level in ("normal", "tension", "intimate", "explicit"):
             lines = grouped.get(level) or []
@@ -1151,9 +1170,9 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
                 continue
             guide = _GUIDE_BY_LEVEL[level]
             block = "\n".join([guide, *lines])
-            # 禁用词只对 h >= 0.5 的档位（intimate/explicit）注入
-            if level in ("intimate", "explicit"):
-                forbidden = self._format_h_forbidden_words()
+            # 禁用词只对 H 档位（intimate/explicit）注入，可经配置整体关闭
+            if level in ("intimate", "explicit") and forbidden_cfg["enabled"]:
+                forbidden = self._format_h_forbidden_words(forbidden_cfg["limit"])
                 if forbidden:
                     block += f"\n{forbidden}"
             blocks.append(block)
@@ -1173,8 +1192,9 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
     def _group_is_h_scene(self, group: CTransList, filename: str) -> bool:
         """判断本批待译句子组是否处于 h 场景（供字典按场景分流注入）。
 
-        与 _format_batch_metadata_block 的 H 判定同用 is_h_value（h >= 0.5）。
-        注意：字典分流是二元的 h/非h，tension 档（0.25 <= h < 0.5）不属于字典
+        与 _format_batch_metadata_block 的 H 判定同用 is_h_value，阈值取
+        internals.hLevels.intimate（默认 0.5），故两侧口径始终一致。
+        注意：字典分流是二元的 h/非h，低于 intimate 阈值的 tension 档不属于字典
         分流的 H 场景，仅 _format_batch_metadata_block 会为其渲染 H_TENSION_GUIDE。
         无元数据/空组时回退非 h。
         """
@@ -1184,21 +1204,72 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         lo, hi = self._trans_global_range(group)
         if hi < lo:
             return False
-        return any(is_h_value(b.get("h", b.get("H", False))) for b in bm.segments_in_range(lo, hi))
+        intimate = self._h_thresholds()[1]
+        return any(
+            is_h_value(b.get("h", b.get("H", False)), intimate)
+            for b in bm.segments_in_range(lo, hi)
+        )
 
-    def _format_h_forbidden_words(self) -> str:
+    def _format_h_forbidden_words(self, limit: Optional[int] = None) -> str:
         """把项目 hCheckDict 词库格式化为 H 区间禁用词提示段。
 
-        词数 ≤ 20 时全量列出，超出时截断为省略提示，避免提示词过长。
+        词数不超过 limit 时全量列出，超出时截断为省略提示，避免提示词过长。
+        limit 默认取 _H_FORBIDDEN_DEFAULT_LIMIT（20）；非法值一律回退默认。
         """
         words = self._resolve_h_check_words()
         if not words:
             return ""
-        if len(words) <= 20:
+        cap = (
+            limit
+            if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0
+            else _H_FORBIDDEN_DEFAULT_LIMIT
+        )
+        if len(words) <= cap:
             listed = "、".join(words)
         else:
-            listed = "、".join(words[:20]) + "…………等词语"
+            listed = "、".join(words[:cap]) + "…………等词语"
         return H_BATCH_FORBIDDEN.format(words=listed)
+
+    def _h_config(self) -> object:
+        """H 相关配置的宿主对象（project_config 优先，回退基类 pj_config）。"""
+        return getattr(self, "project_config", None) or getattr(self, "pj_config", None)
+
+    def _h_thresholds(self) -> Tuple[float, float, float]:
+        """H 档位三点阈值（tension/intimate/explicit，0-1），惰性解析并缓存一次。"""
+        cached = getattr(self, "_h_thresholds_cache", None)
+        if cached is None:
+            cached = resolve_h_thresholds(self._h_config())
+            self._h_thresholds_cache = cached
+        return cached
+
+    def _h_forbidden_cfg(self) -> dict:
+        """H 禁用词注入开关与词数上限（internals.hForbiddenWords），惰性缓存一次。"""
+        cached = getattr(self, "_h_forbidden_cfg_cache", None)
+        if cached is not None:
+            return cached
+        cfg = {"enabled": True, "limit": _H_FORBIDDEN_DEFAULT_LIMIT}
+        get_key = getattr(self._h_config(), "getKey", None)
+        if get_key is not None:
+            cfg["enabled"] = coerce_bool(
+                get_key("internals.hForbiddenWords.enabled", True), default=True
+            )
+            raw_limit = get_key(
+                "internals.hForbiddenWords.limit", _H_FORBIDDEN_DEFAULT_LIMIT
+            )
+            limit = _H_FORBIDDEN_DEFAULT_LIMIT
+            # bool 是 int 的子类，显式排除，避免 true 被当成上限 1 而误截断词表
+            if not isinstance(raw_limit, bool):
+                try:
+                    limit = int(float(raw_limit))
+                except (TypeError, ValueError):
+                    LOGGER.warning(
+                        f"[ForGalJsonTranslate] internals.hForbiddenWords.limit 不是数字"
+                        f"（{raw_limit!r}），回退 {_H_FORBIDDEN_DEFAULT_LIMIT}"
+                    )
+                    limit = _H_FORBIDDEN_DEFAULT_LIMIT
+            cfg["limit"] = limit if limit >= 1 else _H_FORBIDDEN_DEFAULT_LIMIT
+        self._h_forbidden_cfg_cache = cfg
+        return cfg
 
     def _resolve_h_check_words(self) -> list:
         """从项目配置 hCheckDict 惰性加载 H 场景用词不当词库（仅一次）。

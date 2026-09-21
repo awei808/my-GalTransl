@@ -200,6 +200,16 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.promptBlocks.globalPrompt",
         ],
       },
+      {
+        title: "H 档位阈值与禁用词",
+        keys: [
+          "internals.hLevels.tension",
+          "internals.hLevels.intimate",
+          "internals.hLevels.explicit",
+          "internals.hForbiddenWords.enabled",
+          "internals.hForbiddenWords.limit",
+        ],
+      },
     ],
     // 翻译后处理后端：有序数组专用卡片（数字框编辑器），不入通用列表
     fixedCards: ["afterTranslation"],
