@@ -2,6 +2,12 @@ import { createSignal, createEffect, Show, onMount, onCleanup, on } from "solid-
 import type { MetadataEntry } from "../../lib/api/types";
 import { fetchPerFileMetadata } from "../../lib/api/project";
 import { toast } from "../../stores/toastStore";
+import { mermaidToFlow, applyFileRoutes } from "../../lib/plotRoute/mermaidToFlow";
+import { flowToMermaid } from "../../lib/plotRoute/flowToMermaid";
+import { layoutGraph } from "../../lib/plotRoute/routeLayout";
+import type { RouteGraph } from "../../lib/plotRoute/types";
+import { RouteCanvas } from "./plotRoute/RouteCanvas";
+import { FileRouteAssigner } from "./plotRoute/FileRouteAssigner";
 
 /* PlotRouteMap.json 数据模型（键与后端 ForPlotRouteMap 输出一致） */
 interface PlotRouteMap {
@@ -52,7 +58,7 @@ function buildRoutes(nodes: Map<string, string>, fileRoutes: Record<string, stri
   return routes;
 }
 
-type PanelView = "split" | "source" | "preview";
+type PanelView = "visual" | "split" | "source" | "preview";
 
 export function PlotRoutePanel(props: {
   projectId: string;
@@ -74,6 +80,9 @@ export function PlotRoutePanel(props: {
   const [filePlots, setFilePlots] = createSignal<Record<string, string>>({});
   /* 编辑脏标记：本地编辑一旦发生即置位，用于区分「编辑自身回写」与「切换文件/外部更新」 */
   const [dirty, setDirty] = createSignal(false);
+  /* 可视化编辑：由 source() 解析出的图模型；null 表示解析失败（降级纯文本） */
+  const [graph, setGraph] = createSignal<RouteGraph | null>(null);
+  const [graphError, setGraphError] = createSignal("");
 
   let graphRef: HTMLDivElement | undefined;
   let viewerRef: HTMLDivElement | undefined;
@@ -109,10 +118,58 @@ export function PlotRoutePanel(props: {
         setRenderError("");
         setView("split");
         setZoomLevel(1);
+        syncGraph();
         void render();
       },
     ),
   );
+
+  /** 由 source() 重建图模型（含布局）；解析失败时置 graphError 并降级纯文本 */
+  function syncGraph() {
+    const { graph: g, error } = mermaidToFlow(source());
+    if (!g) {
+      setGraph(null);
+      setGraphError(error);
+      return;
+    }
+    setGraphError("");
+    applyFileRoutes(g, fileRoutes());
+    // 首次解析出的坐标全是 0：用分层布局补上，避免所有节点堆在原点
+    const needsLayout = g.nodes.every((n) => n.x === 0 && n.y === 0);
+    if (needsLayout) layoutGraph(g, g.direction);
+    setGraph(g);
+  }
+
+  /** 画布编辑回写：图模型 → mermaid 源码 → 落盘 */
+  function handleGraphChange(next: RouteGraph) {
+    const text = flowToMermaid(next);
+    // 拓扑无变化（如单纯拖动位置未改结构）时只更新坐标缓存，不重挂画布、不落盘
+    if (text === source()) {
+      setGraph(next);
+      return;
+    }
+    setDirty(true);
+    setGraph(next);
+    setSource(text);
+    const obj: PlotRouteMap = {
+      结构类型: data().结构类型 ?? "",
+      用户大纲: data().用户大纲 ?? "",
+      mermaid: text,
+      文件归属: fileRoutes(),
+      节点剧情: routePlots(),
+    };
+    props.onContentChange(JSON.stringify(obj, null, 2));
+    scheduleRender();
+  }
+
+  /** 画布上点节点 → 复用既有编辑弹窗（按节点 id 反查文件名） */
+  function handleCanvasSelectNode(nodeId: string) {
+    const g = graph();
+    const node = g?.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const route = fileRoutes()[node.label] ?? node.route ?? "";
+    setEditing({ alias: node.id, label: node.label, route });
+  }
 
   function emitChange() {
     setDirty(true);
@@ -274,10 +331,16 @@ export function PlotRoutePanel(props: {
     }
   }
 
-  function handleSourceInput(v: string) {
-    setSource(v);
+  /** 防抖触发 mermaid 重渲染（源码/画布改动共用） */
+  function scheduleRender() {
     clearTimeout(renderTimer);
     renderTimer = setTimeout(() => void render(), 400);
+  }
+
+  function handleSourceInput(v: string) {
+    setSource(v);
+    syncGraph();
+    scheduleRender();
     emitChange();
   }
 
@@ -340,8 +403,47 @@ export function PlotRoutePanel(props: {
     return [...s];
   };
 
+  /** 可归属的候选文件：图内节点 label ∪ 已有归属键（去重保序） */
+  const assignableFiles = (): string[] => {
+    const s = new Set<string>();
+    for (const n of graph()?.nodes ?? []) if (n.label) s.add(n.label);
+    for (const f of Object.keys(fileRoutes())) if (f) s.add(f);
+    return [...s];
+  };
+
+  /**
+   * 批量归属：把若干文件归入同一路线。
+   *
+   * 只改 文件归属（不重建 mermaid 拓扑）：路线是语义分组，
+   * 拓扑由用户在画布上拖拽决定，二者解耦避免互相覆盖。
+   * 若目标路线尚未在「节点剧情」中登记，则补一个空摘要占位。
+   */
+  function handleBatchAssign(files: string[], route: string) {
+    const fr = { ...fileRoutes() };
+    for (const f of files) fr[f] = route;
+    const rp = { ...routePlots() };
+    if (!(route in rp)) rp[route] = "";
+    setFileRoutes(fr);
+    setRoutePlots(rp);
+    // 归属变了，图内节点路线色需跟着刷新（新建对象，不就地改当前 graph）
+    const g = graph();
+    if (g) {
+      const next: RouteGraph = {
+        direction: g.direction,
+        nodes: g.nodes.map((n) => ({ ...n })),
+        edges: g.edges.map((e) => ({ ...e })),
+      };
+      applyFileRoutes(next, fr);
+      setGraph(next);
+    }
+    emitChange();
+    props.onBlur();
+    toast.success(`已将 ${files.length} 个文件归入「${route}」`);
+  }
+
   onMount(() => {
     // 首屏渲染由 createEffect 在挂载时触发，此处仅做首次适屏
+    syncGraph();
     setTimeout(() => zoomFit(), 300);
   });
 
@@ -358,6 +460,7 @@ export function PlotRoutePanel(props: {
       <div class="plotroute-toolbar">
         <div class="plotroute-tb-group">
           <span class="plotroute-tb-label">视图</span>
+          <button class="plotroute-tb-btn" classList={{ active: view() === "visual" }} onClick={() => switchView("visual")}>可视化编辑</button>
           <button class="plotroute-tb-btn" classList={{ active: view() === "split" }} onClick={() => switchView("split")}>双栏</button>
           <button class="plotroute-tb-btn" classList={{ active: view() === "source" }} onClick={() => switchView("source")}>仅源码</button>
           <button class="plotroute-tb-btn" classList={{ active: view() === "preview" }} onClick={() => switchView("preview")}>仅渲染</button>
@@ -375,6 +478,50 @@ export function PlotRoutePanel(props: {
       </div>
 
       <div class="plotroute-layout">
+        <Show when={view() === "visual"}>
+          <div class="plotroute-panel-visual">
+            <div class="plotroute-panel-title">
+              可视化编辑
+              <span class="plotroute-hint">
+                （拖拽/连线，改动实时写回 mermaid 源码）
+              </span>
+            </div>
+            <Show
+              when={graph()}
+              fallback={
+                <div class="plotroute-visual-fallback">
+                  无法解析为图：{graphError()}。
+                  <br />
+                  请切到「双栏」或「仅源码」模式手工修正。
+                </div>
+              }
+            >
+              <div class="plotroute-canvas">
+                {/* keyed Show：graph 对象变化时整体重建画布，避免内部状态残留 */}
+                <Show when={graph()} keyed>
+                  {(g) => (
+                    <RouteCanvas
+                      graph={g}
+                      allRoutes={routeOptions()}
+                      onChange={handleGraphChange}
+                      onSelectNode={handleCanvasSelectNode}
+                    />
+                  )}
+                </Show>
+              </div>
+            </Show>
+          </div>
+        </Show>
+
+        <Show when={view() === "visual"}>
+          <FileRouteAssigner
+            files={assignableFiles()}
+            fileRoutes={fileRoutes()}
+            routes={routeOptions()}
+            onAssign={handleBatchAssign}
+          />
+        </Show>
+
         <div class="plotroute-panel-src">
           <div class="plotroute-panel-title">
             mermaid 源码

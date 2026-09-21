@@ -19,6 +19,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\""
   },
   "dependencies": {
+    "@dschz/solid-flow": "0.2.6",
     "@solidjs/router": "^0.15.3",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
