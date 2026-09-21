@@ -361,10 +361,12 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
             user_content = prompt_req
         else:
             # 后续轮次：复用多轮上下文；本批注入本批涉及的剧情区间指导 + 术语表，再发待译句子
+            # 两块均受 internals.promptBlocks 开关控制（默认开启，与旧版一致）
+            block_toggles = self._prompt_block_toggles()
             parts = []
-            if batch_metadata_block:
+            if batch_metadata_block and block_toggles["batchMetadata"]:
                 parts.append(batch_metadata_block)
-            if gptdict:
+            if gptdict and block_toggles["glossary"]:
                 parts.append(gptdict + "\n以下是本批次待翻译内容：")
             parts.append(input_src)
             user_content = "\n".join(parts)

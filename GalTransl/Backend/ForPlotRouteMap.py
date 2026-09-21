@@ -255,7 +255,13 @@ class ForPlotRouteMap(BaseEngine):
         prompt = prompt.replace("[structure_type]", structure_type or "混合")
         prompt = prompt.replace("[user_outline]", user_outline or "（未提供，请根据各文件剧情自行归纳整体结构）")
         prompt = prompt.replace("[file_summaries]", summaries)
-        prompt = prompt.replace("[global_prompt]", self._build_global_prompt_block())
+        # 全局分析块可经 internals.promptBlocks.globalPrompt 关闭（默认为 True）
+        global_prompt_block = (
+            self._build_global_prompt_block()
+            if self._prompt_block_toggles()["globalPrompt"]
+            else ""
+        )
+        prompt = prompt.replace("[global_prompt]", global_prompt_block)
 
         LOGGER.info("[PlotRouteMap] 正在生成剧情路线图…")
         LOGGER.debug(f"[PlotRouteMap] 提示词长度：{len(prompt)} 字符")

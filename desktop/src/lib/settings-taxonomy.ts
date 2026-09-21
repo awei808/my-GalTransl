@@ -190,6 +190,16 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.pipeline.enableImprove",
         ],
       },
+      {
+        title: "提示词注入块（翻译轮 / 修复轮）",
+        keys: [
+          "internals.promptBlocks.translationGuideline",
+          "internals.promptBlocks.glossary",
+          "internals.promptBlocks.plotMetadata",
+          "internals.promptBlocks.batchMetadata",
+          "internals.promptBlocks.globalPrompt",
+        ],
+      },
     ],
     // 翻译后处理后端：有序数组专用卡片（数字框编辑器），不入通用列表
     fixedCards: ["afterTranslation"],

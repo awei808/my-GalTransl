@@ -3,7 +3,7 @@ import httpx
 import math
 from datetime import timedelta
 from opencc import OpenCC
-from typing import Any, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from collections import deque
 from threading import Lock
 from contextvars import ContextVar
@@ -43,6 +43,17 @@ def _default_http_limits() -> httpx.Limits:
     return httpx.Limits(
         max_keepalive_connections=20, max_connections=100, keepalive_expiry=30.0
     )
+
+
+# 注入块开关默认值（internals.promptBlocks）：全 True = 与 0.5.0 之前行为一致。
+# 仅覆盖「可安全关闭」的内容块；[Input]/[SourceLang]/[TargetLang] 不参与开关。
+PROMPT_BLOCK_DEFAULTS: Dict[str, bool] = {
+    "translationGuideline": True,
+    "glossary": True,
+    "plotMetadata": True,
+    "batchMetadata": True,
+    "globalPrompt": True,
+}
 
 
 _GLOBAL_RPM_LOCK = Lock()
@@ -692,17 +703,71 @@ class BaseEngine:
             guideline = self.pj_config.translation_guideline
         else:
             guideline = translation_guideline
-        prompt_req = prompt_req.replace("[translation_guideline]", guideline)
-        prompt_req = prompt_req.replace("[Input]", input_src)
-        prompt_req = prompt_req.replace("[Glossary]", gptdict)
-        prompt_req = prompt_req.replace("[plot_metadata]", plot_metadata)
-        # 批次级元数据(BatchMetadata)：默认空串（占位符被清除），
-        # 仅多轮后端在首轮按需注入。其余后端不受影响。
-        prompt_req = prompt_req.replace("[batch_metadata]", batch_metadata)
-        prompt_req = prompt_req.replace("[global_prompt]", global_prompt)
-        prompt_req = prompt_req.replace("[SourceLang]", self.source_lang)
-        prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
+
+        # 注入块清单（0.5.0）：占位符 -> (值, 开关键)。开关关闭时按空串替换，
+        # 占位符仍被清除（等价于该块「不注入」），模板结构不被破坏。
+        blocks = self._prompt_block_values(
+            input_src=input_src,
+            gptdict=gptdict,
+            plot_metadata=plot_metadata,
+            batch_metadata=batch_metadata,
+            guideline=guideline,
+            global_prompt=global_prompt,
+        )
+        for placeholder, value in blocks:
+            prompt_req = prompt_req.replace(placeholder, value)
         return prompt_req
+
+    def _prompt_block_values(
+        self,
+        input_src: str,
+        gptdict: str,
+        plot_metadata: str,
+        batch_metadata: str,
+        guideline: str,
+        global_prompt: str,
+    ) -> List[Tuple[str, str]]:
+        """返回 (占位符, 替换值) 清单，按块开关决定各块是否为空串。
+
+        开关读取自 ``internals.promptBlocks.<name>``，**默认全部为 True**，
+        故未配置任何开关时行为与 0.5.0 之前完全一致（零回归）。
+
+        `[Input]` / `[SourceLang]` / `[TargetLang]` 为功能性占位符，不参与
+        开关（关闭会让提示词失去待译内容或语言约束），恒按原值替换。
+        """
+        # 块名 -> (占位符, 值)；顺序即替换顺序，不影响结果（各占位符互不包含）
+        toggles = self._prompt_block_toggles()
+        return [
+            ("[translation_guideline]", guideline if toggles["translationGuideline"] else ""),
+            ("[Glossary]", gptdict if toggles["glossary"] else ""),
+            ("[plot_metadata]", plot_metadata if toggles["plotMetadata"] else ""),
+            ("[batch_metadata]", batch_metadata if toggles["batchMetadata"] else ""),
+            ("[global_prompt]", global_prompt if toggles["globalPrompt"] else ""),
+            ("[Input]", input_src),
+            ("[SourceLang]", self.source_lang),
+            ("[TargetLang]", self.target_lang),
+        ]
+
+    def _prompt_block_toggles(self) -> Dict[str, bool]:
+        """读取注入块开关（``internals.promptBlocks`` 段）；缺省全部 True。
+
+        每引擎实例构造时缓存一次，避免每轮提示词拼装都走配置查找。
+        配置对象可能是不带 ``getKey`` 的 duck-typed 桩（测试/嵌入场景），
+        此时一律取默认值（全开），等价于 0.5.0 之前的行为。
+        """
+        cached = getattr(self, "_prompt_block_toggles_cache", None)
+        if cached is not None:
+            return cached
+        get_key = getattr(self.pj_config, "getKey", None)
+        toggles: Dict[str, bool] = {}
+        for name, default in PROMPT_BLOCK_DEFAULTS.items():
+            if get_key is None:
+                toggles[name] = default
+                continue
+            raw = get_key(f"internals.promptBlocks.{name}", default)
+            toggles[name] = coerce_bool(raw, default=default)
+        self._prompt_block_toggles_cache = toggles
+        return toggles
 
     async def _interruptible_sleep(self, seconds: float) -> None:
         """Sleep that can be interrupted by stop_event.

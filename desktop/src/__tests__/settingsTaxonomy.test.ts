@@ -84,3 +84,34 @@ describe("settings-taxonomy 全局分析范围组", () => {
     expect(toggleSub?.keys).not.toContain("internals.pipeline.globalPromptFiles");
   });
 });
+
+describe("settings-taxonomy 提示词注入块组", () => {
+  const BLOCK_KEYS = [
+    "internals.promptBlocks.translationGuideline",
+    "internals.promptBlocks.glossary",
+    "internals.promptBlocks.plotMetadata",
+    "internals.promptBlocks.batchMetadata",
+    "internals.promptBlocks.globalPrompt",
+  ];
+
+  it("五个键已声明在「提示词注入块」子组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-完整流水线",
+    );
+    expect(section).toBeDefined();
+    const sub = (section?.subsections ?? []).find(
+      (x) => x.title.includes("提示词注入块"),
+    );
+    expect(sub).toBeDefined();
+    for (const key of BLOCK_KEYS) {
+      expect(sub?.keys).toContain(key);
+    }
+  });
+
+  it("classifyKeys 不会把五键落到「其他设置」", () => {
+    const { unclassified } = classifyKeys(BLOCK_KEYS);
+    for (const key of BLOCK_KEYS) {
+      expect(unclassified).not.toContain(key);
+    }
+  });
+});

@@ -118,6 +118,14 @@ internals:
   # ForGlobalPrompt 后端专用配置
   forglobalprompt:
     inject_guideline: false       # 是否将翻译规范注入全局分析提示词 [True/False]
+  # 提示词注入块开关：false 时该内容块不注入（占位符被清空，模板结构不变）；
+  # 默认全开 = 与旧版一致。与各后端 inject_guideline 为 AND 关系。
+  promptBlocks:
+    translationGuideline: true    # 注入翻译规范块 [True/False]
+    glossary: true                # 注入术语表（GPT 字典）[True/False]
+    plotMetadata: true            # 注入文件级元数据（剧情/角色/服装）[True/False]
+    batchMetadata: true           # 注入批次级元数据（剧情区间指导）[True/False]
+    globalPrompt: true            # 注入全局游戏分析（剧情概述/角色设定等）[True/False]
   forbatchmeta:
     max_batches: 20 # 翻译区间（批次）最大数量，超过此数将自动合并相邻区间；设大模型输出不稳可调大。[1-200]
     min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间会尽量与相邻区间合并。[1-1000]
