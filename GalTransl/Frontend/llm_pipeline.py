@@ -192,12 +192,19 @@ async def _run_stage_global_prompt(
 
     # 子集覆盖字段：internals.pipeline.globalPromptMergeFields（空=覆盖全部字段）
     raw_fields = projectConfig.getKey("internals.pipeline.globalPromptMergeFields", None)
+    merge_fields: Optional[List[str]] = None
     if isinstance(raw_fields, list) and raw_fields:
-        merge_fields: Optional[List[str]] = [
+        merge_fields = [
             str(x) for x in raw_fields if str(x or "").strip() in MERGE_FIELD_KEYS
         ]
-    else:
-        merge_fields = None
+        # 字段名全部无效时回退「覆盖全部」：空列表会让合并变成「一个字段都不覆盖」，
+        # 用户会看到配置改了却毫无效果（静默失效）。
+        if not merge_fields:
+            LOGGER.warning(
+                f"[流水线] globalPromptMergeFields 中的字段名均无效"
+                f"（可用：{'、'.join(MERGE_FIELD_KEYS)}），本次按覆盖全部字段执行"
+            )
+            merge_fields = None
 
     gp_path = _find_global_prompt_path(projectConfig)
     force_regen_gp = projectConfig.getKey("internals.pipeline.forceRegenGlobal", False)

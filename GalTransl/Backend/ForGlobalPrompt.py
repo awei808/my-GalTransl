@@ -620,8 +620,7 @@ class ForGlobalPrompt(BaseEngine):
             LOGGER.warning(f"[GlobalPrompt] 内容校验警告：{warn}")
 
         # ── 合并（策略：覆盖指定字段）──
-        # 子集分析按字段合并，避免抹掉已有结果中本次未涉及的字段。
-        # 未显式指定 merge_fields 时默认覆盖全部字段（等价整体替换，但保留 base 的键序）。
+        # 按字段合并避免抹掉本次未涉及的内容；未指定 merge_fields 时覆盖全部字段。
         base = load_global_prompt(self.pj_config) if file_filter else None
         if base is not None:
             fields = merge_fields if merge_fields is not None else list(MERGE_FIELD_KEYS)

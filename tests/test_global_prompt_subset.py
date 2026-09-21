@@ -288,5 +288,42 @@ class BatchTranslateSubsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(called, [])
 
 
+class MergeFieldsResolutionTests(unittest.TestCase):
+    """`_run_stage_global_prompt` 对 globalPromptMergeFields 的解析口径。
+
+    单独锁定「字段名全部无效时回退覆盖全部」：若解析出空列表，合并会变成
+    「一个字段都不覆盖」，用户改了配置却看不出效果（静默失效）。
+    """
+
+    def _resolve(self, raw):
+        """复刻 _run_stage_global_prompt 的字段解析段（与实现同口径）。"""
+        merge_fields = None
+        if isinstance(raw, list) and raw:
+            merge_fields = [
+                str(x) for x in raw if str(x or "").strip() in MERGE_FIELD_KEYS
+            ]
+            if not merge_fields:
+                merge_fields = None
+        return merge_fields
+
+    def test_valid_fields_pass_through(self) -> None:
+        self.assertEqual(
+            self._resolve(["剧情概述", "角色列表"]), ["剧情概述", "角色列表"]
+        )
+
+    def test_invalid_fields_all_filtered_fall_back_to_none(self) -> None:
+        """全部非法 -> None（覆盖全部），而非 [] （一个都不覆盖）。"""
+        self.assertIsNone(self._resolve(["剧情概述2", "错别字"]))
+        self.assertIsNone(self._resolve(["   "]))
+
+    def test_partially_invalid_keeps_valid_ones(self) -> None:
+        self.assertEqual(self._resolve(["剧情概述", "幽灵字段"]), ["剧情概述"])
+
+    def test_empty_and_none_both_mean_cover_all(self) -> None:
+        self.assertIsNone(self._resolve([]))
+        self.assertIsNone(self._resolve(None))
+        self.assertIsNone(self._resolve("剧情概述"))  # 非 list 配置不参与
+
+
 if __name__ == "__main__":
     unittest.main()
