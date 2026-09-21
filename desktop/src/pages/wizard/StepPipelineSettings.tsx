@@ -1,65 +1,21 @@
+import { createResource, For, Show } from "solid-js";
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
+import { fetchPipelineStages } from "../../lib/api/general";
+import { FALLBACK_STAGES, stageToggleName } from "../../lib/pipelineStages";
 import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 
-interface PipelineStageItem {
-  key: string;
-  label: string;
-  hint: string;
-  /** 是否支持生成示例文件（仅 JSON 类阶段支持） */
-  sampleable?: boolean;
-}
-
-const PIPELINE_STAGES: PipelineStageItem[] = [
-  {
-    key: "enableValidate",
-    label: "阶段 0：输入数据校验",
-    hint: "校验输入文件的 message 与 name 完整性。关闭后跳过校验直接进入下一阶段（不建议关闭）。",
-  },
-  {
-    key: "enableCompress",
-    label: "阶段 1：文本无损压缩",
-    hint: "压缩全文供全局分析使用。关闭后阶段 2（全局分析）因无压缩文本将自动跳过。",
-  },
-  {
-    key: "enableGlobalPrompt",
-    label: "阶段 2：全局游戏分析",
-    hint: "生成游戏名称/剧情概述/角色列表等全局档案（GlobalPrompt.json）。",
-    sampleable: true,
-  },
-  {
-    key: "enableGenDic",
-    label: "阶段 3：术语表构建",
-    hint: "提取项目术语生成 GPT 字典。该阶段未优化，运行效果较差，不建议启用。",
-  },
-  {
-    key: "enableFileMeta",
-    label: "阶段 4：文件级元数据",
-    hint: "为每个文件生成剧情背景（FileMetaData）。",
-    sampleable: true,
-  },
-  {
-    key: "enablePlotRoute",
-    label: "阶段 4.5：剧情路线图",
-    hint: "基于各文件的剧情摘要生成剧情路线图（PlotRouteMap.json），并标记每个文件所属路线。",
-    sampleable: true,
-  },
-  {
-    key: "enableBatchMeta",
-    label: "阶段 5：批次级元数据",
-    hint: "按剧情分段划分翻译区间。",
-    sampleable: true,
-  },
-  {
-    key: "enableTranslate",
-    label: "阶段 6：翻译执行",
-    hint: "调用 AI 翻译。关闭后流水线只执行前置分析阶段，不进行翻译。",
-  },
-  {
-    key: "enableImprove",
-    label: "阶段 7：修复和改进译文",
-    hint: "翻译完成后逐文件执行下方「修复和改进译文」中选中的后端（按数字顺序）。关闭后整个阶段跳过。",
-  },
-];
+/** 阶段说明文案（后端清单不含 hint，前端按 key 补充） */
+const STAGE_HINTS: Record<string, string> = {
+  validate: "校验输入文件的 message 与 name 完整性。关闭后跳过校验直接进入下一阶段（不建议关闭）。",
+  compress: "压缩全文供全局分析使用。关闭后全局分析阶段因无压缩文本将自动跳过。",
+  global_prompt: "生成游戏名称/剧情概述/角色列表等全局档案（GlobalPrompt.json）。",
+  gen_dic: "提取项目术语生成 GPT 字典。该阶段未优化，运行效果较差，不建议启用。",
+  file_meta: "为每个文件生成剧情背景（FileMetaData）。",
+  plot_route: "基于各文件的剧情摘要生成剧情路线图（PlotRouteMap.json），并标记每个文件所属路线。",
+  batch_meta: "按剧情分段划分翻译区间。",
+  translate: "调用 AI 翻译。关闭后流水线只执行前置分析阶段，不进行翻译。",
+  improve: "翻译完成后逐文件执行下方「修复和改进译文」中选中的后端（按数字顺序）。关闭后整个阶段跳过。",
+};
 
 // 剧情路线图的结构类型（含专业术语通俗说明）
 const PLOT_STRUCTURE_TYPES = [
@@ -125,6 +81,17 @@ function handleTextareaEnter(e: KeyboardEvent, onChange: (v: string) => void) {
 }
 
 export function StepPipelineSettings(props: StepPipelineSettingsProps) {
+  // 阶段清单以后端为准（唯一真源），后端不可用时回退到内置同名清单
+  const [stagesResource] = createResource(async () => {
+    try {
+      const resp = await fetchPipelineStages();
+      return resp.stages?.length ? resp.stages : FALLBACK_STAGES;
+    } catch {
+      return FALLBACK_STAGES;
+    }
+  });
+  const stages = () => stagesResource() ?? FALLBACK_STAGES;
+
   return (
     <div class="wizard-panel">
       <h3 class="wizard-panel-title">流水线与全局设置</h3>
@@ -150,31 +117,36 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
         <div class="field wizard-settings-grid__full">
           <span class="field__label">流水线阶段</span>
           <div class="pipeline-stage-list">
-            {PIPELINE_STAGES.map((s) => (
-              <div class="pipeline-stage-item">
-                <label class="pipeline-stage-item__row">
-                  <input
-                    type="checkbox"
-                    checked={props.stageEnabled[s.key] ?? true}
-                    onChange={(e) => props.onStageToggle(s.key, e.currentTarget.checked)}
-                  />
-                  <div class="pipeline-stage-item__body">
-                    <span class="pipeline-stage-item__label">{s.label}</span>
-                    <span class="pipeline-stage-item__hint">{s.hint}</span>
+            <For each={stages()}>
+              {(s) => {
+                const toggleKey = stageToggleName(s);
+                return (
+                  <div class="pipeline-stage-item">
+                    <label class="pipeline-stage-item__row">
+                      <input
+                        type="checkbox"
+                        checked={props.stageEnabled[toggleKey] ?? true}
+                        onChange={(e) => props.onStageToggle(toggleKey, e.currentTarget.checked)}
+                      />
+                      <div class="pipeline-stage-item__body">
+                        <span class="pipeline-stage-item__label">{s.display_label}</span>
+                        <span class="pipeline-stage-item__hint">{STAGE_HINTS[s.key] ?? ""}</span>
+                      </div>
+                    </label>
+                    <Show when={s.sample_key}>
+                      <label class="pipeline-stage-item__sample">
+                        <input
+                          type="checkbox"
+                          checked={props.sampleStages.has(toggleKey)}
+                          onChange={(e) => props.onSampleToggle(toggleKey, e.currentTarget.checked)}
+                        />
+                        <span>生成示例文件</span>
+                      </label>
+                    </Show>
                   </div>
-                </label>
-                {s.sampleable && (
-                  <label class="pipeline-stage-item__sample">
-                    <input
-                      type="checkbox"
-                      checked={props.sampleStages.has(s.key)}
-                      onChange={(e) => props.onSampleToggle(s.key, e.currentTarget.checked)}
-                    />
-                    <span>生成示例文件</span>
-                  </label>
-                )}
-              </div>
-            ))}
+                );
+              }}
+            </For>
           </div>
           <span class="field__hint">
             阶段开关控制该阶段是否在流水线中执行。「生成示例文件」独立于开关：勾选后会在对应缓存目录生成
@@ -222,7 +194,7 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
                 onKeyDown={(e) => handleTextareaEnter(e, props.onPlotOutlineChange)}
               />
               <span class="field__hint">
-                作为「阶段 4.5 剧情路线图」生成的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
+                作为「阶段 5 剧情路线图」生成的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
               </span>
             </div>
           </div>

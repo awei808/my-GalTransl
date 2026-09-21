@@ -183,6 +183,8 @@ class FullPipelineNoticesTests(_Base):
         with mock.patch("GalTransl.Backend.ForFileMetaData.ForFileMetaData", fm_mock), mock.patch(
             "GalTransl.Backend.ForBatchMetaData.ForBatchMetaData", bm_mock
         ), mock.patch(
+            # 翻译阶段的调用方 llm_pipeline._run_stage_translate 按模块属性查找该函数，
+            # 故 patch 目标仍是定义模块 GalTransl.Frontend.LLMTranslate。
             "GalTransl.Frontend.LLMTranslate._run_translation_phase", mock.AsyncMock()
         ), mock.patch(
             "GalTransl.Backend.ForPlotRouteMap.ForPlotRouteMap", pr_mock
@@ -196,7 +198,8 @@ class FullPipelineNoticesTests(_Base):
         self.assertIn("全局分析已存在，跳过", text)
         self.assertIn("术语表已存在", text)
         self.assertIn("开始翻译", text)
-        self.assertIn("全部 6 个阶段执行完毕", text)
+        # 阶段总数由清单决定，不再硬编码数字（避免新增阶段时断言失效）
+        self.assertIn("流水线完成：全部阶段执行完毕", text)
 
 
 if __name__ == "__main__":

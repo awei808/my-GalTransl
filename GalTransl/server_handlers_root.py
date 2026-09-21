@@ -39,6 +39,7 @@ from GalTransl import (
 from GalTransl import AppSettings
 from GalTransl.Dictionary import parse_dict_line
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
+from GalTransl.Frontend.pipeline_stages import to_payload as pipeline_stages_payload
 from GalTransl.UtilityEngines import UTILITY_ENGINES
 from GalTransl.backend_security import safe_under_project
 from GalTransl.server_runtime import (
@@ -129,6 +130,11 @@ def do_get(handler: Any, registry: JobRegistry) -> None:
         return
     if path == "/api/project-config-template":
         handler._send_json({"content": DEFAULT_PROJECT_CONFIG_YAML})
+        return
+    if path == "/api/pipeline-stages":
+        # 流水线阶段清单（唯一真源 Frontend/pipeline_stages.py），
+        # 供前端渲染阶段开关，避免前后端各自硬编码导致口径漂移。
+        handler._send_json(pipeline_stages_payload())
         return
     if path == "/api/prompt-templates":
         handler._send_json(_build_prompt_templates_payload())

@@ -25,6 +25,7 @@ import { validateAfterTranslation } from "../../lib/afterTranslation";
 import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
 import type { PluginInfo, Job } from "../../lib/api/types";
+import { DEFAULT_STAGE_ENABLED, DEFAULT_STAGE_ENABLED_KEYS } from "../../lib/pipelineStages";
 import { StepProjectInfo } from "./StepProjectInfo";
 import { StepImportFiles } from "./StepImportFiles";
 import { StepBackendSelect } from "./StepBackendSelect";
@@ -33,19 +34,6 @@ import { StepExtractNames } from "./StepExtractNames";
 import { StepPipelineSettings } from "./StepPipelineSettings";
 
 const STEPS = ["项目位置", "导入文件", "翻译后端", "常用设置", "流水线与全局设置", "提取人名"];
-
-// 流水线阶段开关的默认值（全部开启）
-const DEFAULT_STAGE_ENABLED: Record<string, boolean> = {
-  enableValidate: true,
-  enableCompress: true,
-  enableGlobalPrompt: true,
-  enableGenDic: true,
-  enableFileMeta: true,
-  enablePlotRoute: true,
-  enableBatchMeta: true,
-  enableTranslate: true,
-  enableImprove: true,
-};
 
 /* 等待任务结束（completed/failed/cancelled），带超时保护 */
 const JOB_POLL_INTERVAL = 2000;
@@ -383,7 +371,7 @@ export function NewProjectWizard() {
       const stages = stageEnabled();
       const internals = (config.internals as Record<string, unknown>) || {};
       const pipeline = (internals.pipeline as Record<string, unknown>) || {};
-      for (const k of Object.keys(DEFAULT_STAGE_ENABLED)) {
+      for (const k of DEFAULT_STAGE_ENABLED_KEYS) {
         pipeline[k] = stages[k] ?? true;
       }
       internals.pipeline = pipeline;

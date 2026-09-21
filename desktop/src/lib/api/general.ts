@@ -13,6 +13,8 @@ import type {
   ModelCheckResult,
   PluginInfo,
   PluginsResponse,
+  PipelineStagesResponse,
+  PipelineStageInfo,
   ProblemTypeInfo,
   ProblemTypesResponse,
   PromptTemplatesResponse,
@@ -40,6 +42,13 @@ export async function fetchVersionCheck() {
 export async function fetchTranslators() {
   const response = await apiRequest<TranslatorsResponse>("/api/translators");
   return response.translators;
+}
+
+// ---- Pipeline stages ----
+
+/** 获取流水线阶段清单（后端为唯一真源，前端据此渲染阶段开关） */
+export async function fetchPipelineStages() {
+  return apiRequest<PipelineStagesResponse>("/api/pipeline-stages");
 }
 
 // ---- Jobs ----
@@ -169,6 +178,7 @@ export type {
   PluginInfo,
   ProblemTypeInfo,
   PromptTemplateInfo,
+  PipelineStageInfo,
   SubmitJobPayload,
   TranslatorOption,
   VersionCheckResponse,

@@ -208,7 +208,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-剧情路线图",
-    desc: "剧情路线图（阶段 4.5）的生成参数：剧情结构类型与用户提供的剧情大纲（纯文本）。",
+    desc: "剧情路线图（阶段 5）的生成参数：剧情结构类型与用户提供的剧情大纲（纯文本）。",
     subsections: [
       {
         title: "",

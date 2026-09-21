@@ -630,6 +630,41 @@ export type VersionResponse = {
   author?: string;
 };
 
+// ---- Pipeline stages API types ----
+
+/** 流水线阶段（唯一真源为后端 Frontend/pipeline_stages.py） */
+export type PipelineStageInfo = {
+  /** 阶段标识（英文 snake_case），前端与日志的稳定引用名 */
+  key: string;
+  /** 阶段中文显示名（不含"阶段 N"前缀） */
+  label: string;
+  /** 执行顺序 */
+  order: number;
+  /** 带编号的显示名，如「阶段 2：全局游戏分析」 */
+  display_label: string;
+  /** 在清单中的位置（0-based），与 display_label 的编号一致 */
+  index: number;
+  /** config.yaml 中控制该阶段开关的完整参数路径 */
+  enabled_key: string;
+  /** 使用的 stageBackends 槽位；空字符串表示不使用后端 */
+  backend_slot: string;
+  /** 依赖的阶段 key；被依赖阶段未执行时本阶段自动跳过 */
+  depends_on: string[];
+  /** 该阶段会实例化的后端引擎类名 */
+  backend_names: string[];
+  /** 「生成示例文件」对应的缓存产物名；空表示不支持 */
+  sample_key: string;
+  /** 是否要求阶段 1 的压缩文本非空 */
+  needs_compressed_text: boolean;
+};
+
+/** GET /api/pipeline-stages 返回 */
+export type PipelineStagesResponse = {
+  stages: PipelineStageInfo[];
+  /** 支持「生成示例文件」的阶段：缓存产物名 -> 阶段 key */
+  sample_products: Record<string, string>;
+};
+
 // ---- Backend Profiles API types ----
 
 export type BackendProfilesResponse = {
