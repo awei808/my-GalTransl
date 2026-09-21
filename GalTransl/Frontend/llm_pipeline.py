@@ -419,10 +419,18 @@ async def _run_stage_plot_route(
         )
         return
 
-    from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap, load_plot_route_map
+    from GalTransl.Backend.ForPlotRouteMap import (
+        ROUTE_MODE_FULL,
+        ROUTE_MODE_ROUTES_ONLY,
+        ForPlotRouteMap,
+        load_plot_route_map,
+    )
 
+    route_mode_raw = projectConfig.getKey("internals.plotroute.routeMode", ROUTE_MODE_FULL)
+    routes_only = str(route_mode_raw or "").strip() == ROUTE_MODE_ROUTES_ONLY
     force_regen_pr = projectConfig.getKey("internals.pipeline.forceRegenPlotRoute", False)
-    if load_plot_route_map(projectConfig) and not force_regen_pr:
+    # routesOnly 模式的职责就是刷新既有产物的节点剧情，故不因「已存在」而跳过
+    if not routes_only and load_plot_route_map(projectConfig) and not force_regen_pr:
         LOGGER.info(
             "[流水线] 剧情路线图已存在，跳过生成（如需重新生成请启用 forceRegenPlotRoute）"
         )
@@ -444,6 +452,7 @@ async def _run_stage_plot_route(
             structure_type=structure_type,
             user_outline=user_outline,
             force_regen=force_regen_pr,
+            route_mode=ROUTE_MODE_ROUTES_ONLY if routes_only else ROUTE_MODE_FULL,
         )
         if not ok:
             LOGGER.warning("[流水线] 剧情路线图生成失败或未生成，继续流水线")

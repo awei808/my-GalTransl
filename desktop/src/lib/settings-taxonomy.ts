@@ -235,11 +235,12 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-剧情路线图",
-    desc: "剧情路线图（阶段 5）的生成参数：剧情结构类型与用户提供的剧情大纲（纯文本）。",
+    desc: "剧情路线图（阶段 4.5）的生成参数：生成模式、剧情结构类型与用户剧情大纲。",
     subsections: [
       {
         title: "",
         keys: [
+          "internals.plotroute.routeMode",
           "internals.plotroute.structureType",
           "internals.plotroute.userOutline",
         ],
