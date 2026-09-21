@@ -44,6 +44,62 @@ def _find_global_prompt_path(projectConfig: CProjectConfig) -> str:
     )
 
 
+def _select_compressed_paths(
+    compressed_data: Dict[str, str],
+    file_filter: Optional[List[str]],
+) -> List[str]:
+    """按 file_filter 挑选 compressed_data 中要纳入分析的路径。
+
+    筛选口径（宽松匹配，便于前端多选/路线化传入的各种写法）：
+      1. 完整路径精确命中
+      2. 文件名（basename，含扩展名）命中
+      3. 去扩展名的文件名命中（如 "route_a" 匹配 "route_a.json"）
+
+    保留 compressed_data 原有顺序；file_filter 为 None / 空时返回全部。
+    未命中任何文件的 filter 项会被忽略并记 warning（不视为错误，避免因
+    文件名写法差异导致整个分析中止）。
+    """
+    if not file_filter:
+        return list(compressed_data.keys())
+
+    by_exact = set(compressed_data.keys())
+    by_basename: Dict[str, str] = {}
+    by_stem: Dict[str, str] = {}
+    for path in compressed_data:
+        base = os.path.basename(path)
+        by_basename.setdefault(base, path)
+        by_stem.setdefault(os.path.splitext(base)[0], path)
+
+    selected: List[str] = []
+    seen: set = set()
+    unmatched: List[str] = []
+    for raw in file_filter:
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        hit = None
+        if key in by_exact:
+            hit = key
+        elif key in by_basename:
+            hit = by_basename[key]
+        elif key in by_stem:
+            hit = by_stem[key]
+        if hit is None:
+            unmatched.append(key)
+            continue
+        if hit not in seen:
+            seen.add(hit)
+            selected.append(hit)
+
+    if unmatched:
+        LOGGER.warning(
+            f"[GlobalPrompt] file_filter 中有 {len(unmatched)} 项未匹配到任何文件，"
+            f"已忽略：{', '.join(unmatched[:5])}"
+        )
+    # 按 compressed_data 原顺序返回，保证提示词内文件顺序稳定
+    return [p for p in compressed_data if p in seen]
+
+
 def load_global_prompt(projectConfig: CProjectConfig) -> Optional[dict]:
     """
     从 transl_cache/pass0_cache/GlobalPrompt.json 加载全局提示词。
@@ -159,6 +215,63 @@ def _format_global_prompt_as_context(
     return "\n\n".join(parts)
 
 
+MERGE_FIELD_KEYS: tuple = (
+    "游戏名称",
+    "剧情概述",
+    "角色列表",
+    "世界观设定",
+    "行文风格",
+    "题材标签",
+)
+
+
+def merge_global_prompt(
+    base: Optional[dict],
+    incoming: dict,
+    fields: Optional[List[str]] = None,
+) -> dict:
+    """把子集分析结果合并进已有全局分析（策略：覆盖指定字段）。
+
+    Args:
+        base: 已有 GlobalPrompt（None 或空表示首次分析，直接返回 incoming）。
+        incoming: 本次（可能是子集）分析产出的规整结果。
+        fields: 要覆盖的字段名；None 时覆盖全部字段（= 整体替换）。
+
+    Returns:
+        合并后的新 dict（不修改入参）。
+
+    说明：未在 fields 中的字段保留 base 的值，使「只对一条路线重跑全局分析」
+    不会抹掉其余字段。fields 中出现在 incoming 的空值也不覆盖 base 的非空内容
+    ——规整阶段会用空值补齐缺失键，直接覆盖会让子集分析清空无关字段。
+    """
+    if not base or not isinstance(base, dict):
+        return dict(incoming)
+
+    target_fields = MERGE_FIELD_KEYS if fields is None else tuple(fields)
+    merged = dict(base)
+    for key in target_fields:
+        if key not in incoming:
+            continue
+        # 规整后的 incoming 会用空值补齐缺失字段；子集分析时空值不应抹掉
+        # base 里已有的非空内容（模型对子集未提及的角色/设定属正常现象）。
+        incoming_value = incoming[key]
+        if _is_blank_value(incoming_value):
+            continue
+        merged[key] = incoming_value
+    return merged
+
+
+def _is_blank_value(value: Any) -> bool:
+    """判断规整后的字段值是否为「空缺」（空串 / 空列表）。"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, dict)):
+        return len(value) == 0
+    return False
+
+
 # ── ForGlobalPrompt 后端 ──
 
 @register_engine("ForGlobalPrompt")
@@ -227,13 +340,16 @@ class ForGlobalPrompt(BaseEngine):
     # 1. 构建输入文本
     @staticmethod
     def _build_input_text_from_compressed(
-        compressed_data: Dict[str, str]
+        compressed_data: Dict[str, str],
+        file_filter: Optional[List[str]] = None,
     ) -> str:
         """
         将各文件的压缩后文本合并为一段完整的待分析文本。
 
         Args:
             compressed_data: {文件路径: 压缩后文本}
+            file_filter: 仅纳入这些文件（支持完整路径、文件名或去扩展名的
+                文件名）。None / 空列表 = 全量（不筛选）。
 
         Returns:
             合并后的全文文本
@@ -241,8 +357,10 @@ class ForGlobalPrompt(BaseEngine):
         if not compressed_data:
             return ""
 
+        selected = _select_compressed_paths(compressed_data, file_filter)
         parts: List[str] = []
-        for file_path, text in compressed_data.items():
+        for file_path in selected:
+            text = compressed_data[file_path]
             if text and text.strip():
                 short_name = os.path.basename(file_path)
                 parts.append(f"=== {short_name} ===\n{text.strip()}")
@@ -402,6 +520,8 @@ class ForGlobalPrompt(BaseEngine):
         self,
         compressed_data: Dict[str, str],
         external_info: str = "",
+        file_filter: Optional[List[str]] = None,
+        merge_fields: Optional[List[str]] = None,
     ) -> bool:
         """
         全局提示词生成的入口方法。
@@ -409,6 +529,10 @@ class ForGlobalPrompt(BaseEngine):
         Args:
             compressed_data: {文件路径: 压缩后文本}，来自 TextCompressor
             external_info: 外部信息字符串（游戏名称、简介、制作公司等，用户自由填写）
+            file_filter: 仅分析这些文件（完整路径 / 文件名 / 去扩展名文件名）。
+                None 或空列表 = 全量（与 0.4.x 行为一致）。
+            merge_fields: 子集分析时只覆盖这些字段；None = 覆盖全部字段。
+                首次分析（无已有产物）时该参数无效果。
 
         Returns:
             True 如果生成成功并写入 GlobalPrompt.json，否则 False
@@ -431,21 +555,33 @@ class ForGlobalPrompt(BaseEngine):
             LOGGER.warning("[GlobalPrompt] compressed_data 全为空，跳过")
             return False
 
+        # 子集筛选：选中文件可能全部为空文本 → 提前失败，避免把空提示词发给模型
+        selected_paths = _select_compressed_paths(compressed_data, file_filter)
+        if not selected_paths:
+            LOGGER.error(
+                f"[GlobalPrompt] file_filter 未匹配到任何有效文件"
+                f"（候选 {len(compressed_data)} 个），跳过"
+            )
+            return False
+
         # 外部信息：参数 > 配置
         if not external_info:
             external_info = self.pj_config.getKey("externals.gameInfo", "") or ""
 
         # ── 构建输入 ──
-        input_text = self._build_input_text_from_compressed(compressed_data)
+        input_text = self._build_input_text_from_compressed(
+            compressed_data, file_filter=file_filter
+        )
         glossary_text = self._build_glossary_text()
         prompt = self._build_prompt_request(
             input_text, glossary_text, external_info=external_info
         )
 
-        total_files = len(compressed_data)
+        total_files = len(selected_paths)
         total_chars = len(input_text)
+        scope = "全量" if not file_filter else f"子集（{total_files} 个文件）"
         LOGGER.info(
-            f"[GlobalPrompt] 开始为 {total_files} 个文件生成全局提示词…"
+            f"[GlobalPrompt] 开始生成全局提示词，范围：{scope}…"
         )
         LOGGER.debug(
             f"[GlobalPrompt] 提示词长度：{len(prompt)} 字符，"
@@ -482,6 +618,19 @@ class ForGlobalPrompt(BaseEngine):
             return False
         for warn in gp_validation["warnings"]:
             LOGGER.warning(f"[GlobalPrompt] 内容校验警告：{warn}")
+
+        # ── 合并（策略：覆盖指定字段）──
+        # 子集分析按字段合并，避免抹掉已有结果中本次未涉及的字段。
+        # 未显式指定 merge_fields 时默认覆盖全部字段（等价整体替换，但保留 base 的键序）。
+        base = load_global_prompt(self.pj_config) if file_filter else None
+        if base is not None:
+            fields = merge_fields if merge_fields is not None else list(MERGE_FIELD_KEYS)
+            before = len(base.get("角色列表", []))
+            meta = merge_global_prompt(base, meta, fields)
+            LOGGER.info(
+                f"[GlobalPrompt] 已按子集结果覆盖 {len(fields)} 个字段，"
+                f"角色数 {before} → {len(meta.get('角色列表', []))}"
+            )
 
         # ── 保存 ──
         self._save_global_prompt(meta)

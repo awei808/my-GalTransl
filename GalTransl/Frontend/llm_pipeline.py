@@ -176,8 +176,28 @@ async def _run_stage_global_prompt(
         ForGlobalPrompt,
         load_global_prompt,
         _find_global_prompt_path,
+        _select_compressed_paths,
+        MERGE_FIELD_KEYS,
     )
     from GalTransl.DataValidator import validate_global_prompt
+
+    # 全局分析范围：internals.pipeline.globalPromptFiles 指定文件子集（空=全量）。
+    # 支持完整路径 / 文件名 / 去扩展名文件名，便于前端多选与路线化传入。
+    raw_filter = projectConfig.getKey("internals.pipeline.globalPromptFiles", None)
+    file_filter: Optional[List[str]] = None
+    if isinstance(raw_filter, list) and raw_filter:
+        file_filter = [str(x) for x in raw_filter if str(x or "").strip()]
+    elif isinstance(raw_filter, str) and raw_filter.strip():
+        file_filter = [s.strip() for s in raw_filter.replace("，", ",").split(",") if s.strip()]
+
+    # 子集覆盖字段：internals.pipeline.globalPromptMergeFields（空=覆盖全部字段）
+    raw_fields = projectConfig.getKey("internals.pipeline.globalPromptMergeFields", None)
+    if isinstance(raw_fields, list) and raw_fields:
+        merge_fields: Optional[List[str]] = [
+            str(x) for x in raw_fields if str(x or "").strip() in MERGE_FIELD_KEYS
+        ]
+    else:
+        merge_fields = None
 
     gp_path = _find_global_prompt_path(projectConfig)
     force_regen_gp = projectConfig.getKey("internals.pipeline.forceRegenGlobal", False)
@@ -187,6 +207,15 @@ async def _run_stage_global_prompt(
         record_runtime_notice(projectConfig.getProjectDir(), "全局分析已存在，跳过")
         success = True
     else:
+        # 子集筛选后可能无有效文件：提前降级为「全量」，避免阶段整体失败
+        if file_filter is not None:
+            matched = _select_compressed_paths(compressed_texts, file_filter)
+            if not matched:
+                LOGGER.warning(
+                    "[流水线] globalPromptFiles 未匹配到任何文件，本次按全量分析执行"
+                )
+                file_filter = None
+
         await ensure_model_available_if_needed(projectConfig, stage="global_prompt")
         gptapi_global = ForGlobalPrompt(
             projectConfig, "ForGlobalPrompt",
@@ -195,7 +224,10 @@ async def _run_stage_global_prompt(
         try:
             external_info = projectConfig.getKey("externals.gameInfo", "") or ""
             success = await gptapi_global.batch_translate(
-                compressed_texts, external_info=external_info
+                compressed_texts,
+                external_info=external_info,
+                file_filter=file_filter,
+                merge_fields=merge_fields,
             )
         finally:
             if hasattr(gptapi_global, "shutdown"):

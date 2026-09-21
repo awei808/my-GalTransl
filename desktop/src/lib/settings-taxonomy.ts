@@ -170,6 +170,13 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
       {
+        title: "全局分析范围",
+        keys: [
+          "internals.pipeline.globalPromptFiles",
+          "internals.pipeline.globalPromptMergeFields",
+        ],
+      },
+      {
         title: "流水线阶段开关",
         keys: [
           "internals.pipeline.enableValidate",

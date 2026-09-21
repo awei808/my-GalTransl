@@ -45,3 +45,42 @@ describe("settings-taxonomy 对话翻译组", () => {
     expect(unclassified).not.toContain("common.gpt.chatMode");
   });
 });
+
+describe("settings-taxonomy 全局分析范围组", () => {
+  const SCOPE_KEYS = [
+    "internals.pipeline.globalPromptFiles",
+    "internals.pipeline.globalPromptMergeFields",
+  ];
+
+  it("两个键已声明在「翻译后端-完整流水线」的「全局分析范围」子组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-完整流水线",
+    );
+    expect(section).toBeDefined();
+    const sub = (section?.subsections ?? []).find(
+      (x) => x.title === "全局分析范围",
+    );
+    expect(sub).toBeDefined();
+    for (const key of SCOPE_KEYS) {
+      expect(sub?.keys).toContain(key);
+    }
+  });
+
+  it("classifyKeys 不会把两键落到「其他设置」", () => {
+    const { unclassified } = classifyKeys(SCOPE_KEYS);
+    for (const key of SCOPE_KEYS) {
+      expect(unclassified).not.toContain(key);
+    }
+  });
+
+  it("阶段开关子组不受影响", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-完整流水线",
+    );
+    const toggleSub = (section?.subsections ?? []).find(
+      (x) => x.title === "流水线阶段开关",
+    );
+    expect(toggleSub?.keys).toContain("internals.pipeline.enableGlobalPrompt");
+    expect(toggleSub?.keys).not.toContain("internals.pipeline.globalPromptFiles");
+  });
+});

@@ -109,6 +109,8 @@ internals:
     enableBatchMeta: true         # 阶段5 批次级元数据 [True/False]
     enableTranslate: true         # 阶段6 翻译执行 [True/False]
     enableImprove: true           # 阶段7 修复和改进译文（后处理，按 gpt.afterTranslation 顺序执行）[True/False]
+    globalPromptFiles: []         # 全局分析范围：留空=全项目所有文件；填写则为文件名列表（支持文件名或去扩展名名，如 ["route_a","route_b.json"]），仅分析这些文件
+    globalPromptMergeFields: []   # 子集分析的字段覆盖范围：留空=覆盖全部字段；也可只填 ["剧情概述","角色列表"] 等保留其余字段的已有结果
   # ForPlotRouteMap 后端专用配置（剧情路线图）
   plotroute:
     structureType: "树"           # 剧情结构类型 [线性/树/有向无环图/有向有环图/混合]
