@@ -116,7 +116,7 @@ describe("真实产物解析（小粥3-全量 PlotRouteMap.json）", () => {
     const g = applyFileRoutes(mermaidToFlow(REAL_PRODUCT).graph!, REAL_FILE_ROUTES);
     const out = flowToMermaid(g);
     for (const line of out.split("\n")) {
-      const m = /^\s*subgraph\s+([^\s\[]+)/.exec(line);
+      const m = /^\s*subgraph\s+([^\s[]+)/.exec(line);
       if (m) {
         expect(m[1]).toMatch(/^[A-Za-z_][\w-]*$/);
       }

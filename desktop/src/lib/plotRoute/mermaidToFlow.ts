@@ -17,7 +17,7 @@ import type { ConvertResult, RouteEdge, RouteGraph, RouteNode } from "./types";
 
 const NODE_SHAPE_RE = /^([A-Za-z_][\w-]*)\s*\[\s*(?:"([^"]*)"|([^\]]*?))\s*\]/;
 const EDGE_RE = /^([A-Za-z_][\w-]*)(?:\s*\[\s*(?:"([^"]*)"|([^\]]*?))\s*\])?\s*-{1,3}>\s*([A-Za-z_][\w-]*)/;
-const SUBGRAPH_RE = /^subgraph\s+([^\s\[]+)\s*(?:\[\s*(?:"([^"]*)"|([^\]]*?))\s*\])?/;
+const SUBGRAPH_RE = /^subgraph\s+([^\s[]+)\s*(?:\[\s*(?:"([^"]*)"|([^\]]*?))\s*\])?/;
 const END_RE = /^end\b/;
 
 /** 去掉行尾注释与首尾空白；返回空串表示该行可跳过 */
