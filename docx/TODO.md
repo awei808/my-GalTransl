@@ -20,8 +20,7 @@
 - **新建项目向导需持续更进新流程**
 - **命令行参数持续支持和完善**
 - **toast提示覆盖不完全**
-- 翻译控制台文件进度不准确
-- 翻译控制台“译文预览”改为结果预览
+
 - 文件元数据提取后端中，新增称呼翻译策略，要求给出原文到译文的翻译 **已完成未实测**
 - 翻译控制台显示哪些后端任务已完成
 - 复核轮模板不使用文件元数据，使用批次元数据
@@ -30,6 +29,24 @@
 - **问题修复轮新增配置：是否附带上下文**
 - context.ensure_global_prompt_loaded（context.py:20-44）确实无锁，if engine._global_prompt_loaded 后为同步段、无 await。多 worker 共享同一 ForFileMetaData 实例（LLMTranslate.py:1742 创建单实例），依赖"同步段内无 await 不切换协程"不变式。存量问题，非本次改动引入（context.py 既有）。
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
+
+- 全局分析后端似乎不导入人名替换表
+- 校对审核界面，元数据模式下没有自动换行
+- 对于全局分析返回结果中含有错误的角色名称时，后续消费程序对于这个角色的逻辑未知
+- 取消只能在应用目录下新建项目的限制 
+- 双击 AI 建议没有让用户知道有这个功能的提示
+- 术语提取要求新增：完全本地化、注释需要写详细，去除注释只能写“术语/意思h”的限制
+- 内置ai必须有搜索功能，让ai自己找术语翻译是否准确
+- 字典ctrl+s保存似乎不可用或无弹窗反馈
+- 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善
+- 所有下拉框都必须禁用毛玻璃效果
+- run-full-pipline未定义（0.5.0）
+- 新增：对于行数小于20的文件，不用处理元数据
+- 翻译控制台的文件进度显示不完善：当前阶段完成后且未完成所有翻译任务时，显示的是“排队中”，而不是“已完成某个阶段”
+- 翻译控制台的速度单位错误，应为xx条/分钟
+- 允许在所有阶段用户自主选择是否注入翻译规范
+- 模型输出慢时检测，会有以下报错
+请求超时：http://127.0.0.1:12333/api/projects/RDpc6Kej5YyF5oiW5rGJ5YyW55SoXG15LWdhbHRyYW5zbFxteS1HYWxUcmFuc2xccmVsZWFzZVxHYWxUcmFuc2xfMC40Ljlfd2luXOeQhueLguS6ug/check-model
 
 # 未来的大更新项
 - 0.4.1：跟进原项目进度，对原先缺失的功能修补，追加类似上有项目的视觉效果
