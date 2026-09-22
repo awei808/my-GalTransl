@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from typing import Any, Tuple
 
+from GalTransl.Utils import resolve_app_dir
 from GalTransl.server_config_schema import _read_yaml_file
 
 
@@ -125,7 +126,7 @@ def _list_problem_types() -> list[dict[str, str]]:
 
 def _list_translation_guidelines() -> list[str]:
     """List translation guideline filenames under the ``translation_guidelines`` folder."""
-    guidelines_dir = os.path.abspath("translation_guidelines")
+    guidelines_dir = os.path.join(resolve_app_dir(), "translation_guidelines")
     if not os.path.isdir(guidelines_dir):
         return []
     result: list[str] = []
@@ -141,7 +142,7 @@ def _list_translation_guidelines() -> list[str]:
 
 def _scan_plugins() -> list[dict[str, Any]]:
     """Scan the plugins directory and return plugin metadata."""
-    plugins_dir = os.path.abspath("plugins")
+    plugins_dir = os.path.join(resolve_app_dir(), "plugins")
     result = []
     if not os.path.isdir(plugins_dir):
         return result

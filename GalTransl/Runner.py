@@ -10,6 +10,7 @@ from GalTransl.yapsy.PluginManager import PluginManager
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
 from GalTransl.Frontend.LLMTranslate import doLLMTranslate
 from GalTransl.i18n import get_text,GT_LANG
+from GalTransl.Utils import resolve_app_dir
 from GalTransl.UtilityEngines import is_utility_engine, run_utility_engine
 from GalTransl.CSplitter import (
     DictionaryCountSplitter,
@@ -145,7 +146,7 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
             name = name.replace("(project_dir)", "")
             return os.path.join(PROJECT_DIR, "plugins", name, f"{name}.yaml")
         else:
-            return os.path.join(os.path.abspath("plugins"), name, f"{name}.yaml")
+            return os.path.join(resolve_app_dir(), "plugins", name, f"{name}.yaml")
 
     def print_plugin_list(plugin_manager: PluginManager) -> None:
         LOGGER.info("插件列表:")
@@ -259,7 +260,7 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
         # 插件初始化
         plugin_manager = PluginManager(
             {"GTextPlugin": GTextPlugin, "GFilePlugin": GFilePlugin},
-            ["plugins", os.path.join(PROJECT_DIR, "plugins")],
+            [os.path.join(resolve_app_dir(), "plugins"), os.path.join(PROJECT_DIR, "plugins")],
         )
         plugin_manager.locatePlugins()
         # 打印插件列表

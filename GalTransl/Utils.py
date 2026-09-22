@@ -3,6 +3,7 @@
 """
 
 import os
+import sys
 import codecs
 from typing import Tuple, List, Optional
 from collections import Counter
@@ -13,6 +14,27 @@ import json
 import logging
 
 LOGGER = logging.getLogger("GalTransl.Utils")
+
+# 打包后 exe 可能位于这些子目录（与 Rust 侧 backend_executable_candidates 一致），
+# 程序根取其上一级
+_APP_DIR_SUBDIR_NAMES = ("backend", "dist")
+
+
+def resolve_app_dir() -> str:
+    """返回程序目录（全局配置文件与资源目录的根）。
+
+    打包后（PyInstaller onefile）模块 `__file__` 指向临时解包目录 sys._MEIPASS，
+    用它派生路径会让配置「写完即丢」（且每次启动路径不同）；故 frozen 时按 exe
+    位置解析：打包布局为 `<程序根>/backend/galtransl_backend.exe`（或 dist/，见
+    Rust 侧 backend_executable_candidates 的候选顺序），此类子目录取上一级；
+    exe 与程序根同级时取 exe 所在目录。开发模式沿用 GalTransl 的上一级。
+    """
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if os.path.basename(exe_dir).lower() in _APP_DIR_SUBDIR_NAMES:
+            return os.path.dirname(exe_dir)
+        return exe_dir
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PATTERN_CODE_BLOCK = compile(r"```([\w]*)\n([\s\S]*?)\n```")
 whitespace = " \t\n\r\v\f"
@@ -29,7 +51,7 @@ printable = digits + ascii_letters + punctuation + whitespace
 def load_guideline_file(file_path: str) -> str:
     try:
         if "translation_guidelines" not in file_path:
-            file_path=os.path.join( "translation_guidelines",file_path)
+            file_path = os.path.join(resolve_app_dir(), "translation_guidelines", file_path)
         with open(file_path, "r", encoding="utf-8") as file:
             return file.read()
     except Exception as e:

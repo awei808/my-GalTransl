@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from GalTransl import LOGGER
 from GalTransl.Dictionary import _COMMENT_PREFIXES
+from GalTransl.Utils import resolve_app_dir
 from GalTransl.server_config_schema import _read_yaml_file, _write_yaml_file
 
 
@@ -268,7 +269,8 @@ def _collect_project_dict_payload(project_dir: str, config_name: str) -> dict[st
 
 
 def _common_dict_directory() -> str:
-    return os.path.abspath("Dict")
+    # 程序目录口径（打包版不能用 cwd：进程 cwd 取决于启动方式）
+    return os.path.join(resolve_app_dir(), "Dict")
 
 
 def _ensure_common_dicts_in_config(

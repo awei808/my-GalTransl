@@ -23,6 +23,7 @@ from GalTransl import (
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
+from GalTransl.Utils import resolve_app_dir
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
     FORGAL_JSON_IMPROVE_PROMPT,
@@ -372,10 +373,7 @@ async def _check_stage_model_availability(
 # Global backend profiles helpers
 
 # 全局后端配置持久化文件（程序目录下），「后端配置」页与任务提交共同使用
-_BACKEND_PROFILES_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "backend_profiles.yaml",
-)
+_BACKEND_PROFILES_PATH = os.path.join(resolve_app_dir(), "backend_profiles.yaml")
 
 
 _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
@@ -436,7 +434,9 @@ def _read_backend_profiles() -> dict:
         return {"profiles": {}}
     try:
         return _read_yaml_file(_BACKEND_PROFILES_PATH)
-    except Exception:
+    except Exception as exc:
+        # 解析失败不能让「按名引用阶段后端」静默变成「配置不存在」，留一条可见告警
+        LOGGER.warning("读取全局后端配置失败（%s）：%s", _BACKEND_PROFILES_PATH, exc)
         return {"profiles": {}}
 
 

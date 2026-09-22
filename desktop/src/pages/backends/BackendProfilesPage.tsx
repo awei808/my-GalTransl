@@ -10,6 +10,11 @@ import {
   setDefaultBackendProfile,
 } from "../../lib/api/preferences";
 import { fetchOpenAIModels } from "../../lib/api/general";
+import {
+  deleteBackendProfileOnServer,
+  putBackendProfileToServer,
+  syncLocalBackendProfilesToServer,
+} from "../../lib/api/backendProfiles";
 import { getErrorMessage } from "../../lib/errors";
 
 interface TokenEntry {
@@ -70,7 +75,36 @@ export function BackendProfilesPage() {
   // 已拉取模型名的自定义下拉（替代原生 datalist，确保拉取后实时刷新）
   const [openModelIdx, setOpenModelIdx] = createSignal<number | null>(null);
 
-  onMount(() => loadProfiles());
+  onMount(() => {
+    void loadProfiles();
+    void syncProfilesToServer();
+  });
+
+  /**
+   * 首次补齐：把 localStorage 已有、服务端缺失的配置同步到 backend_profiles.yaml。
+   * 后端解析 common.stageBackends 的配置名时只认该文件，缺了会报「配置不存在」。
+   */
+  async function syncProfilesToServer() {
+    try {
+      const { synced, failed } = await syncLocalBackendProfilesToServer();
+      if (failed.length > 0) {
+        toast.warning(`以下后端配置未能同步到服务端：${failed.join("、")}`);
+      } else if (synced.length > 0) {
+        toast.success(`已同步 ${synced.length} 个后端配置到服务端`);
+      }
+    } catch {
+      // 后端不可达时不额外打扰：页面其它请求会给出可见错误
+    }
+  }
+
+  /** 单条同步（失败只告警，不回滚已成功的本地保存） */
+  async function syncProfileToServer(name: string, config: Record<string, unknown>) {
+    try {
+      await putBackendProfileToServer(name, config);
+    } catch (e) {
+      toast.warning(`配置已保存到本机，但同步到服务端失败：${getErrorMessage(e)}`);
+    }
+  }
 
   async function loadProfiles() {
     setLoading(true);
@@ -208,6 +242,7 @@ export function BackendProfilesPage() {
         await updateBackendProfile(name, editConfig());
         toast.success("配置已更新");
       }
+      await syncProfileToServer(name, editConfig());
       setOpenModelIdx(null);
       setEditorOpen(false);
       await loadProfiles();
@@ -228,6 +263,11 @@ export function BackendProfilesPage() {
     try {
       await deleteBackendProfile(name);
       toast.success("配置已删除");
+      try {
+        await deleteBackendProfileOnServer(name);
+      } catch (e) {
+        toast.warning(`本地已删除，但服务端删除失败：${getErrorMessage(e)}`);
+      }
       if (defaultName() === name) {
         setDefaultBackendProfile("");
         setDefaultName("");

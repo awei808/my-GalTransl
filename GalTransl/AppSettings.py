@@ -4,6 +4,8 @@ import json
 import os
 from typing import Any
 
+from GalTransl.Utils import resolve_app_dir
+
 
 DEFAULT_APP_SETTINGS: dict[str, Any] = {
     "printTranslationLogInTerminal": True,
@@ -12,10 +14,9 @@ DEFAULT_APP_SETTINGS: dict[str, Any] = {
     "writeFrontendLog": False,
 }
 
-_SETTINGS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "app_settings.json",
-)
+# 程序目录口径统一走 resolve_app_dir：打包版 __file__ 指向临时解包目录，
+# 会让设置写到 %TEMP%\_MEIxxxx（重启即丢）
+_SETTINGS_PATH = os.path.join(resolve_app_dir(), "app_settings.json")
 
 
 def _normalize_settings(data: dict[str, Any] | None) -> dict[str, Any]:

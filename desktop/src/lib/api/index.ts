@@ -201,3 +201,10 @@ export {
   deletePromptTemplateOverride,
   getPromptTemplateOverridesForJob,
 } from "./preferences";
+
+export {
+  fetchServerBackendProfiles,
+  putBackendProfileToServer,
+  deleteBackendProfileOnServer,
+  syncLocalBackendProfilesToServer,
+} from "./backendProfiles";
