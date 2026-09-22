@@ -211,8 +211,8 @@ def _run_problem_detection(
         entries: 缓存条目列表（dict）。
         proj_config / pre_dic / post_dic / gpt_dic / tPlugins: _load_rebuild_deps 的产物。
         h_ranges: H 剧情区间列表 [(lo, hi), ...]（缓存条目 index 口径），默认 None 不检测。
-        h_check_words: H 场景用词不当检测词库（list[str]），默认 None 不检测。
-        forbidden_words: 非 h 场景禁用词库（list[str]），默认 None 不检测（本次未搭建）。
+        h_check_words: H 场景用词不当检测词库（list[DictWordMatcher]），默认 None 不检测。
+        forbidden_words: 非 h 场景禁用词库（list[DictWordMatcher]），默认 None 不检测（本次未搭建）。
 
     Returns:
         (results, ok)：results 与 entries 等长，每项为

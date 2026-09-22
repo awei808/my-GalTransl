@@ -8,6 +8,7 @@
   - _format_batch_metadata_block 按配置阈值分档渲染（含禁用词启用开关与截断上限）
   - _group_is_h_scene 与注入侧同用 intimate 阈值（字典分流口径一致）
   - _format_h_forbidden_words(limit) 的非法 limit 回退
+  - _format_h_forbidden_words 对 DictWordMatcher 词表（生产口径）的渲染与截断
   - server_cache._project_h_threshold：按项目目录就近读配置 + mtime 缓存
 
 使用 ForGalJsonTranslate.__new__ 打桩，不触发 BaseTranslate.__init__。
@@ -35,6 +36,7 @@ from GalTransl.Backend.utils import (
     is_h_value,
     resolve_h_thresholds,
 )
+from GalTransl.Dictionary import DictWordMatcher
 
 
 class _Cfg:
@@ -321,6 +323,35 @@ class FormatHForbiddenWordsLimitTests(unittest.TestCase):
 
     def test_empty_word_list_returns_empty(self) -> None:
         self.assertEqual(self._t([])._format_h_forbidden_words(), "")
+
+    def test_matcher_words_render_as_text(self) -> None:
+        # 回归：load_h_check_words 返回 DictWordMatcher，join 前须归一化为其显示文本
+        words = [DictWordMatcher("普通词"), DictWordMatcher("re:^あ+$"), "str词"]
+        out = self._t(words)._format_h_forbidden_words()
+        self.assertIn("普通词", out)
+        self.assertIn("^あ+$", out)
+        self.assertIn("str词", out)
+
+    def test_matcher_words_truncated_by_limit(self) -> None:
+        words = [DictWordMatcher(f"词{i}") for i in range(25)]
+        out = self._t(words)._format_h_forbidden_words()
+        self.assertIn("词19", out)
+        self.assertNotIn("词20", out)
+        self.assertIn("等词语", out)
+
+    def test_words_loaded_from_dict_file(self) -> None:
+        # 桩口径必须与生产一致：直接用 load_h_check_words 的真实产物渲染
+        from GalTransl.Problem import load_h_check_words
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = os.path.join(tmp, "h_check.txt")
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("禁用词甲\n// 注释行\nre:^禁止.*$\n")
+            words = load_h_check_words([fp])
+        self.assertEqual(len(words), 2)
+        out = self._t(words)._format_h_forbidden_words()
+        self.assertIn("禁用词甲", out)
+        self.assertIn("^禁止.*$", out)
 
 
 class GroupIsHSceneThresholdTests(unittest.TestCase):

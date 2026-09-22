@@ -10,7 +10,7 @@ from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
 from GalTransl import LOGGER
 from GalTransl.CSentense import CSentense, CTransList
-from GalTransl.Dictionary import CGptDict
+from GalTransl.Dictionary import CGptDict, DictWordMatcher
 from GalTransl.Utils import fix_quotes
 from GalTransl.Backend.Prompts import (
     FORTRANS_SYSTEM,
@@ -72,6 +72,11 @@ from GalTransl.Service import JobCancelledError
 
 # H 禁用词注入的词数上限默认值（可经 internals.hForbiddenWords.limit 配置）
 _H_FORBIDDEN_DEFAULT_LIMIT = 20
+
+
+def _h_word_text(word: object) -> str:
+    """取检测词的显示文本：DictWordMatcher 取 .word，普通 str 原样（兼容旧 list[str] 口径）。"""
+    return word.word if isinstance(word, DictWordMatcher) else str(word)
 
 
 def _h_level(
@@ -1215,6 +1220,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
 
         词数不超过 limit 时全量列出，超出时截断为省略提示，避免提示词过长。
         limit 默认取 _H_FORBIDDEN_DEFAULT_LIMIT（20）；非法值一律回退默认。
+        词条经 _h_word_text 归一化，兼容 load_h_check_words 返回的 DictWordMatcher 列表。
         """
         words = self._resolve_h_check_words()
         if not words:
@@ -1225,9 +1231,9 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
             else _H_FORBIDDEN_DEFAULT_LIMIT
         )
         if len(words) <= cap:
-            listed = "、".join(words)
+            listed = "、".join(_h_word_text(w) for w in words)
         else:
-            listed = "、".join(words[:cap]) + "…………等词语"
+            listed = "、".join(_h_word_text(w) for w in words[:cap]) + "…………等词语"
         return H_BATCH_FORBIDDEN.format(words=listed)
 
     def _h_config(self) -> object:
