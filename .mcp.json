@@ -9,6 +9,14 @@
         "9222"
       ],
       "description": "通过 CDP 直连 Tauri WebView2，捕获前端报错、检查 DOM 结构"
+    },
+    "galtransl": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "run_mcp_server.py"
+      ],
+      "description": "GalTransl 术语与译文检索（只读）：翻译缓存 / 原始脚本 / 字典 / 人名表 / 日志 / 元数据"
     }
   }
 }
