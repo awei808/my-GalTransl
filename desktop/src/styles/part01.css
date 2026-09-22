@@ -114,6 +114,34 @@ textarea {
   -webkit-app-region: drag;
 }
 
+/* ── MCP 连接指示灯（绿 = 有外部 agent 连着，灰 = 无） ── */
+.mcp-status-light {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding-right: var(--space-1);
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.mcp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.mcp-status-light.online {
+  color: var(--color-text-secondary);
+}
+
+.mcp-status-light.online .mcp-status-dot {
+  background: var(--color-status-success);
+}
+
 /* ── TitleBar Dropdown ── */
 .titlebar-dropdown {
   position: absolute;
