@@ -437,8 +437,15 @@ def _categorize_common_dict_file(filename: str) -> str:
     return "pre"
 
 
-def _collect_common_dict_payload() -> dict[str, Any]:
-    dict_dir = _common_dict_directory()
+def _collect_common_dict_payload(dict_dir: Optional[str] = None) -> dict[str, Any]:
+    """收集公共字典目录的载荷：分类文件清单 + 各文件行内容。
+
+    Args:
+        dict_dir: 公共字典目录；None 时取默认（程序目录下的 Dict/）。
+            显式传入便于测试注入临时目录，避免读到真实环境字典。
+    """
+    if dict_dir is None:
+        dict_dir = _common_dict_directory()
     os.makedirs(dict_dir, exist_ok=True)
     category_map = _read_common_dict_category_map(dict_dir)
 
