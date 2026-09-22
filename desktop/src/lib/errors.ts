@@ -19,3 +19,12 @@ export function getErrorMessage(error: unknown): string {
   }
   return String(error);
 }
+
+/**
+ * 是否为「请求超时」——apiRequest 到点主动 abort 时抛出的 408。
+ * 超时不等于业务失败：后端可能仍在处理（如慢模型的 token 探活），
+ * 调用方应据此避免自动重试，否则会让后端重复跑完整流程。
+ */
+export function isApiTimeoutError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 408;
+}

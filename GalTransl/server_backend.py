@@ -52,6 +52,24 @@ from GalTransl.Backend.Prompts import (
 from GalTransl.server_config_schema import _read_yaml_file, _write_yaml_file
 
 
+# HTTP 检测接口专用的探活上限：前端 apiRequest 自带超时（见 client.ts），后端若沿用
+# 翻译期的 apiTimeout（默认 300s）再乘 2 次重试，会把「检测」拖到分钟级 ——
+# 实测慢模型（glm-5.3）单次探活 39s，前端 30s 超时先放弃，报「请求超时」假故障。
+# 故检测路径把单请求超时封顶、重试降为 1 次；任务启动期检测（llm_runtime）不受影响。
+_AVAILABILITY_CHECK_TIMEOUT_CAP = 30
+_AVAILABILITY_CHECK_MAX_RETRIES = 1
+
+
+def _availability_check_limits(pool: "COpenAITokenPool") -> dict[str, int]:
+    """返回 HTTP 检测专用探活参数：单请求超时取 apiTimeout 与上限的较小值。"""
+    try:
+        base = int(float(getattr(pool, "timeout", 0) or 0))
+    except (TypeError, ValueError):
+        base = 0
+    timeout = min(base, _AVAILABILITY_CHECK_TIMEOUT_CAP) if base > 0 else _AVAILABILITY_CHECK_TIMEOUT_CAP
+    return {"timeout": max(1, timeout), "max_retries": _AVAILABILITY_CHECK_MAX_RETRIES}
+
+
 async def _check_model_availability(
     project_dir: str,
     translator: str,
@@ -164,7 +182,7 @@ async def _check_model_availability(
             "engine": translator,
             "message": "Token 池构建结果为空，请检查 token 格式是否正确",
         }
-    await token_pool.checkTokenAvailablity()
+    await token_pool.checkTokenAvailablity(**_availability_check_limits(token_pool))
     available = len(token_pool.tokens)
     result = {
         "ok": available > 0,
@@ -336,7 +354,7 @@ async def _check_stage_model_availability(
                 f"后端配置 '{profile_name}' 令牌池构建结果为空",
             ))
             continue
-        await pool.checkTokenAvailablity()
+        await pool.checkTokenAvailablity(**_availability_check_limits(pool))
         available = len(pool.tokens)
         checked_names.add(profile_name)
         results.append(_stage_result(

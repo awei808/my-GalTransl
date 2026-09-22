@@ -138,6 +138,9 @@ export async function checkModelAvailability(payload: {
   return apiRequest<ModelCheckResult>(`/api/projects/${payload.projectId}/check-model`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    // 探活要逐个 token 真实请求模型，慢模型下单次可达数十秒（实测 39s）；
+    // 后端已把检测路径封顶 30s/token 组并降为 1 次重试，前端留足余量避免假超时
+    timeoutMs: 90000,
     body: JSON.stringify({
       translator: payload.translator,
       config_file_name: payload.configFileName ?? "config.yaml",

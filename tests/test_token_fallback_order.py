@@ -29,7 +29,7 @@ class TokenFallbackOrderTests(unittest.IsolatedAsyncioTestCase):
         second = COpenAIToken("second", "https://second.example", "model-b")
         pool = _make_pool([first, second])
 
-        async def check_token(token, proxy=None):
+        async def check_token(token, proxy=None, **_kwargs):
             # 第二个端点先完成，结果顺序也不能变
             await asyncio.sleep(0.03 if token is first else 0.0)
             return True, token
@@ -50,7 +50,7 @@ class TokenFallbackOrderTests(unittest.IsolatedAsyncioTestCase):
         third = COpenAIToken("third", "https://third.example", "model-c")
         pool = _make_pool([first, second, third])
 
-        async def check_token(token, proxy=None):
+        async def check_token(token, proxy=None, **_kwargs):
             if token is second:
                 return False, token  # 失败的先完成
             await asyncio.sleep(0.03 if token is first else 0.0)

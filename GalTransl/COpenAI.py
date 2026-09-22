@@ -174,14 +174,16 @@ class COpenAITokenPool:
             remaining -= step
 
     async def _isTokenAvailable(
-        self, token: COpenAIToken, proxy: CProxy = None
+        self, token: COpenAIToken, proxy: CProxy = None, timeout: int = None
     ) -> Tuple[bool, COpenAIToken]:
-        return await asyncio.to_thread(self._isTokenAvailable_sync, token, proxy)
+        return await asyncio.to_thread(self._isTokenAvailable_sync, token, proxy, timeout)
 
     def _isTokenAvailable_sync(
-        self, token: COpenAIToken, proxy: CProxy = None
+        self, token: COpenAIToken, proxy: CProxy = None, timeout: int = None
     ) -> Tuple[bool, COpenAIToken]:
         st = time()
+        # 检测接口可传入更短的超时（前端有自身超时上限，详见 server_backend 检测路径）
+        request_timeout = self.timeout if timeout is None else timeout
 
         try:
             LOGGER.info(f"API URL: {token.domain}/chat/completions")
@@ -196,7 +198,7 @@ class COpenAITokenPool:
             create_kwargs = dict(
                 model=token.model_name,
                 messages=[{"role": "user", "content": "1+1="}],
-                timeout=self.timeout,
+                timeout=request_timeout,
                 stream=token.stream,
                 max_tokens=AVAILABILITY_CHECK_MAX_TOKENS,
             )
@@ -260,11 +262,12 @@ class COpenAITokenPool:
         token: COpenAIToken,
         proxy: CProxy = None,
         max_retries: int = 2,
+        timeout: int = None,
     ) -> Tuple[bool, COpenAIToken]:
         is_available = False
         for retry_count in range(max_retries):
             self._raise_if_stop_requested()
-            is_available, token = await self._isTokenAvailable(token, proxy)
+            is_available, token = await self._isTokenAvailable(token, proxy, timeout)
             if is_available:
                 self.bar()
                 return is_available, token
@@ -278,11 +281,22 @@ class COpenAITokenPool:
         return is_available, token
 
     async def checkTokenAvailablity(
-        self, proxy: CProxy = None, eng_type: str = ""
+        self,
+        proxy: CProxy = None,
+        eng_type: str = "",
+        timeout: int = None,
+        max_retries: int = None,
     ) -> None:
         """
         检测令牌有效性
+
+        Args:
+            proxy: 代理（缺省不传，与真实任务一致）。
+            eng_type: 引擎名（保留参数，当前未使用）。
+            timeout: 单次探活请求超时（秒）；缺省沿用 backend 配置的 apiTimeout。
+            max_retries: 每个 token 的最大尝试次数；缺省沿用历史默认 2。
         """
+        retry_limit = 2 if max_retries is None else max(1, int(max_retries))
         raw_concurrency = self.backend_section.get("checkAvailableConcurrency", 4)
         try:
             check_concurrency = max(1, min(16, int(raw_concurrency)))
@@ -294,7 +308,10 @@ class COpenAITokenPool:
             async with check_semaphore:
                 self._raise_if_stop_requested()
                 return await self._check_token_availability_with_retry(
-                    token, proxy if proxy else None
+                    token,
+                    proxy if proxy else None,
+                    max_retries=retry_limit,
+                    timeout=timeout,
                 )
 
         tasks = []

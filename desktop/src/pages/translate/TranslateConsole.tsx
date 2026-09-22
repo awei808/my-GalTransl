@@ -9,7 +9,7 @@ import {
   type ModelCheckState,
 } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
-import { getErrorMessage } from "../../lib/errors";
+import { getErrorMessage, isApiTimeoutError } from "../../lib/errors";
 import { confirm } from "../../stores/confirmStore";
 import {
   fetchProjectRuntime,
@@ -390,17 +390,22 @@ export function TranslateConsole() {
       retryTimer = undefined;
     } catch (e) {
       if (token !== checkingToken) return;
+      // 408 = 前端主动 abort。模型慢时后端可能仍在探活，不能当「模型不可用」呈现，
+      // 更不能自动重试（重试会让后端再跑一轮完整检测，负载叠加）
+      const timedOut = isApiTimeoutError(e);
       setModelCheckResult({
         ok: false,
         applicable: true,
         available: 0,
         total: 0,
         engine: backend,
-        message: getErrorMessage(e) || "检测请求失败",
+        message: timedOut
+          ? "检测超时：所选模型响应较慢，后端可能仍在检测。稍后重试，或换用响应更快的模型。"
+          : getErrorMessage(e) || "检测请求失败",
       });
       setModelCheckState("error");
-      // 错误状态下自动重试（最多 MAX_AUTO_RETRIES 次，间隔 10 秒）
-      if (!isAutoRetry && autoRetryCount < MAX_AUTO_RETRIES) {
+      // 错误状态下自动重试（最多 MAX_AUTO_RETRIES 次，间隔 10 秒）；超时除外
+      if (!timedOut && !isAutoRetry && autoRetryCount < MAX_AUTO_RETRIES) {
         autoRetryCount++;
         retryTimer = setTimeout(() => runModelCheck(true), 10000);
       }
