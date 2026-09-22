@@ -78,6 +78,8 @@ from GalTransl.Frontend.pipeline_stages import (  # noqa: E402
     STAGES_BY_KEY,
     stage_display_label,
 )
+# 必须做真实绑定：下面的 doLLMTranslate 以全局名调用它，模块级 __getattr__ 兜不住
+from GalTransl.Frontend.llm_pipeline import _run_full_pipeline  # noqa: E402
 
 
 async def doLLMTranslate(
@@ -1325,15 +1327,3 @@ async def _run_translation_phase(
                     await shutdown_callable()
                 except Exception as ex:
                     LOGGER.warning(f"关闭模型客户端时出错: {str(ex)}")
-
-
-def __getattr__(name: str):
-    """延迟转发已迁至 llm_pipeline 的符号，保持 LLMTranslate._run_full_pipeline 可用。
-
-    延迟（而非模块级 import）是为规避与 llm_pipeline 的循环依赖：
-    llm_pipeline 的翻译阶段需回调本模块的 _run_translation_phase。
-    """
-    if name == "_run_full_pipeline":
-        from GalTransl.Frontend.llm_pipeline import _run_full_pipeline as _impl
-        return _impl
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

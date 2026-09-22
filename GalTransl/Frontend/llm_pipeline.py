@@ -4,8 +4,11 @@
 - `_run_stage_*`：单阶段实现，阶段间状态经 `stage_ctx` 传递。
 
 阶段清单的静态定义（顺序/开关/依赖/后端槽位）不在此处，见 `pipeline_stages.py`。
-翻译阶段需回调 `LLMTranslate._run_translation_phase`，故该处用函数内延迟导入，
-避免本模块与 LLMTranslate 形成模块级循环依赖。
+翻译阶段需回调 `LLMTranslate._run_translation_phase`，故该处用函数内延迟导入。
+
+注意：`LLMTranslate` 在模块级 import 本模块的 `_run_full_pipeline`（它以全局名调用该函数，
+模块级 `__getattr__` 兜不住），因此**禁止**在本模块模块级 `import LLMTranslate`，
+否则形成循环依赖 —— 需要 LLMTranslate 的符号时一律在函数内延迟导入。
 """
 from __future__ import annotations
 

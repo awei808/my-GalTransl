@@ -12,11 +12,65 @@
 另有一组「被 patch 目标」清单断言：这些名字必须能在其模块命名空间里被找到，
 否则 mock.patch 会静默打空。
 """
+import builtins
+import dis
 import importlib
+import types
 import unittest
 
 import GalTransl.server as server
 from GalTransl.Frontend import LLMTranslate
+
+
+def _iter_code_objects(code: types.CodeType):
+    """递归遍历 code 对象及其嵌套函数/lambda 的 code。"""
+    yield code
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):
+            yield from _iter_code_objects(const)
+
+
+def _collect_functions(module) -> list:
+    """收集**定义在本模块内**的顶层函数与类方法。
+
+    必须按 `__globals__` 过滤：re-export 进来的函数（如 from GalTransl.i18n
+    import get_text）其 globals 属于原模块，用本模块命名空间核对会全部误报。
+    """
+    module_ns = vars(module)
+    found = []
+    for obj in module_ns.values():
+        if isinstance(obj, types.FunctionType):
+            candidates = [obj]
+        elif isinstance(obj, type):
+            candidates = [
+                member for member in vars(obj).values()
+                if isinstance(member, types.FunctionType)
+            ]
+        else:
+            continue
+        found.extend(f for f in candidates if f.__globals__ is module_ns)
+    return found
+
+
+def _unresolved_global_names(module) -> list[str]:
+    """找出模块内函数体引用、但既不在模块命名空间也不在内置命名空间的名字。
+
+    只统计 LOAD_GLOBAL 指令（即真正的「全局名查找」）——模块级 `__getattr__`
+    是 PEP 562 钩子，只在 `模块.属性` 访问时生效，不参与函数体内的全局名查找，
+    因此这类缺口用 hasattr 检测不出来（0.5.0 的 _run_full_pipeline 即此坑）。
+    """
+    module_ns = vars(module)
+    builtin_ns = vars(builtins)
+    missing: set[str] = set()
+    for func in _collect_functions(module):
+        for code in _iter_code_objects(func.__code__):
+            for instruction in dis.get_instructions(code):
+                if instruction.opname != "LOAD_GLOBAL":
+                    continue
+                name = instruction.argval
+                if name not in module_ns and name not in builtin_ns:
+                    missing.add(f"{func.__name__}:{name}")
+    return sorted(missing)
 
 # server.py 全部顶层符号（重构前 AST 快照，拆分后必须仍可从 GalTransl.server 导入）
 SERVER_SYMBOLS = [
@@ -126,10 +180,25 @@ class LLMTranslateSymbolContractTests(unittest.TestCase):
     """GalTransl.Frontend.LLMTranslate 的对外符号面不得因拆分而收缩。"""
 
     def test_all_top_level_symbols_present(self) -> None:
-        missing = [name for name in LLMTRANSLATE_SYMBOLS if not hasattr(LLMTranslate, name)]
+        # 必须查模块 __dict__（真实绑定）而非 hasattr —— hasattr 会被模块级
+        # __getattr__ 兜住，掩盖「函数体内以全局名引用、运行时 NameError」的缺口
+        missing = [name for name in LLMTRANSLATE_SYMBOLS if name not in vars(LLMTranslate)]
         self.assertEqual(
             missing, [], f"GalTransl.Frontend.LLMTranslate 丢失顶层符号: {missing}"
         )
+
+    def test_module_globals_resolvable_in_function_bodies(self) -> None:
+        # 回归防线：任何函数体引用的全局名都必须能在模块命名空间解析到
+        # （0.5.0 的 _run_full_pipeline 就是「符号已迁出却没 re-export」导致的）
+        missing = _unresolved_global_names(LLMTranslate)
+        self.assertEqual(
+            missing, [],
+            f"LLMTranslate 函数体内引用了无法解析的全局名: {missing}",
+        )
+
+    def test_run_full_pipeline_is_real_binding(self) -> None:
+        from GalTransl.Frontend import llm_pipeline
+        self.assertIs(LLMTranslate._run_full_pipeline, llm_pipeline._run_full_pipeline)
 
     def test_entry_doLLMTranslate_is_coroutine(self) -> None:
         # Runner.py:11/355 的入口契约
