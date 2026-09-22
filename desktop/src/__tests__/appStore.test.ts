@@ -12,6 +12,7 @@ import {
   markClean as mc,
   openProject,
   navigateTo,
+  NO_SIDEBAR_VIEWS,
 } from "../stores/appStore";
 
 /** 重置 dirtyFiles 与 activeFilePath 到初始状态 */
@@ -216,5 +217,73 @@ describe("navigateTo 切页确认（pendingView）", () => {
     navigateTo("home");
     expect(appState.activeView).toBe("home");
     expect(appState.pendingView).toBeNull();
+  });
+});
+
+describe("navigateTo 侧栏状态清理（整页视图不残留侧栏）", () => {
+  beforeEach(() => {
+    // 基准：从校对审核页带着展开的侧栏切走
+    setAppState({
+      activeView: "review",
+      pendingView: null,
+      dirtyFiles: [],
+      sidebarOpen: true,
+      sidebarTab: "explorer",
+    });
+  });
+
+  it("切到 home → 清空侧栏展开状态与面板 tab", () => {
+    navigateTo("home");
+    expect(appState.activeView).toBe("home");
+    expect(appState.sidebarOpen).toBe(false);
+    expect(appState.sidebarTab).toBeNull();
+  });
+
+  it("切到其它整页视图（TitleBar 菜单裸入口）→ 同样清空侧栏", () => {
+    // 这些视图均可由 TitleBar 菜单直接 navigateTo 到达，曾是侧栏残留来源
+    const menuViews = [
+      "logs",
+      "backend-profiles",
+      "prompt-templates",
+      "plugins",
+      "project-config",
+    ] as const;
+    for (const view of menuViews) {
+      setAppState({ activeView: "review", sidebarOpen: true, sidebarTab: "explorer" });
+      navigateTo(view);
+      expect(appState.sidebarOpen, `${view} 应清空侧栏展开状态`).toBe(false);
+      expect(appState.sidebarTab, `${view} 应清空侧栏面板`).toBeNull();
+    }
+  });
+
+  it("切到 settings / new-project → 清空侧栏（既有口径保持）", () => {
+    navigateTo("settings");
+    expect(appState.sidebarOpen).toBe(false);
+    expect(appState.sidebarTab).toBeNull();
+  });
+
+  it("切到 translate 保留侧栏状态（菜单返回 review 时还原原面板的例外）", () => {
+    navigateTo("translate");
+    expect(appState.sidebarOpen).toBe(true);
+    expect(appState.sidebarTab).toBe("explorer");
+  });
+
+  it("NO_SIDEBAR_VIEWS 覆盖全部整页视图，且仅 review 保留侧栏", () => {
+    const wholePageViews = [
+      "home",
+      "translate",
+      "logs",
+      "dict",
+      "settings",
+      "project-config",
+      "backend-profiles",
+      "prompt-templates",
+      "plugins",
+      "new-project",
+    ] as const;
+    for (const view of wholePageViews) {
+      expect(NO_SIDEBAR_VIEWS, `${view} 应无侧栏`).toContain(view);
+    }
+    expect(NO_SIDEBAR_VIEWS).not.toContain("review");
   });
 });

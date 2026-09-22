@@ -12,7 +12,7 @@ import { GlobalFind } from "./components/GlobalFind";
 import { StatusBar } from "./components/StatusBar";
 import { ToastHost } from "./components/toast/ToastHost";
 import { ConfirmHost } from "./components/confirm/ConfirmHost";
-import { appState, setAppState } from "./stores/appStore";
+import { appState, setAppState, NO_SIDEBAR_VIEWS } from "./stores/appStore";
 import { setLogProject } from "./stores/logStore";
 import { applyThemePreference } from "./lib/theme";
 
@@ -30,6 +30,9 @@ function handleExternalLinkClick(e: MouseEvent) {
 function handleGlobalKeyDown(e: KeyboardEvent) {
   if (!e.ctrlKey && !e.metaKey) return;
 
+  // 整页视图（除校对审核外）不响应侧栏快捷键，避免产生「状态已改但界面不显示」的残留
+  const sidebarSupported = !NO_SIDEBAR_VIEWS.includes(appState.activeView);
+
   switch (e.key) {
     // [暂时取消] 应用级「可见文本」查找原由 Ctrl+F 接管全部界面；
     //   现暂时放开 Ctrl+F 走默认行为，改用 Ctrl+G 打开浮层（代码保留，待验证后恢复）。
@@ -42,12 +45,16 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
       setAppState({ globalFindOpen: true });
       break;
     case "h":
-      e.preventDefault();
-      setAppState({ sidebarOpen: true, sidebarTab: "find" });
+      if (sidebarSupported) {
+        e.preventDefault();
+        setAppState({ sidebarOpen: true, sidebarTab: "find" });
+      }
       break;
     case "b":
-      e.preventDefault();
-      setAppState("sidebarOpen", (s: boolean) => !s);
+      if (sidebarSupported) {
+        e.preventDefault();
+        setAppState("sidebarOpen", (s: boolean) => !s);
+      }
       break;
     case "s":
       e.preventDefault();
@@ -58,9 +65,9 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
 
 export function App() {
   const sidebarOpen = () => appState.sidebarOpen;
-  // 翻译控制台为只读监控页，不渲染文件浏览器/查找/问题侧边栏
-  const showSidebar = () => appState.activeView !== "translate";
-  // 应用栏类名：translate 视图收为两列（仅 ActivityBar + 主区）；其余视图按 sidebarOpen 折叠/展开
+  // 侧栏列渲染口径与 NO_SIDEBAR_VIEWS 保持一致：整页视图仅 ActivityBar + 主区两列铺满
+  const showSidebar = () => !NO_SIDEBAR_VIEWS.includes(appState.activeView);
+  // 应用栏类名：无侧栏视图收为两列（仅 ActivityBar + 主区）；其余视图按 sidebarOpen 折叠/展开
   const bodyClass = () => (showSidebar() ? (!sidebarOpen() ? "sidebar-collapsed" : "") : "no-sidebar");
 
   // 活动项目变化时同步给日志模块，使前端日志归集到对应翻译项目目录

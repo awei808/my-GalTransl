@@ -83,6 +83,9 @@ describe("TitleBar「回到首页」按钮", () => {
     expect(texts[texts.length - 1]).toBe("回到首页");
     fireEvent.click(findHomeButton());
     expect(appState.activeView).toBe("home");
+    // 回首页须收起侧栏，否则首页会残留文件浏览器/查找面板
+    expect(appState.sidebarOpen).toBe(false);
+    expect(appState.sidebarTab).toBeNull();
   });
 
   it("下拉菜单展开时点击「回到首页」→ 下拉关闭且跳转", () => {

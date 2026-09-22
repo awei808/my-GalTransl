@@ -59,6 +59,21 @@ export type ConnectionPhase = "offline" | "connecting" | "online" | "reconnectin
 
 export type SidebarTab = "explorer" | "find" | "problems" | "alt" | null;
 
+/** 无侧栏视图：校对审核之外的视图均为整页视图，不渲染侧栏列（仅 ActivityBar + 主区两列铺满）。
+    新增视图默认列入此处，避免从校对审核切过去时残留文件浏览器/查找/问题面板。 */
+export const NO_SIDEBAR_VIEWS: readonly ActiveView[] = [
+  "home",
+  "translate",
+  "logs",
+  "dict",
+  "settings",
+  "project-config",
+  "backend-profiles",
+  "prompt-templates",
+  "plugins",
+  "new-project",
+];
+
 export interface AppState {
   // 导航
   activeView: ActiveView;
@@ -158,7 +173,9 @@ export function navigateTo(view: ActiveView) {
     return;
   }
   setAppState({ activeView: view });
-  if (view === "settings" || view === "new-project") {
+  // 进入无侧栏视图时清空侧栏状态，避免他页的面板（文件浏览器/查找/问题）残留到新视图；
+  // translate 例外：不渲染侧栏但保留面板选择，便于经 TitleBar 菜单返回 review 时还原
+  if (NO_SIDEBAR_VIEWS.includes(view) && view !== "translate") {
     setAppState({ sidebarOpen: false, sidebarTab: null });
   }
   if (view !== "review") {
