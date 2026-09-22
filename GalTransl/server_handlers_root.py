@@ -42,6 +42,7 @@ from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
 from GalTransl.Frontend.pipeline_stages import to_payload as pipeline_stages_payload
 from GalTransl.UtilityEngines import UTILITY_ENGINES
 from GalTransl.backend_security import safe_under_project
+from GalTransl.mcp_heartbeat import read_heartbeat
 from GalTransl.server_runtime import (
     _ConcurrentLimitError,
     _has_newer_release,
@@ -93,6 +94,11 @@ def do_get(handler: Any, registry: JobRegistry) -> None:
         return
     if path == "/api/version":
         handler._send_json({"version": GALTRANSL_VERSION, "author": AUTHOR})
+        return
+
+    # 外部 agent 连接状态：读 MCP 进程心跳文件判定（0.5.1）
+    if path == "/api/mcp-status":
+        handler._send_json(read_heartbeat())
         return
     if path == "/api/version/check":
         latest_version = new_version[0] if new_version else None

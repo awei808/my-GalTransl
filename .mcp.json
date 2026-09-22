@@ -12,7 +12,7 @@
     },
     "galtransl": {
       "type": "stdio",
-      "command": "python",
+      "command": "venv/Scripts/python.exe",
       "args": [
         "run_mcp_server.py"
       ],

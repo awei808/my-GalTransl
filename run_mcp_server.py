@@ -32,6 +32,11 @@ from mcp.types import (
 )
 
 from GalTransl import GALTRANSL_VERSION
+from GalTransl.mcp_heartbeat import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    remove_heartbeat,
+    write_heartbeat,
+)
 from GalTransl.mcp_tools import MCP_TOOL_DEFS, call_mcp_tool
 
 SERVER_NAME = "galtransl"
@@ -91,6 +96,13 @@ async def handle_call_tool(
     )
 
 
+async def _heartbeat_loop() -> None:
+    """定期刷新心跳文件，供后端/前端判断「当前是否有外部 agent 连着」。"""
+    while True:
+        write_heartbeat(len(MCP_TOOL_DEFS))
+        await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+
 async def main() -> None:
     server = Server(
         name=SERVER_NAME,
@@ -100,13 +112,20 @@ async def main() -> None:
         on_list_tools=handle_list_tools,
         on_call_tool=handle_call_tool,
     )
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-            raise_exceptions=True,
-        )
+    write_heartbeat(len(MCP_TOOL_DEFS))
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+                raise_exceptions=True,
+            )
+    finally:
+        # 正常退出或异常退出都要清心跳，避免前端亮起"假在线"绿灯
+        heartbeat_task.cancel()
+        remove_heartbeat()
 
 
 if __name__ == "__main__":
