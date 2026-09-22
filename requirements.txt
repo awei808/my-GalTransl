@@ -27,6 +27,8 @@ budoux
 # numpy < 2.0.0
 # hanlp
 
-# MCP 脚本（desktop/scripts/tauri_webview_mcp.py）专用依赖
+# MCP 依赖：run_mcp_server.py（外部 agent 接入，0.5.1 起）与
+# desktop/scripts/tauri_webview_mcp.py（前端 WebView 调试）共用
 mcp>=2.0,<3.0  # 使用 2.x API（ServerRequestContext 等）
+# 仅前端调试脚本（tauri_webview_mcp.py）需要
 playwright

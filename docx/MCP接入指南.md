@@ -27,7 +27,13 @@
 | `mcp>=2.0,<3.0` | 已在 `requirements.txt:30-32` 声明 |
 | GalTransl 的依赖 | `PyYAML` / `orjson` / `requests` 等（见 `requirements.txt`） |
 
-本项目开发机上 `C:/Python312/python.exe` 同时满足两者（`mcp` 装在用户级 site-packages）。
+本项目内已有两个可用环境，均实测通过（`initialize` 协商 + 11 工具 + 真实项目检索）：
+
+| 环境 | 说明 |
+|---|---|
+| `venv/Scripts/python.exe` | 项目虚拟环境，已安装 `mcp` **2.2.0**（推荐） |
+| `C:/Python312/python.exe` | 系统 py3.12，`mcp` **2.0.0** 装在用户级 site-packages |
+
 若用其它环境，先安装：
 
 ```
@@ -73,6 +79,30 @@ pip install "mcp>=2.0,<3.0"
 
 编辑 `claude_desktop_config.json`（Windows 位于 `%APPDATA%\Claude\`），同样并入 `mcpServers` 后重启客户端。
 
+### 3.4 打包版（release 便携版，无需 Python 环境）
+
+构建脚本会把 MCP 服务一并打成单文件 exe：`release/GalTransl_{版本}_win/backend/galtransl_mcp.exe`。
+客户端直接指向它即可，**不需要** 用户自备 Python 与 `mcp` 包：
+
+```json
+{
+  "mcpServers": {
+    "galtransl": {
+      "type": "stdio",
+      "command": "D:/.../release/GalTransl_0.5.1_win/backend/galtransl_mcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+打包由以下任一路径产生（都已在 `0.5.1` 补齐）：
+
+| 路径 | 命令 |
+|---|---|
+| 一键构建脚本 | `python build_release_py312.py`（产 `backend/galtransl_mcp.exe` + 后端 exe，并做 initialize 握手冒烟） |
+| 手工 PyInstaller | `pyinstaller galtransl_mcp.spec`（产 `dist/galtransl_mcp.exe`，自行复制进 `backend/`） |
+
 ---
 
 ## 4. 可用工具（11 个）
@@ -110,7 +140,37 @@ pip install "mcp>=2.0,<3.0"
 
 ---
 
-## 6. 故障排查
+## 6. 连接状态探测（前端指示灯的判定依据）
+
+MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活，故采用**心跳文件**方案：
+
+1. MCP 进程启动时在**程序目录**写入 `mcp_status.json`（含 `pid` / `tools` / `started_at` / `updated_at`），
+   之后每 30 秒刷新一次 mtime；正常退出时删除。
+2. 后端提供只读端点 `GET /api/mcp-status`，读该文件并**按 mtime 新鲜度**判定：
+   90 秒内有刷新 → `available: true`；否则（含进程被强杀留下的残留文件）→ `false`。
+3. 前端顶部指示灯据此显示：**绿 = 当前有外部 agent 连着；灰 = 无**。
+
+⚠️ **不用 `pid` 判存活**：本机实测 `venv/Scripts/python.exe` 是 launcher stub，会 spawn 真实解释器
+（`Popen.pid` 与进程自报 pid 不同），跨进程 pid 校验不可靠；mtime 新鲜度才是可靠判据。
+
+响应示例：
+
+```json
+{
+  "available": true,
+  "path": "D:\\...\\mcp_status.json",
+  "pid": 34964,
+  "tools": 11,
+  "started_at": "2026-09-22T15:07:56+00:00",
+  "updated_at": "2026-09-22T15:07:56+00:00",
+  "age_seconds": 0.8,
+  "stale_after_seconds": 90.0
+}
+```
+
+---
+
+## 7. 故障排查
 
 | 现象 | 原因与处理 |
 |---|---|
@@ -123,7 +183,7 @@ pip install "mcp>=2.0,<3.0"
 
 ---
 
-## 7. 安全说明
+## 8. 安全说明
 
 - 服务仅在本机以 stdio 子进程方式运行，**不监听任何网络端口**。
 - 所有文件访问限于传入的 `project_dir` 之下（读取文件时经 `safe_under_project` 做路径归属校验，拒绝 `../` 与绝对路径）。

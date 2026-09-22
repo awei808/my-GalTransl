@@ -19,6 +19,7 @@ GalTransl Windows 发布版构建脚本
     GalTransl_{version}_win/
       GalTransl Desktop.exe          # Tauri 前端 exe
       backend/galtransl_backend.exe  # Python 后端 (PyInstaller)
+      backend/galtransl_mcp.exe      # MCP 服务 (PyInstaller，外部 agent 接入)
       plugins/                       # 插件目录（仅运行所需文件）
       Dict/                          # 字典
       translation_guidelines/        # 翻译指南
@@ -29,12 +30,14 @@ GalTransl Windows 发布版构建脚本
   本脚本产出的是便携版（zip），不产出 MSI/NSIS 安装包。
   如需安装包，请另行使用 Tauri bundle 产物。
   构建完成后会对后端 exe 做一次冒烟测试（从发布根目录为 cwd 启动，
-  探测 HTTP 服务是否可响应），确保「能构建、能运行」。
+  探测 HTTP 服务是否可响应），并对 MCP exe 做一次 initialize 握手冒烟，
+  确保「能构建、能运行」。
 """
 
 import argparse
 import ast
 import hashlib
+import json
 import logging
 import os
 import re
@@ -142,6 +145,8 @@ RES_DIR = ROOT / "res"
 
 BACKEND_ENTRY = ROOT / "run_backend.py"
 BACKEND_DIST_NAME = "galtransl_backend"
+MCP_ENTRY = ROOT / "run_mcp_server.py"
+MCP_DIST_NAME = "galtransl_mcp"
 VENV_DIR = ROOT / ".venv-build"
 
 # 后端 PyInstaller --add-data 需要收集的运行时数据文件扩展名白名单。
@@ -151,6 +156,8 @@ DATA_FILE_EXTS = {".json", ".yaml", ".yml", ".txt", ".xlsx", ".csv", ".xml"}
 
 # 冒烟测试：后端启动就绪等待超时（秒）
 BACKEND_BOOT_TIMEOUT = 30
+# MCP 冒烟：initialize 握手应答通常 < 5s，超时即判失败
+MCP_SMOKE_TIMEOUT = 20
 
 
 def get_version() -> str:
@@ -266,6 +273,16 @@ def backend_exe_name() -> str:
 def find_backend_exe() -> Path | None:
     """查找 PyInstaller 打包好的后端 exe（当前为 --onefile 单文件产物）"""
     p = ROOT / "dist" / backend_exe_name()
+    return p if p.exists() else None
+
+
+def mcp_exe_name() -> str:
+    return f"{MCP_DIST_NAME}.exe"
+
+
+def find_mcp_exe() -> Path | None:
+    """查找 PyInstaller 打包好的 MCP 服务 exe（--onefile 单文件产物）"""
+    p = ROOT / "dist" / mcp_exe_name()
     return p if p.exists() else None
 
 
@@ -461,13 +478,65 @@ def build_backend(no_deps_cache: bool = False):
     return exe
 
 
+def build_mcp():
+    """用同一构建 venv 打包 MCP 服务 exe（外部 agent 以 stdio 方式接入用）。
+
+    复用 build_backend 建立的 .venv-build（requirements.txt 已含 mcp），把 mcp SDK 与
+    GalTransl 工具层一并打进单文件 exe，使打包版用户无需自备 Python 环境即可接入。
+    """
+    log_info("═══ 构建 MCP 服务 (PyInstaller) ═══")
+
+    venv_python = VENV_DIR / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        log_err(f"构建 venv 不存在: {venv_python}（请先执行后端构建）")
+        sys.exit(1)
+    if not MCP_ENTRY.exists():
+        log_err(f"MCP 入口缺失: {MCP_ENTRY}")
+        sys.exit(1)
+
+    # mcp SDK 含动态导入（server.stdio / streamable_http 等），与 mcp_types 一并整包收集；
+    # GalTransl 工具层同样整包收集，避免手工列表与包结构脱节。
+    collect_args = [
+        f"--paths={ROOT}",
+        "--collect-submodules=GalTransl",
+        "--collect-submodules=mcp",
+        "--collect-submodules=mcp_types",
+    ]
+    # 工具层在函数内延迟导入的第三方依赖，显式补 hidden-import
+    hidden_args = [
+        f"--hidden-import={m}" for m in ("openpyxl", "yaml", "orjson", "requests")
+    ]
+
+    cmd = (
+        [str(venv_python), "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile"]
+        + [f"--name={MCP_DIST_NAME}"]
+        + collect_args
+        + hidden_args
+        + ["--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build")]
+        + [str(MCP_ENTRY)]
+    )
+    run(cmd)
+
+    exe = find_mcp_exe()
+    if not exe:
+        log_err(f"MCP exe 未找到 (dist/{mcp_exe_name()})")
+        sys.exit(1)
+    log_ok(f"MCP exe: {exe}")
+    return exe
+
+
 # ─── 组装发布目录 ────────────────────────────────────────
 
 # 插件目录裁剪：仅复制运行所需文件，剔除源码级/编译中间产物，避免体积膨胀与源码泄露
 PLUGIN_IGNORE = (".pyx", ".pxd", ".pxi", ".c", ".h", "*.pyx", "*.pxd", "*.pxi", "*test*", "__tests__")
 
 
-def assemble_release(frontend_exe: Path | None, backend_exe: Path | None, allow_incomplete: bool = False):
+def assemble_release(
+    frontend_exe: Path | None,
+    backend_exe: Path | None,
+    mcp_exe: Path | None = None,
+    allow_incomplete: bool = False,
+):
     log_info("═══ 组装发布包 ═══")
 
     if BUILD_DIR.exists():
@@ -506,6 +575,16 @@ def assemble_release(frontend_exe: Path | None, backend_exe: Path | None, allow_
     else:
         log_warn("后端 exe 缺失，已跳过")
         missing.append(f"后端 exe (backend/{backend_exe_name()})")
+
+    # MCP 服务（外部 agent 接入）：与后端同目录，便于客户端直接指向 backend/galtransl_mcp.exe
+    if mcp_exe and mcp_exe.exists():
+        be_dir = BUILD_DIR / "backend"
+        be_dir.mkdir(exist_ok=True)
+        shutil.copy2(mcp_exe, be_dir / mcp_exe_name())
+        log_ok(f"MCP 服务 -> backend/{mcp_exe_name()}")
+    else:
+        log_warn("MCP 服务 exe 缺失，已跳过")
+        missing.append(f"MCP 服务 exe (backend/{mcp_exe_name()})")
 
     # 插件（P1-4：裁剪源码级文件）
     if PLUGINS_DIR.exists():
@@ -614,6 +693,64 @@ def smoke_test_backend() -> bool:
                 proc.kill()
 
 
+def smoke_test_mcp() -> bool:
+    """用 stdio 发一次 initialize，验证 MCP exe 能完成协议握手。
+
+    写入请求后主动关闭 stdin：stdio 传输以 EOF 表示会话结束，服务端处理完队列中的
+    请求即退出，故可直接用 communicate 收集响应（无需读线程 + 超时兜底）。
+    """
+    log_info("═══ MCP 服务冒烟测试 ═══")
+    exe = BUILD_DIR / "backend" / mcp_exe_name()
+    if not exe.exists():
+        log_warn("MCP exe 不在发布目录，跳过冒烟测试")
+        return True
+
+    request = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "build-smoke", "version": "1.0"},
+        },
+    }) + "\n"
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [str(exe)],
+            cwd=str(BUILD_DIR),  # 与后端一致：以发布根目录为 cwd 验证资源定位
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        proc.stdin.write(request)
+        proc.stdin.flush()
+        time.sleep(0.3)  # 给服务端读取的时间，避免关闭 stdin 过快导致请求丢失
+        proc.stdin.close()
+        out, _ = proc.communicate(timeout=MCP_SMOKE_TIMEOUT)
+        lines = (out or "").strip().splitlines()
+        if not lines:
+            log_err("MCP 冒烟失败：无响应输出")
+            return False
+        payload = json.loads(lines[0])
+        result = payload.get("result") or {}
+        if "tools" in (result.get("capabilities") or {}):
+            log_ok(f"MCP 冒烟通过 (protocolVersion={result.get('protocolVersion')})")
+            return True
+        log_err(f"MCP 冒烟失败：响应缺少 tools 能力 → {lines[0][:200]}")
+        return False
+    except Exception as exc:
+        log_err(f"MCP 冒烟异常: {type(exc).__name__}: {exc}")
+        return False
+    finally:
+        if proc and proc.poll() is None:
+            proc.kill()
+
+
 # ─── 扫描插件隐式导入 ────────────────────────────────────
 
 def scan_plugin_hidden_imports() -> list[str]:
@@ -674,6 +811,8 @@ def preflight(args) -> None:
     # 关键工具/依赖预检（P2-1）
     if not args.skip_be and not (ROOT / "requirements.txt").exists():
         problems.append("缺少 requirements.txt")
+    if not args.skip_be and not (ROOT / "run_mcp_server.py").exists():
+        problems.append("缺少 run_mcp_server.py（MCP 服务入口）")
     if not args.skip_fe:
         if not (DESKTOP_DIR / "package.json").exists():
             problems.append("缺少 desktop/package.json")
@@ -742,12 +881,27 @@ def main():
             sys.exit(1)
         log_info(f"已有后端 exe: {backend_exe}")
 
+    # MCP 服务（外部 agent 接入）：复用后端构建 venv
+    if not args.skip_be:
+        mcp_exe = build_mcp()
+    else:
+        mcp_exe = find_mcp_exe()
+        if mcp_exe:
+            log_info(f"已有 MCP exe: {mcp_exe}")
+        else:
+            log_warn("跳过构建但未找到 MCP exe（产物将不完整，组装阶段会拦截）")
+
     # 组装 + 完整性校验（P0-4）
-    assemble_release(frontend_exe, backend_exe, allow_incomplete=args.allow_incomplete)
+    assemble_release(frontend_exe, backend_exe, mcp_exe, allow_incomplete=args.allow_incomplete)
 
     # 后端冒烟测试（P0-1）：确保产物可运行
     if not args.no_smoke and backend_exe and not smoke_test_backend():
         log_err("后端冒烟测试失败：产物可能无法运行")
+        sys.exit(1)
+
+    # MCP 冒烟测试：确保 exe 能完成 MCP 协议握手
+    if not args.no_smoke and mcp_exe and not smoke_test_mcp():
+        log_err("MCP 冒烟测试失败：产物可能无法运行")
         sys.exit(1)
 
     # 压缩
