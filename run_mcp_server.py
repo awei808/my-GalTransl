@@ -20,7 +20,7 @@ GalTransl 的只读工具（工具清单见 GalTransl/mcp_tools.py）。
 import asyncio
 import json
 import sys
-from typing import Any
+from typing import Any, Dict
 
 from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
@@ -29,6 +29,7 @@ from mcp.types import (
     ListToolsResult,
     TextContent,
     Tool,
+    ToolAnnotations,
 )
 
 from GalTransl import GALTRANSL_VERSION
@@ -37,29 +38,53 @@ from GalTransl.mcp_heartbeat import (
     remove_heartbeat,
     write_heartbeat,
 )
-from GalTransl.mcp_tools import MCP_TOOL_DEFS, call_mcp_tool
+from GalTransl.mcp_tools import (
+    MCP_TOOL_DEFS,
+    SERVER_INSTRUCTIONS,
+    call_mcp_tool,
+    tool_annotations,
+)
 
 SERVER_NAME = "galtransl"
 SERVER_DESCRIPTION = (
     "GalTransl 术语与译文检索（只读）：翻译缓存、原始脚本、字典、人名表、日志、元数据"
 )
-_LIST_TOOLS_TIMEOUT_NOTE = "所有工具均需提供项目根目录绝对路径 project_dir"
+
+
+def _accepted_annotations(item: Dict[str, Any]) -> Dict[str, Any]:
+    """只保留 SDK 当前版本认得的 annotation 字段。
+
+    SDK 若改名（如 read_only_hint → readOnlyHint），这里退化为不下发该字段，
+    而不是让 ToolAnnotations(**...) 抛 TypeError 把整个 tools/list 打挂——对客户端而言
+    「少一个 hint」远好于「一个工具都看不到」。
+    """
+    return {
+        key: value
+        for key, value in tool_annotations(item).items()
+        if key in ToolAnnotations.model_fields
+    }
+
+
+def _to_mcp_tool(item: Dict[str, Any]) -> Tool:
+    """把 MCP_TOOL_DEFS 条目映射为 SDK Tool，并按 kind 附带只读 annotations。
+
+    非 read 类工具（0.6.0 作业域）不带 annotations：传 None 由 SDK 的 exclude_none
+    省略该字段，避免下发空对象被客户端误判为「未声明」。
+    """
+    annotations = _accepted_annotations(item)
+    return Tool(
+        name=item["name"],
+        description=item["description"],
+        input_schema=item["input_schema"],
+        annotations=ToolAnnotations(**annotations) if annotations else None,
+    )
 
 
 async def handle_list_tools(
     ctx: ServerRequestContext, params: Any = None
 ) -> ListToolsResult:
     """返回工具清单，字段口径与 mcp_tools.MCP_TOOL_DEFS 保持一致。"""
-    return ListToolsResult(
-        tools=[
-            Tool(
-                name=item["name"],
-                description=item["description"],
-                input_schema=item["input_schema"],
-            )
-            for item in MCP_TOOL_DEFS
-        ]
-    )
+    return ListToolsResult(tools=[_to_mcp_tool(item) for item in MCP_TOOL_DEFS])
 
 
 async def handle_call_tool(
@@ -108,7 +133,7 @@ async def main() -> None:
         name=SERVER_NAME,
         version=GALTRANSL_VERSION,
         description=SERVER_DESCRIPTION,
-        instructions=_LIST_TOOLS_TIMEOUT_NOTE,
+        instructions=SERVER_INSTRUCTIONS,
         on_list_tools=handle_list_tools,
         on_call_tool=handle_call_tool,
     )
@@ -129,5 +154,21 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # LOGGER 在本进程无 handler（INFO 会被 lastResort 丢弃），故启动信息走 stderr；
+    # stdio 传输下 stdout 属协议流，任何日志都不得写入。
+    _derived = sum(1 for item in MCP_TOOL_DEFS if tool_annotations(item))
+    _delivered = sum(1 for item in MCP_TOOL_DEFS if _accepted_annotations(item))
     print(f"[galtransl-mcp] 启动 stdio 服务（版本 {GALTRANSL_VERSION}）", file=sys.stderr, flush=True)
+    print(
+        f"[galtransl-mcp] 已下发约束 instructions（{len(SERVER_INSTRUCTIONS)} 字）"
+        f"与 {_delivered} 个只读 annotations",
+        file=sys.stderr,
+        flush=True,
+    )
+    if _delivered != _derived:
+        print(
+            "[galtransl-mcp] 警告：部分 annotation 字段不被当前 mcp SDK 识别，已跳过下发",
+            file=sys.stderr,
+            flush=True,
+        )
     asyncio.run(main())

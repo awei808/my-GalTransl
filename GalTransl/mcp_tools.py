@@ -366,6 +366,42 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ---------- 约束下发（instructions / annotations） ----------
+
+SERVER_INSTRUCTIONS = """GalTransl 术语与译文检索服务（只读，11 个工具）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
+
+使用前必须遵守：
+1. 全部工具只读：不得写文件、改配置、启停翻译。需要修改请让用户在 GalTransl 界面操作。
+2. 禁止查看 H / 成人向内容：本服务读路径无 H 门禁过滤。识别到成人向内容必须立即停止该方向检索，不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。
+3. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。
+4. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。
+5. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。
+6. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。
+
+完整约束见随项目分发的 skills/galtransl-mcp/SKILL.md。"""
+
+# 键名沿用 mcp SDK 的 ToolAnnotations 字段名（snake_case），由传输层构造该类型；
+# 本模块不 import mcp，保持工具层的传输无关性（0.5.1 架构约定）。
+READ_ONLY_ANNOTATIONS: Dict[str, Any] = {
+    "read_only_hint": True,
+    "destructive_hint": False,
+    "idempotent_hint": True,
+    "open_world_hint": False,
+}
+
+
+def tool_annotations(tool_def: Dict[str, Any]) -> Dict[str, Any]:
+    """按工具 kind 派生 MCP annotations：read → 只读声明，其它 → 空 dict。
+
+    11 个工具全部只读本地磁盘、不改环境、同参数重复调用无额外副作用、不访问开放世界，
+    故统一映射为 READ_ONLY_ANNOTATIONS；为 0.6.0 作业域工具（kind=job）留出空分支。
+    返回副本，调用方改写不会污染模块级常量。
+    """
+    if str(tool_def.get("kind", "")) == "read":
+        return dict(READ_ONLY_ANNOTATIONS)
+    return {}
+
+
 # ---------- 工具定义与分发 ----------
 
 def _def(name: str, description: str, properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:

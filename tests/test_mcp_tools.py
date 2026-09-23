@@ -10,8 +10,11 @@ import unittest
 from GalTransl.mcp_tools import (
     DEFAULT_PAGE_SIZE,
     MCP_TOOL_DEFS,
+    READ_ONLY_ANNOTATIONS,
+    SERVER_INSTRUCTIONS,
     _TOOL_HANDLERS,
     call_mcp_tool,
+    tool_annotations,
 )
 
 
@@ -61,6 +64,50 @@ class ToolDefinitionTests(unittest.TestCase):
     def test_unknown_tool_raises_key_error(self) -> None:
         with self.assertRaises(KeyError):
             call_mcp_tool("galtransl_not_exist")
+
+
+class ConstraintDeliveryTests(unittest.TestCase):
+    """下发约束（instructions / annotations）：文案与协议字段口径。"""
+
+    def test_instructions_mentions_all_six_constraints(self) -> None:
+        for keyword in ("只读", "H", "project_dir", "密钥", "max_results", "index"):
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, SERVER_INSTRUCTIONS)
+
+    def test_instructions_states_no_h_filter(self) -> None:
+        # 锁定「声明与实现一致」：H 门禁落地（0.6.1）前不得写成已过滤
+        self.assertIn("无 H 门禁过滤", SERVER_INSTRUCTIONS)
+
+    def test_read_only_annotations_keys_match_sdk(self) -> None:
+        # 键名必须与 mcp SDK ToolAnnotations 字段一致（SDK 升级改名时立即暴露）
+        self.assertEqual(
+            set(READ_ONLY_ANNOTATIONS),
+            {"read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"},
+        )
+        for value in READ_ONLY_ANNOTATIONS.values():
+            self.assertIsInstance(value, bool)
+
+    def test_tool_annotations_derives_from_kind(self) -> None:
+        for item in MCP_TOOL_DEFS:
+            with self.subTest(tool=item["name"]):
+                self.assertEqual(tool_annotations(item), READ_ONLY_ANNOTATIONS)
+        # 非 read 类（0.6.0 作业域）与缺 kind 的桩一律返回空 dict
+        self.assertEqual(tool_annotations({"name": "x", "kind": "job"}), {})
+        self.assertEqual(tool_annotations({"name": "x"}), {})
+
+    def test_tool_annotations_returns_independent_copy(self) -> None:
+        # 返回副本：调用方改写不得污染模块级常量
+        derived = tool_annotations(MCP_TOOL_DEFS[0])
+        derived["read_only_hint"] = False
+        self.assertTrue(READ_ONLY_ANNOTATIONS["read_only_hint"])
+
+    def test_instructions_length_is_bounded(self) -> None:
+        # 防膨胀：instructions 过长有被客户端截断的风险（当前实测 1175 字节）
+        self.assertLessEqual(len(SERVER_INSTRUCTIONS.encode("utf-8")), 2000)
+
+    def test_instructions_tool_count_matches_defs(self) -> None:
+        # 文案里的工具数与 MCP_TOOL_DEFS 同源，数量变更（如 0.6.0 加作业域）时立即暴露
+        self.assertIn(f"{len(MCP_TOOL_DEFS)} 个工具", SERVER_INSTRUCTIONS)
 
 
 class ArgumentValidationTests(unittest.TestCase):
