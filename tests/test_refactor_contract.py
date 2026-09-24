@@ -117,6 +117,8 @@ LLMTRANSLATE_SYMBOLS = [
     "doLLMTranslate", "ensure_model_available_if_needed", "fplugins_load_file",
     "init_gptapi", "postprocess_results", "postprocess_trans_list",
     "preprocess_trans_list", "update_progress_title",
+    # 0.5.2 独立后处理后端表驱动分发（doLLMTranslate 以全局名调用，必须真实绑定）
+    "STANDALONE_BACKENDS", "is_standalone_backend", "run_standalone_backend",
 ]
 
 # 服务器壳：reload(server) 后必须仍可直接调用（14 个测试依赖此路径）

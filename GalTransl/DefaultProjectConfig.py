@@ -72,6 +72,7 @@ common:
   gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
   gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
+  gpt.fixRoundTypes: [] # 单独执行统一问题修复后端（ForFixRound）时修复的问题类型（与 problemAnalyze.problemList 相同的类型名）；空列表=回退 problemAnalyze.problemList 全部类型。仅影响手动单独执行，不影响 gpt.afterTranslation 的 fix 条目
   gpt.swapFixToCurrent: false # 修复轮（brfix/jpfix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]

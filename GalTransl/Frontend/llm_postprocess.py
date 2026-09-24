@@ -42,6 +42,7 @@ from GalTransl.Frontend.llm_prepost import (
     postprocess_trans_list,
     preprocess_trans_list,
 )
+from GalTransl.Frontend.llm_standalone import is_standalone_backend
 
 
 async def doLLMTranslSingleChunk(
@@ -209,6 +210,15 @@ async def postprocess_results(
     # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
     # 重建引擎不执行阶段7（后处理会调用模型，重建只基于现有缓存）。
     _after_order = _resolve_after_translation_order(projectConfig)
+    if is_standalone_backend(eng_type):
+        # 兜底防线：当前任务本身是后处理后端（手动单独执行），不得再按
+        # afterTranslation 连带执行其他后端（防未来新增引擎漏配独立分支）
+        if _after_order:
+            LOGGER.debug(
+                f"[后处理] 当前引擎 {eng_type} 为独立后处理后端，"
+                f"跳过 afterTranslation 连带执行：{'+'.join(_after_order)}"
+            )
+        _after_order = []
     if _after_order and eng_type not in REBUILD_ENGINES:
         _improve_enabled = projectConfig.getKey("internals.pipeline.enableImprove", True)
         if not _improve_enabled:
