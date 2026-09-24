@@ -1218,7 +1218,8 @@ export function ProjectConfigPage() {
               数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 7：
               修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
               ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
-              / ForSemCheckAgain 对已翻译文件手动执行（后者为命中句二次复核）。
+              / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 对已翻译文件手动执行
+              （后者依次为语义命中句二次复核、词语色彩命中句二次复核）。
             </p>
           </div>
           <AfterTranslationOrderEditor

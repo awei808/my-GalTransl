@@ -46,6 +46,8 @@ from GalTransl.Backend.Prompts import (
     FORFIXROUND_SYSTEM,
     FORWORDTONE_SYSTEM,
     FORGAL_JSON_FORWORDTONE_PROMPT,
+    FORWORDTONE_AGAIN_SYSTEM,
+    FORGAL_JSON_FORWORDTONE_AGAIN_PROMPT,
     build_fix_round_prompt,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
@@ -416,6 +418,10 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForToneCheck": {
         "system_prompt": FORWORDTONE_SYSTEM,
         "user_prompt": FORGAL_JSON_FORWORDTONE_PROMPT,
+    },
+    "ForToneCheckAgain": {
+        "system_prompt": FORWORDTONE_AGAIN_SYSTEM,
+        "user_prompt": FORGAL_JSON_FORWORDTONE_AGAIN_PROMPT,
     },
     "ForPlotRouteMap": {
         "system_prompt": FORPLOTROUTE_SYSTEM,

@@ -75,6 +75,9 @@ STANDALONE_BACKENDS: Dict[str, StandaloneBackendSpec] = {
     "ForToneCheck": StandaloneBackendSpec(
         "[色彩检查]", "词语色彩一致性检查", finalize_problems=True
     ),
+    "ForToneCheckAgain": StandaloneBackendSpec(
+        "[色彩复核]", "词语色彩复核", finalize_problems=True
+    ),
     "ForFixRound": StandaloneBackendSpec(
         "[问题修复]", "统一问题修复", needs_fix_params=True
     ),

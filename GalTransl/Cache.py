@@ -214,7 +214,7 @@ def _build_cache_obj(tran: CSentense, post_save: bool = False) -> Optional[dict]
     # AI 语义检测标记：非空即写入（append 增量与 post_save 快照都携带，合并时透传）
     if tran.suspected_error != "":
         cache_obj["suspected_error"] = tran.suspected_error
-    # AI 词语色彩检查标记：非空即写入（append 增量与 post_save 快照都携带，合并时透传）
+    # AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核撤销）：非空即写入（append 增量与 post_save 快照都携带，合并时透传）
     if tran.tone_issue != "":
         cache_obj["tone_issue"] = tran.tone_issue
     if post_save:

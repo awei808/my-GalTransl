@@ -4,7 +4,7 @@
   doLLMTranslSingleChunk（单 chunk 翻译收尾）
     → postprocess_results（问题检测 / 缓存快照 / 输出合并）
       → _resolve_after_translation_order（afterTranslation 顺序解析）
-      → _run_after_trans_single_file（逐引擎后处理：改进/换行/日文/禁用词/语义/色彩/修复轮）
+      → _run_after_trans_single_file（逐引擎后处理：改进/换行/日文/禁用词/语义/色彩/复核/修复轮）
 
 注意：_resolve_after_translation_order 被测试 mock.patch，其调用方
 postprocess_results 与本函数同模块，故 patch 目标为 GalTransl.Frontend.llm_postprocess
@@ -325,7 +325,7 @@ async def postprocess_results(
 def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 
-    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck）或
+    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain）或
     统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}；
     输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文），
     配置中残留的 mode 字段直接忽略。同 key 条目去重保序（fix 条目仅保留第一个）。旧字符串格式
@@ -334,7 +334,7 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """
     allowed = {
         "improve", "brfix", "jpfix", "banfix",
-        "semcheck", "semcheckagain", "tonecheck", "fix",
+        "semcheck", "semcheckagain", "tonecheck", "tonecheckagain", "fix",
     }
     raw = projectConfig.getKey("gpt.afterTranslation")
 
@@ -386,7 +386,7 @@ async def _run_after_trans_single_file(
     projectConfig: CProjectConfig,
     num_better: int,
 ) -> None:
-    """对单个文件执行一种 AI 初步处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复 / tonecheck 色彩检查等）。
+    """对单个文件执行一种 AI 初步处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复 / tonecheck 色彩检查 / tonecheckagain 色彩复核等）。
 
     mode 可为字符串 key 或统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}。
     直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/pre_dic/post_dic/
@@ -404,6 +404,7 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForSemCheck import ForSemCheck
     from GalTransl.Backend.ForSemCheckAgain import ForSemCheckAgain
     from GalTransl.Backend.ForToneCheck import ForToneCheck
+    from GalTransl.Backend.ForToneCheckAgain import ForToneCheckAgain
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
 
     _after_pool = _stage_pool(projectConfig, "afterTrans")
@@ -483,6 +484,13 @@ async def _run_after_trans_single_file(
             _api = ForToneCheck(
                 projectConfig,
                 "ForToneCheck",
+                projectConfig.proxyPool,
+                _after_pool,
+            )
+        elif mode == "tonecheckagain":
+            _api = ForToneCheckAgain(
+                projectConfig,
+                "ForToneCheckAgain",
                 projectConfig.proxyPool,
                 _after_pool,
             )

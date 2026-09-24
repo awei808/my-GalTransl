@@ -104,6 +104,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "词语色彩一致性检查：对照批次级元数据的「用词色彩」标注，标记用词色彩明显偏离所属区间的句子（tone_issue 标记，不改译文）；需先在流水线中生成批次级元数据。",
         "en": "Word-tone consistency check: flags sentences whose wording tone clearly deviates from the per-interval tone annotations in BatchMetadata (tone_issue flag, translation untouched); requires batch metadata from the pipeline."
     },
+    "ForToneCheckAgain": {
+        "zh-cn": "对已标记为「词语色彩不一致」的句子逐句复核。",
+        "en": "Second-pass confirmation for 'word-tone inconsistent' flags: re-checks each flagged sentence against its interval tone annotations and keeps only confirmed deviations, dismissing acceptable translations (false positives)."
+    },
     "ForFixRound": {
         "zh-cn": "统一问题修复：按所选问题类型组合修复译文（多类可并行处理），每类按对应修复指令生成备选译文；输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文）。",
         "en": "Unified problem fix: repairs translations by a configurable combination of problem types, each with its own fix instruction, generating alternative translations (alt_dst); input mode auto-derived from selected types (src+dst if any type needs source, else dst-only)."
@@ -164,7 +168,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForToneCheckAgain", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 
 # 引擎名别名：引擎改名后的兼容映射，旧配置/旧任务提交旧名时解析到现行名
 TRANSLATOR_ALIASES = {

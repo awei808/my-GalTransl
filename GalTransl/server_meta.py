@@ -38,7 +38,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "状语过长", "description": "译文出现「在……中/里」或「……地」状语且中间长度超过「状语最大长度」阈值。"},
     {"name": "频繁换行", "description": "译文有效字符数不足却切出过多小句（<20字符且≥3小句，或<10字符且≥2小句），短译文却频繁断句。（测试中，可能误检）"},
     {"name": "疑似错误", "description": "AI 语义检测（ForSemCheck）判定原文与译文语义存在极大差异（疑似错译/漏译/译文串行），可由 ForSemCheckAgain 二次复核确认/撤销。"},
-    {"name": "词语色彩不一致", "description": "AI 词语色彩检查（ForToneCheck）判定译文用词色彩与批次区间标注的用词色彩明显不符，标记不改译文；可由统一问题修复按标注方向调整。"},
+    {"name": "词语色彩不一致", "description": "AI 词语色彩检查（ForToneCheck）判定译文用词色彩与批次区间标注的用词色彩明显不符，标记不改译文；可由 ForToneCheckAgain 二次复核确认/撤销，或由统一问题修复按标注方向调整。"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)

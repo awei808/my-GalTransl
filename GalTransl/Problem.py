@@ -379,7 +379,7 @@ def find_problems(
             if getattr(tran, "suspected_error", "") != "":
                 problem_list.append("疑似错误")
 
-        # AI 词语色彩检查标记（ForToneCheck 产出）：字段非空即标"词语色彩不一致"。
+        # AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销）：字段非空即标"词语色彩不一致"。
         # reason 非"1"时附进问题文案，供校对者与统一修复后端获知期望色彩方向。
         if CProblemType.词语色彩不一致 in find_type:
             tone_issue = getattr(tran, "tone_issue", "")

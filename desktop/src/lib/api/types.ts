@@ -198,6 +198,7 @@ export type CacheEntry = {
   post_dst_preview?: string;
   alt_dst?: string;
   suspected_error?: string; // AI 语义检测标记（ForSemCheck 产出，ForSemCheckAgain 复核确认/撤销，非空即"疑似错误"，随缓存透传）
+  tone_issue?: string; // AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销，非空即"词语色彩不一致"，随缓存透传）
 };
 
 export type CacheSearchField = "all" | "src" | "dst" | "problem";
