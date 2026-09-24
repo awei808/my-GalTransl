@@ -9,8 +9,8 @@ eng_type 短路分支，ForFixRound / ForToneCheck 漏加分支后落入主翻�
 1. STANDALONE_BACKENDS 覆盖全部后处理后端，且不误收翻译/元数据引擎；
 2. doLLMTranslate 命中独立分支后不再落入主翻译流程（不调 doLLMTranslSingleChunk）；
 3. postprocess_results 兜底守卫：当前引擎为后处理后端时清空 afterTranslation 链；
-4. ForFixRound 类型来源：gpt.fixRoundTypes 优先，空则回退 problemAnalyze.problemList；
-   两处皆空时跳过且不实例化后端。
+4. ForFixRound 类型来源：与界面「问题类型」勾选同源（afterTranslation 的 fix 条目
+   types）；无 fix 条目时回退 problemAnalyze.problemList；两处皆空时跳过且不实例化后端。
 
 配置一律用真实 CProjectConfig + 临时项目，避免手搓桩与生产路径口径漂移
 （历史踩坑：测试桩数据结构与生产路径不一致导致测试全绿但线上崩）。
@@ -93,16 +93,18 @@ proxy:
 """
 
 
-def _build_mini_project(root: str, extra_common: str = "") -> str:
-    """在 root 下构造含 config.inc.yaml 与单个待译文件的临时项目。"""
+def _build_mini_project(root: str, after_translation: str = "[]") -> str:
+    """在 root 下构造含 config.inc.yaml 与单个待译文件的临时项目。
+
+    after_translation 为 gpt.afterTranslation 的 YAML 值文本（替换而非追加，
+    避免出现重复键）。
+    """
     proj = os.path.join(root, "mini_proj")
     os.makedirs(os.path.join(proj, "gt_input"), exist_ok=True)
-    cfg_text = BASE_CONFIG
-    if extra_common:
-        cfg_text = cfg_text.replace(
-            "  gpt.afterTranslation: []",
-            f"  gpt.afterTranslation: []\n{extra_common}",
-        )
+    cfg_text = BASE_CONFIG.replace(
+        "  gpt.afterTranslation: []",
+        f"  gpt.afterTranslation: {after_translation}",
+    )
     with open(os.path.join(proj, "config.inc.yaml"), "w", encoding="utf-8") as f:
         f.write(cfg_text)
     lines = [
@@ -161,27 +163,67 @@ class FixRoundTypeResolutionTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
-    def _cfg(self, extra_common: str = "") -> CProjectConfig:
-        proj = _build_mini_project(self._tmp, extra_common)
+    def _cfg(self, after_translation: str = "[]") -> CProjectConfig:
+        proj = _build_mini_project(self._tmp, after_translation)
         cfg = CProjectConfig(proj, "config.inc.yaml")
         cfg.non_interactive = True
         return cfg
 
-    def test_explicit_key_takes_priority(self) -> None:
-        cfg = self._cfg("  gpt.fixRoundTypes:\n    - 疑似错误\n")
+    def test_types_come_from_after_translation_fix_entry(self) -> None:
+        # 界面「问题类型」勾选写入 afterTranslation 的 fix 条目，单独执行必须读到同一份
+        cfg = self._cfg(
+            "\n"
+            "    - fix:\n"
+            "        types:\n"
+            "          - 疑似错误\n"
+            "        injectProblem: true\n"
+        )
         types = _resolve_fix_round_types(cfg)
         self.assertEqual([t.name for t in types], ["疑似错误"])
 
-    def test_fallback_to_problem_list_when_empty(self) -> None:
-        # 未配置 gpt.fixRoundTypes → 回退 problemAnalyze.problemList（config 中为 2 类）
+    def test_fallback_to_problem_list_without_fix_entry(self) -> None:
+        # 无 fix 条目 → 回退 problemAnalyze.problemList（config 中为 2 类）
         cfg = self._cfg()
         types = _resolve_fix_round_types(cfg)
         self.assertEqual([t.name for t in types], ["词频过高", "残留日文"])
 
+    def test_empty_fix_entry_types_falls_back(self) -> None:
+        # fix 条目存在但 types 为空（界面全不勾）→ 回退 problemList，不静默全修
+        cfg = self._cfg(
+            "\n"
+            "    - fix:\n"
+            "        types: []\n"
+            "        injectProblem: true\n"
+        )
+        types = _resolve_fix_round_types(cfg)
+        self.assertEqual([t.name for t in types], ["词频过高", "残留日文"])
+
     def test_unknown_type_ignored(self) -> None:
-        cfg = self._cfg("  gpt.fixRoundTypes:\n    - 不存在的类型\n    - 疑似错误\n")
+        cfg = self._cfg(
+            "\n"
+            "    - fix:\n"
+            "        types:\n"
+            "          - 不存在的类型\n"
+            "          - 疑似错误\n"
+        )
         types = _resolve_fix_round_types(cfg)
         self.assertEqual([t.name for t in types], ["疑似错误"])
+
+    def test_matches_after_translation_order_source(self) -> None:
+        # 口径一致性防线：与阶段 7 走的 _resolve_after_translation_order 同源，
+        # 保证「界面勾什么 → 两条路径就修什么」
+        from GalTransl.Frontend.llm_postprocess import _resolve_after_translation_order
+
+        cfg = self._cfg(
+            "\n"
+            "    - fix:\n"
+            "        types:\n"
+            "          - 词语色彩不一致\n"
+        )
+        order = _resolve_after_translation_order(cfg)
+        fix_entry = next(e for e in order if isinstance(e, dict))
+        standalone_types = [t.name for t in _resolve_fix_round_types(cfg)]
+        self.assertEqual(standalone_types, fix_entry["fix"]["types"])
 
 
 class RunStandaloneBackendTests(unittest.IsolatedAsyncioTestCase):
@@ -196,7 +238,7 @@ class RunStandaloneBackendTests(unittest.IsolatedAsyncioTestCase):
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
     async def test_empty_fix_types_skips_without_instantiating(self) -> None:
-        # problemList 写成空值（YAML 无条目 → None），fixRoundTypes 也未配置：
+        # problemList 写成空值（YAML 无条目 → None），afterTranslation 也无 fix 条目：
         # 两处皆空应跳过，且不实例化后端。同时覆盖 getProblemAnalyzeConfig 对
         # None 的防御（否则会抛 TypeError）。
         proj = _build_mini_project(self._tmp)

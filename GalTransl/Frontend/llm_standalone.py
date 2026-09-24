@@ -90,19 +90,23 @@ def is_standalone_backend(eng_type: str) -> bool:
 
 
 def _resolve_fix_round_types(projectConfig: CProjectConfig) -> list:
-    """解析统一修复后端的问题类型：gpt.fixRoundTypes 优先，空则回退 problemList 全部。
+    """解析统一修复后端的问题类型，与界面「问题类型」勾选同源。
 
-    与 afterTranslation 的 fix 条目不同，独立执行没有条目级 types 可读，故用
-    专用键 gpt.fixRoundTypes；为空时回退 problemAnalyze.problemList（与
-    ForProblemFixRound._ensure_problem_types_configured 的惰性回退口径一致）。
+    界面控件（AfterTranslationOrderEditor）把勾选写入 gpt.afterTranslation 的 fix
+    条目 types，故此处复用 _resolve_after_translation_order 取同一份配置，保证
+    「界面勾什么就修什么」。无 fix 条目时回退 problemAnalyze.problemList 全部
+    （与 ForProblemFixRound._ensure_problem_types_configured 的惰性回退口径一致）。
     """
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
+    # 延迟导入：llm_postprocess 会反向 import 本模块，模块级导入会成环
+    from GalTransl.Frontend.llm_postprocess import _resolve_after_translation_order
 
-    types = ForProblemFixRound._coerce_problem_type_list(
-        projectConfig.getKey("gpt.fixRoundTypes", None)
-    )
-    if types:
-        return types
+    for entry in _resolve_after_translation_order(projectConfig):
+        if isinstance(entry, dict):
+            raw_types = (entry.get("fix") or {}).get("types")
+            types = ForProblemFixRound._coerce_problem_type_list(raw_types)
+            if types:
+                return types
     try:
         all_types = projectConfig.getProblemAnalyzeConfig("problemList")
     except (TypeError, KeyError) as e:
@@ -112,8 +116,9 @@ def _resolve_fix_round_types(projectConfig: CProjectConfig) -> list:
         all_types = []
     if all_types:
         LOGGER.warning(
-            f"[问题修复] 未指定 gpt.fixRoundTypes，回退 problemAnalyze.problemList "
-            f"全部 {len(all_types)} 类：{[t.name for t in all_types]}"
+            f"[问题修复] afterTranslation 未配置 fix 条目问题类型，回退 "
+            f"problemAnalyze.problemList 全部 {len(all_types)} 类："
+            f"{[t.name for t in all_types]}"
         )
     return all_types
 
@@ -305,8 +310,8 @@ async def run_standalone_backend(
         fix_types = _resolve_fix_round_types(projectConfig)
         if not fix_types:
             LOGGER.warning(
-                f"{spec.log_tag} 未配置 gpt.fixRoundTypes 且 problemAnalyze.problemList "
-                f"为空，跳过该后端"
+                f"{spec.log_tag} 既无 afterTranslation 的 fix 条目问题类型，"
+                f"problemAnalyze.problemList 也为空，跳过该后端"
             )
             return True
 
