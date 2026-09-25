@@ -64,6 +64,14 @@ class DictRow:
 
 # 解析用的注释前缀：仅 //，且只在整行行首起效（与引擎各 load_dic 对齐）
 _COMMENT_PREFIXES = ("//",)
+# 纯符号装饰分隔线（如 ====、----、****）：视作注释口径跳过，与 load_h_check_words 对齐
+_SEPARATOR_LINE_RE = re.compile(r"[=\-~_*]{3,}")
+
+
+def _is_separator_line(line: str) -> bool:
+    """判定是否纯符号装饰分隔线：strip 后整行由 = - ~ _ * 组成且 ≥3 字符。"""
+    return bool(_SEPARATOR_LINE_RE.fullmatch(line.strip()))
+
 _CONDITIONAL_KEYS = [
     "pre_src", "post_src", "pre_dst", "post_dst",
     "pre_jp", "post_jp", "pre_zh", "post_zh",
@@ -201,6 +209,9 @@ def parse_dict_line(line: str, category: str) -> DictRow:
     # 注释判定：仅 // 前缀，且只在整行行首起效（即使含 |）即为整行注释。
     # 与引擎各 load_dic / server 计数 / H 词库加载统一，避免含 | 的注释被当作普通词条加载。
     if line.lstrip().startswith(_COMMENT_PREFIXES):
+        return DictRow("comment", [line], raw_line)
+    # 纯符号分隔线视作注释口径跳过（与引擎 load_dic / load_h_check_words 统一）
+    if _is_separator_line(line):
         return DictRow("comment", [line], raw_line)
     # 与引擎 load_dic 一致：Tab / 四空格转 | 后再分割（兼容旧版 Tab 分隔字典文件）
     line = line.replace("    ", "\t").replace("\t", "|")
@@ -514,6 +525,10 @@ class CNormalDic:
             # 整行注释（仅 // 前缀，即使含 |）跳过，与 parse_dict_line 统一
             if line.lstrip().startswith(_COMMENT_PREFIXES):
                 continue
+            # 纯符号分隔线跳过，与 load_h_check_words 口径一致
+            if _is_separator_line(line):
+                LOGGER.debug(f"字典 {dic_path} 跳过纯符号分隔线：{line.strip()}")
+                continue
 
             # 四个空格和Tab兼容为|分隔符
             line = line.replace("    ", "\t")
@@ -737,6 +752,10 @@ class CGptDict:
                 continue
             # 整行注释（仅 // 前缀，即使含 |）跳过，与 parse_dict_line 统一
             if line.lstrip().startswith(_COMMENT_PREFIXES):
+                continue
+            # 纯符号分隔线跳过，与 load_h_check_words 口径一致
+            if _is_separator_line(line):
+                LOGGER.debug(f"字典 {dic_path} 跳过纯符号分隔线：{line.strip()}")
                 continue
 
             # 兼容四个空格和Tab

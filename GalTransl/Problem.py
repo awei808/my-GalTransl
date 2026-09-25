@@ -17,7 +17,7 @@ from GalTransl.Utils import (
     is_all_gbk,
     extract_control_substrings
 )
-from GalTransl.Dictionary import CGptDict, DictWordMatcher, _COMMENT_PREFIXES, _split_dict_line
+from GalTransl.Dictionary import CGptDict, DictWordMatcher, _COMMENT_PREFIXES, _is_separator_line, _split_dict_line
 from GalTransl.Backend.utils import coerce_bool
 
 MONOLOGUE_MALE_HE_EXCLUDES = (
@@ -140,7 +140,8 @@ def load_h_check_words(dict_paths: list) -> list:
                     continue
                 if stripped.startswith(_COMMENT_PREFIXES):
                     continue
-                if re.fullmatch(r"[=\-~_*]{3,}", stripped):
+                # 纯符号分隔线：与 Dictionary._is_separator_line 共用同一判定
+                if _is_separator_line(stripped):
                     continue
                 # 与 parse_dict_line 对齐：Tab/四空格转 | 后再分割（兼容 Tab 分隔字典）
                 norm = stripped.replace("    ", "\t").replace("\t", "|")
