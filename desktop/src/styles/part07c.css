@@ -833,20 +833,236 @@
 }
 
 /* ==========================================
-   项目配置页面
+   项目配置页面（双栏设置中心：固定顶栏 + 分区导航 + 内容卡片流）
    ========================================== */
 
+/* 页面根：滚动下沉到内容区，顶栏与导航固定可见 */
 .page-project-config {
   display: flex;
   flex-direction: column;
+  gap: var(--space-1-5);
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+/* ── 固定顶栏 ── */
+.pc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1-5);
+  flex-shrink: 0;
+}
+
+.pc-header-titles {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.page-project-config .page-title {
+  margin-bottom: 0;
+  font-size: var(--font-lg);
+  white-space: nowrap;
+}
+
+/* 配置文件名 chip（tooltip 说明编辑对象） */
+.pc-config-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.pc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex-wrap: wrap;
+}
+
+/* 搜索框 */
+.pc-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pc-search__icon {
+  position: absolute;
+  left: 10px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.pc-search__input {
+  width: 220px;
+  padding: 5px 28px 5px 30px;
+  font-size: var(--font-sm);
+  font-family: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  outline: none;
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
+}
+
+.pc-search__input:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand-primary) 18%, transparent);
+}
+
+.pc-search__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* 隐藏原生清除按钮（自绘，保证主题一致） */
+.pc-search__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.pc-search__clear {
+  position: absolute;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.pc-search__clear:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+/* 未保存徽标 */
+.pc-dirty-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-status-warning);
+  background: var(--color-bg-warning);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.pc-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ── 双栏布局：左导航 + 右内容 ── */
+.pc-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
   gap: var(--space-2);
 }
 
-.pc-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+.pc-nav {
+  width: 208px;
   flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: var(--space-1);
+  border-right: 1px solid color-mix(in srgb, var(--color-border-default) 60%, transparent);
+}
+
+.pc-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-base);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.pc-nav__item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.pc-nav__item--active {
+  background: var(--color-bg-selected);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.pc-nav__item:focus-visible,
+.pc-group-title:focus-visible,
+.pc-search__clear:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.pc-nav__icon {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: color var(--duration-fast);
+}
+
+.pc-nav__item--active .pc-nav__icon {
+  color: var(--color-brand-primary);
+}
+
+.pc-nav__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 搜索时隐藏导航（列表被过滤，锚点无意义） */
+.pc-layout--searching .pc-nav {
+  display: none;
+}
+
+.pc-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 2px var(--space-05) var(--space-2);
+}
+
+/* 内容列居中限宽（双栏共用 pc-field-list 的纵向排布） */
+.pc-content-inner {
+  max-width: 960px;
+  margin: 0 auto;
 }
 
 .pc-status {
@@ -854,16 +1070,16 @@
   color: var(--color-text-tertiary);
 }
 
+.pc-status--center {
+  text-align: center;
+  padding: var(--space-4);
+}
+
 .pc-desc {
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
-  line-height: 1.4;
+  line-height: 1.5;
   margin: 0;
-}
-
-/* 条件板块的直接说明文字与兄弟元素保持统一缩进 */
-.pc-group > .pc-desc {
-  padding: var(--space-1) var(--space-2);
 }
 
 .pc-field-list {
@@ -872,25 +1088,26 @@
   gap: var(--space-2);
 }
 
+/* ── 分组卡片 ── */
 .pc-group {
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-lg);
   background: var(--color-bg-panel);
+  overflow: hidden;
   /* 作为快捷跳转锚点时避免贴顶 */
-  scroll-margin-top: var(--space-3);
+  scroll-margin-top: var(--space-2);
+  transition: border-color var(--duration-fast);
+}
+
+.pc-group:hover {
+  border-color: var(--color-border-hover);
 }
 
 .pc-group-title {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-2);
-  font-size: var(--font-base);
-  font-weight: var(--weight-semibold);
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--color-border-default);
-  background: var(--color-bg-app);
-  color: var(--color-text-primary);
+  align-items: center;
+  gap: var(--space-1-5);
+  padding: var(--space-1-5) var(--space-2);
 }
 
 /* 可折叠的大分组标题（项目设置页专用；后端配置页标题为静态文本，不受此影响） */
@@ -899,66 +1116,114 @@
   user-select: none;
 }
 
+/* 分区图标 chip */
+.pc-group-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--color-brand-primary);
+  background: color-mix(in srgb, var(--color-brand-primary) 12%, transparent);
+}
+
+.pc-group-headings {
+  flex: 1;
+  min-width: 0;
+}
+
 .pc-group-title-text {
   font-size: var(--font-base);
   font-weight: var(--weight-semibold);
   color: var(--color-text-primary);
   margin: 0;
+  line-height: var(--leading-tight);
 }
 
 /* 大分组标题旁的二级说明（折叠时仍可见，方便识别分区） */
 .pc-group-desc {
   font-size: var(--font-sm);
-  font-weight: var(--weight-regular);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* 大分组折叠指示箭头 */
-.pc-group-chevron {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.6;
+/* 条目计数徽标（搜索态显示命中数） */
+.pc-group-meta {
   flex-shrink: 0;
-  transition: color 0.15s ease;
+  padding: 2px 8px;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.pc-group-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition:
+    transform var(--duration-normal) var(--ease-default),
+    color var(--duration-fast);
 }
 
 .pc-group-title:hover .pc-group-chevron {
   color: var(--color-text-primary);
 }
 
-/* 折叠状态：隐藏分区内容（display:none，无过渡） */
-/* 项目设置页专用 */
-.pc-group-body--collapsed {
-  display: none;
+.pc-group--collapsed .pc-group-chevron {
+  transform: rotate(-90deg);
 }
 
-/* 项目设置二级子分组（如「翻译处理 → 接口与并发」） */
-.pc-subsection {
-  margin: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-border-muted);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-subtle);
+/* 折叠动画：grid rows 0fr→1fr；visibility 延迟到动画结束后隐藏
+   （保证展开动画可见，折叠态内容不响应聚焦） */
+.pc-group-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--duration-normal) var(--ease-default);
 }
 
-.pc-subsection-title {
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  padding: var(--space-1) var(--space-2);
-  margin: 0;
-  border-bottom: 1px solid var(--color-border-muted);
-  color: var(--color-text-secondary);
+.pc-group-body-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
-/* 全局后端配置接管提示横幅（项目设置中 OpenAI 兼容组） */
+.pc-group--collapsed .pc-group-body {
+  grid-template-rows: 0fr;
+}
+
+.pc-group--collapsed .pc-group-body-inner {
+  visibility: hidden;
+  transition: visibility 0s linear var(--duration-normal);
+}
+
+/* 后端配置页复用 pc-group：恢复旧标题分隔线，并关闭新交互（hover 变色/overflow 裁剪）波及 */
+.page-backend-profiles .pc-group-title {
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.page-backend-profiles .pc-group {
+  overflow: visible;
+}
+
+.page-backend-profiles .pc-group:hover {
+  border-color: var(--color-border-default);
+}
+
+/* ── 全局后端配置接管提示横幅（项目设置中 OpenAI 兼容组） ── */
 .pc-global-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  margin: var(--space-1) var(--space-2) 0;
+  padding: var(--space-1) var(--space-1-5);
   background: var(--color-bg-info);
-  border-bottom: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
 }
 
 .pc-global-banner__text {
@@ -971,100 +1236,73 @@
   color: var(--color-text-primary);
 }
 
-.pc-row {
+/* ── 固定卡片（游戏外部信息 / 翻译规范 / 后处理顺序 / 大阶段独立 API） ── */
+.pc-fixed-card {
   display: flex;
-  align-items: flex-start;
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--color-border-default);
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-1) var(--space-2);
+  padding: var(--space-1-5) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
 }
 
-.pc-row:last-child {
-  border-bottom: none;
-}
-
-.pc-row-label {
-  flex: 1;
-  min-width: 0;
-}
-
-.pc-label {
-  font-size: var(--font-base);
-  color: var(--color-text-primary);
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-/* 待实现/待验证配置项的 TODO 徽标（与 .pc-label 同行展示） */
-.pc-todo-badge {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.5;
-  color: #8a6d1a;
-  background: #fdf3d0;
-  border: 1px solid #e6cf8a;
-  border-radius: 4px;
-  vertical-align: 1px;
-  white-space: nowrap;
-}
-
-.pc-row--todo {
-  background: var(--color-bg-subtle, rgba(0, 0, 0, 0.02));
-}
-
-.pc-desc--todo {
-  color: #a16207;
-}
-
-/* 包裹控件用：去掉 fieldset 默认边框，保持 flex 布局（disabled 时统一禁用内部控件） */
-.pc-fieldset {
-  border: none;
-  padding: 0;
-  margin: 0;
+.pc-fixed-card__head {
   display: flex;
-  align-items: center;
-  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.pc-key-hint {
+.pc-fixed-card__control {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-1);
-  margin-top: 2px;
 }
 
-.pc-key {
-  font-size: 11px;
-  font-family: var(--font-mono);
+.pc-fixed-card__textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  padding: var(--space-1) var(--space-1-5);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.pc-fixed-card__textarea:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.pc-fixed-card__textarea::placeholder {
   color: var(--color-text-tertiary);
 }
 
-.pc-allowed {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
+/* 卡片内说明块（浅底 + 品牌色左缘），如大阶段独立 API 的回退规则说明 */
+.pc-note {
+  margin: 0;
+  padding: var(--space-1) var(--space-1-5);
+  background: color-mix(in srgb, var(--color-bg-info) 60%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--color-brand-primary) 45%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
 }
 
-.pc-row-control {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
+/* 固定卡片内嵌字段行：去掉横向留白，避免与卡片内距叠加 */
+.page-project-config .pc-fixed-card .pc-row {
+  padding: var(--space-1) 0;
 }
 
-.pc-input {
-  width: 280px;
-}
-
-.pc-input--readonly {
-  background: var(--color-bg-subtle);
-  color: var(--color-text-tertiary);
-  cursor: default;
-}
-
-/* 游戏外部信息（ForGlobalPrompt 外部信息接口）专用多行输入框 */
+/* 外部信息输入块：项目设置页已改用 pc-fixed-card，现仅新建项目向导（StepPipelineSettings）使用 */
 .pc-external-info {
   display: flex;
   flex-direction: column;
@@ -1082,7 +1320,7 @@
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
-  background: var(--color-bg-input, var(--color-bg-app));
+  background: var(--color-bg-input);
   color: var(--color-text-primary);
   font-size: var(--font-sm);
   line-height: 1.6;
@@ -1097,6 +1335,117 @@
 
 .pc-external-info__textarea::placeholder {
   color: var(--color-text-tertiary);
+}
+
+/* ── 字段行基础规则（后端配置页复用；项目设置页由下方 grid 口径覆盖） ── */
+.pc-row {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-default);
+  gap: var(--space-2);
+}
+
+.pc-row:last-child {
+  border-bottom: none;
+}
+
+/* ── 字段行（grid 口径仅项目设置页；后端配置页仍走旧 flex 基础规则） ── */
+.page-project-config .pc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1-5);
+  align-items: start;
+  padding: var(--space-1-5) var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+}
+
+.page-project-config .pc-row:hover {
+  background: color-mix(in srgb, var(--color-bg-hover) 55%, transparent);
+}
+
+.pc-row-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 标签行：中文名 + TODO 徽标 + 键名 chip 同行 */
+.pc-label-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pc-label {
+  font-size: var(--font-base);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* 键名 chip（mono 小徽标，排错定位用） */
+.pc-key {
+  font-size: var(--font-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-bg-subtle) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 60%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+/* 待实现/待验证配置项的 TODO 徽标（warning 语义 token，深浅色自适应） */
+.pc-todo-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.5;
+  color: var(--color-status-warning);
+  background: var(--color-bg-warning);
+  border: 1px solid color-mix(in srgb, var(--color-status-warning) 35%, transparent);
+  border-radius: 4px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.page-project-config .pc-row--todo {
+  background: var(--color-bg-subtle);
+}
+
+.pc-desc--todo {
+  color: var(--color-status-warning);
+}
+
+/* 包裹控件用：去掉 fieldset 默认边框，保持 flex 布局（disabled 时统一禁用内部控件） */
+.pc-fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.pc-row-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+.pc-input {
+  width: 280px;
+}
+
+.pc-input--readonly {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-tertiary);
+  cursor: default;
 }
 
 .pc-select {
@@ -1120,15 +1469,15 @@
   width: 96px;
 }
 
-/* 项目设置：通用列表内的多行文本输入（如剧情路线图用户大纲） */
+/* 通用列表内的多行文本输入（如剧情路线图用户大纲） */
 .pc-textarea-multiline {
   width: 280px;
   min-height: 96px;
   resize: vertical;
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-1-5);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
-  background: var(--color-bg-input, var(--color-bg-app));
+  background: var(--color-bg-input);
   color: var(--color-text-primary);
   font-size: var(--font-sm);
   line-height: 1.6;
@@ -1141,6 +1490,27 @@
   border-color: var(--color-border-focus);
 }
 
+/* 项目设置二级子分组（如「翻译处理 → 接口与并发」） */
+.pc-subsection {
+  margin: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.pc-subsection-title {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-1-5);
+  margin: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+  color: var(--color-text-secondary);
+}
+
+/* 预留阶段行：整行弱化 */
+.page-project-config .pc-row--reserved {
+  opacity: 0.6;
+}
+
 /* 后端配置页 API 调用设置：checkbox 着色与对齐 */
 .pc-row-control input[type="checkbox"] {
   accent-color: var(--color-brand-primary);
@@ -1148,5 +1518,23 @@
   height: 16px;
   vertical-align: middle;
   cursor: pointer;
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1100px) {
+  .pc-nav {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .page-project-config .pc-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+
+  .pc-search__input {
+    width: 150px;
+  }
 }
 

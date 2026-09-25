@@ -63,11 +63,6 @@
   -webkit-backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
 }
 
-/* 项目配置分组标题条原为 --color-bg-app（已被置透明），走半透明面板 */
-:root.custom-bg-on .pc-group-title {
-  background: var(--color-bg-panel);
-}
-
 /* 毛玻璃：对低实例数的主要表面加模糊（模糊半径随表面不透明度联动，同上游公式）；
    排除 .entry-card 等高实例列表项与输入框，避免大面积 backdrop-filter 掉帧；
    下拉面板不进模糊清单（见下方固定实底规则） */

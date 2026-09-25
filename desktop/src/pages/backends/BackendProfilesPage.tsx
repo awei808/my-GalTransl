@@ -460,7 +460,9 @@ export function BackendProfilesPage() {
             {/* API 调用设置（OpenAI-Compatible 级）：流式 / 服务商 / 思考参数 */}
             <Show when={editType() === "OpenAI-Compatible"}>
               <div class="pc-group">
-                <div class="pc-group-title">API 调用设置</div>
+                <div class="pc-group-title">
+                  <h3 class="pc-group-title-text">API 调用设置</h3>
+                </div>
                 <div class="pc-field-list">
                   <div class="pc-row">
                     <span class="pc-row-label">流式请求 (stream)</span>

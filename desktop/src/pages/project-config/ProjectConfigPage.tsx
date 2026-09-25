@@ -12,6 +12,7 @@ import type { FixedCardKind } from "../../lib/settings-taxonomy";
 import { parseAfterTranslation, validateAfterTranslation } from "../../lib/afterTranslation";
 import { buildStageBackendFields } from "../../lib/stageBackendFields";
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
+import { Icon } from "../../components/icons";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
 type ConfigValue =
@@ -468,6 +469,49 @@ const KEYWORD_LABELS: Record<string, string> = {
 // 功能落地并验证通过后移除对应条目。
 const TODO_CONFIG_KEYS: Record<string, string> = {};
 
+/**
+ * 大分区图标（与 settings-taxonomy 的 section.title 对应）。
+ * 未命中（含漏归的「其他设置」）回退 settings 齿轮。
+ */
+const SECTION_ICONS: Record<string, string> = {
+  目标语言: "globe",
+  翻译规范文件: "file-text",
+  翻译后端总设置: "server",
+  "翻译后端-全局提示词": "inject",
+  "翻译后端-文件/批次元数据提取": "database",
+  "翻译后端-对话翻译": "user",
+  "翻译后端-修复改进": "swap",
+  "翻译后端-完整流水线": "workflow",
+  "翻译后端-术语表（GenDic）": "library",
+  "翻译后端-剧情路线图": "map",
+  问题检测: "alert-triangle",
+  代理: "shield",
+  缓存: "save",
+  字典: "book",
+  后端专属: "cpu",
+  其他设置: "puzzle",
+};
+
+function sectionIcon(title: string): string {
+  return SECTION_ICONS[title] ?? "settings";
+}
+
+/**
+ * 固定卡片的搜索文本（搜索过滤用，纯静态关键词；动态内容在 fixedCardMatches 单独补充）。
+ */
+const FIXED_CARD_SEARCH_TEXT: Record<FixedCardKind, string> = {
+  externalInfo:
+    "游戏外部信息 externals.gameInfo 全局分析 ForGlobalPrompt 外部背景资料 游戏名称 简介制作公司 世界观 角色 ExternalInfo",
+  translationGuideline:
+    "翻译规范文件 common.gpt.translation_guideline translation_guidelines 文风 措辞 提示词注入 注入翻译提示词",
+  afterTranslation:
+    "翻译后处理后端 阶段7 执行顺序 common.gpt.afterTranslation improve brfix jpfix banfix semcheck fix 备选译文 疑似错误",
+  stageBackends:
+    "大阶段独立 API 接入 common.stageBackends 后端配置 元数据阶段 翻译执行 修复改进 全局分析 术语表 文件级元数据 剧情路线图 批次划分 跟随任务主配置",
+  problemAnalyze:
+    "问题检测 problemAnalyze 检测项 平均分句长度阈值 单句过长 定语过长 状语过长 H场景 阈值 启用检测项",
+};
+
 export function ProjectConfigPage() {
   const [config, setConfig] = createSignal<Record<string, ConfigValue>>({});
   const [schemaDesc, setSchemaDesc] = createSignal<Record<string, string>>({});
@@ -583,6 +627,198 @@ export function ProjectConfigPage() {
   } catch {
     console.warn("[ProjectConfig] 读取折叠状态失败，重置为全展开");
   }
+
+  // ── 搜索过滤与分区导航 ──
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const isSearching = () => searchQuery().trim() !== "";
+  const [activeSection, setActiveSection] = createSignal("");
+  // 内容滚动区（独立于页面根的滚动容器；顶栏/导航固定不随滚动）
+  let contentRef: HTMLDivElement | undefined;
+
+  /** 单个配置行是否命中搜索词（label/键名/说明/值文本，大小写不敏感） */
+  function rowMatches(key: string, q: string): boolean {
+    const val = getValue(key);
+    const valueText =
+      val !== null && typeof val === "object"
+        ? formatNonScalarValue(val, "array")
+        : String(val ?? "");
+    return (
+      getFieldLabel(key).toLowerCase().includes(q) ||
+      key.toLowerCase().includes(q) ||
+      getFieldHint(key).toLowerCase().includes(q) ||
+      valueText.toLowerCase().includes(q)
+    );
+  }
+
+  /** 固定卡片是否命中搜索词（静态关键词 + 动态内容：问题类型/阶段字段） */
+  function fixedCardMatches(kind: FixedCardKind, q: string): boolean {
+    if (FIXED_CARD_SEARCH_TEXT[kind].toLowerCase().includes(q)) return true;
+    if (
+      kind === "problemAnalyze" &&
+      problemTypes().some(
+        (pt) => pt.name.toLowerCase().includes(q) || pt.description.toLowerCase().includes(q),
+      )
+    )
+      return true;
+    if (
+      kind === "stageBackends" &&
+      stageBackendFields().some(
+        (f) =>
+          f.label.toLowerCase().includes(q) ||
+          f.desc.toLowerCase().includes(q) ||
+          f.key.toLowerCase().includes(q),
+      )
+    )
+      return true;
+    return false;
+  }
+
+  /**
+   * 当前应渲染的分组。非搜索态直接复用 classifiedGroups 的结构缓存引用，
+   * 避免 <For> 因新数组引用重建所有行（输入失焦/IME 中断，动机同 classifiedGroups 缓存）；
+   * 搜索态按（结构签名 + 关键词）缓存过滤结果：编辑值不改结构签名，不会误失效。
+   */
+  let _filterSig = "";
+  let _filterCache: ReturnType<typeof classifiedGroups> | null = null;
+  function visibleGroups() {
+    const q = searchQuery().trim().toLowerCase();
+    const base = classifiedGroups();
+    if (!q) {
+      _filterCache = null;
+      _filterSig = "";
+      return base;
+    }
+    // 动态内容（问题类型/阶段字段）异步加载完成会改变命中结果：纳入缓存键，
+    // 避免加载完成前搜索按空列表误判未命中并被缓存（直到结构或关键词变化才重算）
+    const sig = `${_groupedSig}#${q}#${problemTypesLoading() ? "L" : "R"}#${pipelineStages().length}`;
+    if (_filterCache && sig === _filterSig) return _filterCache;
+    const result: typeof base = [];
+    for (const g of base) {
+      const directItems = g.directItems.filter((it) => rowMatches(it[0], q));
+      const subsections = g.subsections
+        .map((sub) => ({ ...sub, items: sub.items.filter((it) => rowMatches(it[0], q)) }))
+        .filter((sub) => sub.items.length > 0);
+      const fixedCards = g.fixedCards.filter((kind) => fixedCardMatches(kind, q));
+      const count =
+        directItems.length +
+        fixedCards.length +
+        subsections.reduce((n, sub) => n + sub.items.length, 0);
+      if (count > 0) result.push({ ...g, directItems, subsections, fixedCards });
+    }
+    _filterSig = sig;
+    _filterCache = result;
+    return result;
+  }
+
+  /**
+   * 固定卡片的条目计数：q 为空串时返回卡内全部条目数，搜索时返回命中条目数；
+   * 仅标题/说明命中而内部条目未命中时按 1 项计（卡片整体命中）。
+   */
+  function fixedCardMatchCount(kind: FixedCardKind, q: string): number {
+    if (!fixedCardMatches(kind, q)) return 0;
+    if (kind === "problemAnalyze") {
+      const typeHits = problemTypes().filter(
+        (pt) => pt.name.toLowerCase().includes(q) || pt.description.toLowerCase().includes(q),
+      ).length;
+      const thresholdLabels = [
+        "平均分句长度阈值（单句过长）",
+        "h 场景平均分句长度阈值（单句过长）",
+        "定语最大长度（定语过长）",
+        "状语最大长度（状语过长）",
+      ];
+      const labelHits = thresholdLabels.filter((l) => l.includes(q)).length;
+      return Math.max(1, typeHits + labelHits);
+    }
+    if (kind === "stageBackends") {
+      return Math.max(
+        1,
+        stageBackendFields().filter(
+          (f) =>
+            f.label.toLowerCase().includes(q) ||
+            f.desc.toLowerCase().includes(q) ||
+            f.key.toLowerCase().includes(q),
+        ).length,
+      );
+    }
+    return 1;
+  }
+
+  /**
+   * 分组内条目计数（直接字段 + 二级字段 + 固定卡片段目）。
+   * 非搜索态传空 q 统计全部条目；搜索态 g 已是过滤结果，传当前 q 即为命中数。
+   */
+  function groupItemCount(
+    g: {
+      directItems: unknown[];
+      subsections: { items: unknown[] }[];
+      fixedCards: FixedCardKind[];
+    },
+    q: string,
+  ): number {
+    return (
+      g.directItems.length +
+      g.subsections.reduce((n, sub) => n + sub.items.length, 0) +
+      g.fixedCards.reduce((n, kind) => n + fixedCardMatchCount(kind, q), 0)
+    );
+  }
+
+  /** 导航点击：展开（若折叠）并滚动到对应分组，立即高亮 */
+  function jumpToSection(title: string) {
+    expandGroup(title);
+    setActiveSection(title);
+    // 折叠展开动画约 150ms，动画结束后滚动定位更准
+    window.setTimeout(() => {
+      const el = Array.from(
+        contentRef?.querySelectorAll<HTMLElement>(".pc-group") ?? [],
+      ).find((node) => node.dataset.title === title);
+      el?.scrollIntoView({ block: "start" });
+    }, 180);
+  }
+
+  /** 滚动联动：内容区滚动时高亮视口顶部的当前分组（rAF 节流） */
+  function updateActiveSection() {
+    const el = contentRef;
+    if (!el) return;
+    const groups = Array.from(el.querySelectorAll<HTMLElement>(".pc-group"));
+    if (groups.length === 0) {
+      setActiveSection("");
+      return;
+    }
+    const containerTop = el.getBoundingClientRect().top;
+    let current = groups[0].dataset.title ?? "";
+    for (const node of groups) {
+      if (node.getBoundingClientRect().top - containerTop <= 120) {
+        current = node.dataset.title ?? current;
+      } else break;
+    }
+    // 滚动到底时强制高亮最后一组（末组可能到不了 120px 阈值线）
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 8) {
+      current = groups[groups.length - 1].dataset.title ?? current;
+    }
+    setActiveSection(current);
+  }
+
+  /** 内容滚动区 ref：挂载滚动监听（元素在 loading 结束后才创建，须用回调 ref） */
+  function attachContentRef(el: HTMLDivElement) {
+    contentRef = el;
+    let raf = 0;
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(updateActiveSection);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onCleanup(() => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    });
+  }
+
+  // 分组结构/加载态变化后重算高亮（下一帧，等 DOM 更新完成）
+  createEffect(() => {
+    void visibleGroups();
+    void loading();
+    if (!contentRef) return;
+    requestAnimationFrame(updateActiveSection);
+  });
 
   // ── 问题检测（problemAnalyze）：已移回项目设置，随「保存配置」按钮统一写回 YAML ──
   // ── 阶段清单：大阶段独立 API 卡片的字段来源（后端不可达时退回旧 4 键，保证界面可用） ──
@@ -711,6 +947,14 @@ export function ProjectConfigPage() {
     // 问题检测分组需等内容加载稳定再滚动；页面顶部无需等待问题类型
     const waitProblemTypes = target === "pc-group-problem-analyze";
     if (loading() || (waitProblemTypes && problemTypesLoading())) return;
+    // pc-top：页面根不再是滚动容器（滚动下沉到内容区），直接置顶内容滚动区
+    if (target === "pc-top") {
+      requestAnimationFrame(() => {
+        if (contentRef) contentRef.scrollTop = 0;
+        setAppState("settingsScrollTarget", null);
+      });
+      return;
+    }
     requestAnimationFrame(() => {
       const el = document.getElementById(target);
       // 目标元素不存在时也清除 target，避免 settingsScrollTarget 悬挂
@@ -718,14 +962,14 @@ export function ProjectConfigPage() {
         setAppState("settingsScrollTarget", null);
         return;
       }
-      // 目标分组处于折叠时，先展开（SolidJS 响应式更新 DOM 需下一帧），下一帧再滚动
+      // 目标分组处于折叠时，先展开（SolidJS 响应式更新 DOM 需下一帧），展开动画结束后再滚动
       const groupTitle = el.dataset.title;
       if (groupTitle && collapsedGroups().has(groupTitle)) {
         expandGroup(groupTitle);
-        requestAnimationFrame(() => {
+        window.setTimeout(() => {
           el.scrollIntoView({ block: "start" });
           setAppState("settingsScrollTarget", null);
-        });
+        }, 180);
       } else {
         el.scrollIntoView({ block: "start" });
         setAppState("settingsScrollTarget", null);
@@ -880,8 +1124,8 @@ export function ProjectConfigPage() {
       return (
         <div class="pc-row">
           <div class="pc-row-label">
-            <span class="pc-label">是否启用动态句数调整</span>
-            <div class="pc-key-hint">
+            <div class="pc-label-line">
+              <span class="pc-label">是否启用动态句数调整</span>
               <code class="pc-key">{key}</code>
             </div>
             <p class="pc-desc">
@@ -913,8 +1157,8 @@ export function ProjectConfigPage() {
       return (
         <div class="pc-row">
           <div class="pc-row-label">
-            <span class="pc-label">{getFieldLabel(key)}</span>
-            <div class="pc-key-hint">
+            <div class="pc-label-line">
+              <span class="pc-label">{getFieldLabel(key)}</span>
               <code class="pc-key">{key}</code>
             </div>
             <Show when={getFieldHint(key)}>
@@ -942,11 +1186,11 @@ export function ProjectConfigPage() {
     return (
       <div class="pc-row" classList={{ "pc-row--todo": !!effectiveTodoMsg }}>
         <div class="pc-row-label">
-          <span class="pc-label">{getFieldLabel(key)}</span>
-          <Show when={effectiveTodoMsg}>
-            <span class="pc-todo-badge">TODO</span>
-          </Show>
-          <div class="pc-key-hint">
+          <div class="pc-label-line">
+            <span class="pc-label">{getFieldLabel(key)}</span>
+            <Show when={effectiveTodoMsg}>
+              <span class="pc-todo-badge">TODO</span>
+            </Show>
             <code class="pc-key">{key}</code>
           </div>
           <Show when={getFieldHint(key)}>
@@ -1122,20 +1366,18 @@ export function ProjectConfigPage() {
   function renderFixedCard(kind: FixedCardKind) {
     if (kind === "externalInfo") {
       return (
-        <div class="pc-external-info">
-          <div class="pc-row-label">
+        <div class="pc-fixed-card">
+          <div class="pc-fixed-card__head">
             <span class="pc-label">游戏外部信息</span>
-            <div class="pc-key-hint">
-              <code class="pc-key">externals.gameInfo</code>
-            </div>
-            <p class="pc-desc">
-              提供给「全局分析（ForGlobalPrompt）」的外部背景资料——游戏名称、简介、制作公司、世界观、已有角色等自由文本。
-              生成全局提示词时会注入 [ExternalInfo] 占位符，帮助模型产出更准确的游戏概况与角色档案。
-              留空则提示词显示「（未提供外部信息）」。
-            </p>
+            <code class="pc-key">externals.gameInfo</code>
           </div>
+          <p class="pc-desc">
+            提供给「全局分析（ForGlobalPrompt）」的外部背景资料——游戏名称、简介、制作公司、世界观、已有角色等自由文本。
+            生成全局提示词时会注入 [ExternalInfo] 占位符，帮助模型产出更准确的游戏概况与角色档案。
+            留空则提示词显示「（未提供外部信息）」。
+          </p>
           <textarea
-            class="pc-external-info__textarea"
+            class="pc-fixed-card__textarea"
             rows="6"
             value={String(getValue("externals.gameInfo") ?? "")}
             onInput={(e) => setValue("externals.gameInfo", e.currentTarget.value)}
@@ -1158,18 +1400,13 @@ export function ProjectConfigPage() {
     }
     if (kind === "translationGuideline") {
       return (
-        <div class="pc-external-info">
-          <div class="pc-row-label">
-            <span class="pc-label">翻译规范文件</span>
-            <div class="pc-key-hint">
-              <code class="pc-key">{GUIDELINE_KEY}</code>
-            </div>
-            <p class="pc-desc">
-              位于 translation_guidelines 目录，影响文风与措辞。运行对应后端或完整流水线时，
-              该文件内容会被注入到翻译提示词中。
-            </p>
-          </div>
-          <div class="pc-row-control" style="margin-top: 4px">
+        <div class="pc-fixed-card">
+          {/* 组头已带「翻译规范文件」标题与位置说明，卡片内只保留补充说明与控件，避免重复 */}
+          <p class="pc-desc">
+            运行对应后端或完整流水线时，该文件内容会被注入到翻译提示词中。
+          </p>
+          <div class="pc-fixed-card__control">
+            <code class="pc-key">{GUIDELINE_KEY}</code>
             {/* 列表加载完成前不渲染 select，避免 value 匹配不到异步 options 而回退显示列表第一项(Basic.md) */}
             <Show
               when={guidelinesLoaded()}
@@ -1207,21 +1444,19 @@ export function ProjectConfigPage() {
     if (kind === "afterTranslation") {
       const order = () => parseAfterTranslation(getValue("common.gpt.afterTranslation"));
       return (
-        <div class="pc-external-info">
-          <div class="pc-row-label">
+        <div class="pc-fixed-card">
+          <div class="pc-fixed-card__head">
             <span class="pc-label">翻译后处理后端（阶段 7 执行顺序）</span>
-            <div class="pc-key-hint">
-              <code class="pc-key">common.gpt.afterTranslation</code>
-            </div>
-            <p class="pc-desc">
-              完整流水线翻译完成后（阶段 7），按数字顺序逐文件执行修复/改进后端；留空则不执行。
-              数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 7：
-              修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
-              ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
-              / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 对已翻译文件手动执行
-              （后者依次为语义命中句二次复核、词语色彩命中句二次复核）。
-            </p>
+            <code class="pc-key">common.gpt.afterTranslation</code>
           </div>
+          <p class="pc-desc">
+            完整流水线翻译完成后（阶段 7），按数字顺序逐文件执行修复/改进后端；留空则不执行。
+            数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 7：
+            修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
+            ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
+            / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 对已翻译文件手动执行
+            （后者依次为语义命中句二次复核、词语色彩命中句二次复核）。
+          </p>
           <AfterTranslationOrderEditor
             value={order()}
             onChange={(o) => setValue("common.gpt.afterTranslation", o)}
@@ -1233,30 +1468,30 @@ export function ProjectConfigPage() {
     if (kind === "stageBackends") {
       const stageValue = () => stageBackendsValue();
       return (
-        <div class="pc-external-info">
-          <div class="pc-row-label">
+        <div class="pc-fixed-card">
+          <div class="pc-fixed-card__head">
             <span class="pc-label">大阶段独立 API 接入</span>
-            <div class="pc-key-hint">
-              <code class="pc-key">common.stageBackends</code>
-            </div>
-            <p class="pc-desc">
-              各阶段可各自使用不同的全局后端配置（「后端配置」页创建）。默认跟随任务主配置
-              （翻译控制台所选）；元数据类子阶段（全局分析/术语表/文件级元数据/剧情路线图/批次划分）
-              未单独指定时回退到「元数据阶段（旧键）」，旧键也为空则跟随任务主配置。
-              阶段配置里的 proxy 不生效，统一使用任务级代理。引用的配置被删除后任务将启动失败，
-              请同步更新此处。
-            </p>
+            <code class="pc-key">common.stageBackends</code>
           </div>
+          <p class="pc-note">
+            各阶段可各自使用不同的全局后端配置（「后端配置」页创建）。默认跟随任务主配置
+            （翻译控制台所选）；元数据类子阶段（全局分析/术语表/文件级元数据/剧情路线图/批次划分）
+            未单独指定时回退到「元数据阶段（旧键）」，旧键也为空则跟随任务主配置。
+            阶段配置里的 proxy 不生效，统一使用任务级代理。引用的配置被删除后任务将启动失败，
+            请同步更新此处。
+          </p>
           <For each={stageBackendFields()}>
             {(f) => {
               const current = () => stageValue()[f.key] ?? "";
               return (
                 <div class="pc-row" classList={{ "pc-row--reserved": f.reserved }}>
                   <div class="pc-row-label">
-                    <label class="pc-label" for={`stage-backend-${f.key}`}>
-                      {f.label}
-                      {f.reserved && <span class="pc-key-hint">（预留）</span>}
-                    </label>
+                    <div class="pc-label-line">
+                      <label class="pc-label" for={`stage-backend-${f.key}`}>
+                        {f.label}
+                      </label>
+                      {f.reserved && <span class="pc-desc">（预留）</span>}
+                    </div>
                     <p class="pc-desc">{f.desc}</p>
                   </div>
                   <div class="pc-row-control">
@@ -1691,17 +1926,51 @@ export function ProjectConfigPage() {
   return (
     <div class="page page-project-config" id="pc-top">
       <div class="pc-header">
-        <div>
+        <div class="pc-header-titles">
           <h2 class="page-title">后端设置（项目设置）</h2>
-          <p class="page-description">编辑当前项目的 {getActiveConfigFileName()} 配置参数。</p>
+          <span
+            class="pc-config-chip"
+            title={`编辑当前项目的 ${getActiveConfigFileName()} 配置参数`}
+          >
+            <Icon name="file-text" size={12} />
+            {getActiveConfigFileName()}
+          </span>
         </div>
-        <button
-          class="btn btn--sm btn--primary"
-          onClick={handleSave}
-          disabled={saving() || loading()}
-        >
-          {saving() ? "保存中…" : "保存配置"}
-        </button>
+        <div class="pc-header-actions">
+          <div class="pc-search">
+            <Icon name="search" size={14} class="pc-search__icon" />
+            <input
+              type="search"
+              class="pc-search__input"
+              placeholder="搜索配置项…"
+              aria-label="搜索配置项"
+              value={searchQuery()}
+              onInput={(e) => setSearchQuery(e.currentTarget.value)}
+            />
+            <Show when={searchQuery()}>
+              <button
+                class="pc-search__clear"
+                aria-label="清除搜索"
+                onClick={() => setSearchQuery("")}
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </Show>
+          </div>
+          <Show when={dirty() && !saving()}>
+            <span class="pc-dirty-pill">
+              <span class="pc-dirty-dot" />
+              未保存
+            </span>
+          </Show>
+          <button
+            class="btn btn--sm btn--primary"
+            onClick={handleSave}
+            disabled={saving() || loading()}
+          >
+            {saving() ? "保存中…" : "保存配置"}
+          </button>
+        </div>
       </div>
 
       <Show when={!loading()} fallback={<p class="pc-status">加载中…</p>}>
@@ -1709,94 +1978,131 @@ export function ProjectConfigPage() {
           when={pid() && classifiedGroups().length > 0}
           fallback={<p class="pc-status">{!pid() ? "请先打开一个项目" : "暂无可编辑的配置参数"}</p>}
         >
-          {/* 所有配置分区（含固定卡片）统一由 classifiedGroups() 按 taxonomy 渲染；
-              游戏外部信息、翻译规范文件、问题检测卡片均通过 section.fixedCards 归位，
-              不再以顶部独立块渲染。 */}
-
-          {/* 问题检测（problemAnalyze）：已移回项目设置，随底部「保存配置」统一写回 YAML。
-              作为固定卡片由 taxonomy 的「问题检测」section 渲染。 */}
-          <div class="pc-field-list">
-            <For each={classifiedGroups()}>
-              {(g) => {
-                const title = g.section.title;
-                return (
-                  <div
-                    class="pc-group"
-                    id={title === "问题检测" ? "pc-group-problem-analyze" : undefined}
-                    data-title={title}
-                  >
-                    <div
-                      class="pc-group-title pc-group-title--toggle"
-                      role="button"
-                      tabindex="0"
-                      aria-expanded={collapsedGroups().has(title) ? "false" : "true"}
-                      aria-controls={title === "问题检测" ? "pc-group-problem-analyze" : undefined}
-                      onClick={() => toggleGroup(title)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          toggleGroup(title);
-                        }
-                      }}
+          <div class="pc-layout" classList={{ "pc-layout--searching": isSearching() }}>
+            {/* 左侧分区导航：滚动联动高亮当前分组；搜索时隐藏（列表已过滤，锚点无意义） */}
+            <Show when={!isSearching()}>
+              <nav class="pc-nav" aria-label="设置分区导航">
+                <For each={visibleGroups()}>
+                  {(g) => (
+                    <button
+                      class="pc-nav__item"
+                      classList={{ "pc-nav__item--active": activeSection() === g.section.title }}
+                      onClick={() => jumpToSection(g.section.title)}
+                      title={g.section.desc || g.section.title}
                     >
-                      <div>
-                        <h3 class="pc-group-title-text">{title}</h3>
-                        <Show when={g.section.desc}>
-                          <p class="pc-group-desc">{g.section.desc}</p>
-                        </Show>
-                      </div>
-                      <span class="pc-group-chevron" aria-hidden="true">
-                        {collapsedGroups().has(title) ? "▸" : "▾"}
-                      </span>
-                    </div>
+                      <Icon name={sectionIcon(g.section.title)} size={14} class="pc-nav__icon" />
+                      <span class="pc-nav__text">{g.section.title}</span>
+                    </button>
+                  )}
+                </For>
+              </nav>
+            </Show>
 
-                    <div class="pc-group-body" classList={{ "pc-group-body--collapsed": collapsedGroups().has(title) }}>
-                      {/* 后端专属：OpenAI 兼容接口跳转到全局后端配置 */}
-                      <Show when={title === "后端专属"}>
-                        <div class="pc-global-banner">
-                          <div class="pc-global-banner__text">
-                            <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「后端配置」统一管理，不再在项目设置中维护。
-                          </div>
-                          <button
-                            class="btn btn--sm btn--primary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigateTo("backend-profiles");
-                            }}
-                          >
-                            去后端配置 →
-                          </button>
-                        </div>
-                      </Show>
-
-                      {/* 固定卡片（游戏外部信息 / 翻译规范文件 / 问题检测），按 taxonomy 顺序渲染 */}
-                      <For each={g.fixedCards}>
-                        {(kind) => renderFixedCard(kind)}
-                      </For>
-
-                      {/* 一级直接字段（无二级时） */}
-                      <For each={g.directItems}>
-                        {(item) => renderFieldRow(item)}
-                      </For>
-
-                      {/* 二级子分组 */}
-                      <For each={g.subsections}>
-                        {(sub) => (
-                          <div class="pc-subsection">
-                            <Show when={sub.subsection.title}>
-                              <h4 class="pc-subsection-title">{sub.subsection.title}</h4>
+            {/* 内容滚动区；pc-field-list 类名保留：卸载自动保存测试以其定位配置输入框 */}
+            <div class="pc-content" ref={attachContentRef}>
+              <div class="pc-content-inner pc-field-list">
+                {/* 所有配置分区（含固定卡片）统一由 visibleGroups 按 taxonomy 渲染：
+                    游戏外部信息、翻译规范文件、问题检测等卡片经 section.fixedCards 归位；
+                    非搜索态直接复用 classifiedGroups 缓存引用，搜索态为过滤结果。 */}
+                <For each={visibleGroups()}>
+                  {(g) => {
+                    const title = g.section.title;
+                    const expanded = () => isSearching() || !collapsedGroups().has(title);
+                    return (
+                      <div
+                        class="pc-group"
+                        classList={{ "pc-group--collapsed": !expanded() }}
+                        id={title === "问题检测" ? "pc-group-problem-analyze" : undefined}
+                        data-title={title}
+                      >
+                        <div
+                          class="pc-group-title pc-group-title--toggle"
+                          role="button"
+                          tabindex="0"
+                          aria-expanded={expanded() ? "true" : "false"}
+                          aria-controls={title === "问题检测" ? "pc-group-problem-analyze" : undefined}
+                          onClick={() => !isSearching() && toggleGroup(title)}
+                          onKeyDown={(e) => {
+                            // 搜索态与 onClick 同口径守卫：避免键盘操作静默改写折叠记录
+                            if (isSearching()) return;
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              toggleGroup(title);
+                            }
+                          }}
+                        >
+                          <span class="pc-group-icon">
+                            <Icon name={sectionIcon(title)} size={15} />
+                          </span>
+                          <div class="pc-group-headings">
+                            <h3 class="pc-group-title-text">{title}</h3>
+                            <Show when={g.section.desc}>
+                              <p class="pc-group-desc">{g.section.desc}</p>
                             </Show>
-                            <For each={sub.items}>
+                          </div>
+                          <span class="pc-group-meta">
+                            {isSearching()
+                              ? `匹配 ${groupItemCount(g, searchQuery().trim().toLowerCase())} 项`
+                              : `${groupItemCount(g, "")} 项`}
+                          </span>
+                          <Icon name="chevron-down" size={14} class="pc-group-chevron" />
+                        </div>
+
+                        {/* 折叠展开由外层 pc-group--collapsed 驱动（grid rows 动画）；搜索态强制展开且不改折叠记录 */}
+                        <div class="pc-group-body">
+                          <div class="pc-group-body-inner">
+                            {/* 后端专属：OpenAI 兼容接口跳转到全局后端配置 */}
+                            <Show when={title === "后端专属"}>
+                              <div class="pc-global-banner">
+                                <div class="pc-global-banner__text">
+                                  <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「后端配置」统一管理，不再在项目设置中维护。
+                                </div>
+                                <button
+                                  class="btn btn--sm btn--primary"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigateTo("backend-profiles");
+                                  }}
+                                >
+                                  去后端配置 →
+                                </button>
+                              </div>
+                            </Show>
+
+                            {/* 固定卡片（游戏外部信息 / 翻译规范文件 / 问题检测），按 taxonomy 顺序渲染 */}
+                            <For each={g.fixedCards}>
+                              {(kind) => renderFixedCard(kind)}
+                            </For>
+
+                            {/* 一级直接字段（无二级时） */}
+                            <For each={g.directItems}>
                               {(item) => renderFieldRow(item)}
                             </For>
+
+                            {/* 二级子分组 */}
+                            <For each={g.subsections}>
+                              {(sub) => (
+                                <div class="pc-subsection">
+                                  <Show when={sub.subsection.title}>
+                                    <h4 class="pc-subsection-title">{sub.subsection.title}</h4>
+                                  </Show>
+                                  <For each={sub.items}>
+                                    {(item) => renderFieldRow(item)}
+                                  </For>
+                                </div>
+                              )}
+                            </For>
                           </div>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                );
-              }}
-            </For>
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+                <Show when={isSearching() && visibleGroups().length === 0}>
+                  <p class="pc-status pc-status--center">没有匹配「{searchQuery().trim()}」的配置项</p>
+                </Show>
+              </div>
+            </div>
           </div>
         </Show>
       </Show>

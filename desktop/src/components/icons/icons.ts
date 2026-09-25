@@ -194,6 +194,17 @@ export const ICON_PATHS: Record<string, IconDef> = {
   terminal: {
     d: "M4 17l6-6-6-6M13 19h7",
   },
+
+  // ── 项目设置分区图标（补齐） ──
+  map: {
+    d: "M9 4 3.5 6v14L9 18l6 2 5.5-2V4L15 6 9 4Zm0 0v14m6-12v14",
+  },
+  shield: {
+    d: "M12 3 5 5.8v5.4c0 4.3 2.9 7.6 7 9.3 4.1-1.7 7-5 7-9.3V5.8L12 3Z",
+  },
+  save: {
+    d: "M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 0v6h8V3M8 21v-7h8v7",
+  },
 };
 
 /** Get all icon names (for testing / validation) */
