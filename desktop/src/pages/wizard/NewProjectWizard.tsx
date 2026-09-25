@@ -80,6 +80,11 @@ export function NewProjectWizard() {
   const [projectId, setProjectId] = createSignal("");
   // 后端 workspace 根目录（应用程序同目录下），用于实时预览项目完整路径
   const [workspaceRoot, setWorkspaceRoot] = createSignal("");
+  // 自定义创建位置：默认落在 workspace 根，开启后可选择磁盘任意已存在的父目录
+  const [useCustomLocation, setUseCustomLocation] = createSignal(false);
+  const [customParentDir, setCustomParentDir] = createSignal("");
+  // 桌面端（Tauri）才有系统目录选择器；Web 模式手输绝对路径
+  const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   // Step 2
   const [importedFiles, setImportedFiles] = createSignal<string[]>([]);
@@ -124,14 +129,33 @@ export function NewProjectWizard() {
     return `${d}${sep}gt_input`;
   });
 
-  // 实时预览：输入项目名即拼接后端 workspace 根目录下的完整预期路径
+  // 实时预览：输入项目名即拼接所选位置下的完整预期路径
+  // （仅展示用：剥掉尾部多余分隔符；发送给后端的是原始输入，由后端 normpath）
   const previewDir = createMemo(() => {
-    const root = workspaceRoot();
     const name = projectName().trim();
-    if (!root || !name) return "";
-    const sep = root.includes("/") ? "/" : "\\";
-    return `${root}${sep}${name}`;
+    if (!name) return "";
+    const root = useCustomLocation() ? customParentDir().trim() : workspaceRoot();
+    if (!root) return "";
+    const trimmed = root.replace(/[\\/]+$/, "");
+    if (!trimmed) return "";
+    const sep = trimmed.includes("/") ? "/" : "\\";
+    return `${trimmed}${sep}${name}`;
   });
+
+  // 创建位置描述（覆盖确认弹窗等文案用）
+  const locationDesc = () =>
+    useCustomLocation() && customParentDir().trim() ? customParentDir().trim() : "后端工作区";
+
+  // 浏览选择自定义父目录（仅桌面端；系统目录选择器返回绝对路径）
+  async function handleBrowseParentDir() {
+    try {
+      const dir = await open({ directory: true });
+      if (!dir || typeof dir !== "string") return;
+      setCustomParentDir(dir);
+    } catch (err) {
+      setFeedback({ type: "error", message: `选择目录失败: ${getErrorMessage(err)}` });
+    }
+  }
 
   // 进入向导即拉取后端 workspace 根目录（位于应用程序同目录下）
   createEffect(() => {
@@ -147,6 +171,12 @@ export function NewProjectWizard() {
       setFeedback({ type: "error", message: "请输入项目名称" });
       return;
     }
+    const parentDir = useCustomLocation() ? customParentDir().trim() : "";
+    if (useCustomLocation() && !parentDir) {
+      setFeedback({ type: "error", message: "请选择或输入自定义位置的父目录" });
+      return;
+    }
+    const options = parentDir ? { parent_dir: parentDir } : undefined;
     // 后端守卫：激活失败明确提示，而非静默报错
     try {
       await ensureDesktopBackendReady({ timeoutMs: 25000 });
@@ -155,21 +185,21 @@ export function NewProjectWizard() {
       return;
     }
     try {
-      const res = await initProject(name, false);
+      const res = await initProject(name, false, options);
       applyInitResult(res);
     } catch (err) {
       // 项目已存在：征询是否覆盖（覆盖仅重建布局与 config.yaml，保留译文/缓存）
       if (err instanceof ApiError && err.status === 409) {
         const result = await confirm.show({
           title: "目标项目已存在",
-          message: `项目「${name}」已存在于后端工作区。\n\n点击「覆盖」将重新生成 config.yaml（已有的译文、缓存等文件会保留）；点击「取消」可返回修改项目名。`,
+          message: `项目「${name}」已存在于 ${locationDesc()}。\n\n点击「覆盖」将重新生成 config.yaml（已有的译文、缓存等文件会保留）；点击「取消」可返回修改项目名或位置。`,
           confirmText: "覆盖",
           cancelText: "取消",
           tone: "warning",
         });
         if (!result.confirmed) return;
         try {
-          const res = await initProject(name, true);
+          const res = await initProject(name, true, options);
           applyInitResult(res);
         } catch (err2) {
           setFeedback({ type: "error", message: `覆盖失败: ${getErrorMessage(err2)}` });
@@ -186,6 +216,13 @@ export function NewProjectWizard() {
     setProjectCreated(true);
     setFeedback({ type: "success", message: "项目创建成功！" });
   }
+
+  // 名称/位置修改后使已创建结果失效：重置标记并清空旧落点，预览回落实时 previewDir
+  const invalidateCreatedProject = () => {
+    setProjectCreated(false);
+    setProjectDir("");
+    setProjectId("");
+  };
 
   // 导入文件（文件或文件夹均可；文件夹会被递归展开，交由后端读取写入 gt_input）
   async function importPathsToInput(paths: string[]) {
@@ -557,8 +594,14 @@ export function NewProjectWizard() {
               projectDir={projectDir()}
               previewDir={previewDir()}
               projectCreated={projectCreated()}
+              isDesktop={isDesktop}
+              useCustomLocation={useCustomLocation()}
+              customParentDir={customParentDir()}
+              onUseCustomLocationChange={setUseCustomLocation}
+              onCustomParentDirChange={setCustomParentDir}
+              onBrowseParentDir={handleBrowseParentDir}
               onProjectNameChange={setProjectName}
-              onProjectCreatedChange={setProjectCreated}
+              onInvalidateCreated={invalidateCreatedProject}
               onCreateProject={handleCreateProject}
             />
           )}

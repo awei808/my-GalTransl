@@ -563,7 +563,11 @@ def do_delete(handler: Any) -> None:
 
 
 def handle_init_project(handler: Any) -> None:
-    """POST /api/projects/init：在服务端 workspace 根下按客户端给定名称创建项目。"""
+    """POST /api/projects/init：按客户端给定名称创建项目。
+
+    未传 parent_dir 时在服务端 workspace 根下创建；传入 parent_dir 时（桌面端
+    经系统对话框选择的绝对路径）在该目录下创建。
+    """
     try:
         payload = handler._read_json_body()
     except (ValueError, TypeError, json.JSONDecodeError):
@@ -573,9 +577,15 @@ def handle_init_project(handler: Any) -> None:
     if not isinstance(name, str) or not name.strip():
         handler._send_json({"error": "name is required"}, status=HTTPStatus.BAD_REQUEST)
         return
+    # 自定义父目录：桌面端目录选择器传入的绝对路径，缺省仍落在 workspace 根
+    parent_dir = payload.get("parent_dir")
+    if parent_dir is not None and (not isinstance(parent_dir, str) or not parent_dir.strip()):
+        handler._send_json({"error": "parent_dir 必须是非空字符串"}, status=HTTPStatus.BAD_REQUEST)
+        return
     try:
-        project_dir = _resolve_new_project_dir(name.strip())
+        project_dir = _resolve_new_project_dir(name.strip(), parent_dir)
     except ValueError as exc:
+        LOGGER.warning(f"创建项目被拒绝: name={name.strip()!r} parent_dir={parent_dir!r}: {exc}")
         handler._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         return
     overwrite = bool(payload.get("overwrite", False))
@@ -614,8 +624,10 @@ def handle_init_project(handler: Any) -> None:
             sample_stages=sample_stages,
         )
     except OSError as exc:
+        LOGGER.error(f"创建项目失败: {project_dir}: {exc}")
         handler._send_json({"error": f"创建项目失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
         return
+    LOGGER.info(f"项目创建成功: {project_dir}")
     handler._send_json(
         {
             "project_id": encode_project_dir(project_dir),

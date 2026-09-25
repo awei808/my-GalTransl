@@ -312,7 +312,8 @@
   border-color: var(--color-brand-primary);
 }
 
-.text-plugin-chip input[type="checkbox"] {
+.text-plugin-chip input[type="checkbox"],
+.text-plugin-chip input[type="radio"] {
   accent-color: var(--color-brand-primary);
 }
 

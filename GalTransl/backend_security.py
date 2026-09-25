@@ -68,9 +68,10 @@ def token_ok(auth_header: str | None, expected: str) -> bool:
 def safe_under_project(project_dir: str, rel_path: str) -> str:
     """将相对路径解析到项目目录内，越界则抛 ValueError。
 
-    供未来写端点（init/import）复用，落实「不接收客户端原始磁盘路径」契约：
-    所有写目标必须是 project_dir 之下的相对路径，杜绝路径穿越。使用
-    os.path.commonpath 做归属判断，可稳健处理项目恰为文件系统根、以及
+    供写端点（init/import）复用：所有写目标必须是 project_dir 之下的相对路径，
+    杜绝路径穿越。project_dir 本身可来自客户端，但仅限「用户经系统对话框
+    显式选择的绝对路径」（init 的 parent_dir / 打开已有项目）。
+    使用 os.path.commonpath 做归属判断，可稳健处理项目恰为文件系统根、以及
     Windows 跨盘符等边界情况。
     """
     if not rel_path:

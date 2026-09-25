@@ -475,6 +475,17 @@ a:hover {
   gap: var(--space-2);
 }
 
+/* 向导第 1 步：自定义父目录输入行（输入框 + 浏览按钮） */
+.wizard-parent-dir-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.wizard-parent-dir-row .field__input {
+  flex: 1;
+}
+
 .wizard-settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

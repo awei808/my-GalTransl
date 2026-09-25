@@ -116,7 +116,7 @@ async function goToSettingsStep() {
   );
   fireEvent.click(createBtn!);
   await vi.waitFor(() => {
-    expect(vi.mocked(initProject)).toHaveBeenCalledWith("TestProj", false);
+    expect(vi.mocked(initProject)).toHaveBeenCalledWith("TestProj", false, undefined);
   });
   for (let i = 0; i < 3; i++) {
     clickNavButton("下一步");

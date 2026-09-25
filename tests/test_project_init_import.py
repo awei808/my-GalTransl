@@ -62,6 +62,28 @@ class HelperUnitTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _server_mod._resolve_new_project_dir(bad)
 
+    def test_resolve_accepts_custom_parent_dir(self) -> None:
+        parent = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(parent)
+        resolved = _server_mod._resolve_new_project_dir("proj", parent)
+        self.assertEqual(os.path.normpath(resolved), os.path.normpath(os.path.join(parent, "proj")))
+
+    def test_resolve_custom_parent_rejects_bad_name(self) -> None:
+        parent = os.path.join(self.tmp, "elsewhere2")
+        os.makedirs(parent)
+        for bad in ("a/b", "..", ""):
+            with self.assertRaises(ValueError):
+                _server_mod._resolve_new_project_dir(bad, parent)
+
+    def test_resolve_rejects_relative_parent_dir(self) -> None:
+        with self.assertRaises(ValueError):
+            _server_mod._resolve_new_project_dir("proj", "relative/dir")
+
+    def test_resolve_rejects_missing_parent_dir(self) -> None:
+        missing = os.path.join(self.tmp, "no-such-parent")
+        with self.assertRaises(ValueError):
+            _server_mod._resolve_new_project_dir("proj", missing)
+
     def test_create_layout_builds_four_cache_dirs(self) -> None:
         project_dir = os.path.join(self.tmp, "p1")
         created = _server_mod._create_project_layout(project_dir)
@@ -149,6 +171,60 @@ class InitEndpointTests(_Base):
 
     def test_init_rejects_absolute_name(self) -> None:
         status, _ = self._req("POST", "/api/projects/init", body={"name": "/etc/x"})
+        self.assertEqual(status, 400)
+
+    def test_init_with_custom_parent_dir(self) -> None:
+        parent = os.path.join(self.tmp, "custom-loc")
+        os.makedirs(parent)
+        status, body = self._req(
+            "POST", "/api/projects/init", body={"name": "cproj", "parent_dir": parent}
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            os.path.normpath(body["project_dir"]),
+            os.path.normpath(os.path.join(parent, "cproj")),
+        )
+        self.assertTrue(os.path.isfile(os.path.join(body["project_dir"], "config.yaml")))
+        self.assertTrue(os.path.isdir(os.path.join(body["project_dir"], "gt_input")))
+        # 项目 ID 应指向自定义位置
+        self.assertEqual(decode_project_dir(body["project_id"]), body["project_dir"])
+
+    def test_init_conflict_with_custom_parent_dir(self) -> None:
+        parent = os.path.join(self.tmp, "custom-loc-conflict")
+        os.makedirs(parent)
+        status, _ = self._req(
+            "POST", "/api/projects/init", body={"name": "dup2", "parent_dir": parent}
+        )
+        self.assertEqual(status, 201)
+        status2, _ = self._req(
+            "POST", "/api/projects/init", body={"name": "dup2", "parent_dir": parent}
+        )
+        self.assertEqual(status2, 409)
+        status3, _ = self._req(
+            "POST", "/api/projects/init", body={"name": "dup2", "parent_dir": parent, "overwrite": True}
+        )
+        self.assertEqual(status3, 201)
+
+    def test_init_rejects_missing_parent_dir(self) -> None:
+        status, _ = self._req(
+            "POST",
+            "/api/projects/init",
+            body={"name": "p1", "parent_dir": os.path.join(self.tmp, "no-such")},
+        )
+        self.assertEqual(status, 400)
+
+    def test_init_rejects_relative_parent_dir(self) -> None:
+        status, _ = self._req(
+            "POST", "/api/projects/init", body={"name": "p2", "parent_dir": "relative/dir"}
+        )
+        self.assertEqual(status, 400)
+
+    def test_init_rejects_blank_parent_dir(self) -> None:
+        status, _ = self._req("POST", "/api/projects/init", body={"name": "p3", "parent_dir": ""})
+        self.assertEqual(status, 400)
+
+    def test_init_rejects_non_string_parent_dir(self) -> None:
+        status, _ = self._req("POST", "/api/projects/init", body={"name": "p4", "parent_dir": 123})
         self.assertEqual(status, 400)
 
 

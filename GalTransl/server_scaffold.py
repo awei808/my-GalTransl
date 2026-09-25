@@ -1,7 +1,7 @@
 """新建项目脚手架与样本文件（0.4.10 从 server.py 抽出）。
 
 职责：
-- 工作区根与新建项目目录解析（_workspace_root / _resolve_new_project_dir）；
+- 工作区根与新建项目目录解析（_workspace_root / _resolve_new_project_dir，支持自定义父目录）；
 - 项目目录布局创建（_create_project_layout，与桌面向导 NewProjectWizard 的 4 类子目录一致）；
 - 初始 config.yaml 与各阶段样本文件写入（_write_initial_config / _write_stage_samples）。
 
@@ -129,22 +129,32 @@ _SAMPLE_PLOT_ROUTE_CONTENT = json.dumps(
 
 
 def _workspace_root() -> str:
-    """init 端点的项目根：由服务端配置，不接受客户端原始路径。"""
+    """init 端点的默认项目根（GALTRANSL_WORKSPACE_ROOT 或进程 cwd），未指定 parent_dir 时项目建在此目录下。"""
     root = (os.environ.get("GALTRANSL_WORKSPACE_ROOT") or "").strip()
     return os.path.normpath(root) if root else os.getcwd()
 
 
-def _resolve_new_project_dir(name: str) -> str:
-    """将客户端提供的项目名解析为服务端根下的绝对目录，越界则抛错。
+def _resolve_new_project_dir(name: str, parent_dir: str | None = None) -> str:
+    """将客户端提供的项目名解析为绝对目标目录，越界则抛错。
 
-    仅接受单一路径段（不含分隔符）；含分隔符或 `..` 一律拒绝，杜绝路径注入。
+    未提供 parent_dir 时落在服务端 workspace 根下；提供 parent_dir 时（桌面端
+    经系统对话框选择的绝对路径）在其下创建。name 仅接受单一路径段（不含
+    分隔符）；含分隔符或 `..` 一律拒绝，杜绝路径注入。
     """
     candidate = name.strip()
     if not candidate or candidate in (".", ".."):
         raise ValueError("非法的项目名")
     if any(sep in candidate for sep in ("/", "\\")):
         raise ValueError("项目名不能包含路径分隔符")
-    return safe_under_project(_workspace_root(), candidate)
+    if parent_dir is None:
+        return safe_under_project(_workspace_root(), candidate)
+    parent = os.path.normpath(parent_dir.strip())
+    if not os.path.isabs(parent):
+        raise ValueError("父目录必须是绝对路径")
+    # 父目录必须已存在：不做 makedirs 自动建父链，避免拼写错误在意外位置建目录
+    if not os.path.isdir(parent):
+        raise ValueError(f"父目录不存在: {parent}")
+    return safe_under_project(parent, candidate)
 
 
 def _create_project_layout(

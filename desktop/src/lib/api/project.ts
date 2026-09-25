@@ -49,12 +49,14 @@ export async function fetchProjectConfig(projectId: string, configFileName = "co
   );
 }
 
-/** 在服务端 workspace 根下按名称创建项目；已存在且 overwrite=false 时回 409。 */
+/** 创建项目：缺省落在后端 workspace 根下；传入 parent_dir（桌面端经系统对话框选择的绝对路径）时在其下创建。已存在且 overwrite=false 时回 409。 */
 export interface InitProjectOptions {
   /** 外部信息（externals.gameInfo），写入项目 config.yaml */
   game_info?: string;
   /** 流水线阶段开关（如 enableGlobalPrompt），值为 false 的阶段在 config.yaml 中禁用 */
   pipeline?: Record<string, boolean>;
+  /** 自定义父目录（必须为已存在的绝对路径），项目将创建在该文件夹内 */
+  parent_dir?: string;
 }
 export async function initProject(name: string, overwrite = false, options?: InitProjectOptions) {
   return apiRequest<{
@@ -70,11 +72,12 @@ export async function initProject(name: string, overwrite = false, options?: Ini
       overwrite,
       ...(options?.game_info !== undefined ? { game_info: options.game_info } : {}),
       ...(options?.pipeline ? { pipeline: options.pipeline } : {}),
+      ...(options?.parent_dir ? { parent_dir: options.parent_dir } : {}),
     }),
   });
 }
 
-/** 获取后端 workspace 根目录（项目创建位置，位于应用程序同目录下）。 */
+/** 获取后端 workspace 根目录（缺省项目创建位置，位于应用程序同目录下）。 */
 export async function fetchWorkspaceRoot() {
   return apiRequest<{ workspace_root: string }>("/api/projects/workspace-root", {
     method: "GET",
