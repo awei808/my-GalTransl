@@ -69,7 +69,8 @@
 }
 
 /* 毛玻璃：对低实例数的主要表面加模糊（模糊半径随表面不透明度联动，同上游公式）；
-   排除 .entry-card 等高实例列表项与输入框，避免大面积 backdrop-filter 掉帧 */
+   排除 .entry-card 等高实例列表项与输入框，避免大面积 backdrop-filter 掉帧；
+   下拉面板不进模糊清单（见下方固定实底规则） */
 :root.custom-bg-on .titlebar,
 :root.custom-bg-on .activitybar,
 :root.custom-bg-on .statusbar,
@@ -81,22 +82,24 @@
 :root.custom-bg-on .plugin-detail,
 :root.custom-bg-on .bp-new-dialog,
 :root.custom-bg-on .ctx-menu,
-:root.custom-bg-on .review-filter-dropdown-panel,
-:root.custom-bg-on .backend-dropdown,
 :root.custom-bg-on .global-find {
   backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
   -webkit-backdrop-filter: blur(calc(2px + var(--custom-bg-surface-opacity, 0.33) * 12px));
 }
 
-/* 弹窗保持实心：仅 .confirm-dialog 与 .plotroute-modal 两个模态，
-   下拉/浮层（ctx-menu 等）按需求保留半透明 */
+/* 弹窗保持实心：仅 .confirm-dialog 与 .plotroute-modal 两个模态；
+   下拉面板见下方固定实底规则，ctx-menu 等其余浮层按需求保留半透明 */
 :root.custom-bg-on .confirm-dialog,
 :root.custom-bg-on .plotroute-modal {
   background: var(--custom-bg-panel-solid);
 }
 
-/* 标题栏菜单下拉固定实底：悬浮菜单不做半透明，保证可读性 */
-:root.custom-bg-on .titlebar-dropdown {
+/* 下拉面板统一固定实底并禁用毛玻璃：下拉列表可读性优先，不透出背景图
+   （标题栏菜单 / 校对视图筛选 / 翻译页后端选择 / 后端配置模型选择） */
+:root.custom-bg-on .titlebar-dropdown,
+:root.custom-bg-on .review-filter-dropdown-panel,
+:root.custom-bg-on .backend-dropdown,
+:root.custom-bg-on .bp-model-dropdown {
   background: var(--custom-bg-panel-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
