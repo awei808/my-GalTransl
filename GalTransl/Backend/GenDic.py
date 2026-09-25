@@ -99,6 +99,10 @@ def _is_suspicious_note(note: str) -> bool:
     return bool(re.search(r"疑似\s*[HhＨ]", note)) or "疑似非术语" in note
 
 
+# AI 备注长度上限：备注已要求写详细（词类型/词义/翻译依据），超上限视为异常输出丢弃
+_GENDIC_NOTE_MAX_LEN = 100
+
+
 # 句子切分：按换行/句末标点断句；「。」后紧跟闭引号（。」等）不切，保持引号归属。
 # 省略号不切，避免切断「そ…そんな」类句中省略。
 _SENT_END_RE = re.compile(r"(?<=[。！？!?」』）】])(?!」|』|）|】)")
@@ -868,7 +872,7 @@ class GenDic(BaseEngine):
             src = sp[0].strip()
             dst = sp[1].strip()
             note = sp[2].strip()
-            if len(note) > 20:
+            if len(note) > _GENDIC_NOTE_MAX_LEN:
                 note = ""
             if not src or not dst:
                 continue
@@ -1049,7 +1053,7 @@ class GenDic(BaseEngine):
             key = src if src in input_set else norm_map.get(src.replace(" ", "").replace("\u3000", ""))
             if key is not None and key not in matched:
                 note = sp[2].strip() if len(sp) >= 3 else ""
-                if len(note) > 20:
+                if len(note) > _GENDIC_NOTE_MAX_LEN:
                     note = ""
                 matched[key] = (dst, note)
             else:
@@ -1289,7 +1293,7 @@ class GenDic(BaseEngine):
             if not src or not dst or dst == "（无法翻译）":
                 continue
             note = sp[2].strip() if len(sp) >= 3 else ""
-            if len(note) > 20:
+            if len(note) > _GENDIC_NOTE_MAX_LEN:
                 note = ""
             entries.append((src, dst, note))
         return entries

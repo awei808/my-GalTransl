@@ -41,11 +41,10 @@
 - context.ensure_global_prompt_loaded（context.py:20-44）确实无锁，if engine._global_prompt_loaded 后为同步段、无 await。多 worker 共享同一 ForFileMetaData 实例（LLMTranslate.py:1742 创建单实例），依赖"同步段内无 await 不切换协程"不变式。存量问题，非本次改动引入（context.py 既有）。
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
-- 全局分析后端似乎不导入人名替换表
-- 对于全局分析返回结果中含有错误的角色名称时，后续消费程序对于这个角色的逻辑未知
 - MCP 的 list_projects 只枚举 workspace 根，建在自定义位置的项目不会出现在该 MCP 工具列表里（UI 不受影响）。
 - 双击 AI 建议没有让用户知道有这个功能的提示
-- 术语提取要求新增：完全本地化、注释需要写详细，去除注释只能写“术语/意思h”的限制
+- 0.5.4：新增左侧按钮“剧情路线图-简易agent界面”，用于承载全新界面：剧情路线图基于mermaid渲染，只显示渲染不显示mermaid源代码，（若没有可渲染的mermaid，则退化显示为有序的多个矩形排列）；简易agent只有4个能力：读取和修改路线图、查找文件元数据、执行所有满足条件的翻译流程后端的终端（终端直接绕过agent内的ai模型执行，也就是说ai只有3个工具）。可以多选文件（暂定右键多选），添加到简易agent（暂定显示在底边栏），选择对应指令调用翻译后端执行所有满足条件的翻译流程后端；剧情路线图可由用户自己划分（通过简易agent输入框中描述要怎么修改，让agent来修改）；可修改每个后端要对哪些文件执行，而不是全部文件一起执行；每个后端注入哪些内容也可修改。
+- 术语提取提示词要求新增：高度本地化（除去原文中强文化载体词汇，其他尽量替换为本地化的词汇）、注释需要写详细，去除注释只能写“术语/疑似h”的限制
 - 字典ctrl+s保存似乎不可用或无弹窗反馈
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善
 - 新增：对于行数小于20的文件，不用处理元数据

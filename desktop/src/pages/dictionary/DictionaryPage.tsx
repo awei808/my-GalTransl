@@ -207,6 +207,7 @@ export function DictionaryPage() {
 
   onCleanup(() => {
     disposed = true;
+    document.removeEventListener("galtransl:save", handleManualSave);
     const snap = captureUnmountSnapshot();
     void runPageAutosave({
       waitForReady: waitForPendingSave,
@@ -371,6 +372,12 @@ export function DictionaryPage() {
       setManualSaving(false);
     }
   }
+
+  // Ctrl+S / 菜单保存（App 全局分发 galtransl:save）：走工具栏保存按钮同一入口，带 toast 反馈。
+  // 用 createEffect 注册（对齐 ReviewPage）：HMR 后组件不重新挂载也能保证监听始终存在
+  createEffect(() => {
+    document.addEventListener("galtransl:save", handleManualSave);
+  });
 
   /** 切换 tab 前保存当前编辑：字典文件始终保存；从人名 tab 切出时额外保存人名表 */
   async function saveBeforeSwitch() {

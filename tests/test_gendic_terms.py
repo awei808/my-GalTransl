@@ -620,10 +620,14 @@ class TermsLlmExtractTests(unittest.TestCase):
         self.assertEqual(entries, [("凛音", "凛音", "人名，女性"), ("クルト", "クルト", "")])
 
     def test_parse_llm_extract_response_long_note_truncated(self) -> None:
-        rsp = "オバ★グラ|欧巴格拉|" + "很长的备注" * 10 + "\n"
-        entries = GenDic._parse_llm_extract_response(rsp)
+        # 备注写详细后上限放宽为 _GENDIC_NOTE_MAX_LEN：限内保留，超限丢弃
+        rsp_keep = "オバ★グラ|欧巴格拉|" + "很长的备注" * 10 + "\n"
+        entries = GenDic._parse_llm_extract_response(rsp_keep)
+        self.assertEqual(entries[0][2], "很长的备注" * 10)
+        rsp_drop = "オバ★グラ|欧巴格拉|" + "很长的备注" * 21 + "\n"
+        entries = GenDic._parse_llm_extract_response(rsp_drop)
         self.assertEqual(len(entries), 1)
-        self.assertLessEqual(len(entries[0][2]), 20)
+        self.assertEqual(entries[0][2], "")
 
     def test_parse_llm_extract_response_tab_fallback(self) -> None:
         # AI 若按旧习惯输出 Tab（未遵守 PSV 提示词）→ 归一为 | 仍能解析
@@ -680,10 +684,13 @@ class TermsParseResponseTests(unittest.TestCase):
         self.assertEqual(matched, {"フィギュア": ("手办", "物品")})
 
     def test_long_note_truncated(self) -> None:
-        rsp = "フィギュア|手办|" + "很长的备注" * 10 + "\n"
-        matched, _ = self._parse(rsp, ["フィギュア"])
-        note = matched["フィギュア"][1]
-        self.assertLessEqual(len(note), 20)
+        # 备注写详细后上限放宽为 _GENDIC_NOTE_MAX_LEN：限内保留，超限丢弃
+        rsp_keep = "フィギュア|手办|" + "很长的备注" * 10 + "\n"
+        matched, _ = self._parse(rsp_keep, ["フィギュア"])
+        self.assertEqual(matched["フィギュア"][1], "很长的备注" * 10)
+        rsp_drop = "フィギュア|手办|" + "很长的备注" * 21 + "\n"
+        matched, _ = self._parse(rsp_drop, ["フィギュア"])
+        self.assertEqual(matched["フィギュア"][1], "")
 
     def test_tab_fallback(self) -> None:
         # AI 若按旧习惯输出 Tab（未遵守 PSV 提示词）→ 归一为 | 仍能解析
