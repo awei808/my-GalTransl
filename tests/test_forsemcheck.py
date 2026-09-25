@@ -260,7 +260,7 @@ class SemcheckPromptInjectionTests(unittest.TestCase):
         self.assertNotIn("[TargetLang]", prompt)  # 已替换
         self.assertNotIn("[Input]", prompt)  # 已替换
 
-    def test_metadata_block_injected_before_task(self) -> None:
+    def test_metadata_block_injected_after_task(self) -> None:
         obj = self._make_obj()
         metadata_block = (
             "\n<plot_metadata>\n"
@@ -273,8 +273,9 @@ class SemcheckPromptInjectionTests(unittest.TestCase):
         prompt = obj._build_semcheck_user_content(
             input_src='#01|{"id":1}', metadata_block=metadata_block
         )
-        # 元数据块在任务说明之前，作为全局语境
-        self.assertLess(prompt.index("<plot_metadata>"), prompt.index("### 任务"))
+        # 缓存头口径：固定的任务说明在最前，动态元数据块在其后、input 之前
+        self.assertGreater(prompt.index("<plot_metadata>"), prompt.index("### 任务"))
+        self.assertLess(prompt.index("<plot_metadata>"), prompt.index("<input>"))
         self.assertIn("角色: 創、華恋、凛音", prompt)
         self.assertIn("剧情: 众人入住 cosplay 度假岛 VIP 栋", prompt)
         # 占位符仍被正确替换

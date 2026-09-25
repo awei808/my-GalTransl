@@ -229,9 +229,12 @@ _SEMCHECK_TASK = """<process_requirements>
 </process_requirements>
 """
 
-# 仅注入任务说明与 input，不注入术语表/批次元数据/历史结果/翻译规范等其它内容。
+# 仅注入任务说明、文件级元数据（[plot_metadata] 占位符，无则替换为空串）与 input，
+# 不注入术语表/批次元数据/历史结果/翻译规范等其它内容。
+# 任务说明置于最前作为固定前缀（缓存头），动态的剧情元数据在其后，保证跨文件/批次可命中前缀缓存。
 FORGAL_JSON_SEMCHECK_PROMPT = (
     _SEMCHECK_TASK
+    + "[plot_metadata]\n\n"
     + "<input>\n"
     + "```jsonline\n"
     + "[Input]\n"
@@ -258,9 +261,12 @@ _SEMCHECK_AGAIN_TASK = """<process_requirements>
 </process_requirements>
 """
 
-# 仅注入任务说明与 input（与 ForSemCheck 同构），不注入术语表/批次元数据/历史结果/翻译规范。
+# 仅注入任务说明、文件级元数据（[plot_metadata] 占位符）与 input（与 ForSemCheck 同构），
+# 不注入术语表/批次元数据/历史结果/翻译规范。
+# 任务说明置于最前作为固定前缀（缓存头），动态的剧情元数据在其后。
 FORGAL_JSON_SEMCHECK_AGAIN_PROMPT = (
     _SEMCHECK_AGAIN_TASK
+    + "[plot_metadata]\n\n"
     + "<input>\n"
     + "```jsonline\n"
     + "[Input]\n"
@@ -293,9 +299,11 @@ _FORWORDTONE_TASK = """<process_requirements>
 </process_requirements>
 """
 
+# 仅注入区间色彩标注（[ToneGuide] 占位符）、任务说明与 input，不注入术语表/批次元数据/历史结果/翻译规范。
+# 任务说明置于最前作为固定前缀（缓存头），每批动态的色彩标注移到其后、input 之前。
 FORGAL_JSON_FORWORDTONE_PROMPT = (
-    "<tone_guide>\n[ToneGuide]\n</tone_guide>\n\n"
-    + _FORWORDTONE_TASK
+    _FORWORDTONE_TASK
+    + "<tone_guide>\n[ToneGuide]\n</tone_guide>\n\n"
     + "<input>\n"
     + "```jsonline\n"
     + "[Input]\n"
@@ -321,10 +329,13 @@ _FORWORDTONE_AGAIN_TASK = """<process_requirements>
 </process_requirements>
 """
 
-# 仅注入区间色彩标注、任务说明与 input（与第一轮同构），不注入术语表/批次元数据/历史结果/翻译规范。
+# 仅注入区间色彩标注（[ToneGuide] 占位符）、文件级元数据（[plot_metadata] 占位符）、
+# 任务说明与 input（与第一轮同构），不注入术语表/批次元数据/历史结果/翻译规范。
+# 任务说明置于最前作为固定前缀（缓存头），文件级元数据与每批色彩标注依次在其后。
 FORGAL_JSON_FORWORDTONE_AGAIN_PROMPT = (
-    "<tone_guide>\n[ToneGuide]\n</tone_guide>\n\n"
-    + _FORWORDTONE_AGAIN_TASK
+    _FORWORDTONE_AGAIN_TASK
+    + "[plot_metadata]\n\n"
+    + "<tone_guide>\n[ToneGuide]\n</tone_guide>\n\n"
     + "<input>\n"
     + "```jsonline\n"
     + "[Input]\n"

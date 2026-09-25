@@ -269,6 +269,8 @@ class ForToneCheck(BaseImproveRound):
         """单轮拼接色彩检查 user 提示词：替换 [ToneGuide]/[TargetLang]/[Input] 占位符。
 
         除区间色彩标注与任务说明外，不注入术语表/文件级元数据/历史结果/翻译规范。
+        固定的任务说明置于最前作为缓存头，每批动态的色彩标注经 [ToneGuide] 占位符
+        注入到任务说明之后（保证 API 前缀缓存可跨文件/批次命中）。
         tone_guide 为空时移除标注段（区间无标注，仅按「不判为不一致」口径输出空块）。
         """
         prompt_req = self.trans_prompt

@@ -230,19 +230,20 @@ class ForToneCheckAgain(ForToneCheck):
     def _build_tonecheck_again_user_content(
         self, input_src: str, tone_guide: str, metadata_block: str = ""
     ) -> str:
-        """拼接复核轮 user 提示词：替换 [ToneGuide]/[TargetLang]/[Input] 占位符。
+        """拼接复核轮 user 提示词：替换 [ToneGuide]/[TargetLang]/[Input]/[plot_metadata] 占位符。
 
-        除区间色彩标注、任务说明与批次 input 外，不注入术语表/批次元数据/历史结果/
-        翻译规范。metadata_block 非空时置于最前（<plot_metadata> 作为全局语境）。
-        tone_guide 为空时移除标注段（防御性分支：正常流程已在调用前跳过该批）。
+        除区间色彩标注、文件级元数据、任务说明与批次 input 外，不注入术语表/
+        批次元数据/历史结果/翻译规范。固定的任务说明置于最前作为缓存头（保证
+        API 前缀缓存可跨文件/批次命中），metadata_block 经模板 [plot_metadata]
+        占位符注入其后，tone_guide 为空时移除标注段（防御性分支：正常流程已在
+        调用前跳过该批）。
         """
         prompt_req = self.trans_prompt
         if not tone_guide:
             prompt_req = prompt_req.replace(
                 "<tone_guide>\n[ToneGuide]\n</tone_guide>\n\n", ""
             )
-        if metadata_block:
-            prompt_req = metadata_block + prompt_req
+        prompt_req = prompt_req.replace("[plot_metadata]", metadata_block)
         prompt_req = prompt_req.replace("[ToneGuide]", tone_guide)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         prompt_req = prompt_req.replace("[Input]", input_src)

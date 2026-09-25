@@ -42,26 +42,18 @@
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
 - 全局分析后端似乎不导入人名替换表
-- 校对审核界面，元数据模式下没有自动换行
 - 对于全局分析返回结果中含有错误的角色名称时，后续消费程序对于这个角色的逻辑未知
 - 取消只能在应用目录下新建项目的限制 
 - 双击 AI 建议没有让用户知道有这个功能的提示
 - 术语提取要求新增：完全本地化、注释需要写详细，去除注释只能写“术语/意思h”的限制
-- 内置ai必须有搜索功能，让ai自己找术语翻译是否准确
 - 字典ctrl+s保存似乎不可用或无弹窗反馈
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善
-- 所有下拉框都必须禁用毛玻璃效果
-- run-full-pipline未定义（0.5.0）
 - 新增：对于行数小于20的文件，不用处理元数据
 - 翻译控制台的文件进度显示不完善：当前阶段完成后且未完成所有翻译任务时，显示的是“排队中”，而不是“已完成某个阶段”
 - 翻译控制台的速度单位错误，应为xx条/分钟
 - 允许在所有阶段用户自主选择是否注入翻译规范
-- 模型输出慢时检测，会有以下报错
-请求超时：http://127.0.0.1:12333/api/projects/RDpc6Kej5YyF5oiW5rGJ5YyW55SoXG15LWdhbHRyYW5zbFxteS1HYWxUcmFuc2xccmVsZWFzZVxHYWxUcmFuc2xfMC40Ljlfd2luXOeQhueLguS6ug/check-model
-- semcheck的提示词中没有缓存头，开头是不固定的剧情元数据，无法缓存
 - 结果预览不要做及时刷新，应该减少刷新时机，当worker内容被替换时不刷新为空，（主要影响在修复改进轮后端的执行结果展示环节）
 - **单独执行某个修复改进后端时会有问题，会连续执行别的后端**
-- 换行符位置异常检测项似乎不会允许——通过 **已完成**（断行白名单加入破折号「—」；ForBRStation/ForFixRound 提示词三处硬编码允许清单改为 [allowed_break_ends] 动态注入，与检测侧 describe_allowed_break_ends 同源不漂移）
 - 疑似错误问题检测项的显示时，有时会显示具体原因有时不显示 **已完成**（semcheck 提示词 reason 必填具体原因、占位值归一为哨兵 "1"；find_problems 认领时原因拼入「疑似错误：原因」文案，非字符串缓存数据 str 收敛防崩）
 
 # 未来的大更新项

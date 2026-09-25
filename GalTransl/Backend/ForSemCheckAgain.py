@@ -222,14 +222,14 @@ class ForSemCheckAgain(BaseImproveRound):
         return trans_list
 
     def _build_semcheck_user_content(self, input_src: str, metadata_block: str = "") -> str:
-        """拼接复核轮 user 提示词：替换 [TargetLang]/[Input] 占位符，可选注入文件级元数据。
+        """拼接复核轮 user 提示词：替换 [TargetLang]/[Input]/[plot_metadata] 占位符。
 
-        除任务说明与批次 input 外，不注入术语表/批次元数据/历史结果/翻译规范。
-        metadata_block 非空时置于任务说明之前（<plot_metadata> 作为全局语境）。
+        除任务说明、文件级元数据与批次 input 外，不注入术语表/批次元数据/历史结果/翻译规范。
+        固定的任务说明置于最前作为缓存头（保证 API 前缀缓存可跨文件/批次命中），
+        metadata_block 经模板 [plot_metadata] 占位符注入到任务说明之后（<plot_metadata>
+        作为全局语境）。
         """
-        prompt_req = self.trans_prompt
-        if metadata_block:
-            prompt_req = metadata_block + prompt_req
+        prompt_req = self.trans_prompt.replace("[plot_metadata]", metadata_block)
         prompt_req = prompt_req.replace("[TargetLang]", self.target_lang)
         prompt_req = prompt_req.replace("[Input]", input_src)
         return prompt_req

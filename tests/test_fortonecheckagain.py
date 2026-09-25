@@ -366,8 +366,8 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase, _ToneAgainTestB
         self.assertIn("<plot_metadata>", captured["user"])
         self.assertIn("角色: 創、華恋", captured["user"])
         self.assertIn("剧情: 众人入住 cosplay 度假岛，华恋是女仆", captured["user"])
-        # 元数据块位于任务说明之前
-        self.assertLess(
+        # 缓存头口径：固定的任务说明在最前，动态元数据块在其后
+        self.assertGreater(
             captured["user"].index("<plot_metadata>"),
             captured["user"].index("### 任务"),
         )
@@ -439,6 +439,9 @@ class ToneAgainPromptInjectionTests(unittest.TestCase):
         self.assertNotIn("[ToneGuide]", prompt)
         self.assertNotIn("[TargetLang]", prompt)
         self.assertNotIn("[Input]", prompt)
+        # 缓存头口径：固定的任务说明在最前，色彩标注在其后、input 之前
+        self.assertLess(prompt.index("### 任务"), prompt.index("<tone_guide>"))
+        self.assertLess(prompt.index("<tone_guide>"), prompt.index("<input>"))
 
     def test_no_glossary_or_batch_or_history(self) -> None:
         obj = self._make_obj()
@@ -451,7 +454,7 @@ class ToneAgainPromptInjectionTests(unittest.TestCase):
         self.assertNotIn("<translation_guidelines>", prompt)
         self.assertNotIn("<glossary>", prompt)
 
-    def test_metadata_block_injected_before_task(self) -> None:
+    def test_metadata_block_injected_after_task(self) -> None:
         obj = self._make_obj()
         metadata_block = (
             "\n<plot_metadata>\n角色: 創、華恋\n剧情: 度假岛\n</plot_metadata>\n"
@@ -459,7 +462,9 @@ class ToneAgainPromptInjectionTests(unittest.TestCase):
         prompt = obj._build_tonecheck_again_user_content(
             '#01|{"id":1}', "区间[1-10] 用词色彩:口语", metadata_block
         )
-        self.assertLess(prompt.index("<plot_metadata>"), prompt.index("### 任务"))
+        # 缓存头口径：任务说明 → 文件级元数据 → 批次级色彩标注 → input
+        self.assertGreater(prompt.index("<plot_metadata>"), prompt.index("### 任务"))
+        self.assertLess(prompt.index("<plot_metadata>"), prompt.index("<tone_guide>"))
         self.assertIn("角色: 創、華恋", prompt)
         self.assertIn("Simplified_Chinese", prompt)
 

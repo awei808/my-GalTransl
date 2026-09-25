@@ -333,6 +333,9 @@ class ToneGuideFormatTests(unittest.TestCase):
         self.assertNotIn("[ToneGuide]", content)
         self.assertNotIn("[Input]", content)
         self.assertNotIn("[TargetLang]", content)
+        # 缓存头口径：固定的任务说明在最前，每批动态的色彩标注在其后、input 之前
+        self.assertLess(content.index("### 任务"), content.index("<tone_guide>"))
+        self.assertLess(content.index("<tone_guide>"), content.index("<input>"))
 
     def test_user_content_removes_guide_when_empty(self) -> None:
         obj = self._make_obj()
