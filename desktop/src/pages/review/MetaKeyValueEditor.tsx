@@ -128,6 +128,7 @@ export function MetaKeyValueEditor(props: {
     props.onBlur();
   };
 
+  // rows 仅作不支持 field-sizing 浏览器的高度回退估算；支持时由 field-sizing: content 决定
   const valueLineCount = (text: string) => Math.min(12, Math.max(1, text.split("\n").length));
 
   return (

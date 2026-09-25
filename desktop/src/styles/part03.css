@@ -437,7 +437,12 @@
   background: var(--color-bg-input);
   color: var(--color-text-primary);
   resize: vertical;
-  white-space: pre;
+  /* pre-wrap：保留换行与缩进，长行自动软换行；break-word 兜底无空格长串防横向溢出 */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  /* 高度随内容（含软换行）自动增长；不支持的浏览器回退 rows 估算，超限内部滚动 */
+  field-sizing: content;
+  max-height: 40vh;
   tab-size: 2;
 }
 
