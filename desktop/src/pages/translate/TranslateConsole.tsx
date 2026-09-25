@@ -637,7 +637,7 @@ export function TranslateConsole() {
             />
             <div class="stats-row-secondary">
               <Show when={summary()}>
-                <span>速度: {summary()!.translation_speed_lpm.toFixed(1)} 条/秒</span>
+                <span>速度: {summary()!.translation_speed_lpm.toFixed(1)} 条/分钟</span>
                 <Show when={summary()!.eta_seconds != null}>
                   <span>ETA: {formatETA(summary()!.eta_seconds!)}</span>
                 </Show>
