@@ -235,6 +235,10 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "全局分析参考翻译规范",
     hint: "开启后，生成游戏概况与角色档案时参考翻译规范，影响描写风格与措辞。",
   },
+  "internals.forglobalprompt.inject_name_table": {
+    label: "全局分析参考人名替换表",
+    hint: "开启后，生成游戏概况与角色档案时参考项目人名替换表，使角色译名与 name 字段替换一致。",
+  },
   "internals.forbatchmeta.inject_guideline": {
     label: "批次划分参考翻译规范",
     hint: "开启后，划分翻译区间批次时参考翻译规范，使各批次翻译风格一致。",

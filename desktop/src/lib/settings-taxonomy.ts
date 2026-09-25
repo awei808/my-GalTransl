@@ -100,6 +100,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         title: "",
         keys: [
           "internals.forglobalprompt.inject_guideline",
+          "internals.forglobalprompt.inject_name_table",
           "internals.pipeline.maxInputChars",
         ],
       },

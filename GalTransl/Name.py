@@ -101,13 +101,16 @@ def write_name_table_csv(
             writer.writerow([name, dst, count])
 
 
-def _load_existing_dst_names(proj_dir: str) -> Dict[str, str]:
+def load_name_table_dict(proj_dir: str) -> Dict[str, str]:
     """
-    Read existing name replacement table (CSV or XLSX) and return
-    a dict of src_name -> dst_name for entries that already have a translation.
+    读取项目根目录已有的人名替换表（name替换表.csv/.xlsx），
+    返回 src_name -> dst_name 映射（仅含已填写译名的条目）。
+
+    兼容新旧列名（SRC_Name/DST_Name 与 JP_Name/CN_Name）；
+    供导出人名表时保留已有翻译、全局分析注入人名对照等场景复用。
 
     Args:
-        proj_dir: Path to the project root directory.
+        proj_dir: 项目根目录路径。
 
     Returns:
         Dict mapping src_name -> dst_name (only entries with non-empty dst_name).
@@ -368,7 +371,7 @@ async def dump_name_table_from_chunks(
         LOGGER.debug(f"{name}: {count}")
 
     # Preserve existing translations from the current name table
-    existing_dst = _load_existing_dst_names(proj_dir)
+    existing_dst = load_name_table_dict(proj_dir)
     if existing_dst:
         preserved = sum(1 for n in name_dict if n in existing_dst)
         LOGGER.info(f"保留已有翻译 {preserved} 条")

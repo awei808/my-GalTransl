@@ -119,6 +119,7 @@ internals:
   # ForGlobalPrompt 后端专用配置
   forglobalprompt:
     inject_guideline: false       # 是否将翻译规范注入全局分析提示词 [True/False]
+    inject_name_table: true       # 是否将项目人名替换表注入全局分析提示词（约束角色译名与name替换表一致）[True/False]
   # 提示词注入块开关：false 时该内容块不注入（占位符被清空，模板结构不变）；
   # 默认全开 = 与旧版一致。与各后端 inject_guideline 为 AND 关系。
   promptBlocks:

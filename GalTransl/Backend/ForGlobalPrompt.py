@@ -28,6 +28,7 @@ from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig, initDictList
 from GalTransl import LOGGER, PASS0_CACHE_DIR
 from GalTransl.Dictionary import CGptDict
+from GalTransl.Name import load_name_table_dict
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
 from GalTransl.Backend.utils import coerce_bool, extract_json_object
@@ -308,6 +309,12 @@ class ForGlobalPrompt(BaseEngine):
         )
         self._inject_guideline = coerce_bool(raw, default=True)
 
+        # 是否把项目人名替换表注入提示词（默认开启）
+        raw = self.pj_config.getKey(
+            "internals.forglobalprompt.inject_name_table", True
+        )
+        self._inject_name_table = coerce_bool(raw, default=True)
+
         # 跨文件写 GlobalPrompt.json 时的互斥锁（虽然当前只有一次写入，
         # 但保留锁以防未来并发场景）
         self._gp_lock = Lock()
@@ -321,7 +328,8 @@ class ForGlobalPrompt(BaseEngine):
     ) -> str:
         """
         在基类占位符替换的基础上，增加 GlobalPrompt 特有的占位符：
-        [ExternalInfo] — 外部信息（游戏名称、简介、制作公司等）。
+        [ExternalInfo] — 外部信息（游戏名称、简介、制作公司等）；
+        [NameTable] — 项目人名替换表对照块。
 
         公共占位符（[Input]/[Glossary]/[translation_guideline]/
         [SourceLang]/[TargetLang]）由基类统一替换。
@@ -334,6 +342,10 @@ class ForGlobalPrompt(BaseEngine):
         # 外部信息：用户自由填写的游戏相关信息
         prompt_req = prompt_req.replace(
             "[ExternalInfo]", external_info or "（未提供外部信息）"
+        )
+        # 人名对照表：无表或开关关闭时为空串（占位符被清除）
+        prompt_req = prompt_req.replace(
+            "[NameTable]", self._build_name_table_text()
         )
         return prompt_req
 
@@ -367,6 +379,36 @@ class ForGlobalPrompt(BaseEngine):
 
         return "\n\n".join(parts)
 
+    # 2. 加载项目专属 GPT 字典
+    def _load_project_gpt_dic(self) -> Optional[CGptDict]:
+        """加载项目专属 GPT 字典（(project_dir) 前缀），供术语表与角色名校正复用。
+
+        无配置、无项目专属字典或加载失败时返回 None。
+        """
+        dict_cfg = self.pj_config.getDictCfgSection()
+        if not dict_cfg:
+            return None
+        gpt_dic_list = dict_cfg.get("gpt.dict", [])
+        if not gpt_dic_list:
+            return None
+        # 仅保留项目专属字典条目
+        project_only = [e for e in gpt_dic_list if str(e).startswith("(project_dir)")]
+        if not project_only:
+            LOGGER.debug("[GlobalPrompt] 无项目专属字典，跳过 GPT 字典注入")
+            return None
+        default_dic_dir = dict_cfg.get("defaultDictFolder", "")
+        try:
+            paths = initDictList(
+                project_only, default_dic_dir, self.pj_config.getProjectDir()
+            )
+            return CGptDict(paths)
+        except Exception as e:
+            LOGGER.warning(
+                f"[GlobalPrompt] 载入项目 GPT 字典失败，"
+                f"全局分析将不含专名译表：{e}"
+            )
+            return None
+
     # 2. 构建术语表文本
     def _build_glossary_text(self) -> str:
         """仅把项目的 gpt.dict 中项目专属字典格式化为 Markdown 译表。
@@ -374,28 +416,8 @@ class ForGlobalPrompt(BaseEngine):
         全局提示词阶段只注入项目级字典（(project_dir) 前缀），
         不注入公共字典，避免无关术语干扰全局分析。
         """
-        dict_cfg = self.pj_config.getDictCfgSection()
-        if not dict_cfg:
-            return ""
-        gpt_dic_list = dict_cfg.get("gpt.dict", [])
-        if not gpt_dic_list:
-            return ""
-        # 仅保留项目专属字典条目
-        project_only = [e for e in gpt_dic_list if str(e).startswith("(project_dir)")]
-        if not project_only:
-            LOGGER.debug("[GlobalPrompt] 无项目专属字典，跳过 GPT 字典注入")
-            return ""
-        default_dic_dir = dict_cfg.get("defaultDictFolder", "")
-        try:
-            paths = initDictList(
-                project_only, default_dic_dir, self.pj_config.getProjectDir()
-            )
-            gpt_dic = CGptDict(paths)
-        except Exception as e:
-            LOGGER.warning(
-                f"[GlobalPrompt] 载入项目 GPT 字典失败，"
-                f"全局分析将不含专名译表：{e}"
-            )
+        gpt_dic = self._load_project_gpt_dic()
+        if gpt_dic is None:
             return ""
 
         lines = [
@@ -417,6 +439,37 @@ class ForGlobalPrompt(BaseEngine):
             f"[GlobalPrompt] 已载入项目 GPT 字典，共 {len(lines) - 3} 条"
             f"（跳过 {skipped} 条 h 词条）"
         )
+        return "\n".join(lines)
+
+    # 2.5 构建人名对照表文本
+    def _build_name_table_text(self) -> str:
+        """把项目人名替换表（name替换表.csv/.xlsx）格式化为人名对照注入块。
+
+        人名表是用户确认的译名权威，用于约束全局分析的角色译名与后续
+        翻译（name 字段替换、GPT 字典）保持一致；无表或开关关闭时返回
+        空串（[NameTable] 占位符被清除，不注入）。
+        """
+        if not self._inject_name_table:
+            LOGGER.debug("[GlobalPrompt] 人名对照表注入已关闭，跳过")
+            return ""
+        try:
+            name_dict = load_name_table_dict(self.pj_config.getProjectDir())
+        except Exception as e:
+            LOGGER.warning(
+                f"[GlobalPrompt] 载入人名替换表失败，全局分析将不含人名对照：{e}"
+            )
+            return ""
+        if not name_dict:
+            LOGGER.debug("[GlobalPrompt] 无可用的人名替换表，跳过人名对照注入")
+            return ""
+        lines = [
+            "# 人名对照表（角色名称必须原样采用表中译名，未收录人名按上下文翻译）",
+            "| 原文 | 译名 |",
+            "| --- | --- |",
+        ]
+        for src, dst in name_dict.items():
+            lines.append(f"| {src} | {dst} |")
+        LOGGER.debug(f"[GlobalPrompt] 已载入人名替换表，共 {len(name_dict)} 条")
         return "\n".join(lines)
 
     # 3. 解析与规整 LLM 返回的 JSON
@@ -492,6 +545,61 @@ class ForGlobalPrompt(BaseEngine):
             "行文风格": _str(obj.get("行文风格", "")),
             "题材标签": tags,
         }
+
+    # 3.5 角色名对照校正
+    def _correct_character_names(self, meta: dict) -> int:
+        """按人名替换表 / 项目 GPT 字典校正角色列表中的名称（生成后兜底）。
+
+        仅当「名称」strip 后精确命中对照原文（如模型漏翻直接输出了日文
+        原名）时替换为对应译名（h 字典词条不参与，与术语表注入口径一致）；
+        命中译名本身或无对照时保持原样。模型自创的错误译名无法自动识别，
+        靠提示词中的人名对照约束预防。
+
+        Returns:
+            校正的角色条数（每条记 info 日志）。
+        """
+        characters = meta.get("角色列表") if isinstance(meta, dict) else None
+        if not isinstance(characters, list) or not characters:
+            return 0
+
+        # 映射来源：人名替换表 + 项目 GPT 字典；配置桩不完整（duck-typed
+        # 测试桩/嵌入场景）时静默跳过对应来源，与 _prompt_block_toggles 口径一致
+        name_dict: Dict[str, str] = {}
+        gpt_dic: Optional[CGptDict] = None
+        get_project_dir = getattr(self.pj_config, "getProjectDir", None)
+        if get_project_dir is not None:
+            try:
+                name_dict = load_name_table_dict(get_project_dir()) or {}
+            except Exception as e:
+                LOGGER.warning(
+                    f"[GlobalPrompt] 载入人名替换表失败，跳过人名对照校正：{e}"
+                )
+        if hasattr(self.pj_config, "getDictCfgSection"):
+            gpt_dic = self._load_project_gpt_dic()
+
+        corrected = 0
+        for ch in characters:
+            if not isinstance(ch, dict):
+                continue
+            name = ch.get("名称", "")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            key = name.strip()
+            dst = name_dict.get(key, "")
+            if not dst and gpt_dic is not None:
+                # 与术语表注入口径一致：h 字典词条不参与角色名校正
+                for dic in getattr(gpt_dic, "_dic_list", []):
+                    if gpt_dic._is_h_dict(dic):
+                        continue
+                    if dic.search_word == key:
+                        dst = dic.replace_word
+                        break
+            dst = (dst or "").strip()
+            if dst and dst != name:
+                LOGGER.info(f"[GlobalPrompt] 角色名「{name}」命中对照表，已校正为「{dst}」")
+                ch["名称"] = dst
+                corrected += 1
+        return corrected
 
     # 4. 保存 GlobalPrompt.json
     def _save_global_prompt(self, data: dict) -> None:
@@ -630,6 +738,11 @@ class ForGlobalPrompt(BaseEngine):
                 f"[GlobalPrompt] 已按子集结果覆盖 {len(fields)} 个字段，"
                 f"角色数 {before} → {len(meta.get('角色列表', []))}"
             )
+
+        # ── 角色名对照校正（作用于合并后的最终角色列表，落盘前统一兜底）──
+        corrected = self._correct_character_names(meta)
+        if corrected:
+            LOGGER.info(f"[GlobalPrompt] 已按人名对照校正 {corrected} 个角色名")
 
         # ── 保存 ──
         self._save_global_prompt(meta)
