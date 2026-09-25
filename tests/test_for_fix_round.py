@@ -2,11 +2,11 @@
 """ForFixRound 统一问题修复后端单元测试。
 
 覆盖：
-  - build_fix_instructions：按白名单装配指令；换行位置异常时携带 [br_issue_guide] 占位符
+  - build_fix_instructions：按白名单装配指令；换行位置异常时携带 [br_issue_guide]/[allowed_break_ends] 占位符
   - 组合筛选：一句话命中白名单任一类型即入轮（多类型组合）
   - 模式差异：_include_src=False（模式 B）时输入 JSONL 不携带 src 字段
   - set_fix_params：参数注入重建提示词、切换模式
-  - _apply_extra_first_round_replacements：仅白名单含换行位置异常时注入 br_issue_guide
+  - _apply_extra_first_round_replacements：仅白名单含换行位置异常时注入 br_issue_guide；动态填充 allowed_break_ends
   - __init__ 白名单回退：未指定类型时回退 problemAnalyze.problemList 全部类型
   - 模式 B 不注入术语表：_build_batch_gptdict 返回空串
 """
@@ -25,8 +25,10 @@ if ROOT not in sys.path:
 from GalTransl.CSentense import CSentense
 from GalTransl.ConfigHelper import CProblemType, CProjectConfig
 from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.Prompts import FORGAL_JSON_BRSTATION_PROMPT
 from GalTransl.Backend.ForFixRound import (
     ForProblemFixRound,
+    build_allowed_break_ends_desc,
     build_br_issue_guide,
     build_fix_instructions,
 )
@@ -264,6 +266,27 @@ class BrGuideHookTests(unittest.TestCase):
         t = make_translator(problem_types=[CProblemType.换行位置异常])
         out = t._apply_extra_first_round_replacements("x[br_issue_guide]y")
         self.assertEqual(out, "x" + build_br_issue_guide() + "y")
+
+    def test_br_guide_mentions_em_dash(self) -> None:
+        # 检测侧白名单含破折号（——）时，修复指引描述必须同步，避免口径漂移
+        self.assertIn("破折号（——）", build_br_issue_guide())
+
+    def test_hook_fills_allowed_break_ends(self) -> None:
+        # [allowed_break_ends] 由检测侧描述动态填充（含破折号），不残留占位符
+        t = make_translator(problem_types=[CProblemType.换行位置异常])
+        out = t._apply_extra_first_round_replacements("x[allowed_break_ends]y")
+        self.assertEqual(out, "x" + build_allowed_break_ends_desc() + "y")
+        self.assertIn("破折号（——）", out)
+
+    def test_fix_instruction_uses_dynamic_break_desc(self) -> None:
+        # 换行位置异常修复指令引用动态占位符，不再硬编码允许清单
+        text = build_fix_instructions([CProblemType.换行位置异常])
+        self.assertIn("[allowed_break_ends]", text)
+
+    def test_brstation_prompt_uses_dynamic_break_desc(self) -> None:
+        # ForBRStation 任务描述与质量标准均引用动态占位符，与 [br_issue_guide] 同源不矛盾
+        self.assertEqual(FORGAL_JSON_BRSTATION_PROMPT.count("[allowed_break_ends]"), 2)
+        self.assertNotIn("空格/Tab、emoji 或颜文字", FORGAL_JSON_BRSTATION_PROMPT)
 
     def test_non_br_type_removes_placeholder(self) -> None:
         t = make_translator(problem_types=[CProblemType.残留日文])

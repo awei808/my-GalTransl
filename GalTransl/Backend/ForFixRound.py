@@ -46,8 +46,8 @@ _FIX_SPECS: dict = {
     ),
     CProblemType.换行位置异常: FixSpec(
         mode=MODE_DST_ONLY,
-        instruction="仅调整 dst 的换行位置，把 <br> 移到合规断句点（标点/逗号/顿号/空格/Tab/"
-        "emoji/颜文字之后），优先移动而非删除，删除是最后手段且最多删一个。\n[br_issue_guide]",
+        instruction="仅调整 dst 的换行位置，把 <br> 移到合规断句点（[allowed_break_ends]之后），"
+        "优先移动而非删除，删除是最后手段且最多删一个。\n[br_issue_guide]",
     ),
     CProblemType.丢失换行: FixSpec(
         mode=MODE_SRC_DST,
@@ -141,14 +141,20 @@ def build_fix_instructions(problem_types: list) -> str:
 
 
 @lru_cache(maxsize=1)
-def build_br_issue_guide() -> str:
-    """动态生成「换行位置异常」说明与解决方法（复用检测侧描述，避免口径漂移）。"""
+def build_allowed_break_ends_desc() -> str:
+    """检测侧「换行前允许内容」描述（复用 Problem 描述，避免口径漂移）。"""
     try:
         from GalTransl.Problem import describe_allowed_break_ends
 
-        allowed_desc = describe_allowed_break_ends()
+        return describe_allowed_break_ends()
     except Exception:
-        allowed_desc = "中文标点、逗号、顿号、空格/Tab、emoji、颜文字"
+        return "中文标点、逗号、顿号、破折号（——）、空格/Tab、emoji、颜文字"
+
+
+@lru_cache(maxsize=1)
+def build_br_issue_guide() -> str:
+    """动态生成「换行位置异常」说明与解决方法（复用检测侧描述，避免口径漂移）。"""
+    allowed_desc = build_allowed_break_ends_desc()
     return "\n".join(
         [
             "1. 【优先，推荐度最高】调整换行符位置：",
@@ -284,8 +290,12 @@ class ForProblemFixRound(BaseProblemFixRound):
     def _apply_extra_first_round_replacements(self, prompt_req: str) -> str:
         """白名单含换行位置异常时注入换行修复专用说明。"""
         has_br = CProblemType.换行位置异常 in (self._problem_types or [])
-        return prompt_req.replace(
+        prompt_req = prompt_req.replace(
             "[br_issue_guide]", build_br_issue_guide() if has_br else ""
+        )
+        # 检测侧「允许断行位置」描述动态注入，避免与 Problem 白名单口径漂移
+        return prompt_req.replace(
+            "[allowed_break_ends]", build_allowed_break_ends_desc()
         )
 
     @staticmethod

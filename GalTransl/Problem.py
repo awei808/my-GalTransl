@@ -30,8 +30,8 @@ MONOLOGUE_MALE_HE_EXCLUDES = (
     "他山",
 )
 
-# 允许出现在换行前的字符：中文标点 + 逗号、顿号 + 空格/Tab（这些字符后换行不判定异常）
-_ALLOWED_BREAK_CHARS = punctuation_zh + "，、 \t"
+# 允许出现在换行前的字符：中文标点 + 逗号、顿号 + 空格/Tab/破折号（这些字符后换行不判定异常）
+_ALLOWED_BREAK_CHARS = punctuation_zh + "，、 \t—"
 
 # 行尾 emoji 字符簇：至少一个基 emoji 字符，后接可选的变体选择符/ZWJ/组合键帽等后缀；
 # 避免单独的 \uFE0F/\u200D 等变体选择符被误放行。
@@ -84,7 +84,7 @@ def describe_allowed_break_ends() -> str:
     """检测侧「换行前允许内容」的人类可读描述，供换行修复提示词复用，避免口径漂移。"""
     return (
         "中文标点（句号/问号/叹号/省略号/括号/分号/书名号/方括号/引号「」『』）、"
-        "逗号、顿号、空格、制表符（Tab）、emoji（如 ♥❤️♪🎵😊）、"
+        "逗号、顿号、破折号（——）、空格、制表符（Tab）、emoji（如 ♥❤️♪🎵😊）、"
         "颜文字（如 (ノ´Д`)ノ、(T_T)、>_<、www）"
     )
 
@@ -373,11 +373,17 @@ def find_problems(
         if "(Failed)" in post_dst:
             problem_list.append("翻译失败")
 
-        # AI 语义检测标记（ForSemCheck 产出）：字段非空即标"疑似错误"。
-        # suspected_error 是持久化信号，problem 是输出，规则重检/校对保存每次重跑都会重新认领。
+        # AI 语义检测标记（ForSemCheck 产出）：suspected_error 非空即认领，problem 每次重检重新生成。
+        # 非 str（手改缓存 null/数字）str 收敛防崩；占位值（"1"/旧版"疑似错误"）不附原因，与色彩口径对齐。
         if CProblemType.疑似错误 in find_type:
-            if getattr(tran, "suspected_error", "") != "":
+            raw_suspected = getattr(tran, "suspected_error", "")
+            suspected_reason = str(raw_suspected) if isinstance(raw_suspected, str) else ""
+            if raw_suspected != "" and suspected_reason in ("", "1", "疑似错误"):
+                # null 等非 str 沿用"非空即标记"语义，只标纯类型名
                 problem_list.append("疑似错误")
+            elif suspected_reason:
+                # ASCII 逗号归一为全角，避免破坏 problem 的逗号分隔口径
+                problem_list.append("疑似错误：" + suspected_reason.replace(",", "，"))
 
         # AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销）：字段非空即标"词语色彩不一致"。
         # reason 非"1"时附进问题文案，供校对者与统一修复后端获知期望色彩方向。

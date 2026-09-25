@@ -277,11 +277,11 @@ class ForSemCheck(BaseImproveRound):
             if isinstance(reason, str) and "�" in reason:
                 # 乱码 reason 视为输出异常：降级为默认标记，避免污染 suspected_error
                 reason = ""
-            tran.suspected_error = (
-                str(reason).strip()
-                if isinstance(reason, str) and str(reason).strip()
-                else "1"
-            )
+            reason_text = str(reason).strip() if isinstance(reason, str) else ""
+            # 占位/旧版固定文案视为无原因，维持 "1" 哨兵口径
+            if reason_text in ("疑似错误", "1"):
+                reason_text = ""
+            tran.suspected_error = reason_text if reason_text else "1"
             hit_count += 1
             LOGGER.debug(
                 f"{self._log_tag} 句子 {line_id} 判定疑似错误（reason={tran.suspected_error}）"

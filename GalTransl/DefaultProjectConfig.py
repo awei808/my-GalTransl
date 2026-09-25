@@ -179,7 +179,7 @@ problemAnalyze:
     #- 引入英文 # 本来没有英文，译文引入了英文
     #- 比日文长严格 # 比日文长1倍以上就提醒
     #- 单句过长 # 译文平均分句长度超过 avgSentenceLengthThreshold，单句过长（疑似丢失应有换行）
-    #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号等）、空格、Tab、emoji 或颜文字之后
+    #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号/破折号等）、空格、Tab、emoji 或颜文字之后
     - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
     #- 词语色彩不一致 # AI词语色彩检查：译文用词与批次区间标注的用词色彩明显不符，由 ForToneCheck 后端标注 tone_issue 后认领，可由 ForToneCheckAgain 二次复核确认/撤销（需先跑过流水线批次划分）
   avgSentenceLengthThreshold: 17 # 单句过长的分句长度阈值，默认17，建议范围15~25

@@ -536,6 +536,16 @@ class NewlinePositionTests(_Base):
         problem = self._check(pid, "第一句\t\n第二句")
         self.assertNotIn("换行位置异常", problem)
 
+    def test_break_after_em_dash_ok(self) -> None:
+        # 破折号（—— U+2014）行尾换行不报（真实与字面换行均覆盖）
+        _, init = self._init_project("np_dash")
+        pid = init["project_id"]
+        self._set_problem_config(init["project_dir"])
+        problem = self._check(pid, "她说——\n第二句")
+        self.assertNotIn("换行位置异常", problem)
+        problem = self._check(pid, "她说——\\n第二句")
+        self.assertNotIn("换行位置异常", problem)
+
     def test_break_after_kaomoji_ok(self) -> None:
         # 颜文字结尾（(ノ´Д`)ノ、(T_T)、>_<、www）后换行不报
         _, init = self._init_project("np_kaomoji")

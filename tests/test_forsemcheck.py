@@ -2,7 +2,7 @@
 """ForSemCheck 语义差异检测的单元测试。
 
 覆盖：
-  - _parse_fix_response：按 id 稀疏解析（id/可选 reason），命中句置 suspected_error
+  - _parse_fix_response：按 id 稀疏解析（id/reason），占位 reason 归一为哨兵 "1"
   - 脏 JSON 容错（尾随垃圾 / 前置思考文字）与未知 id 跳过
   - find_problems 认领：suspected_error 非空 → 输出「疑似错误」问题
   - _filter_target_translations：全量已译句（含 h 场景），排除无译文/Failed/skip_check
@@ -79,6 +79,15 @@ class ParseSemcheckJsonlineTests(unittest.TestCase):
         self.assertEqual(found, 1)
         self.assertEqual(trans.suspected_error, "译文串行")
 
+    def test_placeholder_reason_normalized_to_one(self) -> None:
+        # 旧版固定文案 "疑似错误" / 数字占位 "1" 均归一为哨兵 "1"
+        parser = _make_parser()
+        trans_list = [_trans(2), _trans(3)]
+        text = 'a1b|{"id": 2, "reason": "疑似错误"}\nc2d|{"id": 3, "reason": "1"}'
+        parser._parse_fix_response(text, trans_list, "\r\n")
+        self.assertEqual(trans_list[0].suspected_error, "1")
+        self.assertEqual(trans_list[1].suspected_error, "1")
+
     def test_sparse_by_id_order_irrelevant(self) -> None:
         parser = _make_parser()
         trans_list = [_trans(3), _trans(12), _trans(14)]
@@ -144,11 +153,36 @@ class FilterTargetTranslationsTests(unittest.TestCase):
 
 
 class FindProblemsClaimTests(unittest.TestCase):
-    def test_suspected_error_claimed_as_problem(self) -> None:
+    def test_reason_claimed_into_problem_text(self) -> None:
         trans = _trans(1)
         trans.suspected_error = "译文串行"
         find_problems([trans], _FakePjConfig())
-        self.assertIn("疑似错误", trans.problem)
+        self.assertEqual(trans.problem, "疑似错误：译文串行")
+
+    def test_placeholder_reason_claims_plain_problem(self) -> None:
+        # 占位 "1" 与旧版字面 "疑似错误" 均不附原因
+        for reason in ("1", "疑似错误"):
+            with self.subTest(reason=reason):
+                trans = _trans(1)
+                trans.suspected_error = reason
+                find_problems([trans], _FakePjConfig())
+                self.assertEqual(trans.problem, "疑似错误")
+
+    def test_reason_ascii_comma_normalized(self) -> None:
+        # reason 中的 ASCII 逗号归一为全角，避免破坏 problem 的逗号分隔口径
+        trans = _trans(1)
+        trans.suspected_error = "错译,漏译"
+        find_problems([trans], _FakePjConfig())
+        self.assertEqual(trans.problem, "疑似错误：错译，漏译")
+
+    def test_non_string_suspected_error_tolerated(self) -> None:
+        # 手改缓存可能写入 null/数字：str 收敛不崩溃，非 str 沿用"非空即标记"只标纯类型名
+        for raw in (None, 3):
+            with self.subTest(raw=raw):
+                trans = _trans(1)
+                trans.suspected_error = raw
+                find_problems([trans], _FakePjConfig())
+                self.assertEqual(trans.problem, "疑似错误")
 
     def test_no_suspected_error_no_problem(self) -> None:
         trans = _trans(1)
@@ -515,11 +549,11 @@ class SemcheckEchoBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(obj._llm_calls), 2)
 
     async def test_partial_hits_kept(self) -> None:
-        # 正常批次（少量命中）：标记保留，不重试不告警
-        resp = '\nx01|{"id": 2, "reason": "疑似错误"}\nx02|{"id": 5, "reason": "疑似错误"}'
+        # 正常批次（少量命中）：标记保留，不重试不告警；reason 为具体差异说明
+        resp = '\nx01|{"id": 2, "reason": "人名错译"}\nx02|{"id": 5, "reason": "译文串行"}'
         obj = await self._run([resp])
-        self.assertEqual(obj._targets[1].suspected_error, "疑似错误")  # id 2
-        self.assertEqual(obj._targets[4].suspected_error, "疑似错误")  # id 5
+        self.assertEqual(obj._targets[1].suspected_error, "人名错译")  # id 2
+        self.assertEqual(obj._targets[4].suspected_error, "译文串行")  # id 5
         self.assertEqual(obj._targets[0].suspected_error, "")  # id 1 未命中
         self.assertEqual(obj._recorded_errors, [])
         self.assertEqual(len(obj._llm_calls), 1)
