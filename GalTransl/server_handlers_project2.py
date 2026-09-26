@@ -148,6 +148,9 @@ def route_project_api_part2(
                 "error": job.error,
                 "gendic_added_entries": int(getattr(job, "gendic_added_entries", 0) or 0),
                 "gendic_duplicated_entries": int(getattr(job, "gendic_duplicated_entries", 0) or 0),
+                # 任务运行范围（路线图工作台等入口的文件子集 / 覆盖配置键，供控制台展示）
+                "file_filter": list(getattr(job, "file_filter", []) or []),
+                "config_overrides": list(getattr(job, "config_overrides", []) or []),
             },
             "summary": {
                 "total": total,

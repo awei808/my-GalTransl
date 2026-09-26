@@ -31,7 +31,7 @@ from GalTransl.Dictionary import CGptDict
 from GalTransl.Name import load_name_table_dict
 from GalTransl.Backend.BaseEngine import BaseEngine, register_engine
 from GalTransl.Backend.Prompts import FORGLOBAL_PROMPT, FORGLOBAL_SYSTEM
-from GalTransl.Backend.utils import coerce_bool, extract_json_object
+from GalTransl.Backend.utils import coerce_bool, extract_json_object, select_paths_by_filter
 from GalTransl.DataValidator import validate_global_prompt
 from GalTransl.server_runtime import set_live_snippets
 
@@ -51,54 +51,11 @@ def _select_compressed_paths(
 ) -> List[str]:
     """按 file_filter 挑选 compressed_data 中要纳入分析的路径。
 
-    筛选口径（宽松匹配，便于前端多选/路线化传入的各种写法）：
-      1. 完整路径精确命中
-      2. 文件名（basename，含扩展名）命中
-      3. 去扩展名的文件名命中（如 "route_a" 匹配 "route_a.json"）
-
-    保留 compressed_data 原有顺序；file_filter 为 None / 空时返回全部。
-    未命中任何文件的 filter 项会被忽略并记 warning（不视为错误，避免因
-    文件名写法差异导致整个分析中止）。
+    筛选口径与日志统一收敛在 utils.select_paths_by_filter：
+    完整路径 / 文件名 / 去扩展名三级宽松匹配，保留原顺序，
+    未命中的过滤项记 warning 忽略（不中止分析）。
     """
-    if not file_filter:
-        return list(compressed_data.keys())
-
-    by_exact = set(compressed_data.keys())
-    by_basename: Dict[str, str] = {}
-    by_stem: Dict[str, str] = {}
-    for path in compressed_data:
-        base = os.path.basename(path)
-        by_basename.setdefault(base, path)
-        by_stem.setdefault(os.path.splitext(base)[0], path)
-
-    selected: List[str] = []
-    seen: set = set()
-    unmatched: List[str] = []
-    for raw in file_filter:
-        key = str(raw or "").strip()
-        if not key:
-            continue
-        hit = None
-        if key in by_exact:
-            hit = key
-        elif key in by_basename:
-            hit = by_basename[key]
-        elif key in by_stem:
-            hit = by_stem[key]
-        if hit is None:
-            unmatched.append(key)
-            continue
-        if hit not in seen:
-            seen.add(hit)
-            selected.append(hit)
-
-    if unmatched:
-        LOGGER.warning(
-            f"[GlobalPrompt] file_filter 中有 {len(unmatched)} 项未匹配到任何文件，"
-            f"已忽略：{', '.join(unmatched[:5])}"
-        )
-    # 按 compressed_data 原顺序返回，保证提示词内文件顺序稳定
-    return [p for p in compressed_data if p in seen]
+    return select_paths_by_filter(compressed_data.keys(), file_filter, tag="GlobalPrompt")
 
 
 def load_global_prompt(projectConfig: CProjectConfig) -> Optional[dict]:

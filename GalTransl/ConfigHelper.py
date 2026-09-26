@@ -253,6 +253,8 @@ class CProjectConfig:
         self.translation_guideline=""
         self.non_interactive: bool = False  # 非交互模式（前端启动时为True）
         self.runtime_project_dir: str = projectPath
+        # 本次任务的文件子集（Service 注入，LLMTranslate 在文件枚举后消费；None/空=全项目）
+        self.runtime_file_filter: list | None = None
         self.config_name: str = config_name  # 配置文件名（用于写回）
         
 

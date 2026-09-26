@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 from GalTransl import LOGGER
 
@@ -595,3 +596,58 @@ def coerce_positive_int_strict(value: object, default: int) -> int:
         return default
     val = int(f)
     return val if val > 0 else default
+
+
+def select_paths_by_filter(
+    paths: Iterable[str], file_filter: Optional[List[str]], tag: str = ""
+) -> List[str]:
+    """按 file_filter 三级宽松匹配挑选路径，保留原有顺序。
+
+    匹配口径（宽松匹配，便于前端多选/路线化传入的各种写法）：
+      1. 完整路径精确命中
+      2. 文件名（basename，含扩展名）命中
+      3. 去扩展名的文件名命中（如 "route_a" 匹配 "route_a.json"）
+
+    file_filter 为 None / 空时返回全部；未命中任何文件的过滤项记 warning 并忽略
+    （不视为错误，避免因文件名写法差异导致整个任务中止）。
+    """
+    if not file_filter:
+        return list(paths)
+
+    all_paths = list(paths)
+    path_set = set(all_paths)
+    by_basename: dict = {}
+    by_stem: dict = {}
+    for path in all_paths:
+        base = os.path.basename(path)
+        by_basename.setdefault(base, path)
+        by_stem.setdefault(os.path.splitext(base)[0], path)
+
+    selected: List[str] = []
+    seen: set = set()
+    unmatched: List[str] = []
+    for raw in file_filter:
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        hit = None
+        if key in path_set:
+            hit = key
+        elif key in by_basename:
+            hit = by_basename[key]
+        elif key in by_stem:
+            hit = by_stem[key]
+        if hit is None:
+            unmatched.append(key)
+            continue
+        if hit not in seen:
+            seen.add(hit)
+            selected.append(hit)
+
+    if unmatched:
+        LOGGER.warning(
+            f"{f'[{tag}] ' if tag else ''}file_filter 中有 {len(unmatched)} 项未匹配到任何文件，"
+            f"已忽略：{', '.join(unmatched[:5])}"
+        )
+    # 按原顺序返回，保证下游文件顺序稳定
+    return [p for p in all_paths if p in seen]

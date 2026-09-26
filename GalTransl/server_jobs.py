@@ -138,6 +138,7 @@ class JobRegistry:
                 "gpt",
                 "项目GPT字典-生成.txt",
             )
+        file_filter, config_overrides = validate_job_payload_extras(payload)
 
         # 锁外重置运行时状态：避免 JobRegistry 锁 → runtime 锁的嵌套顺序（submit 已保证同项目不并发提交，无竞态）
         reset_runtime_project(project_dir)
@@ -167,6 +168,8 @@ class JobRegistry:
                 backend_profile=backend_profile,
                 backend_profile_data=backend_profile_data if isinstance(backend_profile_data, dict) else {},
                 prompt_template_overrides=prompt_template_overrides or {},
+                file_filter=file_filter,
+                config_overrides=config_overrides,
             )
             state = create_job_state(spec)
             self._jobs[job_id] = state
@@ -181,5 +184,29 @@ class JobRegistry:
             run_job(spec, state, stop_event=stop_event)
         finally:
             self.clear_project_stop(spec.project_dir)
+
+
+def validate_job_payload_extras(payload: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    """校验并提取 file_filter / config_overrides；非法类型抛 ValueError（HTTP 400）。
+
+    值级校验（标量白名单、禁用前缀）在 Service.apply_job_config_overrides 内做，
+    失败会写入 error.log 并置任务 failed。
+    """
+    file_filter_raw = payload.get("file_filter")
+    if file_filter_raw is None:
+        file_filter: list[str] = []
+    elif isinstance(file_filter_raw, list) and all(isinstance(f, str) for f in file_filter_raw):
+        file_filter = [f.strip() for f in file_filter_raw if f and f.strip()]
+    else:
+        raise ValueError("file_filter must be a list of strings")
+
+    config_overrides_raw = payload.get("config_overrides")
+    if config_overrides_raw is None:
+        config_overrides: dict[str, Any] = {}
+    elif isinstance(config_overrides_raw, dict):
+        config_overrides = dict(config_overrides_raw)
+    else:
+        raise ValueError("config_overrides must be an object")
+    return file_filter, config_overrides
 
 

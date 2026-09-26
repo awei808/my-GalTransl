@@ -34,6 +34,7 @@ from GalTransl.CSerialize import update_json_with_transList, save_json
 from GalTransl.Dictionary import CNormalDic, CGptDict
 from GalTransl.ConfigHelper import CProjectConfig, initDictList
 from GalTransl.Utils import get_file_list
+from GalTransl.Backend.utils import select_paths_by_filter
 from GalTransl.CSplitter import (
     SplitChunkMetadata,
     DictionaryCombiner,
@@ -158,6 +159,16 @@ async def doLLMTranslate(
             )
             return True
         raise RuntimeError(f"{projectConfig.getInputPath()}中没有待翻译的文件")
+
+    # 文件子集过滤（路线图工作台等入口按任务下发；匹配口径见 select_paths_by_filter）。
+    # 在切分之前过滤，全流水线各阶段 / 独立引擎 / 主翻译全部生效。
+    runtime_filter = getattr(projectConfig, "runtime_file_filter", None)
+    if runtime_filter:
+        raw_file_count = len(file_list)
+        file_list = select_paths_by_filter(file_list, runtime_filter)
+        LOGGER.info(f"文件过滤: 保留 {len(file_list)}/{raw_file_count} 个文件")
+        if not file_list:
+            raise RuntimeError(f"文件过滤后没有匹配的文件：{runtime_filter}")
 
     # 按文件名自然排序（处理数字部分）
     import re

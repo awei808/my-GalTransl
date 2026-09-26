@@ -155,6 +155,10 @@ class JobSpec:
     backend_profile: str = ""
     backend_profile_data: dict[str, Any] = field(default_factory=dict)
     prompt_template_overrides: dict[str, dict[str, str]] = field(default_factory=dict)
+    # 文件子集过滤（匹配口径见 Backend.utils.select_paths_by_filter）；空表示全项目
+    file_filter: list[str] = field(default_factory=list)
+    # 按任务覆盖配置（点分键 -> 标量/列表），在提示词覆盖之前应用到 cfg.keyValues
+    config_overrides: dict[str, Any] = field(default_factory=dict)
     # 默认 True 保持服务端（非交互）语义；CLI 入口需显式传 False 以启用进度条与交互提示
     non_interactive: bool = True
 
@@ -170,6 +174,9 @@ class JobState:
     error: str = ""
     gendic_added_entries: int = 0
     gendic_duplicated_entries: int = 0
+    # 运行范围快照：文件子集与覆盖配置键（供 /runtime 与任务历史展示任务来源信息）
+    file_filter: list[str] = field(default_factory=list)
+    config_overrides: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_utcnow_text)
     started_at: str = ""
     finished_at: str = ""
@@ -184,7 +191,42 @@ def create_job_state(spec: JobSpec) -> JobState:
         project_dir=spec.project_dir,
         translator=spec.translator,
         config_file_name=spec.config_file_name,
+        file_filter=list(spec.file_filter or []),
+        config_overrides=sorted(spec.config_overrides.keys()) if isinstance(spec.config_overrides, dict) else [],
     )
+
+
+# config_overrides 禁用前缀：internals.prompt_template.* 由提示词模板覆盖通道专用
+_CONFIG_OVERRIDE_FORBIDDEN_PREFIX = "internals.prompt_template."
+
+# 标量值类型白名单（bool 是 int 子类，无需单列）
+_OVERRIDE_SCALAR_TYPES = (str, int, float, bool)
+
+
+def apply_job_config_overrides(cfg: "CProjectConfig", overrides: dict[str, Any]) -> list[str]:
+    """把按任务覆盖的配置（点分键 -> 值）写入 cfg.keyValues，返回实际应用的键列表。
+
+    值仅接受标量或标量/字典列表；`internals.prompt_template.*` 由
+    prompt_template_overrides 通道专用，经此设置会抛 ValueError。
+    """
+    applied: list[str] = []
+    if not isinstance(overrides, dict):
+        return applied
+    for key, value in overrides.items():
+        key_str = str(key or "").strip()
+        if not key_str:
+            continue
+        if key_str.startswith(_CONFIG_OVERRIDE_FORBIDDEN_PREFIX):
+            raise ValueError(f"config_overrides 不允许覆盖 {key_str}（请使用 prompt_template_overrides）")
+        if value is not None and not isinstance(value, _OVERRIDE_SCALAR_TYPES + (list,)):
+            raise ValueError(f"config_overrides[{key_str}] 值类型非法: {type(value).__name__}")
+        if isinstance(value, list):
+            for item in value:
+                if item is not None and not isinstance(item, _OVERRIDE_SCALAR_TYPES + (dict,)):
+                    raise ValueError(f"config_overrides[{key_str}] 列表中含非法元素类型: {type(item).__name__}")
+        cfg.keyValues[key_str] = value
+        applied.append(key_str)
+    return applied
 
 
 async def run_job_async(
@@ -271,6 +313,17 @@ async def run_job_async(
                     "Applied stage backends: %s",
                     ", ".join(f"{k}={stage_map.get(k)}" for k in resolved),
                 )
+
+        # 按任务覆盖配置与文件子集（路线图工作台等入口下发，先于提示词覆盖应用）
+        if spec.config_overrides:
+            applied_overrides = apply_job_config_overrides(cfg, spec.config_overrides)
+            if applied_overrides:
+                LOGGER.info("Applied config overrides: %s", ", ".join(applied_overrides))
+        if spec.file_filter:
+            runtime_filter = [str(f).strip() for f in spec.file_filter if str(f or "").strip()]
+            if runtime_filter:
+                cfg.runtime_file_filter = runtime_filter
+                LOGGER.info("Applied file filter: %d 项", len(runtime_filter))
 
         # Apply prompt template overrides from job spec
         prompt_overrides = spec.prompt_template_overrides or {}
