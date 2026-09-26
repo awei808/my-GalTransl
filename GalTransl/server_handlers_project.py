@@ -86,6 +86,7 @@ from GalTransl.server_cache import (
     _validate_build,
     recheck_pass3_cache_files,
 )
+from GalTransl.server_agent import handle_agent_chat
 from GalTransl.server_search import search_cache_entries, search_metadata
 from GalTransl.server_scaffold import _workspace_root
 from GalTransl.server_jobs import JobRegistry
@@ -440,6 +441,19 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             handler._send_json({"error": f"AI 建议失败: {exc}"}, status=HTTPStatus.BAD_GATEWAY)
         finally:
             _REVIEW_SUGGEST_LOCK.release()
+        return
+
+    # POST /api/projects/:id/agent/chat —— 路线图工作台简易 agent（3 工具循环，同步返回）
+    if sub_path == "/agent/chat":
+        if handler.command != "POST":
+            handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+            return
+        try:
+            payload = handler._read_json_body()
+        except json.JSONDecodeError:
+            handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        handle_agent_chat(handler, registry, project_dir, payload)
         return
 
     # GET /api/projects/:id/cache
