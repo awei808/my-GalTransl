@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, on, Show } from "solid-js";
 import type { AgentChatStep } from "../../lib/api/types";
 import { sendAgentChat } from "../../lib/api/project";
 import { getErrorMessage } from "../../lib/errors";
@@ -28,6 +28,17 @@ export function AgentPanel(props: {
   const [input, setInput] = createSignal("");
   const [pending, setPending] = createSignal(false);
 
+  // 切项目时清空聊天记录，避免上一个项目的对话残留显示
+  createEffect(
+    on(
+      () => props.projectId,
+      () => {
+        setMessages([]);
+        setPending(false);
+      },
+    ),
+  );
+
   async function handleSend() {
     const text = input().trim();
     if (!text || pending() || !props.projectId) return;
@@ -44,6 +55,8 @@ export function AgentPanel(props: {
     } catch (e) {
       toast.error(`Agent 调用失败: ${getErrorMessage(e)}`);
       setMessages((m) => [...m, { role: "assistant", text: "（调用失败，请重试或检查后端配置）" }]);
+      // 失败分支也刷新一次：前端超时中断时后端 write_route_map 副作用仍可能已发生
+      props.onRouteMapChanged();
     } finally {
       setPending(false);
     }

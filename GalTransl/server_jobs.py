@@ -156,6 +156,11 @@ class JobRegistry:
                 old_executor.shutdown(wait=False)
             if self._has_running_job_for_project(project_dir):
                 raise ValueError("the project already has a pending or running job")
+            # 反向互斥：agent 会话可能正在写路线图（最长数分钟），期间禁止提交任务
+            from GalTransl.server_agent import is_agent_busy
+
+            if is_agent_busy(project_dir):
+                raise ValueError("路线图 Agent 会话进行中，请稍候再提交任务")
             if self._running_job_count() >= self._max_workers:
                 raise _ConcurrentLimitError(f"已达到最大并发翻译任务数 ({self._max_workers})，请等待已有任务完成后再试")
 

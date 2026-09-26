@@ -74,6 +74,8 @@ export function RouteMapViewer(props: {
         ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string),
       );
       if (graphRef) graphRef.innerHTML = "";
+      // 即时清理 mermaid 留在 body 的错误残留（多次渲染失败不累积）
+      document.querySelectorAll('[id^="drouteAgentGraph-"]').forEach((el) => el.remove());
       setRenderError(msg);
     }
   }

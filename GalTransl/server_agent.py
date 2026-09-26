@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 from openai import OpenAI
@@ -25,9 +26,16 @@ AGENT_REQUEST_TIMEOUT = 120.0
 # 工具结果回传给模型的大小上限（超出截断，防上下文膨胀）
 _AGENT_RESULT_MAX_CHARS = 12000
 
-# 同项目 agent 会话单飞（进程内）
+# 同项目 agent 会话单飞（进程内，归一口径与 JobRegistry 一致：Path.resolve）
 _AGENT_BUSY: set = set()
 _AGENT_BUSY_LOCK = threading.Lock()
+
+
+def is_agent_busy(project_dir: str) -> bool:
+    """判断该项目是否正有 agent 会话进行中（供 JobRegistry.submit 反向互斥）。"""
+    norm = str(Path(project_dir).resolve())
+    with _AGENT_BUSY_LOCK:
+        return norm in _AGENT_BUSY
 
 AGENT_TOOLS: List[dict] = [
     {
@@ -265,7 +273,7 @@ def handle_agent_chat(handler: Any, registry: Any, project_dir: str, payload: di
     if registry is not None and registry._has_running_job_for_project(project_dir):
         handler._send_json({"error": "翻译任务运行中，请先停止任务再使用路线图 Agent"}, status=409)
         return
-    norm_dir = os.path.normpath(project_dir)
+    norm_dir = str(Path(project_dir).resolve())
     with _AGENT_BUSY_LOCK:
         if norm_dir in _AGENT_BUSY:
             handler._send_json({"error": "已有一个路线图 Agent 会话进行中，请稍候"}, status=409)

@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import type { MetadataEntry } from "../../lib/api/types";
 import { fetchPerFileMetadata } from "../../lib/api/project";
 import { getErrorMessage } from "../../lib/errors";
@@ -18,7 +18,28 @@ export function RouteAgentPage() {
   const [selectedFiles, setSelectedFiles] = createSignal<string[]>([]);
   const [dockTab, setDockTab] = createSignal<"agent" | "run">("agent");
   const [dockHeight, setDockHeight] = createSignal(320);
-  let resizing = false;
+  let removeResizeListeners: (() => void) | null = null;
+
+  function startResize(e: PointerEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = dockHeight();
+    const onMove = (ev: PointerEvent) => {
+      setDockHeight(Math.min(window.innerHeight - 200, Math.max(160, startH + (startY - ev.clientY))));
+    };
+    removeResizeListeners = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      removeResizeListeners = null;
+    };
+    const onUp = () => {
+      removeResizeListeners?.();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  onCleanup(() => removeResizeListeners?.());
 
   async function refresh() {
     const pid = appState.activeProjectId;
@@ -50,24 +71,6 @@ export function RouteAgentPage() {
     setSelectedFiles((files) =>
       files.includes(filename) ? files.filter((f) => f !== filename) : [...files, filename],
     );
-  }
-
-  function startResize(e: PointerEvent) {
-    e.preventDefault();
-    resizing = true;
-    const startY = e.clientY;
-    const startH = dockHeight();
-    const onMove = (ev: PointerEvent) => {
-      if (!resizing) return;
-      setDockHeight(Math.min(window.innerHeight - 200, Math.max(160, startH + (startY - ev.clientY))));
-    };
-    const onUp = () => {
-      resizing = false;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
   }
 
   return (

@@ -436,16 +436,19 @@ def _iter_text_fields(obj: Any, prefix: str = "") -> Iterator[Tuple[str, str]]:
 def _meta_snippet(text: str, query: str, use_regex: bool) -> str:
     """截取命中位置附近的摘要片段，两端超出时补省略号。"""
     idx = -1
+    hit_end = -1
     if use_regex:
         m = re.search(query, text)
         if m:
             idx = m.start()
+            hit_end = m.end()
     else:
         idx = text.lower().find(query.lower())
+        hit_end = idx + len(query)
     if idx < 0:
         return text[:80]
     start = max(0, idx - _META_SNIPPET_RADIUS)
-    end = min(len(text), idx + len(query) + _META_SNIPPET_RADIUS)
+    end = min(len(text), hit_end + _META_SNIPPET_RADIUS)
     snippet = text[start:end]
     return ("…" if start > 0 else "") + snippet + ("…" if end < len(text) else "")
 

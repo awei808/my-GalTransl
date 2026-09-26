@@ -1,70 +1,19 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { decodeProjectDir } from "../../lib/api/client";
-import {
-  fetchJob,
-  fetchProjectLogs,
-  stopProjectTranslation,
-  submitJob,
-} from "../../lib/api";
-import {
-  getActiveConfigFileName,
-} from "../../stores/appStore";
+import { fetchJob, fetchProjectLogs, stopProjectTranslation, submitJob } from "../../lib/api";
+import { getActiveConfigFileName } from "../../stores/appStore";
 import { loadRouteAgentPlan, saveRouteAgentPlan } from "../../lib/api/preferences";
 import { getErrorMessage } from "../../lib/errors";
 import { confirm } from "../../stores/confirmStore";
 import { toast } from "../../stores/toastStore";
-
-interface InstructionDef {
-  id: string;
-  label: string;
-  description: string;
-}
-
-/** 工作台可执行的翻译流程后端（指令 -> 引擎 ID） */
-const INSTRUCTIONS: InstructionDef[] = [
-  { id: "ForGal-json-translate", label: "翻译", description: "主翻译后端（多轮/单轮对话）" },
-  { id: "ForGal-full-pipeline", label: "完整流水线", description: "按需自动串联 0-7 各阶段" },
-  { id: "ForFileMetaData", label: "文件元数据", description: "生成 pass1 文件级元数据" },
-  { id: "ForBatchMetaData", label: "批次划分", description: "生成 pass2 批次级元数据" },
-  { id: "ForGlobalPrompt", label: "全局分析", description: "生成全局游戏分析" },
-  { id: "ForPlotRouteMap", label: "重生成路线图", description: "基于文件元数据重新生成剧情路线图（始终全项目）" },
-  { id: "ForImproveTranslation", label: "译文改进", description: "为可改进句生成备选译文" },
-  { id: "ForBRStation", label: "换行修复", description: "为换行异常句生成备选译文" },
-  { id: "ForJPResidue", label: "残留修复", description: "为残留日文句生成备选译文" },
-  { id: "ForBanWordFix", label: "用词修复", description: "为用词不当句生成备选译文" },
-  { id: "ForSemCheck", label: "语义复核", description: "标记疑似语义错误" },
-  { id: "ForSemCheckAgain", label: "二次复核", description: "复核疑似错误并剔除误报" },
-  { id: "ForFixRound", label: "统一修复", description: "按 gpt.afterTranslation 的 fix 条目组合修复" },
-];
-
-/** 注入开关 -> 配置键映射（「跟随项目配置」时不写入 config_overrides） */
-const INJECTION_TOGGLES: { key: string; label: string }[] = [
-  { key: "internals.promptBlocks.globalPrompt", label: "全局分析+路线图剧情" },
-  { key: "internals.promptBlocks.plotMetadata", label: "文件元数据" },
-  { key: "internals.promptBlocks.batchMetadata", label: "批次元数据" },
-  { key: "internals.promptBlocks.glossary", label: "GPT字典术语表" },
-  { key: "internals.promptBlocks.translationGuideline", label: "翻译规范" },
-  { key: "internals.forglobalprompt.inject_name_table", label: "人名表（全局分析）" },
-];
-
-type FilesMode = "selected" | "all" | "custom";
-type ToggleValue = "default" | "on" | "off";
-
-interface InstructionConfig {
-  filesMode: FilesMode;
-  customFilesText: string;
-  injections: Record<string, ToggleValue>;
-  advancedText: string;
-}
-
-function defaultConfig(): InstructionConfig {
-  return {
-    filesMode: "selected",
-    customFilesText: "",
-    injections: {},
-    advancedText: "",
-  };
-}
+import {
+  buildJobExtras,
+  defaultConfig,
+  INJECTION_TOGGLES,
+  INSTRUCTIONS,
+  type InstructionConfig,
+  type ToggleValue,
+} from "./plan";
 
 /**
  * 执行终端：按指令（后端）配置文件范围与注入内容，直接提交 /api/jobs 绕过 AI 执行，
@@ -106,33 +55,6 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
     setConfigs((m) => ({ ...m, [selectedId()]: { ...cfg(), ...patch } }));
   }
 
-  function buildFileFilter(): string[] | undefined {
-    const mode = cfg().filesMode;
-    if (mode === "all") return undefined;
-    if (mode === "custom") {
-      return cfg()
-        .customFilesText.split(/[\n,，]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-    return props.selectedFiles.slice();
-  }
-
-  function buildOverrides(): Record<string, unknown> {
-    const overrides: Record<string, unknown> = {};
-    for (const { key } of INJECTION_TOGGLES) {
-      const value = cfg().injections[key] ?? "default";
-      if (value === "on") overrides[key] = true;
-      else if (value === "off") overrides[key] = false;
-    }
-    const text = cfg().advancedText.trim();
-    if (text) {
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      Object.assign(overrides, parsed);
-    }
-    return overrides;
-  }
-
   async function handleRun() {
     const pid = props.projectId;
     if (!pid || submitting()) return;
@@ -141,21 +63,24 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
       return;
     }
     const inst = INSTRUCTIONS.find((i) => i.id === selectedId())!;
-    let fileFilter: string[] | undefined;
-    let overrides: Record<string, unknown>;
+    let extras: { file_filter?: string[]; config_overrides?: Record<string, unknown> };
     try {
-      fileFilter = buildFileFilter();
-      overrides = buildOverrides();
+      const built = buildJobExtras(selectedId(), cfg(), props.selectedFiles);
+      if (built === null) {
+        toast.warning("文件范围为空：请先在路线图中右键选择文件，或把范围改为全部/自定义列表");
+        return;
+      }
+      extras = built;
     } catch (e) {
       toast.error(`高级覆盖 JSON 解析失败: ${getErrorMessage(e)}`);
       return;
     }
-    if (fileFilter && fileFilter.length === 0) {
-      toast.warning("文件范围为空：请先在路线图中右键选择文件，或把范围改为全部/自定义列表");
-      return;
-    }
+    const fileFilter = extras.file_filter;
     const scopeDesc = fileFilter ? `选定的 ${fileFilter.length} 个文件` : "全部文件";
-    const overrideDesc = Object.keys(overrides).length > 0 ? `，覆盖 ${Object.keys(overrides).length} 项注入配置` : "";
+    const overrideDesc =
+      extras.config_overrides !== undefined
+        ? `，覆盖 ${Object.keys(extras.config_overrides).length} 项注入配置`
+        : "";
     const result = await confirm.show({
       title: "执行确认",
       message: `将在${scopeDesc}上执行「${inst.label}」${overrideDesc}。`,
@@ -173,8 +98,7 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
       project_dir: realPath,
       config_file_name: getActiveConfigFileName(),
       translator: inst.id,
-      ...(fileFilter ? { file_filter: fileFilter } : {}),
-      ...(Object.keys(overrides).length > 0 ? { config_overrides: overrides } : {}),
+      ...extras,
     })
       .then((job) => {
         toast.success(`「${inst.label}」任务已提交`);
@@ -186,7 +110,7 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
       .finally(() => setSubmitting(false));
   }
 
-  // 任务状态 + 引擎日志轮询（翻译控制台同款 /runtime 之外，这里直接轮任务与日志做终端）
+  // 任务状态 + 引擎日志轮询（单一定时器：先查状态，再拉日志尾部）
   createEffect(
     on(
       () => [props.projectId, jobId()] as const,

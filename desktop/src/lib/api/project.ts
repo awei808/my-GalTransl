@@ -515,13 +515,13 @@ export async function fetchProjectLogs(
 
 // ---- 路线图工作台 ----
 
-/** 路线图工作台 agent 对话（后端同步执行工具循环，LLM 多轮较慢，放宽超时到 300s） */
+/** 路线图工作台 agent 对话（后端同步执行工具循环，最长 6 轮 × 120s，放宽超时到 780s 覆盖后端上限） */
 export async function sendAgentChat(projectId: string, body: { message: string; model?: string }) {
   return apiRequest<AgentChatResponse>(`/api/projects/${projectId}/agent/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    timeoutMs: 300000,
+    timeoutMs: 780000,
   });
 }
 
