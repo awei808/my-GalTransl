@@ -74,6 +74,26 @@ describe("buildOverrides", () => {
     expect(() => buildOverrides(cfg({ advancedText: "{not json" }))).toThrow();
   });
 
+  it("高级覆盖含嵌套 dict 值抛错（与后端值白名单同口径，提交前拦截）", () => {
+    expect(() =>
+      buildOverrides(cfg({ advancedText: '{"internals.some.key": {"a": 1}}' })),
+    ).toThrow(/值类型非法/);
+  });
+
+  it("高级覆盖的列表元素允许标量与字典", () => {
+    expect(() =>
+      buildOverrides(
+        cfg({ advancedText: '{"gpt.afterTranslation": ["brfix", {"fix": {"types": ["jpfix"]}}]}' }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("高级覆盖的列表元素为嵌套数组时抛错", () => {
+    expect(() => buildOverrides(cfg({ advancedText: '{"gpt.afterTranslation": [["brfix"]]}' }))).toThrow(
+      /非法元素类型/,
+    );
+  });
+
   it("全 default 且无高级覆盖时返回空对象", () => {
     expect(buildOverrides(cfg())).toEqual({});
   });

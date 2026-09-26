@@ -72,7 +72,7 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
       }
       extras = built;
     } catch (e) {
-      toast.error(`高级覆盖 JSON 解析失败: ${getErrorMessage(e)}`);
+      toast.error(`高级覆盖校验失败: ${getErrorMessage(e)}`);
       return;
     }
     const fileFilter = extras.file_filter;
@@ -131,6 +131,10 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
               clearInterval(pollTimer);
               pollTimer = undefined;
               toast.error(`任务 ${jid} 失败: ${job.error || "未知错误"}`);
+            } else if (job.status === "cancelled") {
+              clearInterval(pollTimer);
+              pollTimer = undefined;
+              toast.info(`任务 ${jid} 已取消`);
             }
             const logs = await fetchProjectLogs(pid, 400, "engine");
             if (disposed || props.projectId !== pid) return;

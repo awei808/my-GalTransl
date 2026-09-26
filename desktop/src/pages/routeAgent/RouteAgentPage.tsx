@@ -41,18 +41,24 @@ export function RouteAgentPage() {
 
   onCleanup(() => removeResizeListeners?.());
 
+  let refreshSeq = 0;
+
   async function refresh() {
     const pid = appState.activeProjectId;
     if (!pid) return;
+    const seq = ++refreshSeq;
     setLoading(true);
     try {
       // plotroute 是固定文件（PlotRouteMap.json），filename 传空串命中 /metadata/plotroute/ 路由
       const res = await fetchPerFileMetadata(pid, "plotroute", "");
+      // 单调序号守卫：切项目或并发 refresh 时，过期响应不得覆盖新结果
+      if (appState.activeProjectId !== pid || seq !== refreshSeq) return;
       setEntry(res.exists && res.entry ? res.entry : null);
     } catch (e) {
-      toast.error(`读取路线图失败: ${getErrorMessage(e)}`);
+      if (appState.activeProjectId === pid && seq === refreshSeq)
+        toast.error(`读取路线图失败: ${getErrorMessage(e)}`);
     } finally {
-      setLoading(false);
+      if (appState.activeProjectId === pid && seq === refreshSeq) setLoading(false);
     }
   }
 

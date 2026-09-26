@@ -68,7 +68,8 @@ export function RouteMapViewer(props: {
       bindFunctions?.(graphRef);
       setupSvg();
       bindInteractions();
-      applySelection();    } catch (e) {
+      applySelection();
+    } catch (e) {
       if (disposed || seq !== renderSeq) return;
       const msg = String(e instanceof Error ? e.message : e).replace(/[<>&]/g, (c) =>
         ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string),

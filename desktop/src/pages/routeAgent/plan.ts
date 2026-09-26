@@ -75,7 +75,21 @@ export function buildFileFilter(
   return selectedFiles.slice();
 }
 
-/** 汇总注入覆盖与高级 JSON 覆盖；JSON 非法时抛错由调用方提示 */
+/** 与后端 apply_job_config_overrides 同口径的值类型校验：标量或标量/字典列表，dict 值拒绝 */
+function assertOverrideValue(key: string, value: unknown): void {
+  if (value === null || ["string", "number", "boolean"].includes(typeof value)) return;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (item === null || ["string", "number", "boolean"].includes(typeof item)) continue;
+      if (typeof item === "object" && !Array.isArray(item)) continue;
+      throw new Error(`config_overrides[${key}] 列表中含非法元素类型（仅支持标量或字典）`);
+    }
+    return;
+  }
+  throw new Error(`config_overrides[${key}] 值类型非法（仅支持标量或列表）`);
+}
+
+/** 汇总注入覆盖与高级 JSON 覆盖；JSON 非法或值类型越界时抛错由调用方提示 */
 export function buildOverrides(cfg: InstructionConfig): Record<string, unknown> {
   const overrides: Record<string, unknown> = {};
   for (const { key } of INJECTION_TOGGLES) {
@@ -86,7 +100,10 @@ export function buildOverrides(cfg: InstructionConfig): Record<string, unknown> 
   const text = cfg.advancedText.trim();
   if (text) {
     const parsed = JSON.parse(text) as Record<string, unknown>;
-    Object.assign(overrides, parsed);
+    for (const [key, value] of Object.entries(parsed)) {
+      assertOverrideValue(key, value);
+      overrides[key] = value;
+    }
   }
   return overrides;
 }

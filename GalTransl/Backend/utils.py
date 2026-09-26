@@ -623,7 +623,6 @@ def select_paths_by_filter(
         by_basename.setdefault(base, path)
         by_stem.setdefault(os.path.splitext(base)[0], path)
 
-    selected: List[str] = []
     seen: set = set()
     unmatched: List[str] = []
     for raw in file_filter:
@@ -640,9 +639,7 @@ def select_paths_by_filter(
         if hit is None:
             unmatched.append(key)
             continue
-        if hit not in seen:
-            seen.add(hit)
-            selected.append(hit)
+        seen.add(hit)
 
     if unmatched:
         LOGGER.warning(
