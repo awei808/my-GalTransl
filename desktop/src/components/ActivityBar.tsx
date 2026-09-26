@@ -69,6 +69,7 @@ interface TabDef {
 const tabs: TabDef[] = [
   { icon: "play-stroke", view: "translate", label: "翻译控制台" },
   { icon: "edit", view: "review", label: "校对审核" },
+  { icon: "map", view: "route-agent", label: "路线图工作台" },
   { icon: "search", view: "search", label: "查找替换" },
   { icon: "alert-circle", view: "problems", label: "问题检测" },
   { icon: "swap", view: "alt", label: "查看备选" },
@@ -190,7 +191,7 @@ function handleTabClick(tab: TabDef) {
     return;
   }
 
-  const fullPageViews = ["dict", "settings", "backend-profiles", "plugins", "prompt-templates"];
+  const fullPageViews = ["dict", "settings", "backend-profiles", "plugins", "prompt-templates", "route-agent"];
   if (fullPageViews.includes(tab.view)) {
     navigateTo(tab.view as ActiveView);
     setAppState({ sidebarOpen: false });

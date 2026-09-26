@@ -1,0 +1,577 @@
+/* 路线图工作台（route-agent 视图） */
+
+.route-agent-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.route-agent-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 8px;
+}
+
+.route-agent-refresh {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.route-agent-no-project {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.route-agent-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 上半区渲染器 */
+.route-viewer {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.route-graph {
+  min-height: 200px;
+  padding: 12px;
+}
+
+.route-viewer-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.route-viewer-toolbar {
+  position: sticky;
+  top: 8px;
+  float: right;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  z-index: 5;
+}
+
+.route-viewer-toolbar button {
+  min-width: 28px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.route-viewer-toolbar button:hover {
+  background: var(--bg-tertiary, rgba(128, 128, 128, 0.15));
+}
+
+.route-viewer-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.route-tooltip {
+  position: fixed;
+  z-index: 60;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.route-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.route-tooltip-body {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* mermaid 节点选中态 / 悬停高亮（复用 plotroute-hl 视觉口径） */
+.route-node-selected rect,
+.route-node-selected path,
+.route-node-selected circle,
+.route-node-selected polygon {
+  stroke: #e17055;
+  stroke-width: 2.5px;
+}
+
+/* 矩形回退 */
+.route-fallback {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.route-fallback-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.route-fallback-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.route-fallback-route {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.route-fallback-rects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.route-rect {
+  padding: 8px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-rect--selected {
+  background: rgba(225, 112, 85, 0.14);
+  box-shadow: 0 0 0 2px rgba(225, 112, 85, 0.55) inset;
+}
+
+/* 底边栏 */
+.route-agent-resizer {
+  height: 5px;
+  cursor: row-resize;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.route-agent-resizer:hover {
+  background: rgba(128, 128, 128, 0.25);
+}
+
+.route-agent-dock {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 160px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.route-agent-dock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.route-agent-dock-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.route-agent-dock-tabs button {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.route-agent-dock-tabs button.active {
+  background: var(--bg-tertiary, rgba(128, 128, 128, 0.15));
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.route-agent-selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.route-agent-selected-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.route-agent-selected-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.route-agent-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  max-width: 55vw;
+  padding: 2px 0;
+}
+
+.route-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.route-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.route-chip-remove:hover {
+  color: #e17055;
+}
+
+.route-agent-clear {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.route-agent-dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Agent 对话 */
+.agent-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+.agent-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-empty {
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 8px 2px;
+}
+
+.agent-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-msg--user {
+  align-self: flex-end;
+  background: var(--bg-tertiary, rgba(108, 92, 231, 0.16));
+}
+
+.agent-msg--assistant {
+  align-self: flex-start;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+}
+
+.agent-msg--pending {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.agent-msg-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.agent-step {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.agent-step--fail {
+  color: #e17055;
+  border-color: #e17055;
+}
+
+.agent-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.agent-input {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.agent-send {
+  padding: 9px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent, #6c5ce7);
+  color: #fff;
+  cursor: pointer;
+}
+
+.agent-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 执行终端 */
+.run-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.run-config {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.run-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.run-label {
+  flex-shrink: 0;
+  width: 64px;
+  padding-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.run-select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.run-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding-top: 6px;
+}
+
+.run-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 13px;
+  padding-top: 4px;
+}
+
+.run-files label,
+.run-injection {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.run-custom-files {
+  flex: 1;
+  min-height: 48px;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.run-injections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.run-injection {
+  font-size: 12px;
+  gap: 6px;
+}
+
+.run-injection select {
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.run-advanced {
+  flex: 1;
+  min-height: 32px;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 74px;
+}
+
+.run-submit {
+  padding: 6px 22px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent, #6c5ce7);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.run-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.run-stop {
+  padding: 6px 18px;
+  border: 1px solid #e17055;
+  border-radius: 8px;
+  background: transparent;
+  color: #e17055;
+  cursor: pointer;
+}
+
+.run-job-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.run-terminal {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.run-terminal-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.run-terminal-empty {
+  color: var(--text-secondary);
+}

@@ -672,6 +672,15 @@ export function TranslateConsole() {
                   并行处理: {activeFiles().join("、")}
                 </span>
               </Show>
+              {/* 路线图工作台等入口下发的文件子集任务：显示执行范围 */}
+              <Show when={(runtime()?.job?.file_filter?.length ?? 0) > 0}>
+                <span
+                  class="current-file"
+                  title={(runtime()?.job?.file_filter ?? []).join("\n")}
+                >
+                  文件范围: 仅 {runtime()!.job!.file_filter!.length} 个文件
+                </span>
+              </Show>
             </div>
           </div>
 

@@ -75,6 +75,10 @@ export type {
   BackendProfilesMap,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
+  AgentChatStep,
+  AgentChatResponse,
+  MetadataSearchMatch,
+  MetadataSearchResponse,
 } from "./types";
 
 // ---- Client ----
@@ -138,6 +142,8 @@ export {
   getAiTranslateUrl,
   fetchNameDict,
   fetchProjectLogs,
+  sendAgentChat,
+  searchProjectMetadata,
 } from "./project";
 
 // ---- Preferences ----
@@ -200,6 +206,8 @@ export {
   setPromptTemplateOverride,
   deletePromptTemplateOverride,
   getPromptTemplateOverridesForJob,
+  loadRouteAgentPlan,
+  saveRouteAgentPlan,
 } from "./preferences";
 
 export {

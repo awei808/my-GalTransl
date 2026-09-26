@@ -11,6 +11,7 @@ import { ProjectConfigPage } from "../pages/project-config/ProjectConfigPage";
 import { BackendProfilesPage } from "../pages/backends/BackendProfilesPage";
 import { PluginsPage } from "../pages/plugins/PluginsPage";
 import { PromptTemplatesPage } from "../pages/prompts/PromptTemplatesPage";
+import { RouteAgentPage } from "../pages/routeAgent/RouteAgentPage";
 
 export function MainArea() {
   const view = () => appState.activeView;
@@ -47,6 +48,9 @@ export function MainArea() {
         </Match>
         <Match when={view() === "prompt-templates"}>
           <PromptTemplatesPage />
+        </Match>
+        <Match when={view() === "route-agent"}>
+          <RouteAgentPage />
         </Match>
         <Match when={view() === "project-config"}>
           <ProjectConfigPage />

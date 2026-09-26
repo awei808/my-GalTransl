@@ -640,3 +640,24 @@ export function getEnabledProblemTypes(): string[] {
 export function setEnabledProblemTypes(types: string[]): void {
   localStorage.setItem(PROBLEM_TYPES_KEY, JSON.stringify(types));
 }
+
+// ---- 路线图工作台执行配置（按项目存储，便利性缓存非关键数据） ----
+
+const ROUTE_AGENT_PLAN_KEY = "galtransl:route-agent-run-plan";
+
+export function loadRouteAgentPlan(projectId: string): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem(`${ROUTE_AGENT_PLAN_KEY}:${projectId}`);
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRouteAgentPlan(projectId: string, plan: Record<string, unknown>): void {
+  try {
+    localStorage.setItem(`${ROUTE_AGENT_PLAN_KEY}:${projectId}`, JSON.stringify(plan));
+  } catch {
+    // 存储失败（隐私模式/超限）静默忽略
+  }
+}

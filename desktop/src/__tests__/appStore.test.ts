@@ -280,6 +280,7 @@ describe("navigateTo 侧栏状态清理（整页视图不残留侧栏）", () =>
       "prompt-templates",
       "plugins",
       "new-project",
+      "route-agent",
     ] as const;
     for (const view of wholePageViews) {
       expect(NO_SIDEBAR_VIEWS, `${view} 应无侧栏`).toContain(view);

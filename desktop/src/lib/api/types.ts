@@ -64,6 +64,10 @@ export type Job = {
   translator: string;
   gendic_added_entries?: number;
   gendic_duplicated_entries?: number;
+  /** 任务文件子集（路线图工作台等入口下发；空=全项目） */
+  file_filter?: string[];
+  /** 按任务覆盖的配置键列表（仅键名摘要） */
+  config_overrides?: string[];
 };
 
 export type PromptTemplateOverride = {
@@ -78,6 +82,41 @@ export type SubmitJobPayload = {
   backend_profile?: string;
   backend_profile_data?: Record<string, unknown>;
   prompt_template_overrides?: Record<string, PromptTemplateOverride>;
+  /** 文件子集（路线图工作台按所选文件下发；缺省=全项目） */
+  file_filter?: string[];
+  /** 按任务覆盖配置（点分键 -> 标量/列表，如 internals.promptBlocks.*） */
+  config_overrides?: Record<string, unknown>;
+};
+
+// ---- 路线图工作台 agent ----
+
+export type AgentChatStep = {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  result: Record<string, unknown>;
+};
+
+export type AgentChatResponse = {
+  reply: string;
+  steps: AgentChatStep[];
+  model: string;
+};
+
+export type MetadataSearchMatch = {
+  file: string;
+  type: "filemeta" | "batchmeta";
+  field: string;
+  snippet: string;
+};
+
+export type MetadataSearchResponse = {
+  scope: string;
+  query: string;
+  total_files: number;
+  matched_files: string[];
+  matches: MetadataSearchMatch[];
+  truncated: boolean;
 };
 
 export type TranslatorsResponse = {
@@ -286,6 +325,10 @@ export type RuntimeJob = {
   error?: string;
   gendic_added_entries?: number;
   gendic_duplicated_entries?: number;
+  /** 任务文件子集（路线图工作台等入口下发；空=全项目） */
+  file_filter?: string[];
+  /** 按任务覆盖的配置键列表（仅键名摘要） */
+  config_overrides?: string[];
 };
 
 export type ProjectRuntimeSummary = {

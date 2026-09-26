@@ -53,7 +53,8 @@ export type ActiveView =
   | "backend-profiles"
   | "plugins"
   | "prompt-templates"
-  | "project-config";
+  | "project-config"
+  | "route-agent";
 
 export type ConnectionPhase = "offline" | "connecting" | "online" | "reconnecting";
 
@@ -72,6 +73,7 @@ export const NO_SIDEBAR_VIEWS: readonly ActiveView[] = [
   "prompt-templates",
   "plugins",
   "new-project",
+  "route-agent",
 ];
 
 export interface AppState {

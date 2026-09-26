@@ -36,7 +36,9 @@ import type {
   ProjectRuntimeResponse,
   MetadataEntry,
   MetadataType,
+  MetadataSearchResponse,
   PerFileMetadataResponse,
+  AgentChatResponse,
   StopProjectResponse,
   CommonDictionaryManagerResponse,
 } from "./types";
@@ -503,8 +505,36 @@ export async function fetchNameDict(projectId: string) {
   return apiRequest<NameDictResponse>(`/api/projects/${projectId}/name-dict`);
 }
 
-export async function fetchProjectLogs(projectId: string, tail = 2000) {
-  return apiRequest<ProjectLogsResponse>(`/api/projects/${projectId}/logs?tail=${tail}`);
+export async function fetchProjectLogs(
+  projectId: string,
+  tail = 2000,
+  source: "engine" | "frontend" = "engine",
+) {
+  return apiRequest<ProjectLogsResponse>(`/api/projects/${projectId}/logs?tail=${tail}&source=${source}`);
+}
+
+// ---- 路线图工作台 ----
+
+/** 路线图工作台 agent 对话（后端同步执行工具循环，LLM 多轮较慢，放宽超时到 300s） */
+export async function sendAgentChat(projectId: string, body: { message: string; model?: string }) {
+  return apiRequest<AgentChatResponse>(`/api/projects/${projectId}/agent/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    timeoutMs: 300000,
+  });
+}
+
+/** 检索文件/批次元数据（与 agent「查找文件元数据」工具同源实现） */
+export async function searchProjectMetadata(
+  projectId: string,
+  body: { query: string; scope?: "filemeta" | "batchmeta" | "all"; max_results?: number },
+) {
+  return apiRequest<MetadataSearchResponse>(`/api/projects/${projectId}/metadata/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 // Re-export ProblemEntry type for convenience

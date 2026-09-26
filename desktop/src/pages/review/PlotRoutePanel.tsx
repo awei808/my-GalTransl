@@ -4,7 +4,7 @@ import { fetchPerFileMetadata } from "../../lib/api/project";
 import { toast } from "../../stores/toastStore";
 
 /* PlotRouteMap.json 数据模型（键与后端 ForPlotRouteMap 输出一致） */
-interface PlotRouteMap {
+export interface PlotRouteMap {
   结构类型?: string;
   用户大纲?: string;
   mermaid?: string;
@@ -12,17 +12,17 @@ interface PlotRouteMap {
   节点剧情?: Record<string, string>;
 }
 
-/* mermaid 动态加载（单例，避免重复 import） */
+/* mermaid 动态加载（单例，避免重复 import；路线图工作台 RouteMapViewer 复用） */
 let mermaidMod: Promise<typeof import("mermaid")> | null = null;
-function getMermaid() {
+export function getMermaid() {
   mermaidMod ??= import("mermaid");
   return mermaidMod;
 }
 
-const ROUTE_COLORS = ["#636e72", "#fdcb6e", "#e17055", "#00cec9", "#6c5ce7", "#00b894", "#e84393"];
+export const ROUTE_COLORS = ["#636e72", "#fdcb6e", "#e17055", "#00cec9", "#6c5ce7", "#00b894", "#e84393"];
 
 /* 解析 mermaid 源码节点定义：alias -> 显示文本（兼容带/不带引号，跳过 subgraph 行） */
-function parseNodes(src: string): Map<string, string> {
+export function parseNodes(src: string): Map<string, string> {
   const map = new Map<string, string>();
   const re = /^\s*([A-Za-z_][\w-]*)\s*\[\s*(?:"([^"]*)"|([^\]]*?))\s*\]/gm;
   let m: RegExpExecArray | null;
@@ -35,7 +35,7 @@ function parseNodes(src: string): Map<string, string> {
 }
 
 /* 从文件归属反查路线内节点：路线名 -> { color, aliases } */
-function buildRoutes(nodes: Map<string, string>, fileRoutes: Record<string, string>) {
+export function buildRoutes(nodes: Map<string, string>, fileRoutes: Record<string, string>) {
   const routes: Record<string, { color: string; aliases: string[] }> = {};
   const routeIdx: Record<string, number> = {};
   for (const label of Object.values(fileRoutes)) {
