@@ -86,7 +86,7 @@ from GalTransl.server_cache import (
     _validate_build,
     recheck_pass3_cache_files,
 )
-from GalTransl.server_search import search_cache_entries
+from GalTransl.server_search import search_cache_entries, search_metadata
 from GalTransl.server_scaffold import _workspace_root
 from GalTransl.server_jobs import JobRegistry
 from GalTransl.server_handlers_project2 import route_project_api_part2
@@ -700,6 +700,32 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
     # 文件级元数据存储为 pass1_cache/{filename}.meta.json
     # 批次级元数据存储为 pass2_cache/{filename}.batch.json
     # 全局提示词仍为 pass0_cache/GlobalPrompt.json
+
+    # POST /api/projects/:id/metadata/search —— 文件/批次元数据文本检索（路线图工作台 agent 工具）
+    if sub_path == "/metadata/search":
+        if handler.command != "POST":
+            handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+            return
+        try:
+            payload = handler._read_json_body()
+            query = str(payload.get("query", "") or "").strip()
+            if not query:
+                raise ValueError("query required")
+            result = search_metadata(
+                project_dir,
+                query,
+                scope=str(payload.get("scope", "all") or "all"),
+                max_results=payload.get("max_results", 50),
+                use_regex=bool(payload.get("re", False)),
+            )
+            handler._send_json(result)
+        except ValueError as exc:
+            handler._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+        except re.error as exc:
+            handler._send_json({"error": f"invalid regex: {exc}"}, status=HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            handler._send_json({"error": f"元数据检索失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        return
 
     # GET/POST /api/projects/:id/metadata/filemeta/:filename
     if sub_path.startswith("/metadata/filemeta/"):

@@ -10,9 +10,9 @@ import json
 import os
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-from GalTransl import CACHE_FOLDERNAME, INPUT_FOLDERNAME, LOGGER
+from GalTransl import CACHE_FOLDERNAME, INPUT_FOLDERNAME, LOGGER, PASS1_CACHE_DIR, PASS2_CACHE_DIR
 from GalTransl.Dictionary import DictRow, parse_dict_line
 from GalTransl.server_cache import _collect_cache_files
 from GalTransl.server_dict import (
@@ -404,5 +404,139 @@ def search_dict_entries(
         "query": query,
         "results": results,
         "total": total,
+        "truncated": truncated,
+    }
+
+
+# 元数据检索（pass1/pass2）：供路线图工作台 agent 的「查找文件元数据」工具使用
+_META_SEARCH_SCOPES = ("filemeta", "batchmeta", "all")
+_META_SEARCH_DEFAULT_MAX = 50
+_META_SEARCH_HARD_MAX = 500
+_META_SNIPPET_RADIUS = 32
+
+
+def _iter_text_fields(obj: Any, prefix: str = "") -> Iterator[Tuple[str, str]]:
+    """递归产出（字段路径, 文本）：字符串值直接产出，字符串列表拼为一段，嵌套 dict/list 下钻。"""
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield from _iter_text_fields(value, path)
+    elif isinstance(obj, list):
+        texts = [v for v in obj if isinstance(v, str)]
+        if texts and prefix:
+            yield prefix, "、".join(texts)
+        for idx, value in enumerate(obj):
+            if isinstance(value, dict):
+                path = f"{prefix}.{idx}" if prefix else str(idx)
+                yield from _iter_text_fields(value, path)
+    elif isinstance(obj, str) and prefix:
+        yield prefix, obj
+
+
+def _meta_snippet(text: str, query: str, use_regex: bool) -> str:
+    """截取命中位置附近的摘要片段，两端超出时补省略号。"""
+    idx = -1
+    if use_regex:
+        m = re.search(query, text)
+        if m:
+            idx = m.start()
+    else:
+        idx = text.lower().find(query.lower())
+    if idx < 0:
+        return text[:80]
+    start = max(0, idx - _META_SNIPPET_RADIUS)
+    end = min(len(text), idx + len(query) + _META_SNIPPET_RADIUS)
+    snippet = text[start:end]
+    return ("…" if start > 0 else "") + snippet + ("…" if end < len(text) else "")
+
+
+def search_metadata(
+    project_dir: str,
+    query: str,
+    scope: str = "all",
+    max_results: Any = None,
+    use_regex: bool = False,
+) -> Dict[str, Any]:
+    """检索文件级（pass1）与批次级（pass2）元数据的文本字段。
+
+    只读、无副作用；目录缺失或无命中返回空结果而非错误。
+    scope 非法抛 ValueError（调用方映射为 400）。
+
+    Returns:
+        {"scope", "query", "total_files", "matched_files", "matches", "truncated"}；
+        matches 条目含 file / type / field / snippet。
+    """
+    if scope not in _META_SEARCH_SCOPES:
+        raise ValueError(f"scope 必须为 {'/'.join(_META_SEARCH_SCOPES)}")
+    query = str(query or "").strip()
+    if not query:
+        return {
+            "scope": scope,
+            "query": query,
+            "total_files": 0,
+            "matched_files": [],
+            "matches": [],
+            "truncated": False,
+        }
+    try:
+        limit = int(max_results)
+    except (TypeError, ValueError):
+        limit = _META_SEARCH_DEFAULT_MAX
+    limit = max(0, min(limit, _META_SEARCH_HARD_MAX))
+
+    matcher = _make_matcher(query, use_regex)
+    scope_dirs: List[Tuple[str, str]] = []
+    if scope in ("filemeta", "all"):
+        scope_dirs.append(("filemeta", os.path.join(project_dir, CACHE_FOLDERNAME, PASS1_CACHE_DIR)))
+    if scope in ("batchmeta", "all"):
+        scope_dirs.append(("batchmeta", os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR)))
+
+    matches: List[Dict[str, Any]] = []
+    matched_files: List[str] = []
+    truncated = False
+    total_files = 0
+    for meta_type, dir_path in scope_dirs:
+        if not os.path.isdir(dir_path):
+            continue
+        suffix = ".meta.json" if meta_type == "filemeta" else ".batch.json"
+        for filename in sorted(os.listdir(dir_path)):
+            if not filename.endswith(suffix):
+                continue
+            file_path = os.path.join(dir_path, filename)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    entry = json.load(f)
+            except Exception as exc:
+                LOGGER.warning(f"[meta-search] 读取元数据失败 {filename}: {exc}")
+                continue
+            if not isinstance(entry, dict):
+                continue
+            total_files += 1
+            file_id = str(entry.get("id") or filename[: -len(suffix)] or "")
+            hit_fields = [
+                (field, _meta_snippet(text, query, use_regex))
+                for field, text in _iter_text_fields(entry)
+                if text and matcher(text)
+            ]
+            if not hit_fields:
+                continue
+            if file_id not in matched_files:
+                matched_files.append(file_id)
+            for field, snippet in hit_fields:
+                if len(matches) >= limit:
+                    truncated = True
+                    break
+                matches.append({"file": file_id, "type": meta_type, "field": field, "snippet": snippet})
+            if truncated:
+                break
+        if truncated:
+            break
+    LOGGER.debug(f"[meta-search] scope={scope} query={query!r} 命中文件 {len(matched_files)} 个")
+    return {
+        "scope": scope,
+        "query": query,
+        "total_files": total_files,
+        "matched_files": matched_files,
+        "matches": matches,
         "truncated": truncated,
     }
