@@ -73,7 +73,7 @@ const tabs: TabDef[] = [
   { icon: "search", view: "search", label: "查找替换" },
   { icon: "alert-circle", view: "problems", label: "问题检测" },
   { icon: "swap", view: "alt", label: "查看备选" },
-  { icon: "book", view: "dict", label: "字典管理" },
+  { icon: "book", view: "dict", label: "人名与字典" },
   { icon: "terminal", view: "build-output", label: "构建输出" },
   { icon: "settings", view: "settings", label: "设置" },
 ];
