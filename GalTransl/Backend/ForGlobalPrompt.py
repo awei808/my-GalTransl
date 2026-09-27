@@ -576,8 +576,11 @@ class ForGlobalPrompt(BaseEngine):
         path = os.path.join(out_dir, "GlobalPrompt.json")
 
         with self._gp_lock:
-            with open(path, "w", encoding="utf-8") as f:
+            # 先写 .tmp 再 os.replace（口径同 Cache.py）：下游读到的是完整旧文件或完整新文件
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
 
         LOGGER.debug(
             f"[GlobalPrompt] 已保存 {path}"

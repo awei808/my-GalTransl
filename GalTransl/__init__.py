@@ -76,6 +76,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "路线分析：按剧情路线图划分的路线逐条做局部游戏分析，产出 route_analysis 分片（需先有剧情路线图），供全局汇总使用。",
         "en": "Route analysis: per-route game analysis based on PlotRouteMap assignments, writes route_analysis shards (requires PlotRouteMap) for the global merge stage."
     },
+    "ForGlobalAnalysis": {
+        "zh-cn": "全局分析（汇总）：融合各路线分析分片为一份覆盖全游戏的全局分析，写入 GlobalPrompt.json（需先有路线分析分片）。",
+        "en": "Global analysis (merge): fuses route analysis shards into one full-game GlobalPrompt.json (requires route analysis shards)."
+    },
     "ForGal-json-translate": {
         "zh-cn": "翻译后端：翻译Gal时使用，json格式输入，对话模式可选（多轮/单轮），可注入文件级元数据(FileMetaData)和批次级元数据(BatchMetadata)。",
         "en": "Translation backend for Gal translation, json input, selectable multi-turn/single-turn chat mode, supports FileMetaData and BatchMetadata injection."

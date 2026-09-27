@@ -528,6 +528,45 @@ async def doLLMTranslate(
                 await gptapi_routes.shutdown()
         return True
 
+    # ---- 2.10 独立引擎：全局分析汇总（ForGlobalAnalysis）----
+    if eng_type == "ForGlobalAnalysis":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+
+        from GalTransl.Backend.ForGlobalAnalysis import ForGlobalAnalysis
+        from GalTransl.Backend.ForPlotRouteMap import load_plot_route_map
+        from GalTransl.Backend.ForRouteAnalysis import load_route_shards
+
+        route_map = load_plot_route_map(projectConfig)
+        file_map = (route_map or {}).get("文件归属")
+        valid_routes = (
+            {str(v).strip() for v in file_map.values() if str(v or "").strip()}
+            if isinstance(file_map, dict) and file_map
+            else None
+        )
+        shards = load_route_shards(projectConfig, valid_routes=valid_routes)
+        if not shards:
+            LOGGER.error(
+                "[全局汇总] 无可用路线分析分片，请先运行路线分析（ForRouteAnalysis）"
+            )
+            raise RuntimeError("全局分析汇总失败：无路线分析分片")
+
+        _update_runtime(projectConfig, stage="全局分析汇总")
+        gptapi_merge = ForGlobalAnalysis(
+            projectConfig, "ForGlobalAnalysis",
+            projectConfig.proxyPool, projectConfig.tokenPool,
+        )
+        try:
+            ok = await gptapi_merge.batch_translate(shards, route_map=route_map)
+            if not ok:
+                LOGGER.error("[全局汇总] 全局分析汇总失败")
+                raise RuntimeError("全局分析汇总失败")
+            _update_runtime(projectConfig, stage="全局分析汇总完成")
+        finally:
+            if hasattr(gptapi_merge, "shutdown"):
+                await gptapi_merge.shutdown()
+        return True
+
     # 3. 根据 sortBy 决定 chunk 顺序：name（文件名自然序）或 size（大 chunk 优先）
     soryBy = projectConfig.getKey("sortBy", "name")
     if soryBy == "name":

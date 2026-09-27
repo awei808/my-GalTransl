@@ -147,6 +147,7 @@ class RequestHealthMetrics:
 ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForGlobalPrompt": "GalTransl.Backend.ForGlobalPrompt",
     "ForRouteAnalysis": "GalTransl.Backend.ForRouteAnalysis",
+    "ForGlobalAnalysis": "GalTransl.Backend.ForGlobalAnalysis",
     "ForGal-json-translate": "GalTransl.Backend.ForGalJsonTranslate",
     # 旧引擎名别名：兼容旧配置/旧任务，指向同一模块
     "ForGal-json-multi-chat": "GalTransl.Backend.ForGalJsonTranslate",
