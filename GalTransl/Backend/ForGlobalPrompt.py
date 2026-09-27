@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig, initDictList
@@ -256,8 +256,7 @@ class ForGlobalPrompt(BaseEngine):
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
 
-        self.system_prompt = FORGLOBAL_SYSTEM
-        self.trans_prompt = FORGLOBAL_PROMPT
+        self.system_prompt, self.trans_prompt = self._default_prompts()
         self._setup_prompts(eng_type, config)
 
         # 是否把项目翻译规范注入提示词（默认开启）
@@ -275,6 +274,10 @@ class ForGlobalPrompt(BaseEngine):
         # 跨文件写 GlobalPrompt.json 时的互斥锁（虽然当前只有一次写入，
         # 但保留锁以防未来并发场景）
         self._gp_lock = Lock()
+
+    def _default_prompts(self) -> Tuple[str, str]:
+        """返回默认 (system_prompt, trans_prompt)；子类（路线分析/全局汇总）覆写以替换。"""
+        return FORGLOBAL_SYSTEM, FORGLOBAL_PROMPT
 
     # 0. 可控注入翻译规范
     def _build_prompt_request(

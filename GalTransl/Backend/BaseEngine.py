@@ -146,6 +146,7 @@ class RequestHealthMetrics:
 # 模块加载时 @register_engine 装饰器运行，把「name -> 构造工厂」写入 ENGINE_REGISTRY。
 ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForGlobalPrompt": "GalTransl.Backend.ForGlobalPrompt",
+    "ForRouteAnalysis": "GalTransl.Backend.ForRouteAnalysis",
     "ForGal-json-translate": "GalTransl.Backend.ForGalJsonTranslate",
     # 旧引擎名别名：兼容旧配置/旧任务，指向同一模块
     "ForGal-json-multi-chat": "GalTransl.Backend.ForGalJsonTranslate",
@@ -658,10 +659,10 @@ class BaseEngine:
     def _build_guideline_block(self) -> str:
         """按 _inject_guideline 开关构建翻译规范注入块（带标题；关闭或为空时返回空串）。
 
-        仅文件级/批次级/全局分析三个元数据类后端使用（ForFileMetaData /
-        ForBatchMetaData / ForGlobalPrompt），对应配置键按引擎命名空间隔离：
-        internals.forfilemeta.inject_guideline / internals.forbatchmeta.inject_guideline /
-        internals.forglobalprompt.inject_guideline。该开关**不作用于翻译轮与修复轮**
+        仅元数据类后端使用（ForFileMetaData / ForBatchMetaData /
+        ForGlobalPrompt 及其子类 ForRouteAnalysis / ForGlobalAnalysis），
+        ForGlobalPrompt 系子类共用 internals.forglobalprompt.inject_guideline。
+        该开关**不作用于翻译轮与修复轮**
         （ForGalJsonTranslate、ForImproveTranslation、ForBRStation、ForJPResidue、
         ForBanWordFix），它们由 _build_prompt_request 默认裸替换
         pj_config.translation_guideline（无条件注入，无此开关）。

@@ -72,6 +72,10 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "由压缩后全文+游戏信息生成全局剧情概要、角色档案、行文风格。结果写入 transl_cache/pass0_cache/GlobalPrompt.json。",
         "en": "Generate global plot summary, character profiles, writing style from compressed full text + game info. Writes GlobalPrompt.json."
     },
+    "ForRouteAnalysis": {
+        "zh-cn": "路线分析：按剧情路线图划分的路线逐条做局部游戏分析，产出 route_analysis 分片（需先有剧情路线图），供全局汇总使用。",
+        "en": "Route analysis: per-route game analysis based on PlotRouteMap assignments, writes route_analysis shards (requires PlotRouteMap) for the global merge stage."
+    },
     "ForGal-json-translate": {
         "zh-cn": "翻译后端：翻译Gal时使用，json格式输入，对话模式可选（多轮/单轮），可注入文件级元数据(FileMetaData)和批次级元数据(BatchMetadata)。",
         "en": "Translation backend for Gal translation, json input, selectable multi-turn/single-turn chat mode, supports FileMetaData and BatchMetadata injection."

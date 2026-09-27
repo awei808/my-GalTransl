@@ -88,6 +88,45 @@ from GalTransl.Frontend.pipeline_stages import (  # noqa: E402
 from GalTransl.Frontend.llm_pipeline import _run_full_pipeline  # noqa: E402
 
 
+async def _validate_metadata_inputs(
+    projectConfig: CProjectConfig,
+    file_json_lists: dict,
+    tag: str,
+    abort_hint: str,
+) -> None:
+    """元数据类独立引擎共用的输入数据校验（任一文件不合格即抛 RuntimeError）。"""
+    from GalTransl.DataValidator import validate_input_json
+
+    LOGGER.info(f"[{tag}] 阶段 0/2：输入数据校验")
+    _update_runtime(projectConfig, stage="输入数据校验")
+    all_valid = True
+    for file_path, json_list in file_json_lists.items():
+        result = validate_input_json(json_list, file_path)
+        if not result["valid"]:
+            for err in result["errors"]:
+                LOGGER.error(f"[校验失败] {file_path}: {err}")
+            all_valid = False
+        for warn in result["warnings"]:
+            LOGGER.warning(f"[校验警告] {file_path}: {warn}")
+    if not all_valid:
+        raise RuntimeError(f"输入数据校验失败，{abort_hint}。请修复上述错误后重试。")
+    LOGGER.info(f"[{tag}] 阶段 0 完成：所有输入文件校验通过")
+
+
+def _compress_texts_for_metadata(
+    projectConfig: CProjectConfig, file_json_lists: dict
+) -> Dict[str, str]:
+    """元数据类独立引擎共用的文本压缩（{file_path: compressed_text}）。"""
+    from GalTransl.TextCompressor import TextCompressor
+
+    max_chars = projectConfig.getKey("internals.pipeline.maxInputChars", 950000)
+    compressor = TextCompressor(max_chars=max_chars)
+    compressed_texts: Dict[str, str] = {}
+    for file_path, json_list in file_json_lists.items():
+        compressed_texts[file_path] = compressor.compress({file_path: json_list})
+    return compressed_texts
+
+
 async def doLLMTranslate(
     projectConfig: CProjectConfig,
 ) -> bool:
@@ -391,45 +430,23 @@ async def doLLMTranslate(
         _check_stop_requested(projectConfig)
         await ensure_model_available_if_needed(projectConfig)
 
-        from GalTransl.TextCompressor import TextCompressor
-        from GalTransl.DataValidator import (
-            validate_input_json,
-            validate_global_prompt,
-        )
+        from GalTransl.DataValidator import validate_global_prompt
         from GalTransl.Backend.ForGlobalPrompt import (
             ForGlobalPrompt,
             load_global_prompt,
         )
 
         # 阶段 0：输入数据校验
-        LOGGER.info("[GlobalPrompt] 阶段 0/2：输入数据校验")
-        _update_runtime(projectConfig, stage="输入数据校验")
-        all_valid = True
-        for file_path, json_list in file_json_lists.items():
-            result = validate_input_json(json_list, file_path)
-            if not result["valid"]:
-                for err in result["errors"]:
-                    LOGGER.error(f"[校验失败] {file_path}: {err}")
-                all_valid = False
-            for warn in result["warnings"]:
-                LOGGER.warning(f"[校验警告] {file_path}: {warn}")
-        if not all_valid:
-            raise RuntimeError(
-                "输入数据校验失败，全局分析中止。请修复上述错误后重试。"
-            )
-        LOGGER.info("[GlobalPrompt] 阶段 0 完成：所有输入文件校验通过")
+        await _validate_metadata_inputs(
+            projectConfig, file_json_lists, "GlobalPrompt", "全局分析中止"
+        )
 
         # 阶段 1：文本压缩（产出 {file_path: compressed_text} 字典）
         LOGGER.info("[GlobalPrompt] 阶段 1/2：文本无损压缩")
         _update_runtime(projectConfig, stage="文本无损压缩")
-        max_chars = projectConfig.getKey(
-            "internals.pipeline.maxInputChars", 950000
+        compressed_texts: Dict[str, str] = _compress_texts_for_metadata(
+            projectConfig, file_json_lists
         )
-        compressor = TextCompressor(max_chars=max_chars)
-        compressed_texts: Dict[str, str] = {}
-        for file_path, json_list in file_json_lists.items():
-            compressed = compressor.compress({file_path: json_list})
-            compressed_texts[file_path] = compressed
 
         # 阶段 2：全局游戏分析
         LOGGER.info("[GlobalPrompt] 阶段 2/2：全局游戏分析")
@@ -468,6 +485,47 @@ async def doLLMTranslate(
         finally:
             if hasattr(gptapi_global, "shutdown"):
                 await gptapi_global.shutdown()
+        return True
+
+    # ---- 2.9 独立引擎：逐路线分析（ForRouteAnalysis）----
+    if eng_type == "ForRouteAnalysis":
+        _check_stop_requested(projectConfig)
+        await ensure_model_available_if_needed(projectConfig)
+
+        from GalTransl.Backend.ForRouteAnalysis import ForRouteAnalysis
+
+        await _validate_metadata_inputs(
+            projectConfig, file_json_lists, "RouteAnalysis", "路线分析中止"
+        )
+
+        LOGGER.info("[RouteAnalysis] 阶段 1/2：文本无损压缩")
+        _update_runtime(projectConfig, stage="文本无损压缩")
+        compressed_texts: Dict[str, str] = _compress_texts_for_metadata(
+            projectConfig, file_json_lists
+        )
+
+        LOGGER.info("[RouteAnalysis] 阶段 2/2：逐路线分析")
+        _update_runtime(projectConfig, stage="路线分析")
+        force_regen_ra = bool(
+            projectConfig.getKey(
+                "internals.globalanalysis.forceRegenRouteAnalysis", False
+            )
+        )
+        gptapi_routes = ForRouteAnalysis(
+            projectConfig, "ForRouteAnalysis",
+            projectConfig.proxyPool, projectConfig.tokenPool,
+        )
+        try:
+            ok = await gptapi_routes.batch_translate(
+                compressed_texts, force_regen=force_regen_ra
+            )
+            if not ok:
+                LOGGER.error("[RouteAnalysis] 路线分析生成失败")
+                raise RuntimeError("路线分析生成失败")
+            _update_runtime(projectConfig, stage="路线分析完成")
+        finally:
+            if hasattr(gptapi_routes, "shutdown"):
+                await gptapi_routes.shutdown()
         return True
 
     # 3. 根据 sortBy 决定 chunk 顺序：name（文件名自然序）或 size（大 chunk 优先）
