@@ -137,14 +137,15 @@ RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
 RUNTIME_SNAPSHOT_SUCCESS_LIMIT = 500
 
 
-# 8 阶段流水线——供前端"流程完成情况"展示用。
-# 顺序与 LLMTranslate.doLLMTranslate 的阶段执行顺序一致。
+# 9 阶段流水线——供前端"流程完成情况"展示用。
+# 顺序与 _run_full_pipeline 的阶段执行顺序（pipeline_stages.PIPELINE_STAGES）一致。
 PIPELINE_STAGE_NAMES: list[str] = [
     "输入数据校验",
     "文本无损压缩",
-    "生成全局游戏分析",
     "构建术语表",
     "生成文件级元数据",
+    "生成剧情路线图",
+    "生成全局游戏分析",
     "划分翻译区间",
     "翻译执行中",
     "AI初步处理",
@@ -153,17 +154,20 @@ PIPELINE_STAGE_TOTAL: int = len(PIPELINE_STAGE_NAMES)
 
 
 def _compute_stage_index(stage: str) -> int:
-    """返回 stage 字段对应的流水线阶段索引（0-7）；-1 表示不匹配。"""
+    """返回 stage 字段对应的流水线阶段索引（0-8）；-1 表示不匹配。"""
     if not stage:
         return -1
     # 子阶段如 "文件级元数据 (1/5)" 通过前缀或包含匹配映射到对应主阶段
     for idx, name in enumerate(PIPELINE_STAGE_NAMES):
         if stage.startswith(name) or name in stage:
             return idx
-    # 别名：旧版阶段7显示名 / 独立改进轮运行态 / 大阶段独立 API 预检
-    if "译文质量改进" in stage or "后处理-" in stage or "AI初步处理-" in stage:
-        return 7
-    # 兜底："完整流水线启动" → 阶段 0，"流水线完成" → 阶段 7，"检查模型可用性" → 阶段 0
+    # 别名：独立引擎运行态（路线分析/全局分析汇总）→ 全局分析阶段
+    if "路线分析" in stage or "全局分析汇总" in stage:
+        return PIPELINE_STAGE_NAMES.index("生成全局游戏分析")
+    # 别名：旧版阶段7显示名 / 独立改进轮运行态 → 末阶段
+    if "译文质量改进" in stage or "后处理-" in stage:
+        return PIPELINE_STAGE_TOTAL - 1
+    # 兜底："完整流水线启动" → 阶段 0，"流水线完成" → 末阶段，"检查模型可用性" → 阶段 0
     if "启动" in stage or "模型可用性" in stage:
         return 0
     if "完成" in stage:

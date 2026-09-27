@@ -156,10 +156,10 @@ def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
 STAGE_BACKEND_KEYS: tuple = (
     "validate",
     "compress",
-    "global_prompt",
     "gen_dic",
     "file_meta",
     "plot_route",
+    "global_analysis",
     "batch_meta",
     "translate",
     "afterTrans",
@@ -179,10 +179,10 @@ ALL_STAGE_BACKEND_KEYS: tuple = tuple(
 STAGE_BACKEND_FALLBACKS: dict = {
     "validate": "",
     "compress": "",
-    "global_prompt": "metadata",
     "gen_dic": "metadata",
     "file_meta": "metadata",
     "plot_route": "metadata",
+    "global_analysis": "metadata",
     "batch_meta": "metadata",
     "translate": "",
     "afterTrans": "",

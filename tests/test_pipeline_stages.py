@@ -26,10 +26,10 @@ class PipelineStageManifestTests(unittest.TestCase):
             [
                 "validate",
                 "compress",
-                "global_prompt",
                 "gen_dic",
                 "file_meta",
                 "plot_route",
+                "global_analysis",
                 "batch_meta",
                 "translate",
                 "improve",
@@ -57,15 +57,23 @@ class PipelineStageManifestTests(unittest.TestCase):
                 self.assertEqual(stage.backend_slot, "" if stage.key != "improve" else "afterTrans")
 
     def test_dependency_declarations(self) -> None:
-        self.assertEqual(get_stage("global_prompt").depends_on, ("compress",))
+        # 全局分析只依赖压缩：路线图缺失时回退全文分析而非跳过
+        self.assertEqual(get_stage("global_analysis").depends_on, ("compress",))
         self.assertEqual(get_stage("plot_route").depends_on, ("file_meta",))
-        self.assertTrue(get_stage("global_prompt").needs_compressed_text)
+        self.assertTrue(get_stage("global_analysis").needs_compressed_text)
+        # 全局分析必须排在剧情路线图之后（路线分片汇总的前置）
+        keys = [s.key for s in PIPELINE_STAGES]
+        self.assertLess(keys.index("plot_route"), keys.index("global_analysis"))
+        self.assertEqual(
+            get_stage("global_analysis").backend_names,
+            ("ForRouteAnalysis", "ForGlobalAnalysis"),
+        )
 
     def test_sample_products_map_to_stage_keys(self) -> None:
         self.assertEqual(
             SAMPLE_PRODUCTS,
             {
-                "GlobalPrompt.json": "global_prompt",
+                "GlobalPrompt.json": "global_analysis",
                 "FileMetaData.json": "file_meta",
                 "PlotRouteMap.json": "plot_route",
                 "BatchMetadata.json": "batch_meta",
@@ -76,7 +84,8 @@ class PipelineStageManifestTests(unittest.TestCase):
         """历史上「阶段 4.5」改为整序号，且编号与列表位置一致。"""
         labels = [stage_display_label(s) for s in PIPELINE_STAGES]
         self.assertEqual(labels[0], "阶段 0：输入数据校验")
-        self.assertIn("阶段 5：剧情路线图", labels)
+        self.assertIn("阶段 4：剧情路线图", labels)
+        self.assertIn("阶段 5：全局游戏分析", labels)
         self.assertFalse(any("4.5" in lbl for lbl in labels))
 
 
@@ -95,9 +104,9 @@ class PipelineStageSkipReasonTests(unittest.TestCase):
         self.assertIn("plot_route", reasons)
         self.assertIn("文件级元数据", reasons["plot_route"])
 
-    def test_no_compressed_text_skips_global_prompt(self) -> None:
+    def test_no_compressed_text_skips_global_analysis(self) -> None:
         reasons = compute_skip_reasons({}, compressed_texts_present=False)
-        self.assertIn("global_prompt", reasons)
+        self.assertIn("global_analysis", reasons)
         self.assertNotIn("gen_dic", reasons)
 
     def test_payload_shape(self) -> None:

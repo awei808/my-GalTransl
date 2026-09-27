@@ -150,19 +150,54 @@ async def _run_stage_compress(
     stage_ctx["compressed_texts"] = compressed_texts
 
 
-async def _run_stage_global_prompt(
+def resolve_global_analysis_mode(
+    route_map: Optional[dict],
+    compressed_texts: Dict[str, str],
+    max_routes: int,
+) -> Tuple[str, Dict[str, List[str]], List[str]]:
+    """判定全局分析走「路线分片汇总」还是「全文回退」。
+
+    回退口径（任一命中即 fulltext，宁全勿缺）：
+    路线图缺失 / mermaid 为空（路线图未生成成功）/ 路线覆盖存在缺口
+    （有文件未归入任何路线）/ 路线数超过 max_routes。
+
+    Returns:
+        (mode, routes, unmatched_keys)：mode 为 "routes"（分片汇总）或
+        "fulltext"（回退全文分析，此时 routes 为空 dict）。
+    """
+    from GalTransl.Backend.ForRouteAnalysis import derive_route_file_map
+
+    if not isinstance(route_map, dict) or not str(
+        route_map.get("mermaid", "") or ""
+    ).strip():
+        return "fulltext", {}, []
+    routes, unmatched = derive_route_file_map(route_map, compressed_texts)
+    routes = {r: fs for r, fs in routes.items() if fs}
+    if not routes:
+        return "fulltext", {}, unmatched
+    covered = {p for fs in routes.values() for p in fs}
+    if any(p not in covered for p in compressed_texts):
+        return "fulltext", {}, unmatched
+    if len(routes) > max_routes:
+        return "fulltext", {}, unmatched
+    return "routes", routes, unmatched
+
+
+async def _run_stage_global_analysis(
     projectConfig: CProjectConfig,
     file_json_lists: dict,
     file_list: list,
     stage_ctx: dict,
 ) -> None:
-    """阶段：全局游戏分析（GlobalPrompt.json）。"""
+    """阶段：全局游戏分析（路线分片汇总为主，全文分析回退兜底）。"""
     import os
 
-    _stage_begin(projectConfig, "global_prompt", "生成全局游戏分析")
+    _stage_begin(projectConfig, "global_analysis", "生成全局游戏分析")
 
-    if not _stage_enabled(projectConfig, "global_prompt"):
-        _stage_skip(projectConfig, "global_prompt", "已禁用（enableGlobalPrompt=false）")
+    if not _stage_enabled(projectConfig, "global_analysis"):
+        _stage_skip(
+            projectConfig, "global_analysis", "已禁用（enableGlobalPrompt=false）"
+        )
         # 后续阶段通过 projectConfig.global_prompt 或缓存惰性读取，缺省时自动退化
         projectConfig.global_prompt = None
         return
@@ -170,78 +205,107 @@ async def _run_stage_global_prompt(
     compressed_texts = stage_ctx.get("compressed_texts") or {}
     if not compressed_texts:
         _stage_skip(
-            projectConfig, "global_prompt", "压缩文本为空（阶段 1 已禁用或未产出）"
+            projectConfig, "global_analysis", "压缩文本为空（阶段 1 已禁用或未产出）"
         )
         projectConfig.global_prompt = None
         return
 
+    from GalTransl.Backend.ForGlobalAnalysis import ForGlobalAnalysis
     from GalTransl.Backend.ForGlobalPrompt import (
         ForGlobalPrompt,
         load_global_prompt,
         _find_global_prompt_path,
-        _select_compressed_paths,
-        MERGE_FIELD_KEYS,
     )
+    from GalTransl.Backend.ForPlotRouteMap import load_plot_route_map
+    from GalTransl.Backend.ForRouteAnalysis import ForRouteAnalysis, load_route_shards
     from GalTransl.DataValidator import validate_global_prompt
-
-    # 全局分析范围：internals.pipeline.globalPromptFiles 指定文件子集（空=全量）。
-    # 支持完整路径 / 文件名 / 去扩展名文件名，便于前端多选与路线化传入。
-    raw_filter = projectConfig.getKey("internals.pipeline.globalPromptFiles", None)
-    file_filter: Optional[List[str]] = None
-    if isinstance(raw_filter, list) and raw_filter:
-        file_filter = [str(x) for x in raw_filter if str(x or "").strip()]
-    elif isinstance(raw_filter, str) and raw_filter.strip():
-        file_filter = [s.strip() for s in raw_filter.replace("，", ",").split(",") if s.strip()]
-
-    # 子集覆盖字段：internals.pipeline.globalPromptMergeFields（空=覆盖全部字段）
-    raw_fields = projectConfig.getKey("internals.pipeline.globalPromptMergeFields", None)
-    merge_fields: Optional[List[str]] = None
-    if isinstance(raw_fields, list) and raw_fields:
-        merge_fields = [
-            str(x) for x in raw_fields if str(x or "").strip() in MERGE_FIELD_KEYS
-        ]
-        # 字段名全部无效时回退「覆盖全部」：空列表会让合并变成「一个字段都不覆盖」，
-        # 用户会看到配置改了却毫无效果（静默失效）。
-        if not merge_fields:
-            LOGGER.warning(
-                f"[流水线] globalPromptMergeFields 中的字段名均无效"
-                f"（可用：{'、'.join(MERGE_FIELD_KEYS)}），本次按覆盖全部字段执行"
-            )
-            merge_fields = None
 
     gp_path = _find_global_prompt_path(projectConfig)
     force_regen_gp = projectConfig.getKey("internals.pipeline.forceRegenGlobal", False)
+    force_regen_ra = bool(
+        projectConfig.getKey(
+            "internals.globalanalysis.forceRegenRouteAnalysis", False
+        )
+    )
 
     if os.path.exists(gp_path) and not force_regen_gp:
         LOGGER.info("[流水线] 全局分析已存在，跳过生成")
         record_runtime_notice(projectConfig.getProjectDir(), "全局分析已存在，跳过")
         success = True
     else:
-        # 子集筛选后可能无有效文件：提前降级为「全量」，避免阶段整体失败
-        if file_filter is not None:
-            matched = _select_compressed_paths(compressed_texts, file_filter)
-            if not matched:
-                LOGGER.warning(
-                    "[流水线] globalPromptFiles 未匹配到任何文件，本次按全量分析执行"
-                )
-                file_filter = None
-
-        await ensure_model_available_if_needed(projectConfig, stage="global_prompt")
-        gptapi_global = ForGlobalPrompt(
-            projectConfig, "ForGlobalPrompt",
-            projectConfig.proxyPool, _stage_pool(projectConfig, "global_prompt"),
-        )
+        await ensure_model_available_if_needed(projectConfig, stage="global_analysis")
+        route_map = load_plot_route_map(projectConfig)
+        raw_max_routes = projectConfig.getKey("internals.globalanalysis.maxRoutes", 12)
         try:
-            external_info = projectConfig.getKey("externals.gameInfo", "") or ""
-            success = await gptapi_global.batch_translate(
-                compressed_texts,
-                external_info=external_info,
-                file_filter=file_filter,
-                merge_fields=merge_fields,
+            max_routes = max(1, int(raw_max_routes))
+        except (TypeError, ValueError):
+            max_routes = 12
+        mode, routes, unmatched = resolve_global_analysis_mode(
+            route_map, compressed_texts, max_routes
+        )
+        if unmatched:
+            LOGGER.warning(
+                f"[流水线] 路线图「文件归属」中 {len(unmatched)} 个文件"
+                f"未匹配到压缩文本：{unmatched}"
             )
-        finally:
-            if hasattr(gptapi_global, "shutdown"):
-                await gptapi_global.shutdown()
+
+        if mode == "routes":
+            # 第 1 步：逐路线分析（分片已就绪的自动跳过）
+            LOGGER.info(f"[流水线] 全局分析：按 {len(routes)} 条路线分片汇总")
+            gptapi_routes = ForRouteAnalysis(
+                projectConfig, "ForRouteAnalysis",
+                projectConfig.proxyPool, _stage_pool(projectConfig, "global_analysis"),
+            )
+            try:
+                ok = await gptapi_routes.batch_translate(
+                    compressed_texts, force_regen=force_regen_ra
+                )
+            finally:
+                if hasattr(gptapi_routes, "shutdown"):
+                    await gptapi_routes.shutdown()
+            if not ok:
+                LOGGER.error("[流水线] 路线分析生成失败，流水线中止")
+                raise RuntimeError("路线分析生成失败")
+
+            # 第 2 步：汇总分片为全量 GlobalPrompt.json
+            valid_routes = set(routes.keys())
+            shards = load_route_shards(projectConfig, valid_routes=valid_routes)
+            missing_shards = valid_routes - set(shards.keys())
+            if missing_shards:
+                LOGGER.warning(
+                    f"[流水线] 路线分片缺失：{sorted(missing_shards)}，"
+                    f"对应路线将不参与汇总"
+                )
+            gptapi_merge = ForGlobalAnalysis(
+                projectConfig, "ForGlobalAnalysis",
+                projectConfig.proxyPool, _stage_pool(projectConfig, "global_analysis"),
+            )
+            try:
+                success = await gptapi_merge.batch_translate(shards, route_map=route_map)
+            finally:
+                if hasattr(gptapi_merge, "shutdown"):
+                    await gptapi_merge.shutdown()
+        else:
+            if not isinstance(route_map, dict):
+                reason = "无有效剧情路线图"
+            elif not str(route_map.get("mermaid", "") or "").strip():
+                reason = "路线图 mermaid 为空（路线图未生成成功），回退全文分析"
+            else:
+                reason = "路线覆盖存在缺口或路线数超限，回退全文分析"
+            LOGGER.info(f"[流水线] 全局分析：{reason}")
+            gptapi_global = ForGlobalPrompt(
+                projectConfig, "ForGlobalPrompt",
+                projectConfig.proxyPool, _stage_pool(projectConfig, "global_analysis"),
+            )
+            try:
+                external_info = projectConfig.getKey("externals.gameInfo", "") or ""
+                success = await gptapi_global.batch_translate(
+                    compressed_texts, external_info=external_info
+                )
+            finally:
+                if hasattr(gptapi_global, "shutdown"):
+                    await gptapi_global.shutdown()
+
         if not success:
             LOGGER.error("[流水线] 全局游戏分析生成失败，流水线中止")
             raise RuntimeError("全局游戏分析生成失败")
@@ -568,7 +632,7 @@ async def _run_stage_translate(
 _STAGE_HANDLERS = {
     "validate": _run_stage_validate,
     "compress": _run_stage_compress,
-    "global_prompt": _run_stage_global_prompt,
+    "global_analysis": _run_stage_global_analysis,
     "gen_dic": _run_stage_gen_dic,
     "file_meta": _run_stage_file_meta,
     "plot_route": _run_stage_plot_route,

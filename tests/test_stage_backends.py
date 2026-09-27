@@ -8,7 +8,7 @@
   - Runner._build_stage_token_pools：按 stage_profiles 预建各阶段池，缺段回退告警
   - BaseEngine._effective_backend_section：池携带段实例级优先，Sakura 分支不覆盖
   - CProjectConfig.get_stage_token_pool：未配置阶段回退主池
-  - server_runtime._compute_stage_index：阶段 7 新旧命名与别名映射
+  - server_runtime._compute_stage_index：阶段索引新旧命名与别名映射
 
 0.5.0 批次 2（每阶段独立后端）补充：
   - STAGE_BACKEND_KEYS 扩为 10 阶段键，旧 4 键降为 LEGACY，ALL 为并集
@@ -100,7 +100,7 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
         self.assertEqual(
             set(STAGE_BACKEND_KEYS),
             {
-                "validate", "compress", "global_prompt", "gen_dic", "file_meta",
+                "validate", "compress", "global_analysis", "gen_dic", "file_meta",
                 "plot_route", "batch_meta", "translate", "afterTrans", "proofread",
             },
         )
@@ -114,7 +114,7 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
         # 6 个元数据域子阶段键均可写入并解析
         resolved = _resolve_stage_backend_profiles(
             {
-                "global_prompt": "pA",
+                "global_analysis": "pA",
                 "gen_dic": "pA",
                 "file_meta": "pB",
                 "plot_route": "pB",
@@ -123,7 +123,7 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
             {"pA": _profile(), "pB": _profile()},
         )
         self.assertEqual(
-            set(resolved), {"global_prompt", "gen_dic", "file_meta", "plot_route", "batch_meta"}
+            set(resolved), {"global_analysis", "gen_dic", "file_meta", "plot_route", "batch_meta"}
         )
 
     def test_legacy_metadata_key_still_accepted(self) -> None:
@@ -134,7 +134,7 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
 
 class StageBackendFallbackTests(unittest.TestCase):
     def test_metadata_domain_stages_fall_back_to_legacy_slot(self) -> None:
-        for key in ("global_prompt", "gen_dic", "file_meta", "plot_route", "batch_meta"):
+        for key in ("global_analysis", "gen_dic", "file_meta", "plot_route", "batch_meta"):
             with self.subTest(key=key):
                 self.assertEqual(STAGE_BACKEND_FALLBACKS.get(key), "metadata")
 
@@ -156,17 +156,17 @@ class StageBackendFallbackTests(unittest.TestCase):
         return proj
 
     def test_resolve_prefers_own_stage_pool(self) -> None:
-        proj = self._proj({"global_prompt": object(), "metadata": object()})
-        self.assertEqual(proj.resolve_stage_pool_key("global_prompt"), "global_prompt")
+        proj = self._proj({"global_analysis": object(), "metadata": object()})
+        self.assertEqual(proj.resolve_stage_pool_key("global_analysis"), "global_analysis")
 
     def test_resolve_falls_back_to_legacy_slot(self) -> None:
         proj = self._proj({"metadata": object()})
-        self.assertEqual(proj.resolve_stage_pool_key("global_prompt"), "metadata")
+        self.assertEqual(proj.resolve_stage_pool_key("global_analysis"), "metadata")
         self.assertEqual(proj.resolve_stage_pool_key("plot_route"), "metadata")
 
     def test_resolve_returns_stage_when_nothing_configured(self) -> None:
         proj = self._proj({})
-        self.assertEqual(proj.resolve_stage_pool_key("global_prompt"), "global_prompt")
+        self.assertEqual(proj.resolve_stage_pool_key("global_analysis"), "global_analysis")
 
     def test_get_stage_token_pool_uses_fallback_chain(self) -> None:
         legacy = object()
@@ -235,13 +235,13 @@ class BuildStageTokenPoolsTests(unittest.TestCase):
     def test_same_profile_object_shares_one_pool(self) -> None:
         # 多个阶段引用同一 profile 对象 → 复用一个池实例，避免重复建池与令牌重复计数
         shared = _profile([{"token": "sk-shared", "endpoint": "https://s.example.com"}])
-        cfg = _FakeRunnerConfig({"global_prompt": shared, "gen_dic": shared, "file_meta": shared})
+        cfg = _FakeRunnerConfig({"global_analysis": shared, "gen_dic": shared, "file_meta": shared})
         _build_stage_token_pools(cfg, "ForGal-full-pipeline")
         self.assertEqual(
-            set(cfg.stage_token_pools), {"global_prompt", "gen_dic", "file_meta"}
+            set(cfg.stage_token_pools), {"global_analysis", "gen_dic", "file_meta"}
         )
         self.assertIs(
-            cfg.stage_token_pools["global_prompt"], cfg.stage_token_pools["gen_dic"]
+            cfg.stage_token_pools["global_analysis"], cfg.stage_token_pools["gen_dic"]
         )
         self.assertIs(
             cfg.stage_token_pools["gen_dic"], cfg.stage_token_pools["file_meta"]
@@ -250,15 +250,15 @@ class BuildStageTokenPoolsTests(unittest.TestCase):
     def test_distinct_profiles_get_distinct_pools(self) -> None:
         cfg = _FakeRunnerConfig(
             {
-                "global_prompt": _profile([{"token": "sk-a", "endpoint": "https://a.example.com"}]),
+                "global_analysis": _profile([{"token": "sk-a", "endpoint": "https://a.example.com"}]),
                 "gen_dic": _profile([{"token": "sk-b", "endpoint": "https://b.example.com"}]),
             }
         )
         _build_stage_token_pools(cfg, "ForGal-full-pipeline")
         self.assertIsNot(
-            cfg.stage_token_pools["global_prompt"], cfg.stage_token_pools["gen_dic"]
+            cfg.stage_token_pools["global_analysis"], cfg.stage_token_pools["gen_dic"]
         )
-        self.assertEqual(cfg.stage_token_pools["global_prompt"].tokens[0][1].token, "sk-a")
+        self.assertEqual(cfg.stage_token_pools["global_analysis"].tokens[0][1].token, "sk-a")
         self.assertEqual(cfg.stage_token_pools["gen_dic"].tokens[0][1].token, "sk-b")
 
 
@@ -319,19 +319,34 @@ class GetStageTokenPoolTests(unittest.TestCase):
 
 
 class ComputeStageIndexAliasTests(unittest.TestCase):
-    def test_new_stage7_name_prefixed(self) -> None:
-        self.assertEqual(server_runtime._compute_stage_index("AI初步处理-fix"), 7)
+    def test_new_stage_last_name_prefixed(self) -> None:
+        # 9 阶段后末阶段索引 = PIPELINE_STAGE_TOTAL - 1（"AI初步处理" 前缀直接命中）
+        self.assertEqual(
+            server_runtime._compute_stage_index("AI初步处理-fix"),
+            server_runtime.PIPELINE_STAGE_TOTAL - 1,
+        )
 
     def test_old_stage7_name_alias(self) -> None:
-        self.assertEqual(server_runtime._compute_stage_index("译文质量改进"), 7)
-        self.assertEqual(server_runtime._compute_stage_index("译文质量改进完成"), 7)
+        self.assertEqual(
+            server_runtime._compute_stage_index("译文质量改进"),
+            server_runtime.PIPELINE_STAGE_TOTAL - 1,
+        )
+        self.assertEqual(
+            server_runtime._compute_stage_index("译文质量改进完成"),
+            server_runtime.PIPELINE_STAGE_TOTAL - 1,
+        )
 
     def test_legacy_postprocess_prefix_alias(self) -> None:
-        self.assertEqual(server_runtime._compute_stage_index("后处理-improve"), 7)
+        self.assertEqual(
+            server_runtime._compute_stage_index("后处理-improve"),
+            server_runtime.PIPELINE_STAGE_TOTAL - 1,
+        )
 
     def test_other_stages_unaffected(self) -> None:
-        self.assertEqual(server_runtime._compute_stage_index("翻译执行中"), 6)
-        self.assertEqual(server_runtime._compute_stage_index("生成全局游戏分析"), 2)
+        self.assertEqual(server_runtime._compute_stage_index("翻译执行中"), 7)
+        # 9 阶段后全局分析后置到路线图之后（索引 5）
+        self.assertEqual(server_runtime._compute_stage_index("生成全局游戏分析"), 5)
+        self.assertEqual(server_runtime._compute_stage_index("生成剧情路线图"), 4)
         self.assertEqual(server_runtime._compute_stage_index("未知阶段"), -1)
 
 

@@ -38,6 +38,13 @@ def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
         profile_name = str(profile_name or "").strip()
         if not profile_name:
             continue
+        # 旧阶段键兼容：全局分析阶段改名后旧配置平滑迁移（0.5.5）
+        if stage_key == "global_prompt":
+            LOGGER.warning(
+                "stageBackends.global_prompt 已更名为 global_analysis，"
+                "本次自动按 global_analysis 生效；请更新 config.yaml"
+            )
+            stage_key = "global_analysis"
         if stage_key not in ALL_STAGE_BACKEND_KEYS:
             raise ValueError(
                 f"stageBackends 含未知阶段键 '{stage_key}'，"

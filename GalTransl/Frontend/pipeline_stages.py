@@ -82,20 +82,9 @@ PIPELINE_STAGES: Tuple[PipelineStage, ...] = (
         backend_slot="",
     ),
     PipelineStage(
-        key="global_prompt",
-        label="全局游戏分析",
-        order=2,
-        enabled_key=_enabled_key("enableGlobalPrompt"),
-        backend_slot="metadata",
-        depends_on=("compress",),
-        backend_names=("ForGlobalPrompt",),
-        sample_key="GlobalPrompt.json",
-        needs_compressed_text=True,
-    ),
-    PipelineStage(
         key="gen_dic",
         label="术语表构建",
-        order=3,
+        order=2,
         enabled_key=_enabled_key("enableGenDic"),
         backend_slot="metadata",
         backend_names=("GenDic",),
@@ -103,7 +92,7 @@ PIPELINE_STAGES: Tuple[PipelineStage, ...] = (
     PipelineStage(
         key="file_meta",
         label="文件级元数据",
-        order=4,
+        order=3,
         enabled_key=_enabled_key("enableFileMeta"),
         backend_slot="metadata",
         backend_names=("ForFileMetaData",),
@@ -112,12 +101,25 @@ PIPELINE_STAGES: Tuple[PipelineStage, ...] = (
     PipelineStage(
         key="plot_route",
         label="剧情路线图",
-        order=5,
+        order=4,
         enabled_key=_enabled_key("enablePlotRoute"),
         backend_slot="metadata",
         depends_on=("file_meta",),
         backend_names=("ForPlotRouteMap",),
         sample_key="PlotRouteMap.json",
+    ),
+    PipelineStage(
+        # 全局分析后置到路线图之后：优先按路线图划分逐路线分析再汇总；
+        # 依赖只声明 compress——路线图缺失/不合格时本阶段回退全文分析而非跳过
+        key="global_analysis",
+        label="全局游戏分析",
+        order=5,
+        enabled_key=_enabled_key("enableGlobalPrompt"),
+        backend_slot="metadata",
+        depends_on=("compress",),
+        backend_names=("ForRouteAnalysis", "ForGlobalAnalysis"),
+        sample_key="GlobalPrompt.json",
+        needs_compressed_text=True,
     ),
     PipelineStage(
         key="batch_meta",

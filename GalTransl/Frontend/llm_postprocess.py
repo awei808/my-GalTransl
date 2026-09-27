@@ -223,7 +223,7 @@ async def postprocess_results(
         _improve_enabled = projectConfig.getKey("internals.pipeline.enableImprove", True)
         if not _improve_enabled:
             LOGGER.debug(
-                f"[后处理] 阶段 7 已禁用（enableImprove=false），"
+                f"[后处理] 阶段 8 已禁用（enableImprove=false），"
                 f"跳过 {len(_after_order)} 个后处理后端：{'+'.join(_after_order)}"
             )
         else:

@@ -67,7 +67,7 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
-  gpt.afterTranslation: [] # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 7）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，需先跑过semcheck）；tonecheck词语色彩一致性检查（对照批次区间的用词色彩标注，标记色彩明显不符的句子写入tone_issue并标记"词语色彩不一致"问题，不改译文，需先跑过流水线批次划分）；tonecheckagain色彩命中句二次复核（对tonecheck标记句逐句确认/撤销误报，需先跑过tonecheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/fix]
+  gpt.afterTranslation: [] # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 8）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，需先跑过semcheck）；tonecheck词语色彩一致性检查（对照批次区间的用词色彩标注，标记色彩明显不符的句子写入tone_issue并标记"词语色彩不一致"问题，不改译文，需先跑过流水线批次划分）；tonecheckagain色彩命中句二次复核（对tonecheck标记句逐句确认/撤销误报，需先跑过tonecheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/fix]
   gpt.enableBetterTranslation: false # [已废弃] 由 gpt.afterTranslation 取代。旧项目兼容：true 等价于 afterTranslation=improve。[True/False]
   gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
@@ -78,10 +78,10 @@ common:
   stageBackends: # 每阶段独立API：值为「后端配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
     validate: "" # 阶段0 输入数据校验（一般无需独立后端）
     compress: "" # 阶段1 文本无损压缩（一般无需独立后端）
-    global_prompt: "" # 阶段2 全局游戏分析；留空时回退下方 metadata（旧键）
-    gen_dic: "" # 阶段3 术语表构建；留空时回退下方 metadata（旧键）
-    file_meta: "" # 阶段4 文件级元数据；留空时回退下方 metadata（旧键）
-    plot_route: "" # 阶段5 剧情路线图；留空时回退下方 metadata（旧键）
+    gen_dic: "" # 阶段2 术语表构建；留空时回退下方 metadata（旧键）
+    file_meta: "" # 阶段3 文件级元数据；留空时回退下方 metadata（旧键）
+    plot_route: "" # 阶段4 剧情路线图；留空时回退下方 metadata（旧键）
+    global_analysis: "" # 阶段5 全局游戏分析（路线分片汇总）；留空时回退下方 metadata（旧键）
     batch_meta: "" # 阶段6 批次级元数据；留空时回退下方 metadata（旧键）
     translate: "" # 阶段7 翻译执行
     afterTrans: "" # 阶段8 修复和改进译文（全部后处理引擎）
@@ -100,17 +100,20 @@ internals:
     abortOnDicFailure: false      # 是否在术语表生成失败时中止流水线 [True/False]
     # === 流水线阶段开关（false 则跳过该阶段）===
     enableValidate: true          # 阶段0 输入数据校验 [True/False]
-    enableCompress: true          # 阶段1 文本无损压缩（仅全局分析需要）[True/False]
-    enableGlobalPrompt: true      # 阶段2 全局游戏分析 [True/False]
-    enableGenDic: true            # 阶段3 术语表构建 [True/False]
-    enableFileMeta: true          # 阶段4 文件级元数据 [True/False]
-    enablePlotRoute: true         # 阶段4.5 剧情路线图 [True/False]
+    enableCompress: true          # 阶段1 文本无损压缩（全局分析需要）[True/False]
+    enableGenDic: true            # 阶段2 术语表构建 [True/False]
+    enableFileMeta: true          # 阶段3 文件级元数据 [True/False]
+    enablePlotRoute: true         # 阶段4 剧情路线图 [True/False]
     forceRegenPlotRoute: false    # 是否强制重新生成剧情路线图（即使已存在）[True/False]
-    enableBatchMeta: true         # 阶段5 批次级元数据 [True/False]
-    enableTranslate: true         # 阶段6 翻译执行 [True/False]
-    enableImprove: true           # 阶段7 修复和改进译文（后处理，按 gpt.afterTranslation 顺序执行）[True/False]
-    globalPromptFiles: []         # 全局分析范围：留空=全项目所有文件；填写则为文件名列表（支持文件名或去扩展名名，如 ["route_a","route_b.json"]），仅分析这些文件
-    globalPromptMergeFields: []   # 子集分析的字段覆盖范围：留空=覆盖全部字段；也可只填 ["剧情概述","角色列表"] 等保留其余字段的已有结果
+    enableGlobalPrompt: true      # 阶段5 全局游戏分析（路线分片汇总，无路线图时回退全文分析）[True/False]
+    enableBatchMeta: true         # 阶段6 批次级元数据 [True/False]
+    enableTranslate: true         # 阶段7 翻译执行 [True/False]
+    enableImprove: true           # 阶段8 修复和改进译文（后处理，按 gpt.afterTranslation 顺序执行）[True/False]
+  # 全局分析（路线分片+汇总）配置
+  globalanalysis:
+    maxRoutes: 12                 # 路线数上限：路线图划分超过此值时全局分析回退为压缩全文单次分析 [1-50]
+    routeParallelism: 2           # 路线分析并行度（同时分析的路线数）[1-8]
+    forceRegenRouteAnalysis: false # 是否强制重算全部分片（即使分片已存在且文件范围未变）[True/False]
   # ForPlotRouteMap 后端专用配置（剧情路线图）
   plotroute:
     structureType: "树"           # 剧情结构类型 [线性/树/有向无环图/有向有环图/混合]
