@@ -31,6 +31,7 @@ import {
   getTableColumns,
   getTypeLabel,
   isDictSectionDivider,
+  regexBadgeColumnIndex,
   stripProjectDirMarker,
   stripTabPrefix,
   condSemanticOf,
@@ -1287,6 +1288,10 @@ export function DictionaryPage() {
                 </div>
               </div>
 
+              <p class="dict-regex-hint">
+                搜索词/检测词列支持 <code>re:</code> 前缀正则（如 <code>re:あ+い</code>；替换类词典可与 <code>1^</code>/<code>^^</code> 组合）。非法正则回退为字面量匹配；可匹配空串的正则在替换/GPT 类词典中丢弃，检测类词库（H/禁用词）中同样回退为字面量匹配。
+              </p>
+
               <Show
                 when={viewMode() === "text"}
                 fallback={
@@ -1337,7 +1342,29 @@ export function DictionaryPage() {
                                                 : undefined
                                             }
                                           >
-                                            {dictCell(ri, colSignal(), rowSignal())}
+                                            <Show
+                                              when={
+                                                csi === regexBadgeColumnIndex(rowSignal().type) &&
+                                                rowSignal().isRegex
+                                              }
+                                              fallback={dictCell(ri, colSignal(), rowSignal())}
+                                            >
+                                              <span class="dict-cell-regex-wrap">
+                                                <span
+                                                  class="dict-regex-badge"
+                                                  classList={{
+                                                    "dict-regex-badge--error":
+                                                      !!rowSignal().regexError,
+                                                  }}
+                                                  title={
+                                                    rowSignal().regexError || "re: 前缀正则词条"
+                                                  }
+                                                >
+                                                  正则
+                                                </span>
+                                                {dictCell(ri, colSignal(), rowSignal())}
+                                              </span>
+                                            </Show>
                                           </td>
                                         )}
                                       </Index>

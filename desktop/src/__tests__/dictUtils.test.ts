@@ -18,6 +18,7 @@ import {
   getFilesByTab,
   getFieldLabels,
   getTableColumns,
+  regexBadgeColumnIndex,
   DICT_TABLE_COLUMNS,
   getTypeLabel,
   isDictSectionDivider,
@@ -411,6 +412,24 @@ describe("DICT_TABLE_COLUMNS / getTableColumns（表格表头列定义）", () =
       const sum = cols.reduce((acc, c) => acc + parseFloat(c.width ?? "0"), 0);
       expect(Math.round(sum)).toBe(100);
     }
+  });
+});
+
+describe("regexBadgeColumnIndex（正则徽标列位）", () => {
+  it("gpt/禁用词/普通替换行徽标在首列（搜索/检测词为第 1 列）", () => {
+    expect(regexBadgeColumnIndex("gpt")).toBe(0);
+    expect(regexBadgeColumnIndex("forbidden")).toBe(0);
+    expect(regexBadgeColumnIndex("normal")).toBe(0);
+  });
+
+  it("条件行徽标在搜索列（第 3 列），场景行在第 2 列", () => {
+    expect(regexBadgeColumnIndex("conditional")).toBe(2);
+    expect(regexBadgeColumnIndex("situation")).toBe(1);
+  });
+
+  it("注释/空行无搜索词列，返回 null 不显示徽标", () => {
+    expect(regexBadgeColumnIndex("comment")).toBeNull();
+    expect(regexBadgeColumnIndex("blank")).toBeNull();
   });
 });
 

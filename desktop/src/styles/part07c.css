@@ -116,6 +116,37 @@
   box-shadow: inset 3px 0 0 var(--color-status-error);
 }
 
+/* 正则词条徽标（isRegex 行的搜索/检测词列，error 变体悬停显示错误原因） */
+.dict-cell-regex-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dict-cell-regex-wrap .dict-cell-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dict-regex-badge {
+  flex: 0 0 auto;
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.5;
+  color: var(--color-text-link);
+  background: color-mix(in srgb, var(--color-text-link) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-link) 35%, transparent);
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: default;
+}
+.dict-regex-badge--error {
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-status-error) 35%, transparent);
+}
+
 .dict-cell-note {
   display: inline-block;
   max-width: 100%;

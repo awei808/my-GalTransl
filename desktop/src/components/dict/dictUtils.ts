@@ -293,6 +293,18 @@ export function getFieldLabels(type: DictRowType, tab: DictTab): string[] {
   return getTableColumns(type, tab).map((c) => c.label);
 }
 
+/**
+ * 正则徽标应显示的表格列下标（re: 前缀作用于搜索/检测词列）：
+ * gpt/禁用词/普通替换行在首列；条件行搜索词在第 3 列；场景行在第 2 列。
+ * 注释/空行等无搜索词行返回 null。
+ */
+export function regexBadgeColumnIndex(type: DictRowType): number | null {
+  if (type === "gpt" || type === "forbidden" || type === "normal") return 0;
+  if (type === "conditional") return 2;
+  if (type === "situation") return 1;
+  return null;
+}
+
 // 条件字典搜索词/条件语义辅助：解析、序列化与映射
 
 export type SearchMode = "all" | "first" | "startswith";
