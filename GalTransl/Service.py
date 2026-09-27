@@ -38,7 +38,7 @@ def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
         profile_name = str(profile_name or "").strip()
         if not profile_name:
             continue
-        # 旧阶段键兼容：全局分析阶段改名后旧配置平滑迁移（0.5.5）
+        # 旧阶段键兼容：全局分析阶段改名后旧配置平滑迁移
         if stage_key == "global_prompt":
             LOGGER.warning(
                 "stageBackends.global_prompt 已更名为 global_analysis，"
