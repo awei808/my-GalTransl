@@ -37,6 +37,10 @@ from GalTransl.Backend.Prompts import (
     FORBATCHMETA_SYSTEM,
     FORGLOBAL_PROMPT,
     FORGLOBAL_SYSTEM,
+    FORROUTEANALYSIS_PROMPT,
+    FORROUTEANALYSIS_SYSTEM,
+    FORGLOBALMERGE_PROMPT,
+    FORGLOBALMERGE_SYSTEM,
     FORIMPROVE_SYSTEM,
     FORBR_SYSTEM,
     FORJP_SYSTEM,
@@ -394,6 +398,14 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForGlobalPrompt": {
         "system_prompt": FORGLOBAL_SYSTEM,
         "user_prompt": FORGLOBAL_PROMPT,
+    },
+    "ForRouteAnalysis": {
+        "system_prompt": FORROUTEANALYSIS_SYSTEM,
+        "user_prompt": FORROUTEANALYSIS_PROMPT,
+    },
+    "ForGlobalAnalysis": {
+        "system_prompt": FORGLOBALMERGE_SYSTEM,
+        "user_prompt": FORGLOBALMERGE_PROMPT,
     },
     "ForImproveTranslation": {
         "system_prompt": FORIMPROVE_SYSTEM,

@@ -773,7 +773,7 @@ async def _run_translation_phase(
     file_list: list,
 ) -> None:
     """
-    执行翻译阶段（流水线阶段 6）。
+    执行翻译阶段（流水线阶段 7）。
 
     复用现有的翻译流程核心逻辑：
     - 切块 → worker 协程池 → 翻译每个 chunk → 后处理 → 输出

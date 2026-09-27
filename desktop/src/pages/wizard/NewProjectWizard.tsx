@@ -111,7 +111,7 @@ export function NewProjectWizard() {
   // 剧情路线图：结构类型（默认树）与用户大纲（纯文本）
   const [plotStructureType, setPlotStructureType] = createSignal("树");
   const [plotOutline, setPlotOutline] = createSignal("");
-  // 修复和改进译文（阶段 7）后处理顺序：有序后端条目数组（空数组 = 不执行）
+  // 修复和改进译文（阶段 8）后处理顺序：有序后端条目数组（空数组 = 不执行）
   const [afterTranslationOrder, setAfterTranslationOrder] = createSignal<AfterTranslationEntry[]>([]);
 
   // Step 6
@@ -358,7 +358,7 @@ export function NewProjectWizard() {
         // 动态句数调整默认开启（已取代原"单次翻译句数 gpt.numPerRequestTranslate"，后者由后端默认值接管）
         "gpt.dynamicNumPerRequestTranslate": false,
         "gpt.contextNum": 8,
-        // 修复和改进译文（阶段 7）后处理顺序：有序数组（空数组 = 不执行）
+        // 修复和改进译文（阶段 8）后处理顺序：有序数组（空数组 = 不执行）
         "gpt.afterTranslation": afterTranslationOrder(),
       };
       // 校验统一问题修复（fix）条目：问题类型为空时告警（运行时会跳过且不执行）

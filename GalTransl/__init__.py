@@ -176,7 +176,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForToneCheckAgain", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForRouteAnalysis", "ForGlobalAnalysis", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForToneCheckAgain", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 
 # 引擎名别名：引擎改名后的兼容映射，旧配置/旧任务提交旧名时解析到现行名
 TRANSLATOR_ALIASES = {

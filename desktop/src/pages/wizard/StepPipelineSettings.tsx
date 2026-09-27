@@ -8,7 +8,7 @@ import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 const STAGE_HINTS: Record<string, string> = {
   validate: "校验输入文件的 message 与 name 完整性。关闭后跳过校验直接进入下一阶段（不建议关闭）。",
   compress: "压缩全文供全局分析使用。关闭后全局分析阶段因无压缩文本将自动跳过。",
-  global_prompt: "生成游戏名称/剧情概述/角色列表等全局档案（GlobalPrompt.json）。",
+  global_analysis: "先按剧情路线图逐路线分析，再融合为全局档案（GlobalPrompt.json）；无路线图时回退为全文分析。",
   gen_dic: "提取项目术语生成 GPT 字典。该阶段未优化，运行效果较差，不建议启用。",
   file_meta: "为每个文件生成剧情背景（FileMetaData）。",
   plot_route: "基于各文件的剧情摘要生成剧情路线图（PlotRouteMap.json），并标记每个文件所属路线。",
@@ -54,7 +54,7 @@ interface StepPipelineSettingsProps {
   /** 剧情路线图：结构类型与用户大纲（纯文本） */
   plotStructureType: string;
   plotOutline: string;
-  /** 修复和改进译文（阶段 7）后处理顺序：有序后端条目数组（字符串 key 或 fix 对象条目） */
+  /** 修复和改进译文（阶段 8）后处理顺序：有序后端条目数组（字符串 key 或 fix 对象条目） */
   afterTranslationOrder: AfterTranslationEntry[];
   onGameInfoChange: (v: string) => void;
   onStageToggle: (key: string, enabled: boolean) => void;
@@ -104,7 +104,7 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
           <div class="pc-external-info">
             <textarea
               class="pc-external-info__textarea"
-              placeholder={"可选。提供给全局游戏分析（阶段 2）的外部剧情信息，如游戏简介、世界观说明等。\n留空则由 AI 根据游戏文本自行推断。"}
+              placeholder={"可选。提供给全局游戏分析（阶段 5）的外部剧情信息，如游戏简介、世界观说明等。\n留空则由 AI 根据游戏文本自行推断。"}
               value={props.gameInfo}
               onInput={(e) => props.onGameInfoChange(e.currentTarget.value)}
               onKeyDown={(e) => handleTextareaEnter(e, props.onGameInfoChange)}
@@ -155,15 +155,15 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
           </span>
         </div>
         <div class="field wizard-settings-grid__full">
-          <span class="field__label">修复和改进译文（阶段 7 后处理顺序）</span>
+          <span class="field__label">修复和改进译文（阶段 8 后处理顺序）</span>
           <AfterTranslationOrderEditor
             value={props.afterTranslationOrder}
             onChange={props.onAfterTranslationOrderChange}
           />
           <span class="field__hint">
-            在数字框中填入数字表示该后端在阶段 7 中的执行顺序（数字几就第几步执行）；留空则不执行。
+            在数字框中填入数字表示该后端在阶段 8 中的执行顺序（数字几就第几步执行）；留空则不执行。
             点击数字框自动分配当前最小可用序号，清空后其余后端自动紧凑重排。顺序写入
-            config.yaml 的 common.gpt.afterTranslation（有序数组）；关闭「阶段 7」开关后此处不生效。
+            config.yaml 的 common.gpt.afterTranslation（有序数组）；关闭「阶段 8」开关后此处不生效。
           </span>
         </div>
         <div class="field wizard-settings-grid__full">
@@ -194,7 +194,7 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
                 onKeyDown={(e) => handleTextareaEnter(e, props.onPlotOutlineChange)}
               />
               <span class="field__hint">
-                作为「阶段 5 剧情路线图」生成的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
+                作为「阶段 4 剧情路线图」生成的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
               </span>
             </div>
           </div>

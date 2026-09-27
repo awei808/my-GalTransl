@@ -101,27 +101,35 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "internals.pipeline.enableCompress": {
     label: "开启阶段 1：文本无损压缩",
-    hint: "压缩全文供全局分析使用；关闭后阶段 2（全局分析）因无压缩文本将自动跳过。",
+    hint: "压缩全文供全局分析使用；关闭后阶段 5（全局分析）因无压缩文本将自动跳过。",
   },
   "internals.pipeline.enableGlobalPrompt": {
-    label: "开启阶段 2：全局游戏分析",
-    hint: "生成世界观与角色档案；关闭后文件级/批次级元数据与翻译将缺少全局上下文（提示词块为空，仍可继续）。",
+    label: "开启阶段 5：全局游戏分析",
+    hint: "先按剧情路线图逐路线分析再融合为全局档案；无路线图时回退全文分析。关闭后文件级/批次级元数据与翻译将缺少全局上下文（提示词块为空，仍可继续）。",
   },
   "internals.pipeline.enableGenDic": {
-    label: "开启阶段 3：术语表构建",
+    label: "开启阶段 2：术语表构建",
     hint: "关闭后不生成/不更新 GPT 字典，翻译时无项目术语表。",
   },
   "internals.pipeline.enableFileMeta": {
-    label: "开启阶段 4：文件级元数据",
+    label: "开启阶段 3：文件级元数据",
     hint: "关闭后不生成/不更新文件级元数据（pass1_cache），翻译时无文件级剧情背景。",
   },
+  "internals.pipeline.enablePlotRoute": {
+    label: "开启阶段 4：剧情路线图",
+    hint: "关闭后不生成剧情路线图（PlotRouteMap.json），全局分析将回退为全文分析。",
+  },
   "internals.pipeline.enableBatchMeta": {
-    label: "开启阶段 5：批次级元数据",
+    label: "开启阶段 6：批次级元数据",
     hint: "关闭后不划分翻译区间，翻译按每次请求句数直接分块进行。",
   },
   "internals.pipeline.enableTranslate": {
-    label: "开启阶段 6：翻译执行",
+    label: "开启阶段 7：翻译执行",
     hint: "关闭后流水线只执行前置分析阶段，不进行翻译。",
+  },
+  "internals.pipeline.enableImprove": {
+    label: "开启阶段 8：修复和改进译文",
+    hint: "关闭后翻译完成后不执行 gpt.afterTranslation 中选中的后处理。",
   },
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
     label: "令牌轮询策略",
@@ -509,7 +517,7 @@ const FIXED_CARD_SEARCH_TEXT: Record<FixedCardKind, string> = {
   translationGuideline:
     "翻译规范文件 common.gpt.translation_guideline translation_guidelines 文风 措辞 提示词注入 注入翻译提示词",
   afterTranslation:
-    "翻译后处理后端 阶段7 执行顺序 common.gpt.afterTranslation improve brfix jpfix banfix semcheck fix 备选译文 疑似错误",
+    "翻译后处理后端 阶段8 执行顺序 common.gpt.afterTranslation improve brfix jpfix banfix semcheck fix 备选译文 疑似错误",
   stageBackends:
     "大阶段独立 API 接入 common.stageBackends 后端配置 元数据阶段 翻译执行 修复改进 全局分析 术语表 文件级元数据 剧情路线图 批次划分 跟随任务主配置",
   problemAnalyze:
@@ -1444,18 +1452,18 @@ export function ProjectConfigPage() {
         </div>
       );
     }
-    // kind === "afterTranslation"：修复和改进译文（阶段 7）后处理顺序
+    // kind === "afterTranslation"：修复和改进译文（阶段 8）后处理顺序
     if (kind === "afterTranslation") {
       const order = () => parseAfterTranslation(getValue("common.gpt.afterTranslation"));
       return (
         <div class="pc-fixed-card">
           <div class="pc-fixed-card__head">
-            <span class="pc-label">翻译后处理后端（阶段 7 执行顺序）</span>
+            <span class="pc-label">翻译后处理后端（阶段 8 执行顺序）</span>
             <code class="pc-key">common.gpt.afterTranslation</code>
           </div>
           <p class="pc-desc">
-            完整流水线翻译完成后（阶段 7），按数字顺序逐文件执行修复/改进后端；留空则不执行。
-            数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 7：
+            完整流水线翻译完成后（阶段 8），按数字顺序逐文件执行修复/改进后端；留空则不执行。
+            数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 8：
             修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
             ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
             / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 对已翻译文件手动执行

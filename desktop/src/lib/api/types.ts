@@ -684,7 +684,7 @@ export type PipelineStageInfo = {
   label: string;
   /** 执行顺序 */
   order: number;
-  /** 带编号的显示名，如「阶段 2：全局游戏分析」 */
+  /** 带编号的显示名，如「阶段 5：全局游戏分析」 */
   display_label: string;
   /** 在清单中的位置（0-based），与 display_label 的编号一致 */
   index: number;

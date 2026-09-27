@@ -18,11 +18,11 @@ export type StageBackendField = {
 
 /** 后端不可达时的兜底清单：与 0.4.x 的旧 4 键保持一致，保证界面始终可用。 */
 export const LEGACY_STAGE_BACKEND_FIELDS: StageBackendField[] = [
-  { key: "translate", label: "翻译执行", desc: "翻译后端：多轮/单轮对话可选（阶段 8）" },
+  { key: "translate", label: "翻译执行", desc: "翻译后端：多轮/单轮对话可选（阶段 7）" },
   {
     key: "afterTrans",
     label: "修复和改进译文",
-    desc: "阶段 9 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）",
+    desc: "阶段 8 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）",
   },
   { key: "proofread", label: "人工校对时 AI 精修", desc: "功能预留，当前版本未实现", reserved: true },
   {
@@ -34,13 +34,13 @@ export const LEGACY_STAGE_BACKEND_FIELDS: StageBackendField[] = [
 
 /** 按阶段 key 补充人话说明（后端只给 label 与槽位，说明文案在前端维护）。 */
 const PIPELINE_STAGE_BACKEND_DESC: Record<string, string> = {
-  global_prompt: "全局游戏分析：整部作品的设定/人物/世界观提炼",
+  global_analysis: "全局游戏分析：按路线分片分析后汇总（无路线图回退全文），整部作品的设定/人物/世界观提炼",
   gen_dic: "术语表生成：从全局分析结果抽取专有名词词典",
   file_meta: "文件级元数据：逐文件生成剧情摘要与人物表（pass1）",
   plot_route: "剧情路线图：梳理分支线路（pass1 剧情路线图）",
   batch_meta: "批次划分：按剧情语义段切分翻译区间（pass2）",
   translate: "翻译执行：多轮/单轮对话可选（阶段 8）",
-  afterTrans: "阶段 9 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）",
+  afterTrans: "阶段 8 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）",
 };
 
 /** 旧键槽位：由元数据域各阶段作为回退目标，始终附加在清单末尾。 */

@@ -33,10 +33,10 @@ function stage(
 const BACKEND_STAGES: PipelineStageInfo[] = [
   stage("validate", 0, "", "输入校验"),
   stage("compress", 1, "", "文本压缩"),
-  stage("global_prompt", 2, "global_prompt", "全局游戏分析"),
-  stage("gen_dic", 3, "gen_dic", "术语表构建"),
-  stage("file_meta", 4, "file_meta", "文件级元数据"),
-  stage("plot_route", 5, "plot_route", "剧情路线图"),
+  stage("gen_dic", 2, "gen_dic", "术语表构建"),
+  stage("file_meta", 3, "file_meta", "文件级元数据"),
+  stage("plot_route", 4, "plot_route", "剧情路线图"),
+  stage("global_analysis", 5, "global_analysis", "全局游戏分析"),
   stage("batch_meta", 6, "batch_meta", "批次级元数据"),
   stage("translate", 7, "translate", "翻译执行"),
   stage("improve", 8, "afterTrans", "修复和改进译文"),
@@ -48,10 +48,10 @@ describe("buildStageBackendFields 后端清单可达", () => {
     expect(keys).not.toContain("validate");
     expect(keys).not.toContain("compress");
     expect(keys).toEqual([
-      "global_prompt",
       "gen_dic",
       "file_meta",
       "plot_route",
+      "global_analysis",
       "batch_meta",
       "translate",
       "afterTrans",
@@ -64,7 +64,7 @@ describe("buildStageBackendFields 后端清单可达", () => {
     const f = buildStageBackendFields(BACKEND_STAGES).find(
       (x) => x.key === "plot_route",
     );
-    expect(f?.label).toBe("剧情路线图（阶段 5）");
+    expect(f?.label).toBe("剧情路线图（阶段 4）");
     expect(f?.desc).toContain("剧情路线图");
   });
 

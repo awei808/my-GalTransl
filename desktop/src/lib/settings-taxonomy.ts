@@ -171,10 +171,11 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
       {
-        title: "全局分析范围",
+        title: "全局分析（路线分片+汇总）",
         keys: [
-          "internals.pipeline.globalPromptFiles",
-          "internals.pipeline.globalPromptMergeFields",
+          "internals.globalanalysis.maxRoutes",
+          "internals.globalanalysis.routeParallelism",
+          "internals.globalanalysis.forceRegenRouteAnalysis",
         ],
       },
       {
@@ -236,7 +237,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-剧情路线图",
-    desc: "剧情路线图（阶段 4.5）的生成参数：生成模式、剧情结构类型与用户剧情大纲。",
+    desc: "剧情路线图（阶段 4）的生成参数：生成模式、剧情结构类型与用户剧情大纲。",
     subsections: [
       {
         title: "",
