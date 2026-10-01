@@ -33,7 +33,8 @@
 | `mcp>=2.0,<3.0` | 已在 `requirements.txt:30-32` 声明 |
 | GalTransl 的依赖 | `PyYAML` / `orjson` / `requests` 等（见 `requirements.txt`） |
 
-本项目内已有两个可用环境，均实测通过（`initialize` 协商 + 11 工具 + 真实项目检索）：
+本项目内已有两个可用环境，均实测通过（`initialize` 协商 + 工具清单 + 真实项目检索；
+接入验收时是 11 个只读工具，**0.6.0 起为 15 个**）：
 
 | 环境 | 说明 |
 |---|---|
@@ -183,7 +184,7 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
   "available": true,
   "path": "D:\\...\\mcp_status.json",
   "pid": 34964,
-  "tools": 11,
+  "tools": 15,
   "started_at": "2026-09-22T15:07:56+00:00",
   "updated_at": "2026-09-22T15:07:56+00:00",
   "age_seconds": 0.8,

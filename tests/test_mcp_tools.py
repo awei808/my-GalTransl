@@ -141,6 +141,21 @@ class ConstraintDeliveryTests(unittest.TestCase):
         # 文案里的工具数与 MCP_TOOL_DEFS 同源，数量变更（如 0.6.0 加作业域）时立即暴露
         self.assertIn(f"{len(MCP_TOOL_DEFS)} 个工具", SERVER_INSTRUCTIONS)
 
+    def test_server_description_does_not_claim_read_only(self) -> None:
+        # serverInfo.description 也是模型可见元数据。0.6.0 加写工具后一度仍写「（只读）」，
+        # 会让客户端与模型低估服务能力——与 instructions 同样的口径，同样要锁。
+        from run_mcp_server import SERVER_DESCRIPTION
+
+        self.assertNotIn("（只读）", SERVER_DESCRIPTION)
+        self.assertNotIn("全部只读", SERVER_DESCRIPTION)
+        self.assertIn(f"{len(MCP_TOOL_DEFS)} 个工具", SERVER_DESCRIPTION)
+
+    def test_server_description_names_both_capabilities(self) -> None:
+        from run_mcp_server import SERVER_DESCRIPTION
+
+        self.assertIn("只读", SERVER_DESCRIPTION)
+        self.assertIn("写入", SERVER_DESCRIPTION)
+
 
 class ArgumentValidationTests(unittest.TestCase):
     def test_missing_project_dir_raises(self) -> None:
