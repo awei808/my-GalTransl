@@ -45,6 +45,14 @@
 - 双击 AI 建议没有让用户知道有这个功能的提示
 - 0.5.4：新增左侧按钮“剧情路线图-简易agent界面” **已完成**（视图名 route-agent，按钮文案「路线图工作台」：RouteMapViewer 只渲染不显示源码、渲染失败/无 mermaid 退化为按路线分组的有序矩形列表；节点/矩形右键（或左键）多选文件加入底边栏 agent；AI 仅持 3 工具：read_route_map/write_route_map（整体覆盖+校验原子写）/search_file_metadata（POST /metadata/search），终端不经 AI 直连 /api/jobs；任务支持 file_filter 文件子集与 config_overrides 注入覆盖（Service→LLMTranslate 唯一过滤点，复用 globalPromptFiles 匹配口径）；JobState//runtime 透出任务范围，翻译控制台显示「文件范围: 仅 N 个文件」；执行配置按项目存 localStorage；agent 会话翻译运行中 409、同项目单飞）
   - 0.6.0 修订：**内置简易 agent 已整体移除**（`server_agent.py`、`/agent/chat`、`AgentPanel.tsx`、`AGENT_SYSTEM_PROMPT`、agent 反向互斥），路线图工作台**保留视图**但底边栏只剩「执行终端」；路线图读写逻辑迁入 `GalTransl/mcp_tools.py`（`read_route_map`/`write_route_map`），Agent 能力统一改由外置 dsh + MCP 提供。
+- **0.6.0 批次 4（dsh 预设包交付形态）已完成**：
+  - 修掉一个**真实漂移缺陷**：预设本体原先在两处手工维护（`cordis.patch.yml` 与 `presets/galtransl.patch.yml`），审查时发现两份的 persona 提示词**已经不一致**，且都是 0.5.1 时代旧文案（称「11 个只读工具」「无写能力」）。
+  - 改为**单一真相源**：`agents/dsh-preset/galtransl.preset.yml`（顶层数组的条目清单，即 `cordis:include` 的目标格式）。`cordis.patch.yml` 改由 `tools/build_dsh_preset.py` 生成（带「请勿手改」头），`--check` 校验同步。回归测试见 `tests/test_dsh_preset_package.py`（17 用例，含防漂移与安全性质断言）。
+  - 交付形态从「用户手改自己 profile 的 `cordis.patch.yml`」改为 **home 层 `$DSH_HOME/cordis.patch.yml` + `cordis:include`**：用户只需**新建 1 个文件**，不碰自己 profile 任何现有配置，且一个文件覆盖所有 profile（home 层对全部 profile 生效，文件缺失时静默跳过不影响启动）。
+  - **实测确认的两个 include 坑**（已写入 README，非推测）：① 被 include 的文件必须放在 `$DSH_HOME\profiles\` 内，否则文件里的裸包名 `@deepseek-ai/dsh-*` 解析失败报 `failed to import`（被 include 的树走宿主模块管线，不按自身目录解析）② `path` 相对 profile 目录解析而非 patch 文件，且 `Include` 要求 `file:` URL scheme，写裸 Windows 路径报 `ERR_INVALID_URL_SCHEME`。
+  - 另查明：**dsh 不存在用户级预设目录**（`registry` 「neither scans directories nor accepts preset paths」）；遗留的 `$DSH_HOME\.agent-presets\` 已不被读取。官方另一条路径是把预设打包成 bundle 用 `plugin_manager` 的 `install_bundle` 安装，但它在 Host 进程执行插件代码、需 Full access，与「不给 agent 写权限」的初衷相悖，故未采用。
+  - `persona` 的必填字段是 `prefix`（`z.string().required()`），**不是** `text`——用 `text` 会让整个预设行激活失败；用户机器上遗留的 `agent.cordis.yml` 有该 bug（无害，因该目录已不被读取），已加测试锁定。
+  - 端到端验证：按新 README 步骤安装后启动，MCP 成功握手（`启动 stdio 服务（版本 0.6.0）`），`mcp_status.json` 显示 `tools: 15`。探针与用户 `$DSH_HOME` 均已清理复原。
 - **0.6.0 批次 3（L3 路径白名单）已完成**：
   - 新增 `mcp_tools.validate_project_dir`：判据沿用 `_tool_list_projects` 的既有口径——`detect_config_file()` 解析到的配置文件必须**真实存在**。注意该函数找不到时会回退返回 `config.yaml`，故不能只用它做判定，否则任意空目录都会通过。
   - 写工具（4 个）经 `_require_write_project_dir` **硬拒绝**非法项目；实测把 `project_dir` 指向仓库根时 `save_metadata` 已被拦住，不再落盘（此即审查实证过的缺陷）。

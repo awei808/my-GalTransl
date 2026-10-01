@@ -3,24 +3,6 @@
 给 **DeepSeek Harness（dsh）** 用的 GalTransl 专用 Agent 预设：只挂载 GalTransl 的 MCP 工具，
 **不挂载** 文件读写、Shell、子代理、网页抓取等原生工具。
 
-## 验证状态（2026-10-01 实测）
-
-用 `dsh --dump-config` + 实际启动两种方式验证，结论如下（非推测）：
-
-| 验证项 | 结果 |
-|---|---|
-| 预设行能否组合进 profile tree | ✅ 成功，`--dump-config` 完整回显 4 个子行 |
-| 预设区块内是否含危险工具 | ✅ 无。区块内 `@deepseek-ai/dsh-*` 仅 5 条：`dsh-agent-preset`(自身) / `dsh-persona` / `dsh-agent-instructions` / `dsh-mcp-client` / `dsh-tool-ask-user` |
-| MCP 能否实际握手 | ✅ `[galtransl-mcp] 启动 stdio 服务（版本 0.5.4）`、`已下发约束 instructions（541 字）与 11 个只读 annotations` |
-| 心跳是否写入 | ✅ `mcp_status.json` 写入 `pid` / `tools: 11` |
-
-**关键实测发现**：宿主层（`dsh-base` + `dsh-web-app`）的 `tool-fs` / `tool-pwsh` /
-`tool-bash` / `tool-fs-search` / `tool-jobs` 等行**本来就已经是 `disabled: true`**
-（被 web 组合包的 patch 关掉），能力改由各 preset 自行挂载。
-所以本预设**不需要**去"禁用"任何东西——**不挂就是没有**。
-`--dump-config` 输出里出现的危险工具行全部位于**其他内置预设**
-（`standard` / `ptc` / `minimal` / `cordis`）的区块内，与本预设无关。
-
 ## 这个预设解决什么问题
 
 GalTransl 本体不再内置 Agent，改为**只提供 MCP 连接与 MCP 工具**；dsh 作为官方外置 Agent。
@@ -35,52 +17,98 @@ GalTransl 本体不再内置 Agent，改为**只提供 MCP 连接与 MCP 工具*
 
 > **该保证的边界**：上述覆盖的是 **dsh 侧的工具面**。GalTransl MCP 服务自身是独立进程
 > （`run_mcp_server.py` / `galtransl_mcp.exe`），以普通用户权限运行，其能力边界由
-> **工具实现**决定，不受 dsh 工具目录约束。当前 11 个工具**全部只读**，故现状无写能力；
-> 将来若新增写类工具（如 `kind=job`），这个安全表述需同步复核。
+> **工具实现**决定，不受 dsh 工具目录约束。
+>
+> 0.6.0 起 MCP 侧有 4 个写工具，故「无写能力」的说法已不成立。MCP 侧自身的收敛靠三层：
+> 写工具只改项目内指定产物（无任意路径写、无命令执行）、L3 项目白名单（拒绝非项目目录）、
+> H 硬门禁（命中即拒绝）。**这三层是 MCP 进程自己的约束，与本预设无关**——
+> 即使不用本预设、用 dsh 内置的 `standard`，MCP 的写入边界也一样。
 
 ## 文件
 
 | 文件 | 作用 |
 |---|---|
-| `presets/galtransl.patch.yml` | 预设声明本体（`@deepseek-ai/dsh-agent-preset` 行） |
-| `cordis.patch.yml` | 安装片段：把上面那条声明插入用户的 dsh profile |
+| `galtransl.preset.yml` | **唯一真相源**：预设声明本体，顶层是条目清单（`cordis:include` 的目标格式） |
+| `cordis.patch.yml` | 由上面那份**生成**的同内容 patch（带 `- insert:` 包裹），供不想用 include 的用户直接并入 profile。**请勿手改**，改真相源后重跑 `python tools/build_dsh_preset.py` |
 | `README.md` | 本文件 |
 
-## 安装
+## 安装（推荐：home 层 include）
 
-dsh 的 profile 位于 `$DSH_HOME/profiles/<name>/`（Windows 默认 `C:\Users\<你>\.dsh\profiles\`）。
-预设**只能装到 profile**，dsh **不支持**项目级预设。
+> **为什么是 home 层**：dsh 有两层用户可写的 patch，层叠顺序为
+> bundle 层 → profile 的 `cordis.patch.yml` → **`$DSH_HOME/cordis.patch.yml`（home 层）** → `--patch`。
+> home 层**对所有 profile 生效**，且文件不存在时会被静默跳过（不影响 dsh 启动）。
+> 这意味着用户只需**新建一个文件**，完全不碰自己 profile 里任何现有配置。
+
+dsh 的配置根 `$DSH_HOME` 在 Windows 默认是 `C:\Users\<你>\.dsh\`。
+预设**只能装到 profile / bundle patch**——dsh **不支持**项目级预设。
 
 > ⚠️ **不要用 `$DSH_HOME\.agent-presets\<name>\` 目录格式**（`preset.yml` + `agent.cordis.yml`）。
-> 那是 dsh 的**遗留格式**，现行版本已不再读取该目录。
-> 现行机制是「`@deepseek-ai/dsh-agent-preset` 声明行」，只能通过 profile 的 patch 层安装。
+> 那是 dsh 的**遗留格式**，现行版本已不再读取该目录（`registry/README.md`：
+> "The registry neither scans directories nor accepts preset paths"）。
+> 现行机制是「`@deepseek-ai/dsh-agent-preset` 声明行」，只能通过 patch 层安装。
 
-1. 把 `cordis.patch.yml` 里的 `- insert:` 段并入该 profile 的 `cordis.patch.yml`
-   （例如 `C:\Users\<你>\.dsh\profiles\desktop\cordis.patch.yml`）。
-   ⚠️ 外部/新增行**必须放在 `insert:` 列表里**——裸写 `- id: X / name: Y` 会被当成
-   对已有条目的覆写，tree 中不存在时报 `entry not found` 且不插入。
+**安装步骤：**
 
-2. 改其中 `command` / `args` / `cwd` 三处**绝对路径**，指向你本机的实际位置（见下节）。
+1. 把 `galtransl.preset.yml` 复制到 `$DSH_HOME\profiles\` 下
+   （即 `C:\Users\<你>\.dsh\profiles\galtransl.preset.yml`）。
 
-3. （可选）若想保持预设本体独立成文件：**不能**直接把 `presets/galtransl.patch.yml`
-   用作 `cordis:include` 的目标——它的顶层是完整的 `- insert:` 补丁，而 `cordis:include`
-   期望的是**一份字面条目清单**。正确做法是把里面那条 preset 声明单独取出
-   （去掉 `- insert:` 与 `- id:` 两层缩进，使 `- name: '@deepseek-ai/dsh-agent-preset'` 顶格），
-   存成独立文件后按 `cordis.patch.yml` 末尾注释的写法引用。
+2. 在 `$DSH_HOME\cordis.patch.yml` 写入下面这条 include 行
+   （**该文件不存在就新建**；已存在则把 `- insert:` 那一段并进去）：
 
-   > 注意：`<profile>\presets\` **不是** dsh 的自动发现目录（`presets/` 是
-   > `@deepseek-ai/dsh-web-app` 这个 bundle 的内部目录）。放哪里都可以，
-   > 关键是必须被 profile 的 `cordis.patch.yml` 显式引用才生效。
+   ```yaml
+   - insert:
+       - id: galtransl-preset-include
+         name: cordis:include
+         config:
+           path: file:///C:/Users/<你>/.dsh/profiles/galtransl.preset.yml
+   ```
+
+3. 改 `galtransl.preset.yml` 里 `mcp-galtransl` 行的 `command` / `args` / `cwd`
+   三处绝对路径，指向你本机的实际位置（见下节）。
 
 4. 重启 dsh，在会话的 **Agent 预设** 选择器里选 `GalTransl`
    （预设**每会话选择**，且**首轮后锁定**——要换预设请开新会话）。
 
-5. 自检：`dsh --profile <name> --dump-config` 应能看到 `id: preset-galtransl` 行及
-   其 4 个子行，且该区块内**没有**任何 `tool-fs` / `tool-pwsh` 等危险工具。
+### 备选：直接并入 profile 的 patch
+
+不想用 include，就把 `cordis.patch.yml` 里 `- insert:` 那一段原样并入
+`$DSH_HOME\profiles\<name>\cordis.patch.yml`。代价是**换 profile 要重做一遍**。
+
+> ⚠️ 外部/新增行**必须放在 `insert:` 列表里**——裸写 `- id: X / name: Y` 会被当成
+> 对已有条目的覆写，tree 中不存在时报 `entry not found` 且不插入。
+
+## 实测踩过的两个坑（务必知道）
+
+用 `cordis:include` 时，下面两条**都不是直觉行为**，实测确认：
+
+1. **被 include 的文件必须放在 `profiles\` 目录内**（或其 `node_modules` 可解析的位置）。
+   放到别处会报 `preset-galtransl (@deepseek-ai/dsh-agent-preset): failed to import`——
+   因为**被 include 文件里的裸包名（`@deepseek-ai/dsh-*`）不按该文件所在目录解析**，
+   而是走宿主模块管线（包名占位在 `$DSH_HOME/profiles/node_modules`）。
+
+2. **`path` 是相对 profile 目录解析的，不是相对 patch 文件**。
+   所以用绝对 `file:///` URL 最稳（写成裸 Windows 路径会报
+   `ERR_INVALID_URL_SCHEME: The URL must be of scheme file`）。
+
+另外：目标文件必须**顶层就是数组的条目清单**——写 `- insert:` 会被拒绝
+（`config file must be a top-level array of entries`）。`galtransl.preset.yml` 已是正确格式。
+
+## 自检
+
+- `dsh --profile <name> --dump-config` 应能看到 `id: preset-galtransl` 行及其 4 个子行，
+  且该区块内**没有**任何 `tool-fs` / `tool-pwsh` 等危险工具，输出里应有
+  `# == C:\Users\<你>\.dsh\cordis.patch.yml` 归属头。
+- ⚠️ **`--dump-config` 看不到 include 展开的内容**（它只渲染该 include 行本身）。
+  要确认预设**真的被加载**，必须实际启动，看 stderr 有无 `failed to import`，
+  并确认日志里出现 `[galtransl-mcp] 启动 stdio 服务`。
+- ⚠️ **`desktop` profile 不能这样自检**：它由 Electron 独占，CLI 会报
+  `profile "desktop" is managed exclusively by the Electron application`。
+  桌面用户请改为在 dsh 里直接看 **Agent 预设选择器里有没有 `GalTransl`**——
+  预设注册成功就一定出现在列表里（没有「隐藏」开关字段）。
 
 ## 必须改的路径
 
-`cordis.patch.yml` 里 `@deepseek-ai/dsh-mcp-client` 行的 `command` / `args` / `cwd`：
+`galtransl.preset.yml` 里 `@deepseek-ai/dsh-mcp-client` 行的 `command` / `args` / `cwd`：
 
 - **源码模式**：指向 `venv\Scripts\python.exe` 与 `run_mcp_server.py`。
 - **打包版**：`command` 指向 `<程序根>\backend\galtransl_mcp.exe`，`args: []`。
@@ -90,21 +118,40 @@ dsh 的 profile 位于 `$DSH_HOME/profiles/<name>/`（Windows 默认 `C:\Users\<
 
 ## 预设内容说明
 
-`galtransl.patch.yml` 的 `plugins:` 只有这些行：
+`galtransl.preset.yml` 的 `plugins:` 只有这些行：
 
 | 行 | bundle | 作用 |
 |---|---|---|
-| `persona` | `@deepseek-ai/dsh-persona` | 系统提示词（GalTransl 硬性契约） |
-| `agent-instructions` | `@deepseek-ai/dsh-agent-instructions` | AGENTS.md 发现 |
+| `persona` | `@deepseek-ai/dsh-persona` | 系统提示词（GalTransl 硬性契约）。字段是 `prefix`，**不是** `text` |
+| `agent-instructions` | `@deepseek-ai/dsh-agent-instructions` | AGENTS.md 发现（`maxBytes` 必须重申） |
 | `mcp-galtransl` | `@deepseek-ai/dsh-mcp-client` | 连 GalTransl MCP（stdio） |
 | `tool-ask-user` | `@deepseek-ai/dsh-tool-ask-user` | 向用户提问（唯一保留的交互工具） |
 
 **刻意不挂载**（下列均为**行 id**）：`tool-fs`、`tool-fs-search`、`tool-bash`、`tool-pwsh`、
 `tool-jobs`、`tool-web`、`tool-skill`、`skill-filesystem`、`tool-goal`、`tool-todo`、
-`tool-present`、`planning`（plan-mode）、`compaction`（compaction-basic / command-compact /
-tool-result-pruner）、`delegation`（tool-subagent-control / list-agents / subagent ×4 /
-workflow / ralph）、`tool-plugin-manager`（此行的 bundle 是
-`@deepseek-ai/dsh-plugin-manager/tools`，与其他行的 `dsh-tool-*` 命名不同）。
+`tool-present`、`tool-str-replace-editor`、`tool-cordis`、`planning`（plan-mode）、
+`compaction`（compaction-basic / command-compact / tool-result-pruner）、
+`delegation`（tool-subagent-control / tool-subagent / tool-subagent-fork /
+tool-subagent-list-agents / tool-agent-team / tool-workflow / tool-ralph）、
+`tool-plugin-manager`（此行的 bundle 是 `@deepseek-ai/dsh-plugin-manager/tools`，
+与其他行的 `dsh-tool-*` 命名不同）。
+
+> 这份清单不必手动维护完整：回归测试用的是**白名单**
+> （`ALLOWED_PLUGIN_BUNDLES`，只允许上面那 4 个 bundle），
+> 所以 dsh 将来新增任何工具都不会让测试静默失效。
+
+有回归测试锁定这份清单：`tests/test_dsh_preset_package.py`。
+
+## 升级 / 维护
+
+预设内容**只改** `galtransl.preset.yml`，然后：
+
+```bash
+python tools/build_dsh_preset.py          # 刷新 cordis.patch.yml
+python tools/build_dsh_preset.py --check  # 校验两者是否同步
+```
+
+改了真相源后，把新的 `galtransl.preset.yml` 覆盖到 `$DSH_HOME\profiles\` 即可升级。
 
 ## 已知限制
 
@@ -115,7 +162,9 @@ workflow / ralph）、`tool-plugin-manager`（此行的 bundle 是
   预设不拥有它。装完仍需在 profile/设置里配好模型。
 - **不兼容 built-in `standard`**：本预设是独立预设，不覆写 `standard`。
   若你想要「GalTransl 工具 + 通用编码能力」的混合体，请用 dsh 的新增预设功能自行编写。
+- **home 层对所有 profile 生效**：若你已在用 home 层，需自行把 include 行合并进去。
 
 ## 卸载
 
-从 profile 的 `cordis.patch.yml` 中删除该 `insert` 条目与 `presets/galtransl.patch.yml`，重启 dsh。
+删除 `$DSH_HOME\cordis.patch.yml` 里那段 include 条目与
+`$DSH_HOME\profiles\galtransl.preset.yml`，重启 dsh。

@@ -1,98 +1,48 @@
-# 安装片段：把 GalTransl Agent 预设并入你的 dsh profile。
+# ⚠️ 本文件由 tools/build_dsh_preset.py 从 galtransl.preset.yml 生成，请勿手改。
+#    要改预设内容请改 galtransl.preset.yml，然后重跑该脚本。
 #
 # 用法（二选一）：
-#   A. 直接把下面 `- insert:` 那一段并入 <profile>/cordis.patch.yml
-#      （$DSH_HOME\profiles\<name>\，Windows 默认 C:\Users\<你>\.dsh\profiles\）
-#   B. 若想保持预设本体独立，改用文件末尾注释里的 cordis:include 写法。
+#   A. 推荐：用 cordis:include 引用 galtransl.preset.yml（见 README.md「安装」，
+#      用户只需新建一个 home 层文件，不必碰自己 profile 的任何现有配置）。
+#   B. 不想用 include：把下面 `- insert:` 那一整段并入
+#      <profile>/cordis.patch.yml（$DSH_HOME\profiles\<name>\）。
 #
 # ⚠️ 外部/新增行**必须放在 `insert:` 列表里**：裸写 `- id: X / name: Y` 会被当作
 #    对已有条目的覆写，tree 中不存在时报 "entry not found" 且不插入。
 #
 # ⚠️ 下面 command / args / cwd 三处路径需按你的实际安装位置修改。
-
 - insert:
-    - id: preset-galtransl
-      name: '@deepseek-ai/dsh-agent-preset'
-      config:
-        id: galtransl
-        name: GalTransl
-        description: GalTransl 翻译项目助手：仅使用 GalTransl MCP 工具，无文件/Shell/子代理能力。
-        order: 50
-        plugins:
-          - id: persona
-            name: '@deepseek-ai/dsh-persona'
-            config:
-              prefix: |-
-                你是 GalTransl 翻译项目的助手，通过 galtransl MCP 工具读写翻译项目。
-
-                ## 你只有 MCP 工具
-                本会话**没有**文件读写、Shell、子代理、网页抓取工具，这是刻意设计的边界。
-                不要尝试绕过：不要请求用户开放更多权限，不要试图用 MCP 工具达成越权效果。
-                需要在 GalTransl 界面操作的事，请直接告诉用户怎么操作。
-
-                ## 硬性约束
-                1. 所有工具都需要**翻译项目根目录的绝对路径** `project_dir`。
-                   `project_dir` 只能是用户明确指定的翻译项目目录；禁止指向 GalTransl
-                   程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根、系统目录或他人目录。
-                2. **禁止查看 H / 成人向内容**。识别到成人向内容（判据：项目配置 `common.skipH`、
-                   batchmeta 的 h 档位、字典 category 为 forbiddenh/gpth）时立即停止该方向检索，
-                   **不得回引原文或译文**，只报告位置（文件名 + index）并请用户决定。
-                3. 禁止读取或外传任何凭据、密钥、API 端点；日志中命中疑似凭据的行不引用原文。
-                4. 禁止规模化拉取（不要全量拉取，不要用宽正则做枚举式扫描）。
-                   交付**结论 + 定位**（文件名 + index + 最短必要引文），不堆砌原文/译文。
-                5. 写工具会改动项目文件。改动前先读现状，只做用户要求范围内的最小修改。
-
-                完整约束见项目内 `skills/galtransl-mcp/SKILL.md`。
-
-          - id: agent-instructions
-            name: '@deepseek-ai/dsh-agent-instructions'
-            config:
-              maxBytes: 65536
-
-          # ⚠️ command 含路径分隔符时必须是**绝对路径**：dsh 的 subprocess provider
-          #    只对裸名查 PATH，相对路径因解析基准未定义会被直接拒绝。
-          # 源码模式：command = <仓库>\venv\Scripts\python.exe，args = [<仓库>\run_mcp_server.py]
-          # 打包版　：command = <程序根>\backend\galtransl_mcp.exe，args = []
-          - id: mcp-galtransl
-            name: '@deepseek-ai/dsh-mcp-client'
-            config:
-              serverName: galtransl
-              transport: stdio
-              command: 'D:\解包或汉化用\my-galtransl\my-GalTransl\venv\Scripts\python.exe'
-              args:
-                - 'D:\解包或汉化用\my-galtransl\my-GalTransl\run_mcp_server.py'
-              cwd: 'D:\解包或汉化用\my-galtransl\my-GalTransl'
-              failOnStartupError: false
-              # reconnect 是正式字段（dsh 0.2.0-rc.2 的 zod schema 与文档均收录）。
-              reconnect:
-                enabled: true
-                initialDelayMs: 1500
-                maxDelayMs: 30000
-                maxAttempts: 100
-
-          # 唯一保留的交互工具：用于「只有用户能决定」的问题
-          # （如是否处理某段 H 内容、是否执行破坏性写入）。
-          - id: tool-ask-user
-            name: '@deepseek-ai/dsh-tool-ask-user'
-
-# ── 变体：若想保持预设本体独立成文件 ──────────────────────────────────
-# 把 presets/galtransl.patch.yml 复制到任意位置（例如 <profile>\ 下），改用：
-#
-# - insert:
-#     - id: preset-galtransl-include
-#       name: cordis:include
-#       config:
-#         path: ./galtransl.patch.yml
-#
-# ⚠️ cordis:include 加载的是**一份字面条目清单**，所以被引用的文件顶层必须是
-#    「条目行」本身——即 `- name: '@deepseek-ai/dsh-agent-preset'` 顶格开始，
-#    **不能**再套一层 `- insert:`。本目录的 presets/galtransl.patch.yml 为了
-#    能直接被 profile 的 patch 层使用，顶层是带 `- insert:` 的完整补丁，
-#    因此**不能**直接用它做 include 目标。
-#
-# 简便做法：把本文件第 1 段 `- insert:` 展开后的 preset 行单独存成
-# galtransl.patch.yml（即去掉 `- insert:` 与 `- id:` 两层缩进），再按上面的写法引用。
-#
-# 说明：`<profile>\presets\` 只是**自选存放位置**，dsh 不会自动发现该目录；
-# 发现只走 bundle 的 patch 列表或 profile 的 cordis.patch.yml。
-# 所以放在哪里都行，关键是必须被显式引用。
+  - id: preset-galtransl
+    name: '@deepseek-ai/dsh-agent-preset'
+    config:
+      id: galtransl
+      name: GalTransl
+      description: GalTransl 翻译项目助手：仅使用 GalTransl MCP 工具，无文件/Shell/子代理能力。
+      order: 50
+      plugins:
+      - id: persona
+        name: '@deepseek-ai/dsh-persona'
+        config:
+          prefix: "你是 GalTransl 翻译项目的助手，通过 galtransl MCP 工具检索翻译项目、写入路线图/元数据、启停翻译任务。\n\n## 你只有 MCP 工具\n本会话**没有**文件读写、Shell、子代理、网页抓取工具，这是刻意设计的边界。\n不要尝试绕过：不要请求用户开放更多权限，不要试图用 MCP 工具达成越权效果。\n需要在 GalTransl 界面操作的事，请直接告诉用户怎么操作。\n\n## 工具面（15 个 = 11 只读 + 4 写）\n写工具只有这 4 个，各自只能改项目内指定产物：\n- `write_route_map` / `save_metadata`：写路线图、写元数据（整体覆盖，先读现状）\n- `submit_job` / `stop_job`：启停翻译任务（需后端在运行）\n本服务不提供任意路径读写、不提供命令执行、不改程序配置。\n\n## 硬性约束\n1. 所有工具都需要**翻译项目根目录的绝对路径** `project_dir`。\n   `project_dir` 只能是用户明确指定的翻译项目目录；禁止指向 GalTransl\n   程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根、系统目录或他人目录。\n   写工具会硬校验该目录是可识别项目（含 config.inc.yaml/config.yaml），指向别处会被拒绝。\n2. **禁止查看 H / 成人向内容**。识别到成人向内容（判据：项目配置 `common.skipH`、\n   batchmeta 的 h 档位、字典 category 为 forbiddenh/gpth）时立即停止该方向检索，\n   **不得回引原文或译文**，只报告位置（文件名 + index）并请用户决定。\n   写工具有 H 硬门禁，命中即拒绝写入——被拒时如实转告用户，**不要**改写措辞重试。\n3. 禁止读取或外传任何凭据、密钥、API 端点；日志中命中疑似凭据的行不引用原文。\n4. 禁止规模化拉取（不要全量拉取，不要用宽正则做枚举式扫描）。\n   交付**结论 + 定位**（文件名 + index + 最短必要引文），不堆砌原文/译文。\n5. **写操作前先读现状**，只做用户要求范围内的最小修改；\n\
+            \   `submit_job` 会真实消耗 API 额度，**仅在用户明确要求时**调用。\n\n完整约束见项目内 `skills/galtransl-mcp/SKILL.md`。"
+      - id: agent-instructions
+        name: '@deepseek-ai/dsh-agent-instructions'
+        config:
+          maxBytes: 65536
+      - id: mcp-galtransl
+        name: '@deepseek-ai/dsh-mcp-client'
+        config:
+          serverName: galtransl
+          transport: stdio
+          command: D:\解包或汉化用\my-galtransl\my-GalTransl\venv\Scripts\python.exe
+          args:
+          - D:\解包或汉化用\my-galtransl\my-GalTransl\run_mcp_server.py
+          cwd: D:\解包或汉化用\my-galtransl\my-GalTransl
+          failOnStartupError: false
+          reconnect:
+            enabled: true
+            initialDelayMs: 1500
+            maxDelayMs: 30000
+            maxAttempts: 100
+      - id: tool-ask-user
+        name: '@deepseek-ai/dsh-tool-ask-user'
