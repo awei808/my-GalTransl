@@ -1,7 +1,7 @@
 """后端档案（backend profile）与模型可用性检测（0.4.10 从 server.py 抽出）。
 
 职责：
-- 全局后端配置的读写（_BACKEND_PROFILES_PATH / _read_backend_profiles / _write_backend_profiles）；
+- 全局 API 配置的读写（_BACKEND_PROFILES_PATH / _read_backend_profiles / _write_backend_profiles）；
 - 提示词模板默认值汇总（_DEFAULT_TRANSLATOR_PROMPTS / _build_prompt_templates_payload）；
 - 模型 / token 可用性检测（_check_model_availability / _check_stage_model_availability）；
 - 校对页 AI 建议的后端解析（_resolve_suggest_backend，含 _REVIEW_SUGGEST_LOCK）。
@@ -113,8 +113,8 @@ async def _check_model_availability(
             "message": f"无法加载项目配置文件（{resolved_config}），请检查配置是否存在",
         }
 
-    # 应用全局后端配置（backend profile）覆盖 backendSpecific，使「检测」与「真实调用」使用同一份令牌来源。
-    # 这样翻译项目的 AI 令牌统一由程序全局后端配置管理，项目自身 config.yaml 的 tokens 不再参与检测。
+    # 应用全局 API 配置（backend profile）覆盖 backendSpecific，使「检测」与「真实调用」使用同一份令牌来源。
+    # 这样翻译项目的 AI 令牌统一由程序全局 API 配置管理，项目自身 config.yaml 的 tokens 不再参与检测。
     profile: dict = backend_profile_data if isinstance(backend_profile_data, dict) else {}
     if not profile and backend_profile:
         profiles_data = _read_backend_profiles()
@@ -131,9 +131,9 @@ async def _check_model_availability(
             cfg.projectConfig["proxy"] = profile["proxy"]
             cfg.refreshProxyEnabledFlag()
     token_src = (
-        f"全局后端配置「{backend_profile}」"
+        f"全局 API 配置「{backend_profile}」"
         if (using_profile and backend_profile)
-        else ("全局后端配置" if using_profile else "项目配置")
+        else ("全局 API 配置" if using_profile else "项目配置")
     )
 
     if not any(frag in translator for frag in NEED_OpenAITokenPool):
@@ -163,9 +163,9 @@ async def _check_model_availability(
             "total": 0,
             "engine": translator,
             "message": (
-                f"{token_src} 中没有 token。请到「后端配置」页添加真实 API Key"
+                f"{token_src} 中没有 token。请到「API 配置」页添加真实 API Key"
                 if using_profile
-                else "未配置 AI 令牌：请到「后端配置」页添加全局 API Key，再返回此处检测"
+                else "未配置 AI 令牌：请到「API 配置」页添加全局 API Key，再返回此处检测"
             ),
         }
     if real_count == 0 and example_count > 0:
@@ -211,11 +211,11 @@ async def _check_model_availability(
     return result
 
 
-_STAGE_CHECK_SKIP_MESSAGE = "与已检测的后端配置相同，跳过重复检测"
+_STAGE_CHECK_SKIP_MESSAGE = "与已检测的 API 配置相同，跳过重复检测"
 
 
 class _SuggestConfigError(Exception):
-    """AI 建议的后端配置不可用（无 token / 无可用 profile），映射为 400。"""
+    """AI 建议的 API 配置不可用（无 token / 无可用 profile），映射为 400。"""
 
 
 # 校对页 AI 建议的全局单飞锁：同一时刻只允许一个请求在跑（防误触连发打爆 API）
@@ -243,7 +243,7 @@ def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str,
             if isinstance(candidate, dict):
                 oai_section = candidate
             else:
-                raise _SuggestConfigError(f"后端配置「{profile_name}」不存在或无 OpenAI-Compatible 段")
+                raise _SuggestConfigError(f"API 配置「{profile_name}」不存在或无 OpenAI-Compatible 段")
     if oai_section is None:
         # 项目自身的 backendSpecific（翻译任务实际使用的后端）
         try:
@@ -262,11 +262,11 @@ def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str,
                 oai_section = candidate
                 break
     if not isinstance(oai_section, dict):
-        raise _SuggestConfigError("未找到可用的 OpenAI 兼容后端配置，请先在「模型设置」中添加")
+        raise _SuggestConfigError("未找到可用的 OpenAI 兼容 API 配置，请先在「API 配置」页添加")
 
     token_entry = ReviewAssist.pick_real_token(oai_section.get("tokens"))
     if token_entry is None:
-        raise _SuggestConfigError("后端配置中没有真实 API token（示例 key 不会被使用）")
+        raise _SuggestConfigError("API 配置中没有真实 API token（示例 key 不会被使用）")
     api_key = str(token_entry.get("token", "") or "")
     endpoint = str(token_entry.get("endpoint", "") or "https://api.openai.com")
     model = str(
@@ -280,7 +280,7 @@ def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str,
 async def _check_stage_model_availability(
     cfg: "CProjectConfig", translator: str, main_profile_name: str
 ) -> list[dict[str, Any]]:
-    """逐个检测 common.stageBackends 引用的阶段后端配置可用性。
+    """逐个检测 common.stageBackends 引用的阶段 API 配置可用性。
 
     与主配置同名的 profile 跳过重复检测；返回列表为空表示项目未配置阶段独立 API。
     """
@@ -326,7 +326,7 @@ async def _check_stage_model_availability(
         if not isinstance(section, dict):
             results.append(_stage_result(
                 stage_key, profile_name, False,
-                f"后端配置 '{profile_name}' 不存在或缺少 OpenAI-Compatible 段",
+                f"API 配置 '{profile_name}' 不存在或缺少 OpenAI-Compatible 段",
             ))
             continue
         raw_tokens = section.get("tokens") or []
@@ -336,13 +336,13 @@ async def _check_stage_model_availability(
         real_count = len(raw_tokens) - example_count
         if not raw_tokens:
             results.append(_stage_result(
-                stage_key, profile_name, False, f"后端配置 '{profile_name}' 中没有 token",
+                stage_key, profile_name, False, f"API 配置 '{profile_name}' 中没有 token",
             ))
             continue
         if real_count == 0:
             results.append(_stage_result(
                 stage_key, profile_name, False,
-                f"后端配置 '{profile_name}' 中 {example_count} 个 token 均为示例 key",
+                f"API 配置 '{profile_name}' 中 {example_count} 个 token 均为示例 key",
                 available=0, total=example_count,
             ))
             continue
@@ -351,14 +351,14 @@ async def _check_stage_model_availability(
         except Exception as exc:
             results.append(_stage_result(
                 stage_key, profile_name, False,
-                f"后端配置 '{profile_name}' 令牌池构建失败: {exc}",
+                f"API 配置 '{profile_name}' 令牌池构建失败: {exc}",
             ))
             continue
         total = len(pool.tokens)
         if total == 0:
             results.append(_stage_result(
                 stage_key, profile_name, False,
-                f"后端配置 '{profile_name}' 令牌池构建结果为空",
+                f"API 配置 '{profile_name}' 令牌池构建结果为空",
             ))
             continue
         await pool.checkTokenAvailablity(**_availability_check_limits(pool))
@@ -378,7 +378,7 @@ async def _check_stage_model_availability(
 
 # Global backend profiles helpers
 
-# 全局后端配置持久化文件（程序目录下），「后端配置」页与任务提交共同使用
+# 全局 API 配置持久化文件（程序目录下），「API 配置」页与任务提交共同使用
 _BACKEND_PROFILES_PATH = os.path.join(resolve_app_dir(), "backend_profiles.yaml")
 
 
@@ -454,7 +454,7 @@ def _read_backend_profiles() -> dict:
         return _read_yaml_file(_BACKEND_PROFILES_PATH)
     except Exception as exc:
         # 解析失败不能让「按名引用阶段后端」静默变成「配置不存在」，留一条可见告警
-        LOGGER.warning("读取全局后端配置失败（%s）：%s", _BACKEND_PROFILES_PATH, exc)
+        LOGGER.warning("读取全局 API 配置失败（%s）：%s", _BACKEND_PROFILES_PATH, exc)
         return {"profiles": {}}
 
 

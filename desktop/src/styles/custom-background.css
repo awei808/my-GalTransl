@@ -90,7 +90,7 @@
 }
 
 /* 下拉面板统一固定实底并禁用毛玻璃：下拉列表可读性优先，不透出背景图
-   （标题栏菜单 / 校对视图筛选 / 翻译页后端选择 / 后端配置模型选择） */
+   （标题栏菜单 / 校对视图筛选 / 翻译页后端选择 / API 配置模型选择） */
 :root.custom-bg-on .titlebar-dropdown,
 :root.custom-bg-on .review-filter-dropdown-panel,
 :root.custom-bg-on .backend-dropdown,

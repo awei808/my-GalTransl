@@ -281,7 +281,7 @@ def handle_agent_chat(handler: Any, registry: Any, project_dir: str, payload: di
         _AGENT_BUSY.add(norm_dir)
     try:
         api_key, base_url, model = _resolve_suggest_backend(payload, project_dir)
-        # 允许请求显式指定 agent 模型名（与该后端配置的默认模型不同时）
+        # 允许请求显式指定 agent 模型名（与该 API 配置的默认模型不同时）
         model_override = str(payload.get("model", "") or "").strip()
         if model_override:
             model = model_override

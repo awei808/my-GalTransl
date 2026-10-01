@@ -1,9 +1,9 @@
 /**
- * 全局后端配置的**服务端**侧读写（`<程序目录>/backend_profiles.yaml`）。
+ * 全局 API 配置的**服务端**侧读写（`<程序目录>/backend_profiles.yaml`）。
  *
- * 「后端配置」页的编辑数据存在 localStorage（本地偏好），但后端解析
+ * 「API 配置」页的编辑数据存在 localStorage（本地偏好），但后端解析
  * `common.stageBackends` 里的配置名时只认这个文件 —— 必须同步写过去，否则按名
- * 引用阶段后端一律报「引用的后端配置 X 不存在（当前可用：无）」。
+ * 引用阶段后端一律报「引用的 API 配置 X 不存在（当前可用：无）」。
  * 历史缺口：前端只写 localStorage，该文件从无生产者（0.5.1 修复）。
  */
 import { apiRequest } from "./client";

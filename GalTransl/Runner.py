@@ -99,7 +99,7 @@ def _build_stage_token_pools(cfg: CProjectConfig, translator: str) -> None:
         section = profile.get("OpenAI-Compatible") if isinstance(profile, dict) else None
         if not isinstance(section, dict):
             LOGGER.warning(
-                "[stage] 阶段 %s 的后端配置缺少 OpenAI-Compatible 段，回退主池", stage_key
+                "[stage] 阶段 %s 的 API 配置缺少 OpenAI-Compatible 段，回退主池", stage_key
             )
             continue
         cache_key = id(profile)
@@ -107,7 +107,7 @@ def _build_stage_token_pools(cfg: CProjectConfig, translator: str) -> None:
         if shared is not None:
             cfg.stage_token_pools[stage_key] = shared
             LOGGER.info(
-                f"[stage] 阶段 {stage_key} 复用同一后端配置的令牌池"
+                f"[stage] 阶段 {stage_key} 复用同一 API 配置的令牌池"
                 f"（可用token数={len(shared.tokens)}）"
             )
             continue

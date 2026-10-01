@@ -363,7 +363,7 @@ export function TranslateConsole() {
 
     const realPath = decodeProjectDir(pid);
     if (!realPath) return;
-    // 统一使用程序全局「后端配置」中的令牌进行检测（不再读项目自身 config.yaml 的 tokens）
+    // 统一使用程序全局「API 配置」中的令牌进行检测（不再读项目自身 config.yaml 的 tokens）
     const { name, profile } = resolveSelectedBackendProfile(realPath);
 
     const token = ++checkingToken;
@@ -501,7 +501,7 @@ export function TranslateConsole() {
       project_dir: realPath,
       config_file_name: getActiveConfigFileName(),
       translator: appState.selectedBackend,
-      // 统一使用程序全局「后端配置」中的令牌进行翻译（不再读项目自身 config.yaml 的 tokens）
+      // 统一使用程序全局「API 配置」中的令牌进行翻译（不再读项目自身 config.yaml 的 tokens）
       ...getSelectedBackendProfileJobPayload(realPath),
     })
       .then(() => toast.success("翻译任务已提交，正在启动…"))
@@ -754,7 +754,7 @@ export function TranslateConsole() {
                   <span class="model-check__dot" />
                   <span class="model-check__text">{modelCheckText()}</span>
                 </span>
-                {/* 示例 key 提示：提供快捷跳转到后端配置页 */}
+                {/* 示例 key 提示：提供快捷跳转到 API 配置页 */}
                 <Show when={
                   modelCheckState() === "error" &&
                   /example|示例/i.test(modelCheckResult()?.message ?? "")
@@ -762,7 +762,7 @@ export function TranslateConsole() {
                   <button
                     class="btn btn--sm btn--primary model-check__goto-config"
                     onClick={() => navigateTo("backend-profiles")}
-                    title="前往后端配置页面设置真实的 API Key"
+                    title="前往 API 配置页面设置真实的 API Key"
                   >
                     去配置令牌 →
                   </button>
@@ -991,7 +991,7 @@ export function TranslateConsole() {
                     <li><b>文件级元数据</b>：AI 分析每个文件的剧情和角色身份，生成文件级提示词。可使用后端ForFileMetaData完成或人工创建</li>
                     <li><b>划分区间</b>：把文件按剧情拆成几个批次并生成批次级提示词。跳过本步将按照项目设置的每次请求句数来进行下步。可使用后端ForBatchMetaData完成或人工创建</li>
                     <li><b>翻译执行</b>：逐文件、逐批次交给 AI 翻译，注入全局、文件级、批次级提示词提高翻译效果（若有）。使用后端ForGalJsonTranslate完成</li>
-                    <li><b>翻译后处理（AI 初步批量处理）</b>：完整流水线翻译完成后，按项目设置「AI 初步处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行：基本问题处理（换行修复、残留日文修复、禁用词修复、统一问题修复）、修正翻译风格（改进轮，给出备选译文）、词语色彩一致性检查（tonecheck，对照批次区间的用词色彩标注标记色彩不符句，不改译文）与色彩命中句二次复核（tonecheckagain，撤销误报，需先执行 tonecheck 产生标记）、标注疑似错误（semcheck，标记疑似错译/漏译/串行）与命中句二次复核（semcheckagain，撤销误报，需先执行 semcheck 产生标记）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 手动执行。元数据、翻译执行、AI 初步处理三个大阶段还可在项目设置中各自接入不同的后端配置（common.stageBackends）。</li>
+                    <li><b>翻译后处理（AI 初步批量处理）</b>：完整流水线翻译完成后，按项目设置「AI 初步处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行：基本问题处理（换行修复、残留日文修复、禁用词修复、统一问题修复）、修正翻译风格（改进轮，给出备选译文）、词语色彩一致性检查（tonecheck，对照批次区间的用词色彩标注标记色彩不符句，不改译文）与色彩命中句二次复核（tonecheckagain，撤销误报，需先执行 tonecheck 产生标记）、标注疑似错误（semcheck，标记疑似错译/漏译/串行）与命中句二次复核（semcheckagain，撤销误报，需先执行 semcheck 产生标记）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 手动执行。元数据、翻译执行、AI 初步处理三个大阶段还可在项目设置中各自接入不同的 API 配置（common.stageBackends）。</li>
                     <li><b>校对审核</b>：你在界面里逐条检查、修改译文。</li>
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>

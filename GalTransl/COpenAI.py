@@ -71,7 +71,7 @@ class COpenAITokenPool:
         Args:
             config: 项目配置对象。
             eng_type: 引擎类型标识。
-            section: 后端配置段（backendSpecific["OpenAI-Compatible"] 同构 dict）。
+            section: API 配置段（backendSpecific["OpenAI-Compatible"] 同构 dict）。
                 传入时令牌池从该段读取 tokens/stream/apiTimeout 等（供大阶段独立
                 API 使用），未传时读项目配置的 backendSpecific 段。
         """
@@ -127,7 +127,7 @@ class COpenAITokenPool:
 
     @property
     def backend_section(self) -> dict:
-        """本池生效的后端配置段：优先构造时传入的 profile 段，否则读项目配置。"""
+        """本池生效的 API 配置段：优先构造时传入的 profile 段，否则读项目配置。"""
         override = getattr(self, "_section_override", None)
         if override is not None:
             return override

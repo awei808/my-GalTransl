@@ -1,5 +1,5 @@
 /**
- * 全局后端配置的「服务端同步」测试（0.5.1）。
+ * 全局 API 配置的「服务端同步」测试（0.5.1）。
  *
  * 历史缺口：前端只写 localStorage，后端的 backend_profiles.yaml 从无生产者，
  * 于是 common.stageBackends 按名引用一律报「配置不存在（当前可用：无）」。
@@ -26,7 +26,7 @@ import {
 const apiRequestMock = apiRequest as unknown as ReturnType<typeof vi.fn>;
 const fetchLocalMock = fetchBackendProfiles as unknown as ReturnType<typeof vi.fn>;
 
-describe("后端配置的服务端同步", () => {
+describe("API 配置的服务端同步", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiRequestMock.mockResolvedValue({});

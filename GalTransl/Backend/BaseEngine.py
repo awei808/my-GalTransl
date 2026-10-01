@@ -420,7 +420,7 @@ class BaseEngine:
     def _effective_backend_section(
         self, section_name: str = "OpenAI-Compatible", config: Optional[CProjectConfig] = None
     ) -> dict:
-        """解析本引擎生效的后端配置段。
+        """解析本引擎生效的 API 配置段。
 
         大阶段独立 API：token 池携带其来源 profile 的配置段（backend_section）时，
         实例级配置优先于项目全局 backendSpecific；未携带时行为与旧版一致。

@@ -387,7 +387,7 @@ export function NewProjectWizard() {
         textPlugins: [selectedTextPlugin()],
       };
 
-      // AI 令牌不再写入项目 config.yaml：统一由程序全局「后端配置」管理，
+      // AI 令牌不再写入项目 config.yaml：统一由程序全局「API 配置」管理，
       // 翻译时由后端在运行时应用选中的 profile（见 Service.run_job_async）。
 
       // 外部信息（游戏信息）写入 config 的 externals.gameInfo 段
@@ -511,7 +511,7 @@ export function NewProjectWizard() {
     toast.success("项目已创建并打开");
   }
 
-  // 第3步：加载后端配置
+  // 第3步：加载 API 配置
   createEffect(() => {
     if (currentStep() === 3) {
       fetchPlugins()

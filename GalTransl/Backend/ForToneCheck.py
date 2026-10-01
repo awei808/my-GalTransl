@@ -90,7 +90,7 @@ class ForToneCheck(BaseImproveRound):
         if not getattr(token_pool, "get_available_token", lambda: [])():
             if not self._disabled_reason:
                 self._disabled_reason = (
-                    "主翻译令牌池无可用 token（请在「后端配置」页配置 OpenAI 兼容端点）"
+                    "主翻译令牌池无可用 token（请在「API 配置」页配置 OpenAI 兼容端点）"
                 )
         super().__init__(config, eng_type, proxy_pool, token_pool)
         # 覆盖基类（翻译轮）的系统提示词为色彩检查轮专用角色声明

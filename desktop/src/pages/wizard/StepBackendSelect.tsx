@@ -12,8 +12,8 @@ export function StepBackendSelect(props: StepBackendSelectProps) {
   let hint = "";
   if (props.selectedBackend === "__default__") {
     hint = defaultName
-      ? `当前默认配置为「${defaultName}」，可在「翻译后端配置」页面修改`
-      : "尚未设置默认配置，请在「翻译后端配置」页面设置";
+      ? `当前默认配置为「${defaultName}」，可在「翻译 API 配置」页面修改`
+      : "尚未设置默认配置，请在「翻译 API 配置」页面设置";
   } else if (props.selectedBackend) {
     hint = `翻译时将使用全局配置「${props.selectedBackend}」覆盖项目后端设置`;
   } else {
@@ -23,9 +23,9 @@ export function StepBackendSelect(props: StepBackendSelectProps) {
   return (
     <div class="wizard-panel">
       <h3 class="wizard-panel-title">翻译后端</h3>
-      <p class="wizard-panel-desc">选择翻译后端配置，也可以跳过此步骤在配置编辑中设置。</p>
+      <p class="wizard-panel-desc">选择翻译 API 配置，也可以跳过此步骤在配置编辑中设置。</p>
       <div class="field">
-        <span class="field__label">后端配置</span>
+        <span class="field__label">API 配置</span>
         <select
           class="field__input"
           value={props.selectedBackend}

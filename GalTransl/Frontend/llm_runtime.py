@@ -171,7 +171,7 @@ async def ensure_model_available_if_needed(
 
     stage 非空时检查该大阶段（metadata/translate/afterTrans）的独立令牌池；
     可用性标志挂在池对象上，主池与各阶段池分别检查、互不误跳。
-    checkAvailable 开关读池携带的后端配置段（阶段 profile），未配置时回退主配置。
+    checkAvailable 开关读池携带的 API 配置段（阶段 profile），未配置时回退主配置。
     """
     translator = getattr(projectConfig, "select_translator", "")
     if not any(x in translator for x in NEED_OpenAITokenPool):

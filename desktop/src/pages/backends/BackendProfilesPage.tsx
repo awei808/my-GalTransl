@@ -90,9 +90,9 @@ export function BackendProfilesPage() {
     try {
       const { synced, failed } = await syncLocalBackendProfilesToServer();
       if (failed.length > 0) {
-        toast.warning(`以下后端配置未能同步到服务端：${failed.join("、")}`);
+        toast.warning(`以下 API 配置未能同步到服务端：${failed.join("、")}`);
       } else if (synced.length > 0) {
-        toast.success(`已同步 ${synced.length} 个后端配置到服务端`);
+        toast.success(`已同步 ${synced.length} 个 API 配置到服务端`);
       }
     } catch {
       // 后端不可达时不额外打扰：页面其它请求会给出可见错误
@@ -118,7 +118,7 @@ export function BackendProfilesPage() {
       }));
       setProfiles(entries);
     } catch {
-      toast.error("加载后端配置失败");
+      toast.error("加载 API 配置失败");
     } finally {
       setLoading(false);
     }
@@ -272,7 +272,7 @@ export function BackendProfilesPage() {
   async function handleDelete(name: string) {
     const result = await confirm.show({
       title: "删除配置",
-      message: `确定删除后端配置「${name}」吗？`,
+      message: `确定删除 API 配置「${name}」吗？`,
       tone: "danger",
     });
     if (!result.confirmed) return;
@@ -311,9 +311,9 @@ export function BackendProfilesPage() {
 
   return (
     <div class="page page-backend-profiles">
-      <h2 class="page-title">后端配置</h2>
+      <h2 class="page-title">API 配置</h2>
       <p class="page-description">
-        管理 API 地址、模型、密钥等后端连接配置。OpenAI 兼容接口支持从接口拉取可用模型名。
+        管理 API 地址、模型、密钥等连接配置。OpenAI 兼容接口支持从接口拉取可用模型名。
       </p>
 
       <div class="bp-toolbar">
@@ -329,7 +329,7 @@ export function BackendProfilesPage() {
       <Show when={editorOpen()}>
         <div class="bp-editor-panel">
           <div class="bp-editor-header">
-            <h3>{editorIsNew() ? "新建后端配置" : `编辑: ${editName()}`}</h3>
+            <h3>{editorIsNew() ? "新建 API 配置" : `编辑: ${editName()}`}</h3>
             <button class="btn btn--sm" onClick={() => setEditorOpen(false)}>
               关闭
             </button>

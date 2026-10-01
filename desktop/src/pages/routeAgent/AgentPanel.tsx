@@ -54,7 +54,7 @@ export function AgentPanel(props: {
       }
     } catch (e) {
       toast.error(`Agent 调用失败: ${getErrorMessage(e)}`);
-      setMessages((m) => [...m, { role: "assistant", text: "（调用失败，请重试或检查后端配置）" }]);
+      setMessages((m) => [...m, { role: "assistant", text: "（调用失败，请重试或检查 API 配置）" }]);
       // 失败分支也刷新一次：前端超时中断时后端 write_route_map 副作用仍可能已发生
       props.onRouteMapChanged();
     } finally {

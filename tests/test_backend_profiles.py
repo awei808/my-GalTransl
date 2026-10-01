@@ -1,7 +1,7 @@
-"""全局后端配置（backend profile）读写回归测试。
+"""全局 API 配置（backend profile）读写回归测试。
 
 历史上 _BACKEND_PROFILES_PATH 常量曾被误删，导致 _read_backend_profiles /
-_write_backend_profiles 调用即抛 NameError（后端配置页、按名提交任务、check-model
+_write_backend_profiles 调用即抛 NameError（API 配置页、按名提交任务、check-model
 全部不可用）。本测试锁定：两个函数可调用且读写一致。
 
 0.4.10 起这两个函数与 _BACKEND_PROFILES_PATH 位于 GalTransl.server_backend，
@@ -102,7 +102,7 @@ class StageBackendResolutionFromFileTests(unittest.TestCase):
                 with self.assertLogs("GalTransl", level="WARNING") as logs:
                     data = server_backend._read_backend_profiles()
         self.assertEqual({"profiles": {}}, data)
-        self.assertTrue(any("全局后端配置" in line for line in logs.output))
+        self.assertTrue(any("全局 API 配置" in line for line in logs.output))
 
 
 if __name__ == "__main__":

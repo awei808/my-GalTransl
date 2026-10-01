@@ -150,7 +150,7 @@ const menus: MenuDef[] = [
       { label: "", separator: true },
       { label: "打开日志", action: () => navigateTo("logs") },
       { label: "", separator: true },
-      { label: "后端配置", action: () => navigateTo("backend-profiles") },
+      { label: "API 配置", action: () => navigateTo("backend-profiles") },
       { label: "提示词模板", action: () => navigateTo("prompt-templates") },
       { label: "插件管理", action: () => navigateTo("plugins") },
       { label: "", separator: true },

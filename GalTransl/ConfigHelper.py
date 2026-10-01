@@ -151,7 +151,7 @@ def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
     return result
 
 
-# 阶段独立 API 配置键（common.stageBackends）：值为全局后端配置名。
+# 阶段独立 API 配置键（common.stageBackends）：值为全局 API 配置名。
 # 每键对应一个流水线阶段，使「全局分析」「剧情路线图」等可各接不同后端。
 STAGE_BACKEND_KEYS: tuple = (
     "validate",
@@ -245,7 +245,7 @@ class CProjectConfig:
         self.proxyPool = None  # 代理池
         # 大阶段独立 API（common.stageBackends）：Service 解析后注入 profile dict，
         # Runner 据此预建各阶段独立令牌池；未配置的阶段回退主池
-        self.stage_profiles: dict = {}  # 阶段键 -> 全局后端配置 dict
+        self.stage_profiles: dict = {}  # 阶段键 -> 全局 API 配置 dict
         self.stage_token_pools: dict = {}  # 阶段键 -> COpenAITokenPool
         self.input_splitter = None  # 输入分割器
         self.active_workers: int=0

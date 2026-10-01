@@ -227,7 +227,7 @@ class ForProblemFixRound(BaseProblemFixRound):
         if not getattr(token_pool, "get_available_token", lambda: [])():
             # 空令牌池（无配置端点）与构建失败同口径：禁用并跳过请求，避免回退到本地端口默认值
             if not self._disabled_reason:
-                self._disabled_reason = "未配置 OpenAI 兼容后端（请在「后端配置」页配置）"
+                self._disabled_reason = "未配置 OpenAI 兼容后端（请在「API 配置」页配置）"
             LOGGER.warning(f"[{eng_type}] {self._disabled_reason}，将跳过问题修复请求")
         super().__init__(config, eng_type, proxy_pool, token_pool)
         # 不在 __init__ 回退 problemList：afterTranslation 调度路径总会先 set_fix_params，

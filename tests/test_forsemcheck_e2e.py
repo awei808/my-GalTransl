@@ -2,7 +2,7 @@
 """ForSemCheck 端到端集成测试（mock OpenAI 兼容服务器模拟主翻译 profile 端点）。
 
 覆盖真实链路：CProjectConfig 加载 → ForSemCheck 实例化（跟随主翻译 profile
-tokenPool，即「后端配置」页的 OpenAI-Compatible 端点）→ batch_translate
+tokenPool，即「API 配置」页的 OpenAI-Compatible 端点）→ batch_translate
 （真实 HTTP 请求 mock 服务器）→ suspected_error 置位 → find_problems 认领
 「疑似错误」→ 重跑幂等 → 主池为空时降级跳过。
 

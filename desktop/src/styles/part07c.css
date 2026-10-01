@@ -288,7 +288,7 @@
 }
 
 /* ==========================================
-   后端配置页面
+   API 配置页面
    ========================================== */
 
 .page-backend-profiles {
@@ -434,7 +434,7 @@
   justify-content: flex-end;
 }
 
-/* 后端配置：结构化字段表单 */
+/* API 配置：结构化字段表单 */
 .bp-field {
   display: flex;
   flex-direction: column;
@@ -559,7 +559,7 @@
   align-self: flex-start;
 }
 
-/* 后端配置页按钮加大一档：字号 12→14px、内边距 +2px（仅本页，不影响全局 .btn--sm） */
+/* API 配置页按钮加大一档：字号 12→14px、内边距 +2px（仅本页，不影响全局 .btn--sm） */
 .page-backend-profiles .btn--sm {
   padding: 5px 12px;
   font-size: var(--font-md);
@@ -1141,7 +1141,7 @@
   padding: var(--space-1-5) var(--space-2);
 }
 
-/* 可折叠的大分组标题（项目设置页专用；后端配置页标题为静态文本，不受此影响） */
+/* 可折叠的大分组标题（项目设置页专用；API 配置页标题为静态文本，不受此影响） */
 .pc-group-title--toggle {
   cursor: pointer;
   user-select: none;
@@ -1232,7 +1232,7 @@
   transition: visibility 0s linear var(--duration-normal);
 }
 
-/* 后端配置页复用 pc-group：恢复旧标题分隔线，并关闭新交互（hover 变色/overflow 裁剪）波及 */
+/* API 配置页复用 pc-group：恢复旧标题分隔线，并关闭新交互（hover 变色/overflow 裁剪）波及 */
 .page-backend-profiles .pc-group-title {
   border-bottom: 1px solid var(--color-border-default);
 }
@@ -1245,7 +1245,7 @@
   border-color: var(--color-border-default);
 }
 
-/* ── 全局后端配置接管提示横幅（项目设置中 OpenAI 兼容组） ── */
+/* ── 全局API 配置接管提示横幅（项目设置中 OpenAI 兼容组） ── */
 .pc-global-banner {
   display: flex;
   align-items: center;
@@ -1368,7 +1368,7 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── 字段行基础规则（后端配置页复用；项目设置页由下方 grid 口径覆盖） ── */
+/* ── 字段行基础规则（API 配置页复用；项目设置页由下方 grid 口径覆盖） ── */
 .pc-row {
   display: flex;
   align-items: flex-start;
@@ -1381,7 +1381,7 @@
   border-bottom: none;
 }
 
-/* ── 字段行（grid 口径仅项目设置页；后端配置页仍走旧 flex 基础规则） ── */
+/* ── 字段行（grid 口径仅项目设置页；API 配置页仍走旧 flex 基础规则） ── */
 .page-project-config .pc-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1542,7 +1542,7 @@
   opacity: 0.6;
 }
 
-/* 后端配置页 API 调用设置：checkbox 着色与对齐 */
+/* API 配置页 API 调用设置：checkbox 着色与对齐 */
 .pc-row-control input[type="checkbox"] {
   accent-color: var(--color-brand-primary);
   width: 16px;

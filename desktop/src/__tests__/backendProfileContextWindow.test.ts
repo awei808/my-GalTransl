@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONTEXT_WINDOW, parseContextWindowInput } from "../pages/backends/BackendProfilesPage";
 
-describe("后端配置「上下文大小」输入", () => {
+describe("API 配置「上下文大小」输入", () => {
   it("纯数字落成 number", () => {
     expect(parseContextWindowInput("200000")).toBe(200000);
   });

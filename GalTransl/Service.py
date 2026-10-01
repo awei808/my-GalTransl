@@ -18,7 +18,7 @@ from GalTransl.AppSettings import load_app_settings
 
 
 def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
-    """解析 common.stageBackends 映射为「阶段键 -> 全局后端配置 dict」。
+    """解析 common.stageBackends 映射为「阶段键 -> 全局 API 配置 dict」。
 
     空映射/留空值跳过；未知阶段键、引用不存在的配置名、配置缺
     OpenAI-Compatible 段一律抛 ValueError（fail-fast，由调用方在任务
@@ -26,7 +26,7 @@ def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
 
     Args:
         stage_map: common.stageBackends 原始配置（dict，键为阶段键）。
-        profiles: 全局后端配置表（backend_profiles.yaml 的 profiles 段）。
+        profiles: 全局 API 配置表（backend_profiles.yaml 的 profiles 段）。
 
     Returns:
         阶段键 -> profile dict；无有效配置时返回空 dict。
@@ -53,12 +53,12 @@ def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
         candidate = profiles.get(profile_name)
         if not isinstance(candidate, dict):
             raise ValueError(
-                f"stageBackends.{stage_key} 引用的后端配置 '{profile_name}' 不存在，"
-                f"请在「后端配置」页检查（当前可用：{', '.join(sorted(profiles)) or '无'}）"
+                f"stageBackends.{stage_key} 引用的 API 配置 '{profile_name}' 不存在，"
+                f"请在「API 配置」页检查（当前可用：{', '.join(sorted(profiles)) or '无'}）"
             )
         if not isinstance(candidate.get("OpenAI-Compatible"), dict):
             raise ValueError(
-                f"stageBackends.{stage_key} 引用的后端配置 '{profile_name}' "
+                f"stageBackends.{stage_key} 引用的 API 配置 '{profile_name}' "
                 f"缺少 OpenAI-Compatible 配置段"
             )
         resolved[stage_key] = candidate
@@ -303,7 +303,7 @@ async def run_job_async(
                 cfg.refreshProxyEnabledFlag()
             LOGGER.info("Applied backend profile: %s", spec.backend_profile or "inline")
 
-        # 解析大阶段独立 API 配置（common.stageBackends，值为全局后端配置名）。
+        # 解析大阶段独立 API 配置（common.stageBackends，值为全局 API 配置名）。
         # 引用不存在 / 未知阶段键 / 配置段缺失由 _resolve_stage_backend_profiles
         # 抛 ValueError（fail-fast），在 load_config 阶段失败任务并透出原因。
         stage_map = cfg.keyValues.get("stageBackends")

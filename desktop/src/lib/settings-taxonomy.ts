@@ -89,7 +89,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
     ],
-    // 大阶段独立 API 卡片：元数据/翻译/AI初步处理 各自接入不同后端配置
+    // 大阶段独立 API 卡片：元数据/翻译/AI初步处理 各自接入不同 API 配置
     fixedCards: ["stageBackends"],
   },
   {
@@ -301,7 +301,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "后端专属",
-    desc: "由程序全局「后端配置」统一管理的接口与插件。",
+    desc: "由程序全局「API 配置」统一管理的接口与插件。",
     subsections: [
       {
         title: "插件",

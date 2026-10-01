@@ -570,7 +570,7 @@ def route_project_api_part2(
                     if isinstance(candidate, dict):
                         oai_section = candidate
                 elif backend_profile:
-                    handler._send_json({"error": f"后端配置 '{backend_profile}' 不存在"}, status=HTTPStatus.NOT_FOUND)
+                    handler._send_json({"error": f"API 配置 '{backend_profile}' 不存在"}, status=HTTPStatus.NOT_FOUND)
                     return
                 else:
                     for _pname, _pconf in profiles.items():
@@ -579,12 +579,12 @@ def route_project_api_part2(
                             break
 
             if not oai_section:
-                handler._send_json({"error": "未找到可用的 OpenAI 兼容后端配置，请先在后端配置中添加 OpenAI 兼容接口"}, status=HTTPStatus.BAD_REQUEST)
+                handler._send_json({"error": "未找到可用的 OpenAI 兼容 API 配置，请先在「API 配置」页添加"}, status=HTTPStatus.BAD_REQUEST)
                 return
 
             tokens = oai_section.get("tokens", [])
             if not tokens:
-                handler._send_json({"error": "后端配置中没有 API token"}, status=HTTPStatus.BAD_REQUEST)
+                handler._send_json({"error": "API 配置中没有 API token"}, status=HTTPStatus.BAD_REQUEST)
                 return
 
             token_entry = tokens[0]
@@ -594,7 +594,7 @@ def route_project_api_part2(
             timeout = oai_section.get("apiTimeout", 300)
 
             if not api_key or "-example-" in api_key:
-                handler._send_json({"error": "后端配置中的 API token 无效"}, status=HTTPStatus.BAD_REQUEST)
+                handler._send_json({"error": "API 配置中的 API token 无效"}, status=HTTPStatus.BAD_REQUEST)
                 return
 
             import re as _re

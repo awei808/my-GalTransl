@@ -328,7 +328,7 @@ export function SettingsPage() {
             style="cursor:pointer"
             onClick={() => navigateTo("backend-profiles")}
           >
-            <span class="settings-label">后端配置</span>
+            <span class="settings-label">API 配置</span>
             <span class="settings-about-value settings-about-link">管理 API 地址与模型 →</span>
           </div>
           <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("plugins")}>

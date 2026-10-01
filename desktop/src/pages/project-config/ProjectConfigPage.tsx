@@ -31,8 +31,8 @@ interface FieldUI {
 }
 
 /**
- * 已由程序全局「后端配置」统一管理的配置前缀：这些字段（含 AI 令牌）不再在项目设置中维护，
- * 检测 / 调用统一走全局后端配置，避免与项目自身 config.yaml 的 tokens 产生歧义。
+ * 已由程序全局「API 配置」统一管理的配置前缀：这些字段（含 AI 令牌）不再在项目设置中维护，
+ * 检测 / 调用统一走全局 API 配置，避免与项目自身 config.yaml 的 tokens 产生歧义。
  */
 const MANAGED_GLOBAL_PREFIX = "backendSpecific.OpenAI-Compatible.";
 // 动态句数调整：仅暴露“是否启用”开关，句数由后端按 上限/4 自动管理，以下子项不再让用户手填
@@ -295,7 +295,7 @@ const ARRAY_LIST_KEYS = new Set([
 
 /**
  * 这些键不进入「通用配置列表」（在展平阶段直接跳过），改为专用卡片、隐藏行或条件板块：
- * - 后端全局管理前缀：交全局后端配置页维护
+ * - 后端全局管理前缀：交全局 API 配置页维护
  * - HIDDEN_CONFIG_KEYS：旧版本残留/由专用卡片接管的键
  * - REMOVED_CONFIG_KEYS：暂不在前端暴露的键（如 contextNum）
  * - GUIDELINE_KEY：改为「翻译规范文件」固定卡片渲染
@@ -521,7 +521,7 @@ const FIXED_CARD_SEARCH_TEXT: Record<FixedCardKind, string> = {
   afterTranslation:
     "翻译后处理后端 阶段8 执行顺序 common.gpt.afterTranslation improve brfix jpfix banfix semcheck fix 备选译文 疑似错误",
   stageBackends:
-    "大阶段独立 API 接入 common.stageBackends 后端配置 元数据阶段 翻译执行 修复改进 全局分析 术语表 文件级元数据 剧情路线图 批次划分 跟随任务主配置",
+    "大阶段独立 API 接入 common.stageBackends API 配置 元数据阶段 翻译执行 修复改进 全局分析 术语表 文件级元数据 剧情路线图 批次划分 跟随任务主配置",
   problemAnalyze:
     "问题检测 problemAnalyze 检测项 平均分句长度阈值 单句过长 定语过长 状语过长 H场景 阈值 启用检测项",
 };
@@ -546,7 +546,7 @@ export function ProjectConfigPage() {
   // 当前翻译规范值（响应式读取，供固定卡片展示）
   const guidelineCurrent = () => String(getValue(GUIDELINE_KEY) ?? "");
 
-  // ── 大阶段独立 API（stageBackends）：全局后端配置名下拉选项 ──
+  // ── 大阶段独立 API（stageBackends）：全局 API 配置名下拉选项 ──
   const [backendProfileNames, setBackendProfileNames] = createSignal<string[]>([]);
 
   onMount(() => {
@@ -573,7 +573,7 @@ export function ProjectConfigPage() {
     }
   }
 
-  // 「后端配置」页增删改名后刷新本页下拉选项（与配置编辑互不影响）
+  // 「API 配置」页增删改名后刷新本页下拉选项（与配置编辑互不影响）
   createEffect(() => {
     const handler = () => void loadBackendProfileNames();
     window.addEventListener(BACKEND_PROFILES_CHANGE_EVENT, handler);
@@ -594,7 +594,7 @@ export function ProjectConfigPage() {
     return {};
   };
 
-  /** 写入单个阶段的后端配置名（空串 = 跟随任务主配置） */
+  /** 写入单个阶段的 API 配置名（空串 = 跟随任务主配置） */
   function setStageBackend(stage: string, name: string) {
     setValue("common.stageBackends", { ...stageBackendsValue(), [stage]: name });
   }
@@ -1126,7 +1126,7 @@ export function ProjectConfigPage() {
     const [key, , dtype] = item;
     // 待实现/待验证的配置项：渲染 TODO 徽标并禁用编辑（功能落地后从 TODO_CONFIG_KEYS 移除）
     const effectiveTodoMsg = TODO_CONFIG_KEYS[key];
-    // 该前缀下的字段（含 AI 令牌）交由全局后端配置管理，不在项目设置渲染
+    // 该前缀下的字段（含 AI 令牌）交由全局 API 配置管理，不在项目设置渲染
     if (key.startsWith(MANAGED_GLOBAL_PREFIX)) return <></>;
     // 动态句数调整的下限/上限不再手填，由“是否启用”开关统一管理
     if (HIDDEN_CONFIG_KEYS.has(key)) return <></>;
@@ -1488,7 +1488,7 @@ export function ProjectConfigPage() {
             <code class="pc-key">common.stageBackends</code>
           </div>
           <p class="pc-note">
-            各阶段可各自使用不同的全局后端配置（「后端配置」页创建）。默认跟随任务主配置
+            各阶段可各自使用不同的全局 API 配置（「API 配置」页创建）。默认跟随任务主配置
             （翻译控制台所选）；元数据类子阶段（全局分析/术语表/文件级元数据/剧情路线图/批次划分）
             未单独指定时回退到「元数据阶段（旧键）」，旧键也为空则跟随任务主配置。
             阶段配置里的 proxy 不生效，统一使用任务级代理。引用的配置被删除后任务将启动失败，
@@ -2075,11 +2075,11 @@ export function ProjectConfigPage() {
                         {/* 折叠展开由外层 pc-group--collapsed 驱动（grid rows 动画）；搜索态强制展开且不改折叠记录 */}
                         <div class="pc-group-body">
                           <div class="pc-group-body-inner">
-                            {/* 后端专属：OpenAI 兼容接口跳转到全局后端配置 */}
+                            {/* 后端专属：OpenAI 兼容接口跳转到全局 API 配置 */}
                             <Show when={title === "后端专属"}>
                               <div class="pc-global-banner">
                                 <div class="pc-global-banner__text">
-                                  <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「后端配置」统一管理，不再在项目设置中维护。
+                                  <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「API 配置」统一管理，不再在项目设置中维护。
                                 </div>
                                 <button
                                   class="btn btn--sm btn--primary"
@@ -2088,7 +2088,7 @@ export function ProjectConfigPage() {
                                     navigateTo("backend-profiles");
                                   }}
                                 >
-                                  去后端配置 →
+                                  去 API 配置 →
                                 </button>
                               </div>
                             </Show>

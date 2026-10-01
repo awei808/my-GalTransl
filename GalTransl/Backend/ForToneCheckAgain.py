@@ -43,7 +43,7 @@ class ForToneCheckAgain(ForToneCheck):
     （_format_tone_guide）与主 profile 令牌池降级逻辑，仅重写复核语义相关部分。
 
     与主翻译 profile 共用令牌池（与其他后处理后端一致）：外部 OpenAI 兼容
-    大模型与本地 llama.cpp 均可直接使用，取决于「后端配置」页所选端点；主池
+    大模型与本地 llama.cpp 均可直接使用，取决于「API 配置」页所选端点；主池
     无可用 token 时降级跳过，不发任何请求、不清理既有标记。
 
     引擎标识：ForToneCheckAgain

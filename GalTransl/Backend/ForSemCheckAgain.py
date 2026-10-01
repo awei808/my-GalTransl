@@ -45,7 +45,7 @@ class ForSemCheckAgain(BaseImproveRound):
       绝不因复核故障清空第一轮信号。
 
     与主翻译 profile 共用令牌池（与其他后处理后端一致）：外部 OpenAI 兼容
-    大模型与本地 llama.cpp 均可直接使用，取决于「后端配置」页所选端点；本引擎
+    大模型与本地 llama.cpp 均可直接使用，取决于「API 配置」页所选端点；本引擎
     额外支持未传 token_pool 时按主 profile 自建，主池无可用 token 时降级跳过，
     不发任何请求。
 
@@ -92,7 +92,7 @@ class ForSemCheckAgain(BaseImproveRound):
         if not getattr(token_pool, "get_available_token", lambda: [])():
             if not self._disabled_reason:
                 self._disabled_reason = (
-                    "主翻译令牌池无可用 token（请在「后端配置」页配置 OpenAI 兼容端点）"
+                    "主翻译令牌池无可用 token（请在「API 配置」页配置 OpenAI 兼容端点）"
                 )
         super().__init__(config, eng_type, proxy_pool, token_pool)
         # 覆盖基类（翻译轮）的系统提示词为复核轮专用角色声明

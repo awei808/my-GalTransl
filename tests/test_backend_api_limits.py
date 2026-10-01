@@ -1,7 +1,7 @@
 """后端 API 调用限制测试：次数上限、频率节流、错误率上限。
 
 覆盖 GalTransl/Backend/BaseEngine.py 中：
-- init_chatbot 按 eng_type 选择隔离的后端配置段并读取三项配置
+- init_chatbot 按 eng_type 选择隔离的 API 配置段并读取三项配置
 - _coerce_ratio / _coerce_nonneg_float 对非法值的规范化
 - _check_request_count_quota：累计请求次数超过 apiMaxRequests 终止流程
 - _throttle_request_rate：两次请求间隔不小于 apiMinIntervalSec

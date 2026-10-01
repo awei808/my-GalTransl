@@ -75,7 +75,7 @@ common:
   gpt.swapFixToCurrent: false # 修复轮（brfix/jpfix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
-  stageBackends: # 每阶段独立API：值为「后端配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
+  stageBackends: # 每阶段独立API：值为「API 配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
     validate: "" # 阶段0 输入数据校验（一般无需独立后端）
     compress: "" # 阶段1 文本无损压缩（一般无需独立后端）
     gen_dic: "" # 阶段2 术语表构建；留空时回退下方 metadata（旧键）
