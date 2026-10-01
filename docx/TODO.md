@@ -45,10 +45,15 @@
 - 双击 AI 建议没有让用户知道有这个功能的提示
 - 0.5.4：新增左侧按钮“剧情路线图-简易agent界面” **已完成**（视图名 route-agent，按钮文案「路线图工作台」：RouteMapViewer 只渲染不显示源码、渲染失败/无 mermaid 退化为按路线分组的有序矩形列表；节点/矩形右键（或左键）多选文件加入底边栏 agent；AI 仅持 3 工具：read_route_map/write_route_map（整体覆盖+校验原子写）/search_file_metadata（POST /metadata/search），终端不经 AI 直连 /api/jobs；任务支持 file_filter 文件子集与 config_overrides 注入覆盖（Service→LLMTranslate 唯一过滤点，复用 globalPromptFiles 匹配口径）；JobState//runtime 透出任务范围，翻译控制台显示「文件范围: 仅 N 个文件」；执行配置按项目存 localStorage；agent 会话翻译运行中 409、同项目单飞）
   - 0.6.0 修订：**内置简易 agent 已整体移除**（`server_agent.py`、`/agent/chat`、`AgentPanel.tsx`、`AGENT_SYSTEM_PROMPT`、agent 反向互斥），路线图工作台**保留视图**但底边栏只剩「执行终端」；路线图读写逻辑迁入 `GalTransl/mcp_tools.py`（`read_route_map`/`write_route_map`），Agent 能力统一改由外置 dsh + MCP 提供。
-- **0.6.0 待办（批次 2 写工具时必须一并处理，否则有安全风险）**：
-  - `mcp_tools.py` 的 `SERVER_INSTRUCTIONS` 仍写「只读，11 个工具」「全部工具只读：不得写文件」——注册写工具后必须同步改写，否则下发给 agent 的约束与工具面自相矛盾，会诱导 agent 拒绝使用写工具。
-  - `READ_ONLY_ANNOTATIONS` 上方说明段同样称「11 个工具全部只读本地磁盘」，需一并调整。
-  - 已处理：`_def()` 已加 `kind` 参数（默认 `"read"` 保兼容），写工具注册时**必须显式传 `kind="write"`**；否则 `tool_annotations()` 会下发 `read_only_hint: True`，部分 MCP 客户端可能据此跳过用户确认直接执行写入。已有回归测试 `tests/test_mcp_tools.py::test_def_kind_defaults_to_read_and_accepts_write` 锁定。
+- **0.6.0 批次 2（写工具）已完成**：
+  - `SERVER_INSTRUCTIONS` 已改写为「15 个工具：11 个只读检索 + 4 个写操作」，并明确写工具边界；`READ_ONLY_ANNOTATIONS` 上方说明同步改为按 `kind` 派生。
+  - `_def()` 的 `kind` 参数（默认 `"read"`）已落地；4 个写工具均显式传 `kind="write"`，`tool_annotations()` 对 write 返回空 dict。回归测试见 `tests/test_mcp_tools.py::test_write_tools_are_never_annotated_read_only`。
+  - 新增 `GalTransl/mcp_backend_client.py`：作业域 2 工具（`submit_job`/`stop_job`）经 HTTP 回后端（`JobRegistry` 是后端进程内单例，MCP 为独立进程）。这是 0.5.1「不打自家 REST」约定的**范围克制例外**（仅 2 个工具，其余 13 个仍直接读磁盘）。
+  - H 硬门禁落在 `mcp_tools.enforce_h_gate`：文件维度复用 `server_cache._resolve_cache_h_ranges`、文本维度经 `server_cache._load_rebuild_deps(...)[5]` 取 H 词库 + `Problem._hit_display_words`。**写路径有门禁，读路径仍无**。
+  - **已修的两处静默失效**（写工具测试当场抓到）：
+    - `_entry_has_h` 原先传裸文件名，而 `_resolve_cache_h_ranges` 只认 `pass3_cache/xx.json` 形态 → 文件维度判据永远返回 False。已改为拼 `pass3_cache/{name}.json`，并加回归测试 `test_entry_has_h_uses_pass3_relative_path`。
+    - `_ensure_safe_metadata_filename` 原先放过含冒号与 Windows 保留名的输入（`a:b` 会让 `os.makedirs` 抛 OSError 而非 ValueError）。已补冒号与保留名拦截 + 测试 `test_ads_and_reserved_names_rejected`。
+  - 附带发现（未修，属 HTTP 侧既有问题）：`POST /metadata/filemeta|batchmeta` 直拼路径且**无文件名校验**、**非原子写**；MCP 侧已用 `.tmp`+`os.replace` 且校验更严。建议后续把 `_ensure_safe_metadata_filename` 提为共用并给 HTTP 端点补原子写。
 - 术语提取提示词要求新增：高度本地化（除去原文中强文化载体词汇，其他尽量替换为本地化的词汇）、注释需要写详细，去除注释只能写“术语/疑似h”的限制
 - 字典ctrl+s保存似乎不可用或无弹窗反馈
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善

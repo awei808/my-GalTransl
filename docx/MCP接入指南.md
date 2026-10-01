@@ -1,20 +1,26 @@
 # GalTransl MCP 接入指南（外部 Agent 调用）
 
-> 版本：0.5.1 起提供。让外部 agent（CodeBuddy / Claude Desktop / Cherry Studio 等 MCP 客户端）
-> 以**只读**方式检索 GalTransl 项目的术语、译文、字典、人名表、日志与元数据。
-> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（11 个工具）。
+> 版本：0.5.1 起提供只读检索；0.6.0 起增加 4 个受限写工具。让外部 agent
+> （CodeBuddy / Claude Desktop / Cherry Studio / dsh 等 MCP 客户端）
+> 检索 GalTransl 项目的术语、译文、字典、人名表、日志与元数据，并写入路线图/元数据、启停翻译任务。
+> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（15 个工具）。
 
 ---
 
 ## 1. 这是什么
 
-外部 agent 通过标准 MCP 协议调用 GalTransl 的**检索能力**，典型用途是「核查术语译法是否统一」：
+外部 agent 通过标准 MCP 协议调用 GalTransl 的能力，典型用途是「核查术语译法是否统一」：
 
 - 某术语在字典里定的译法 vs 实际译文里用的译法是否一致
 - 某角色名是否已进译名表、正文用名是否与译名表一致
 - 某类问题译文（残留日文、词频过高…）分布在哪些文件、哪些行
 
-**只读**：没有启动翻译、改配置、写字典的工具，不会改动项目文件。
+**能力边界**：11 个只读检索工具不需要后端运行（直接读项目文件）；
+4 个写工具（路线图 / 元数据 / 提交任务 / 停止任务）只能改项目内的指定产物，
+**不提供任意路径读写、不提供命令执行、不修改程序配置**。
+其中提交/停止任务需要 GalTransl 后端在运行。
+
+> 0.6.0 起本 MCP 是 GalTransl 官方的 Agent 接入方式：程序本体不再内置 Agent。
 
 ---
 
@@ -105,7 +111,9 @@ pip install "mcp>=2.0,<3.0"
 
 ---
 
-## 4. 可用工具（11 个）
+## 4. 可用工具（15 个 = 11 只读 + 4 写入）
+
+### 只读检索（不需要后端运行）
 
 | 工具 | 用途 |
 |---|---|
@@ -121,6 +129,18 @@ pip install "mcp>=2.0,<3.0"
 | `galtransl_read_source_script` | 读取原始脚本文件条目（分页） |
 | `galtransl_get_project_metadata` | 读元数据（globalprompt / filemeta / batchmeta） |
 
+### 写入（0.6.0 新增，受 H 门禁与路径约束）
+
+| 工具 | 用途 | 备注 |
+|---|---|---|
+| `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 需先读现状；mermaid 经生成侧校验；未提供字段保留旧值 |
+| `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta / plotroute / globalprompt |
+| `galtransl_submit_job` | 提交翻译任务 | **需后端运行**；会真实消耗 API 额度，仅在用户明确要求时调用 |
+| `galtransl_stop_job` | 停止项目当前任务 | **需后端运行**；无任务时 409 |
+
+写入工具的边界：只能改项目内的指定产物，**无任意路径写、无命令执行、不改程序配置**。
+写工具**下发时不含 `read_only_hint`**（`kind=write` → 空 annotations），客户端会按写操作征询用户确认。
+
 所有工具都需要 `project_dir`（项目根目录绝对路径）。工作流建议见 `skills/galtransl-mcp/SKILL.md`。
 
 ---
@@ -133,7 +153,7 @@ pip install "mcp>=2.0,<3.0"
 |---|---|
 | `initialize` | 返回 `protocolVersion: 2025-06-18`、`capabilities.tools`、`serverInfo{name: galtransl}` |
 | `notifications/initialized` | 无响应（通知不产生响应，符合协议） |
-| `tools/list` | 返回 **11** 个工具，`inputSchema` 合法 |
+| `tools/list` | 0.5.1 时返回 **11** 个工具；0.6.0 增至 **15** 个（+4 写工具），`inputSchema` 合法 |
 | `tools/call` → `galtransl_get_project_overview` | 在真实项目上正确读出 `language: zh-cn`、`numPerRequestTranslate: 16`、`translation_guideline` 等 |
 | `tools/call` → `galtransl_search_scripts` | 在真实项目上成功命中「クルト」及其所在文件与 index |
 | `tools/call` → 未知工具 | 返回 `isError: true` + 「未知工具」文案，**协议连接未中断** |
@@ -186,6 +206,14 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
 ## 8. 安全说明
 
 - 服务仅在本机以 stdio 子进程方式运行，**不监听任何网络端口**。
-- 所有文件访问限于传入的 `project_dir` 之下（读取文件时经 `safe_under_project` 做路径归属校验，拒绝 `../` 与绝对路径）。
-- **H 内容**：0.5.1 的读取路径**未做 H 门禁过滤**（完整实现排在 0.6.1）。检索结果可能包含成人向内容。
+- 所有文件访问限于传入的 `project_dir` 之下（读取文件时经 `safe_under_project` 做路径归属校验，拒绝 `../` 与绝对路径；`save_metadata` 的 `filename` 同样经过穿越校验）。
+- **H 内容**：
+  - **读路径未做 H 门禁过滤**（只读工具会原样返回 H 原文/译文），需由 agent 自行遵守 `skills/galtransl-mcp/SKILL.md` §1 的约束。
+  - **写工具已做硬门禁**：`write_route_map` / `save_metadata` 会检查目标缓存文件是否落在 H 区间
+    （复用校对界面同源的 `_resolve_cache_h_ranges`）与待写入文本是否命中项目 H 词库
+    （`forbiddenDictH`，走与问题重建相同的 `_load_rebuild_deps` 链路），命中即**拒绝写入并返回错误**，不落盘。
+- **写工具的能力边界**：仅 4 个写工具，各自只能改项目内指定产物（路线图 / 元数据 / 任务启停）；
+  无任意路径写、无命令执行、不改程序配置。写工具不下发 `read_only_hint`，客户端会按写操作征询用户确认。
 - 服务进程读得到项目目录下的一切文件（包括日志），请只把 `project_dir` 指向自己的翻译项目目录。
+- `submit_job` / `stop_job` 经 HTTP 回到 `127.0.0.1:12333`（可用 `GALTRANSL_BACKEND_URL` 覆盖），
+  沿用 `GALTRANSL_API_TOKEN` Bearer 鉴权；这是「作业状态只存在于后端进程内」导致的必要例外。

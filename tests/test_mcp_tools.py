@@ -37,8 +37,11 @@ class ToolDefinitionTests(unittest.TestCase):
         def_names = {item["name"] for item in MCP_TOOL_DEFS}
         self.assertEqual(def_names, set(_TOOL_HANDLERS))
 
-    def test_tool_count_is_eleven(self) -> None:
-        self.assertEqual(len(MCP_TOOL_DEFS), 11)
+    def test_tool_count_is_fifteen(self) -> None:
+        # 0.5.1：11 个只读检索；0.6.0：+4 个写工具（路线图/元数据/提交/停止任务）
+        self.assertEqual(len(MCP_TOOL_DEFS), 15)
+        self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "read"), 11)
+        self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "write"), 4)
 
     def test_all_names_are_prefixed_and_unique(self) -> None:
         names = [item["name"] for item in MCP_TOOL_DEFS]
@@ -57,9 +60,17 @@ class ToolDefinitionTests(unittest.TestCase):
                 for key in schema["required"]:
                     self.assertIn(key, schema["properties"])
 
-    def test_every_tool_is_read_only_kind(self) -> None:
+    def test_every_tool_kind_is_read_or_write(self) -> None:
         for item in MCP_TOOL_DEFS:
-            self.assertEqual(item["kind"], "read")
+            with self.subTest(tool=item["name"]):
+                self.assertIn(item["kind"], ("read", "write"))
+
+    def test_write_tools_are_never_annotated_read_only(self) -> None:
+        # 安全性质：写工具若被下发 read_only_hint=True，客户端可能跳过用户确认直接写入
+        for item in MCP_TOOL_DEFS:
+            if item["kind"] == "write":
+                with self.subTest(tool=item["name"]):
+                    self.assertEqual(tool_annotations(item), {})
 
     def test_unknown_tool_raises_key_error(self) -> None:
         with self.assertRaises(KeyError):
@@ -74,9 +85,16 @@ class ConstraintDeliveryTests(unittest.TestCase):
             with self.subTest(keyword=keyword):
                 self.assertIn(keyword, SERVER_INSTRUCTIONS)
 
-    def test_instructions_states_no_h_filter(self) -> None:
-        # 锁定「声明与实现一致」：H 门禁落地（0.6.1）前不得写成已过滤
-        self.assertIn("无 H 门禁过滤", SERVER_INSTRUCTIONS)
+    def test_instructions_declares_h_gate_not_absence_of_one(self) -> None:
+        # 反向锁定：H 门禁已落地（0.6.0），文案不得再声称「无 H 门禁过滤」
+        self.assertIn("硬门禁", SERVER_INSTRUCTIONS)
+        self.assertNotIn("无 H 门禁过滤", SERVER_INSTRUCTIONS)
+
+    def test_instructions_does_not_claim_all_tools_are_read_only(self) -> None:
+        # 文案必须与工具面一致：存在写工具时不得声称「全部工具只读」，
+        # 否则 agent 会被诱导拒绝使用写工具
+        self.assertNotIn("全部工具只读", SERVER_INSTRUCTIONS)
+        self.assertIn("11 个只读检索 + 4 个写操作", SERVER_INSTRUCTIONS)
 
     def test_read_only_annotations_keys_match_sdk(self) -> None:
         # 键名必须与 mcp SDK ToolAnnotations 字段一致（SDK 升级改名时立即暴露）
@@ -89,10 +107,12 @@ class ConstraintDeliveryTests(unittest.TestCase):
 
     def test_tool_annotations_derives_from_kind(self) -> None:
         for item in MCP_TOOL_DEFS:
+            if item["kind"] != "read":
+                continue
             with self.subTest(tool=item["name"]):
                 self.assertEqual(tool_annotations(item), READ_ONLY_ANNOTATIONS)
-        # 非 read 类（0.6.0 作业域）与缺 kind 的桩一律返回空 dict
-        self.assertEqual(tool_annotations({"name": "x", "kind": "job"}), {})
+        # write 与缺 kind 的桩一律返回空 dict
+        self.assertEqual(tool_annotations({"name": "x", "kind": "write"}), {})
         self.assertEqual(tool_annotations({"name": "x"}), {})
 
     def test_tool_annotations_returns_independent_copy(self) -> None:

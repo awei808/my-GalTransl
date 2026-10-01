@@ -1,8 +1,9 @@
-"""MCP 工具层：面向外部 agent 的能力（0.5.1 起只读检索；0.6.0 增路线图读写）。
+"""MCP 工具层：面向外部 agent 的能力（0.5.1 只读检索；0.6.0 增写工具）。
 
-11 个检索工具为纯读磁盘的纯函数风格：显式接收 project_dir，返回可 JSON 序列化的 dict。
+11 个检索工具为纯读磁盘的纯函数风格；4 个写工具（路线图/元数据/提交/停止任务）
+同样以显式 project_dir 为边界，写入范围仅限项目内指定产物，无任意路径写、无命令执行。
 本模块不依赖任何 MCP 传输实现，供独立 stdio server（run_mcp_server.py）与未来内置 agent 共用，
-避免上游「工具全走 HTTP 打自家 REST」的架构绕路。
+避免上游「工具全走 HTTP 打自家 REST」的架构绕路（例外：作业域 2 个工具需回后端，见 mcp_backend_client）。
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from GalTransl import (
     PASS0_CACHE_DIR,
     PASS1_CACHE_DIR,
     PASS2_CACHE_DIR,
+    PASS3_CACHE_DIR,
 )
 from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.Frontend.pipeline_stages import to_payload as _pipeline_stages_payload
@@ -366,6 +368,61 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ---------- 写工具（0.6.0 新增，kind=write） ----------
+
+def _tool_write_route_map(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_project_dir(arguments)
+    return write_route_map(project_dir, arguments)
+
+
+def _tool_save_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_project_dir(arguments)
+    entry = arguments.get("entry")
+    if not isinstance(entry, dict):
+        raise ValueError("entry 必须是 JSON 对象（要写入的完整元数据）")
+    return write_metadata(
+        project_dir,
+        str(arguments.get("kind", "") or "").strip(),
+        str(arguments.get("filename", "") or "").strip(),
+        entry,
+    )
+
+
+def _tool_submit_job(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    from GalTransl.mcp_backend_client import post_json
+
+    project_dir = _require_project_dir(arguments)
+    payload: Dict[str, Any] = {
+        "project_dir": project_dir,
+        "translator": str(arguments.get("translator", "") or "").strip(),
+    }
+    if not payload["translator"]:
+        raise ValueError("translator 必填（如 ForGal-full-pipeline）")
+    for key in ("config_file_name", "backend_profile"):
+        value = str(arguments.get(key, "") or "").strip()
+        if value:
+            payload[key] = value
+    file_filter = arguments.get("file_filter")
+    if file_filter:
+        if not isinstance(file_filter, list) or not all(isinstance(f, str) for f in file_filter):
+            raise ValueError("file_filter 必须是字符串数组")
+        payload["file_filter"] = file_filter
+    result = post_json("/api/jobs", payload)
+    job_id = str(result.get("job_id", "") or "")
+    LOGGER.info(f"[mcp] 已提交翻译任务 job_id={job_id} translator={payload['translator']}")
+    return {"success": True, "job_id": job_id, "project_dir": project_dir, "translator": payload["translator"]}
+
+
+def _tool_stop_job(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    from GalTransl.mcp_backend_client import post_json
+    from GalTransl.server_runtime import encode_project_dir
+
+    project_dir = _require_project_dir(arguments)
+    result = post_json(f"/api/projects/{encode_project_dir(project_dir)}/stop", {})
+    LOGGER.info(f"[mcp] 已请求停止任务 project={project_dir}")
+    return {"success": bool(result.get("success", True)), "project_dir": project_dir, "detail": result}
+
+
 # ---------- 路线图读写（供 MCP 写工具与后续 agent 复用） ----------
 
 def route_map_path(project_dir: str) -> str:
@@ -422,6 +479,12 @@ def write_route_map(project_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
             "写入被拒绝：mermaid 校验失败。首行必须以 flowchart 或 graph 开头；"
             "subgraph id 只能包含字母/数字/下划线/连字符（可含中文），禁止空格等其它字符。"
         )
+    # H 门禁：路线图的节点剧情/大纲属剧情摘要，命中 H 词库即拒绝
+    # （_normalize_result 只规整 mermaid/文件归属/节点剧情，大纲须取 merged）
+    enforce_h_gate(
+        project_dir,
+        texts=[merged["用户大纲"], *normalized["节点剧情"].values()],
+    )
     final = {
         "结构类型": merged["结构类型"],
         "用户大纲": merged["用户大纲"],
@@ -446,17 +509,172 @@ def write_route_map(project_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ---------- H 门禁（写工具硬拦截） ----------
+
+_H_DENY_MESSAGE = (
+    "写入被拒绝：目标内容被判定为 H / 成人向。本服务不下发此类内容，"
+    "也无法代写。请如实告知用户「该部分因 H 门禁未执行」，由用户在 GalTransl 界面手动处理。"
+)
+
+
+def _entry_has_h(project_dir: str, filename: str) -> bool:
+    """判断某个翻译缓存文件是否含 H 区间（复用校对界面同源判定）。
+
+    `_resolve_cache_h_ranges` 要求「pass3_cache 下真实存在的缓存相对路径」
+    （如 `pass3_cache/01.json`），裸文件名会一律判为不存在。故这里按
+    pass3_cache 下的缓存命名探测：先试 `{filename}.json`，再试分片形态。
+    识别不了（缓存/批次元数据缺失、命名对不上）时返回 False——不因判定不了而阻断正常写入。
+    """
+    candidates = [f"{PASS3_CACHE_DIR}/{filename}.json"]
+    # 分片缓存可能形如 {输入名}_{N}.json；无 N 时也试一次裸名，命中由文件存在性决定
+    if not filename.endswith(".json"):
+        candidates.append(f"{PASS3_CACHE_DIR}/{filename}")
+    try:
+        from GalTransl.server_cache import _resolve_cache_h_ranges
+
+        for cache_name in candidates:
+            if _resolve_cache_h_ranges(project_dir, cache_name).get("has_h"):
+                return True
+    except Exception as exc:
+        LOGGER.debug(f"[mcp] H 区间判定失败，按非 H 处理：{exc}")
+    return False
+
+
+def _h_check_words(project_dir: str) -> list:
+    """加载项目「H 场景禁用词库」（配置 forbiddenDictH，回退旧 hCheckDict）。
+
+    走与校对页问题重建完全相同的链路（_load_rebuild_deps），保证门禁口径一致。
+    项目无配置/加载失败时返回空列表，此时文本维度不拦截。
+    """
+    try:
+        from GalTransl.server_cache import _load_rebuild_deps
+
+        config_name = "config.yaml"
+        for cand in ("config.inc.yaml", "config.yaml"):
+            if os.path.isfile(os.path.join(project_dir, cand)):
+                config_name = cand
+                break
+        return _load_rebuild_deps(project_dir, config_name)[5] or []
+    except Exception as exc:
+        LOGGER.debug(f"[mcp] H 词库加载失败，按非 H 处理：{exc}")
+        return []
+
+
+def _text_has_h(project_dir: str, *texts: str) -> bool:
+    """判断若干文本是否命中项目 H 词库（复用 Problem 的命中判定口径）。"""
+    candidates = [t for t in texts if t and t.strip()]
+    if not candidates:
+        return False
+    words = _h_check_words(project_dir)
+    if not words:
+        return False
+    try:
+        from GalTransl.Problem import _hit_display_words
+
+        return bool(_hit_display_words(words, *candidates))
+    except Exception as exc:
+        LOGGER.debug(f"[mcp] H 命中判定失败，按非 H 处理：{exc}")
+        return False
+
+
+def enforce_h_gate(project_dir: str, *, cache_filename: str = "", texts: Optional[List[str]] = None) -> None:
+    """写工具的 H 硬门禁：命中即抛 ValueError，不落盘。
+
+    两条判据任一成立即拒绝：(1) 目标缓存文件落在 H 区间；(2) 待写入文本命中 H 词库。
+    元数据类写入（filemeta/batchmeta）本身不含对话原文，故主要靠文件维度判定。
+    """
+    if cache_filename and _entry_has_h(project_dir, cache_filename):
+        LOGGER.warning(f"[mcp] H 门禁拦截写入: {cache_filename}")
+        raise ValueError(_H_DENY_MESSAGE)
+    if texts and _text_has_h(project_dir, *texts):
+        LOGGER.warning("[mcp] H 门禁拦截写入: 文本命中 H 词库")
+        raise ValueError(_H_DENY_MESSAGE)
+
+
+# ---------- 元数据写入（项目内原子写） ----------
+
+_METADATA_SUBDIRS = {
+    "filemeta": (PASS1_CACHE_DIR, ".meta.json"),
+    "batchmeta": (PASS2_CACHE_DIR, ".batch.json"),
+}
+
+
+def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+    """原子写入单文件元数据；kind 支持 filemeta / batchmeta / plotroute / globalprompt。
+
+    走本模块自带的 .tmp + os.replace 原子写（HTTP 侧 filemeta/batchmeta 端点为直写，
+    无原子性），并复用与 HTTP 端点同口径的文件名校验。
+    """
+    if not isinstance(entry, dict):
+        raise ValueError("entry 必须是 JSON 对象")
+    if kind == "plotroute":
+        enforce_h_gate(project_dir, texts=[json.dumps(entry, ensure_ascii=False)])
+        path = route_map_path(project_dir)
+    elif kind == "globalprompt":
+        enforce_h_gate(project_dir, texts=[json.dumps(entry, ensure_ascii=False)])
+        path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json")
+    elif kind in _METADATA_SUBDIRS:
+        name = str(filename or "").strip()
+        if not name:
+            raise ValueError(f"kind={kind} 时 filename 必填")
+        sub_dir, suffix = _METADATA_SUBDIRS[kind]
+        _ensure_safe_metadata_filename(name)
+        enforce_h_gate(project_dir, cache_filename=name)
+        path = os.path.join(project_dir, CACHE_FOLDERNAME, sub_dir, f"{name}{suffix}")
+    else:
+        raise ValueError(f"未知 kind: {kind}（可选 filemeta/batchmeta/plotroute/globalprompt）")
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(entry, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    size = os.path.getsize(path)
+    LOGGER.info(f"[mcp] 元数据已写入 kind={kind} ({size} 字节)")
+    return {"success": True, "kind": kind, "filename": filename or "", "bytes": size}
+
+
+_WINDOWS_RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
+
+
+def _ensure_safe_metadata_filename(filename: str) -> None:
+    """拒绝 . / .. / 含路径分隔符 / 含冒号 / Windows 保留名的文件名。
+
+    比 HTTP 元数据端点（`server_handlers_project` 直拼路径、无校验）更严：MCP 侧
+    `filename` 来自外部 agent，属未受信输入。冒号挡 NTFS 交换数据流（`a:b`）；
+    保留名（CON/PRN/AUX/NUL/COM1-9/LPT1-9）在 Windows 上会被解析为设备而非文件，
+    须在拼路径前拦掉，否则 os.makedirs 会抛非 ValueError 的 OSError 泄漏给调用方。
+    """
+    norm = os.path.normpath(filename.replace("\\", "/"))
+    if norm in (".", "..") or norm.startswith("..") or os.path.isabs(norm):
+        raise ValueError(f"非法元数据文件名：{filename}")
+    if "/" in norm or "\\" in norm:
+        raise ValueError(f"非法元数据文件名（不得含路径分隔符）：{filename}")
+    if ":" in norm:
+        raise ValueError(f"非法元数据文件名（不得含冒号）：{filename}")
+    if norm.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES:
+        raise ValueError(f"非法元数据文件名（Windows 保留名）：{filename}")
+
+
 # ---------- 约束下发（instructions / annotations） ----------
 
-SERVER_INSTRUCTIONS = """GalTransl 术语与译文检索服务（只读，11 个工具）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
+SERVER_INSTRUCTIONS = """GalTransl 翻译项目管理服务（15 个工具：11 个只读检索 + 4 个写操作）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
 
 使用前必须遵守：
-1. 全部工具只读：不得写文件、改配置、启停翻译。需要修改请让用户在 GalTransl 界面操作。
-2. 禁止查看 H / 成人向内容：本服务读路径无 H 门禁过滤。识别到成人向内容必须立即停止该方向检索，不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。
-3. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。
-4. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。
-5. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。
-6. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。
+1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_*）不得引发任何写入。
+   写工具仅这 4 个：write_route_map、save_metadata、submit_job、stop_job，各自只能改项目内的指定产物；
+   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。
+2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎。
+3. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，
+   不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。
+4. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。
+5. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。
+6. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。
+7. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。
 
 完整约束见随项目分发的 skills/galtransl-mcp/SKILL.md。"""
 
@@ -473,8 +691,9 @@ READ_ONLY_ANNOTATIONS: Dict[str, Any] = {
 def tool_annotations(tool_def: Dict[str, Any]) -> Dict[str, Any]:
     """按工具 kind 派生 MCP annotations：read → 只读声明，其它 → 空 dict。
 
-    11 个工具全部只读本地磁盘、不改环境、同参数重复调用无额外副作用、不访问开放世界，
-    故统一映射为 READ_ONLY_ANNOTATIONS；为 0.6.0 作业域工具（kind=job）留出空分支。
+    11 个检索工具只读本地磁盘、不改环境、同参数重复调用无额外副作用、不访问开放世界，
+    故统一映射为 READ_ONLY_ANNOTATIONS。写工具（kind=write）返回空 dict —— 绝不能下发
+    read_only_hint=True，否则客户端可能据此跳过用户确认直接执行写入。
     返回副本，调用方改写不会污染模块级常量。
     """
     if str(tool_def.get("kind", "")) == "read":
@@ -636,6 +855,70 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
 ]
 
+_WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
+    _def(
+        "galtransl_write_route_map",
+        "整体覆盖写入剧情路线图（PlotRouteMap.json）。未提供的字段保留旧值；"
+        "mermaid 会经生成侧同口径校验（首行必须 flowchart/graph 开头）。"
+        "写入前请先读取现状，未被要求修改的路线/文件必须原样带回。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "结构类型": {"type": "string", "description": "路线结构类型；不传保留旧值"},
+            "用户大纲": {"type": "string", "description": "用户大纲；不传保留旧值"},
+            "mermaid": {"type": "string", "description": "mermaid 源码（首行 flowchart/graph）"},
+            "文件归属": {"type": "object", "description": "{文件名: 路线名}"},
+            "节点剧情": {"type": "object", "description": "{路线名: 剧情摘要}"},
+        },
+        ["project_dir"],
+        kind="write",
+    ),
+    _def(
+        "galtransl_save_metadata",
+        "原子写入单文件元数据。kind=filemeta/batchmeta 需 filename（不含扩展名），"
+        "kind=plotroute/globalprompt 不要 filename。entry 为要写入的完整 JSON 对象（整体覆盖）。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "kind": {
+                "type": "string",
+                "enum": ["filemeta", "batchmeta", "plotroute", "globalprompt"],
+                "description": "元数据种类",
+            },
+            "filename": {"type": "string", "description": "kind=filemeta/batchmeta 时必填，不含扩展名"},
+            "entry": {"type": "object", "description": "要写入的完整元数据对象"},
+        },
+        ["project_dir", "kind", "entry"],
+        kind="write",
+    ),
+    _def(
+        "galtransl_submit_job",
+        "提交 GalTransl 翻译任务（会真实启动翻译、消耗 API 额度）。"
+        "**仅在用户明确要求开始翻译时调用**；调用前应与用户确认项目与引擎。"
+        "返回 job_id，可用 galtransl_stop_job 停止。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "translator": {"type": "string", "description": "翻译引擎 ID，如 ForGal-full-pipeline"},
+            "config_file_name": {"type": "string", "description": "配置文件名，默认 config.yaml"},
+            "backend_profile": {"type": "string", "description": "API 配置名（可选）"},
+            "file_filter": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "仅翻译这些文件（可选，支持完整路径/文件名/去扩展名）",
+            },
+        },
+        ["project_dir", "translator"],
+        kind="write",
+    ),
+    _def(
+        "galtransl_stop_job",
+        "请求停止某项目当前正在运行的翻译任务。无运行中任务时后端返回 409。",
+        {"project_dir": _PROJECT_PROP},
+        ["project_dir"],
+        kind="write",
+    ),
+]
+
+MCP_TOOL_DEFS.extend(_WRITE_TOOL_DEFS)
+
 _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_search_cache": _tool_search_cache,
     "galtransl_search_scripts": _tool_search_scripts,
@@ -648,6 +931,10 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_read_translation_file": _tool_read_translation_file,
     "galtransl_read_source_script": _tool_read_source_script,
     "galtransl_get_project_metadata": _tool_get_project_metadata,
+    "galtransl_write_route_map": _tool_write_route_map,
+    "galtransl_save_metadata": _tool_save_metadata,
+    "galtransl_submit_job": _tool_submit_job,
+    "galtransl_stop_job": _tool_stop_job,
 }
 
 
