@@ -3,6 +3,8 @@ import { appState, setAppState, getActiveConfigFileName, navigateTo } from "../.
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { runPageAutosave } from "../../lib/usePageAutosave";
+import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
+import type { GlobalSaveEntry } from "../../lib/globalSave";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
 import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes, fetchPipelineStages } from "../../lib/api/general";
 import { fetchBackendProfiles, BACKEND_PROFILES_CHANGE_EVENT } from "../../lib/api/preferences";
@@ -1906,6 +1908,16 @@ export function ProjectConfigPage() {
   async function handleSave() {
     await doSave(true);
   }
+
+  // Ctrl+S / 菜单「保存」（全局保存注册表）：与保存按钮同口径（doSave(true) 内部自带成功/失败 toast），
+  // 无 dirty 时也执行保存（幂等覆盖写）；在途保存时静默避免并发双写
+  const globalSaveEntry: GlobalSaveEntry = {
+    save: () => (saving() ? Promise.resolve(false) : doSave(true)),
+  };
+  createEffect(() => {
+    registerGlobalSave(globalSaveEntry);
+    onCleanup(() => unregisterGlobalSave(globalSaveEntry));
+  });
 
   /** 等待在途手动保存结束（卸载自动保存前调用，带超时兜底），避免保存在途时跳过导致编辑未落盘 */
   async function waitForSavingDone(): Promise<void> {

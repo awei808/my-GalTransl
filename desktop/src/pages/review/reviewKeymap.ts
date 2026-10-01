@@ -102,7 +102,8 @@ export function decideCrossFileRestore(args: {
 
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
-export type KeyAction = "undo" | "redo" | "save";
+// Ctrl+S 保存不在页内分派：统一走全局保存注册表（lib/globalSave.ts）
+export type KeyAction = "undo" | "redo";
 
 export interface KeyEventLike {
   key: string;
@@ -117,7 +118,6 @@ export function resolveKeyAction(e: KeyEventLike): KeyAction | null {
   const key = e.key.toLowerCase();
   if (key === "z") return e.shiftKey ? "redo" : "undo";
   if (key === "y") return "redo";
-  if (key === "s") return "save";
   return null;
 }
 

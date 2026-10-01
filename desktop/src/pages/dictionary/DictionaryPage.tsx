@@ -1,6 +1,8 @@
 import { createSignal, createEffect, createMemo, untrack, For, Index, Show, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { sendLog } from "../../lib/api/log";
+import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
+import type { GlobalSaveEntry } from "../../lib/globalSave";
 import { appState, getActiveConfigFileName } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
@@ -208,7 +210,6 @@ export function DictionaryPage() {
 
   onCleanup(() => {
     disposed = true;
-    document.removeEventListener("galtransl:save", handleManualSave);
     const snap = captureUnmountSnapshot();
     void runPageAutosave({
       waitForReady: waitForPendingSave,
@@ -339,14 +340,14 @@ export function DictionaryPage() {
   // 显式保存进行中标志（用于保存按钮禁用与文案）
   const [manualSaving, setManualSaving] = createSignal(false);
 
-  /** 显式保存当前编辑内容（工具栏「保存」按钮）：非人名 tab 保存字典文件，人名 tab 保存人名表 */
-  async function handleManualSave(): Promise<void> {
-    if (manualSaving()) return;
+  /** 显式保存当前编辑内容（工具栏「保存」按钮 / 全局保存注册表）：非人名 tab 保存字典文件，人名 tab 保存人名表。返回是否执行了保存 */
+  async function handleManualSave(): Promise<boolean> {
+    if (manualSaving()) return false;
     if (activeTab() === "names") {
       // 与卸载快照口径一致：无条目时不视为有可保存修改
       if (!namesDirty || nameEntries().length === 0) {
         toast.info("没有需要保存的修改");
-        return;
+        return false;
       }
       setManualSaving(true);
       try {
@@ -354,16 +355,16 @@ export function DictionaryPage() {
       } finally {
         setManualSaving(false);
       }
-      return;
+      return true;
     }
     if (!selectedFile()) {
       toast.info("请先选择一个字典文件");
-      return;
+      return false;
     }
     const snap = captureUnmountSnapshot();
     if (!snap.dirtyDict) {
       toast.info("没有需要保存的修改");
-      return;
+      return false;
     }
     setManualSaving(true);
     try {
@@ -372,12 +373,15 @@ export function DictionaryPage() {
     } finally {
       setManualSaving(false);
     }
+    return true;
   }
 
-  // Ctrl+S / 菜单保存（App 全局分发 galtransl:save）：走工具栏保存按钮同一入口，带 toast 反馈。
-  // 用 createEffect 注册（对齐 ReviewPage）：HMR 后组件不重新挂载也能保证监听始终存在
+  // Ctrl+S / 菜单「保存」（全局保存注册表）：走工具栏保存按钮同一入口，反馈由 handleManualSave 内部 toast 提供
+  // 用 createEffect 注册（HMR 后组件不重新挂载也能保证注册始终存在）
+  const globalSaveEntry: GlobalSaveEntry = { save: handleManualSave };
   createEffect(() => {
-    document.addEventListener("galtransl:save", handleManualSave);
+    registerGlobalSave(globalSaveEntry);
+    onCleanup(() => unregisterGlobalSave(globalSaveEntry));
   });
 
   /** 切换 tab 前保存当前编辑：字典文件始终保存；从人名 tab 切出时额外保存人名表 */

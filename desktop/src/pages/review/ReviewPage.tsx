@@ -17,6 +17,8 @@ import { getCachePageSizePreference } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { runPageAutosave, autosaveInfo, autosaveError } from "../../lib/usePageAutosave";
+import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
+import type { GlobalSaveEntry } from "../../lib/globalSave";
 import { replaceInEntries } from "../../lib/replaceEntries";
 import type {
   CacheEntry,
@@ -199,11 +201,7 @@ export function ReviewPage() {
     e.preventDefault();
     if (action === "undo") handleUndo();
     else if (action === "redo") handleRedo();
-    else if (action === "save") {
-      // handleRefresh 内部会先失焦同步草稿，再保存并重检
-      if (reviewMode() === "translate") void handleRefresh();
-      else void saveMeta();
-    }
+    // Ctrl+S 保存不在页内分派：由全局保存注册表（App → invokeGlobalSave）统一处理
   }
 
   // ── 菜单事件（编辑→撤销/重做） ──
@@ -214,12 +212,24 @@ export function ReviewPage() {
     handleRedo();
   }
 
-  // ── 菜单事件（文件→保存） ──
-  function handleMenuSave() {
-    // handleRefresh 内部会先失焦同步草稿，再保存并重检
-    if (reviewMode() === "translate") void handleRefresh();
-    else void saveMeta();
-  }
+  // ── 全局保存注册表（Ctrl+S / 菜单「保存」） ──
+  const globalSaveEntry: GlobalSaveEntry = {
+    save: async () => {
+      // handleRefresh 内部会先失焦同步草稿，再保存并重检
+      if (reviewMode() === "translate") {
+        const wasDirty = !!loadedFile && appState.dirtyFiles.includes(loadedFile);
+        const ok = await handleRefresh();
+        if (wasDirty && ok) toast.success("已保存当前文件");
+        return ok;
+      }
+      return saveMeta(true, "已保存元数据");
+    },
+  };
+  // 用 createEffect 注册（对齐 DictionaryPage）：HMR 后组件不重新挂载也能保证监听始终存在
+  createEffect(() => {
+    registerGlobalSave(globalSaveEntry);
+    onCleanup(() => unregisterGlobalSave(globalSaveEntry));
+  });
 
   // 展开字段 textarea 的原生 Enter 处理（Solid 事件委托在 <Show> 内不工作，由 document 监听兜底）
   function handleExpandFieldEnter(e: KeyboardEvent) {
@@ -241,7 +251,6 @@ export function ReviewPage() {
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("galtransl:undo", handleMenuUndo);
     document.addEventListener("galtransl:redo", handleMenuRedo);
-    document.addEventListener("galtransl:save", handleMenuSave);
     void fetchProblemTypes().then((r) => {
       if (r) setProblemTypes(r);
     });
@@ -256,7 +265,6 @@ export function ReviewPage() {
     document.removeEventListener("keydown", handleExpandFieldEnter);
     document.removeEventListener("galtransl:undo", handleMenuUndo);
     document.removeEventListener("galtransl:redo", handleMenuRedo);
-    document.removeEventListener("galtransl:save", handleMenuSave);
     // 组件卸载时清除跳转标记，避免残留
     setAppState("reviewJumpToIndex", null);
     // 取消未完成的高亮定位 rAF，避免卸载后继续查询 DOM
@@ -1513,15 +1521,15 @@ export function ReviewPage() {
   // 保存并重检进行中标志：按钮/Ctrl+S/菜单保存三入口共用，重入时静默忽略（首次执行已含保存+重检全部意图）
   let refreshInFlight = false;
 
-  /** 保存并重检：先自动保存未保存的更改（若有，保存触发后端 rebuild 重检写盘），再强制重新运行问题检测并写盘（persist=true），确保侧栏同步最新结果 */
-  async function handleRefresh() {
-    if (refreshInFlight) return;
+  /** 保存并重检：先自动保存未保存的更改（若有，保存触发后端 rebuild 重检写盘），再强制重新运行问题检测并写盘（persist=true），确保侧栏同步最新结果。返回保存+重检是否成功 */
+  async function handleRefresh(): Promise<boolean> {
+    if (refreshInFlight) return false;
     refreshInFlight = true;
     try {
       (document.activeElement as HTMLElement | null)?.blur(); // 同步主译文框草稿到 entries
       const pid = appState.activeProjectId;
       const myFile = loadedFile; // entries() 当前真正所属的文件，不取 activeFilePath（切文件时可能已变）
-      if (!pid || !myFile || appState.activeFilePath !== myFile) return;
+      if (!pid || !myFile || appState.activeFilePath !== myFile) return false;
       if (appState.dirtyFiles.includes(myFile)) {
         // 等待在途保存完成（saveInFlight 在 saveCurrentFile 的 finally 必定释放），带超时兜底，
         // 避免保存被 saveInFlight 守卫跳过导致磁盘未落盘
@@ -1529,10 +1537,12 @@ export function ReviewPage() {
         while (saveInFlight && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 30));
         }
-        await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
+        const ok = await saveCurrentFile(); // 自动保存；保存触发后端 rebuild 重检
+        if (!ok) return false;
       }
-      if (appState.activeFilePath !== myFile) return;
+      if (appState.activeFilePath !== myFile) return false;
       await recheckProblems(pid, myFile, true); // 重检并写盘（非 dirty 时也同步侧栏）
+      return true;
     } finally {
       refreshInFlight = false;
     }

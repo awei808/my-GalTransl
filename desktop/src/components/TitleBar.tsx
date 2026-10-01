@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ensureDesktopBackendReady, encodeProjectDir, isBackendReachable } from "../lib/api/client";
 import { fetchProjectFiles } from "../lib/api/project";
+import { invokeGlobalSave } from "../lib/globalSave";
 import { McpStatusLight } from "./McpStatusLight";
 
 interface MenuItem {
@@ -132,7 +133,7 @@ const menus: MenuDef[] = [
       {
         label: "保存",
         shortcut: "Ctrl+S",
-        action: () => document.dispatchEvent(new CustomEvent("galtransl:save")),
+        action: () => void invokeGlobalSave(),
       },
     ],
   },

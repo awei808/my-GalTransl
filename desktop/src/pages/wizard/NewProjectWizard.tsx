@@ -6,6 +6,8 @@ import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
 import { getErrorMessage } from "../../lib/errors";
 import { runPageAutosave } from "../../lib/usePageAutosave";
+import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
+import type { GlobalSaveEntry } from "../../lib/globalSave";
 import { Icon } from "../../components/icons/Icon";
 import {
   fetchPlugins,
@@ -443,6 +445,16 @@ export function NewProjectWizard() {
       return false;
     }
   }
+
+  // Ctrl+S / 菜单「保存」（全局保存注册表）：仅设置起 currentStep >= 3 的各步注册
+  // （与「保存设置」按钮的 Show 门一致）；反馈由 handleSaveSettings 内部页内 feedback 提供，
+  // 早退分支返回 false 静默
+  const globalSaveEntry: GlobalSaveEntry = { save: handleSaveSettings };
+  createEffect(() => {
+    if (currentStep() < 3) return;
+    registerGlobalSave(globalSaveEntry);
+    onCleanup(() => unregisterGlobalSave(globalSaveEntry));
+  });
 
   // 完成：提取人名 + 打开项目
   async function handleFinish() {

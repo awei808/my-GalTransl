@@ -1,6 +1,8 @@
-import { createSignal, For, Show, Index, onMount } from "solid-js";
+import { createSignal, For, Show, Index, onMount, createEffect, onCleanup } from "solid-js";
 import { toast } from "../../stores/toastStore";
 import { confirm } from "../../stores/confirmStore";
+import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
+import type { GlobalSaveEntry } from "../../lib/globalSave";
 import {
   fetchBackendProfiles,
   createBackendProfile,
@@ -252,6 +254,20 @@ export function BackendProfilesPage() {
       setSaving(false);
     }
   }
+
+  // Ctrl+S / 菜单「保存」（全局保存注册表）：仅编辑器打开时可保存；
+  // 反馈由 handleSubmit 内部 toast 提供，编辑器未打开或在途保存时静默
+  const globalSaveEntry: GlobalSaveEntry = {
+    save: async () => {
+      if (!editorOpen() || saving()) return false;
+      await handleSubmit();
+      return true;
+    },
+  };
+  createEffect(() => {
+    registerGlobalSave(globalSaveEntry);
+    onCleanup(() => unregisterGlobalSave(globalSaveEntry));
+  });
 
   async function handleDelete(name: string) {
     const result = await confirm.show({

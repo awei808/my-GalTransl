@@ -387,12 +387,12 @@ describe("场景 9：resolveKeyAction 快捷键分派", () => {
     expect(resolveKeyAction({ key: "y", ctrlKey: true, metaKey: false, shiftKey: false })).toBe("redo");
   });
 
-  it("Ctrl+S → save", () => {
-    expect(resolveKeyAction({ key: "s", ctrlKey: true, metaKey: false, shiftKey: false })).toBe("save");
+  it("Ctrl+S 不再页内分派（移交全局保存注册表）→ null", () => {
+    expect(resolveKeyAction({ key: "s", ctrlKey: true, metaKey: false, shiftKey: false })).toBeNull();
   });
 
-  it("Mac Cmd+S（metaKey）→ save", () => {
-    expect(resolveKeyAction({ key: "s", ctrlKey: false, metaKey: true, shiftKey: false })).toBe("save");
+  it("Mac Cmd+S 同样移交全局注册表 → null", () => {
+    expect(resolveKeyAction({ key: "s", ctrlKey: false, metaKey: true, shiftKey: false })).toBeNull();
   });
 
   it("无 Ctrl/Meta → null", () => {

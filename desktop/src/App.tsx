@@ -14,6 +14,7 @@ import { ToastHost } from "./components/toast/ToastHost";
 import { ConfirmHost } from "./components/confirm/ConfirmHost";
 import { appState, setAppState, NO_SIDEBAR_VIEWS } from "./stores/appStore";
 import { setLogProject } from "./stores/logStore";
+import { invokeGlobalSave } from "./lib/globalSave";
 import { applyThemePreference } from "./lib/theme";
 
 function handleExternalLinkClick(e: MouseEvent) {
@@ -58,7 +59,7 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
       break;
     case "s":
       e.preventDefault();
-      document.dispatchEvent(new CustomEvent("galtransl:save"));
+      void invokeGlobalSave();
       break;
   }
 }

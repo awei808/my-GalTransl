@@ -1,6 +1,8 @@
-import { createSignal, For, Show, onMount } from "solid-js";
+import { createSignal, For, Show, onMount, createEffect, onCleanup } from "solid-js";
 import { toast } from "../../stores/toastStore";
 import { fetchPromptTemplates } from "../../lib/api/general";
+import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
+import type { GlobalSaveEntry } from "../../lib/globalSave";
 import type { PromptTemplateInfo } from "../../lib/api/types";
 import {
   getPromptTemplateOverride,
@@ -70,6 +72,19 @@ export function PromptTemplatesPage() {
     setOverridden(false);
     toast.success("已重置为默认值");
   }
+
+  // Ctrl+S / 菜单「保存」（全局保存注册表）：反馈由 handleSave 内部 toast 提供，未选模板或在途保存时静默
+  const globalSaveEntry: GlobalSaveEntry = {
+    save: async () => {
+      if (!selected() || saving()) return false;
+      await handleSave();
+      return true;
+    },
+  };
+  createEffect(() => {
+    registerGlobalSave(globalSaveEntry);
+    onCleanup(() => unregisterGlobalSave(globalSaveEntry));
+  });
 
   return (
     <div class="page page-prompt-templates">
