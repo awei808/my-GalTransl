@@ -74,9 +74,88 @@ from GalTransl.Service import JobCancelledError
 _H_FORBIDDEN_DEFAULT_LIMIT = 20
 
 
+def _strip_leading_lookaround(text: str) -> str:
+    """若 text 以环视断言开头则整体剥离，返回其后内容；否则原样返回。
+
+    断言形如 (?<!...)/(?<=...)/(?!...)/(?=...)，内部可能再含括号，
+    故按括号配对扫描而非非贪婪正则（后者会被断言内的 ')' 提前截断）。
+    字符组 [...] 内的 ')' 是字面量，须跳过不计配对。
+    """
+    if not text.startswith("(?") or len(text) < 3 or text[2] not in "<!=":
+        return text
+    depth = 0
+    in_class = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\":  # 转义字符跳过下一字符，避免 \[ \] 误判
+            index += 2
+            continue
+        if in_class:
+            if char == "]":
+                in_class = False
+        elif char == "[":
+            in_class = True
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[index + 1:]
+        index += 1
+    return text
+
+
+def _strip_trailing_lookaround(text: str) -> str:
+    """若 text 以环视断言结尾则整体剥离，返回其前内容；否则原样返回。"""
+    if not text.endswith(")"):
+        return text
+    depth = 0
+    in_class = False
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if in_class:
+            if char == "[":
+                in_class = False
+            continue
+        if char == "]":
+            in_class = True
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                segment = text[index:]
+                if segment.startswith("(?") and len(segment) > 2 and segment[2] in "<!=":
+                    return text[:index]
+                return text
+        elif char == ")":
+            depth += 1
+    return text
+
+
+def _literal_core(pattern: str) -> str:
+    """从检测正则中提取字面核心：剥离首尾环视断言后返回剩余模式。
+
+    供提示词注入使用——环视正则（如 (?<![催紧])逼(?![近真...])）仅用于精确检测，
+    注入 `逼` 这类字面核心可避免提示词出现正则噪音。
+    对不含环视的模式（普通词、^あ+$ 等）是恒等变换，故旧口径行为不变。
+    """
+    core = pattern.strip()
+    while True:  # 两侧各可有多层嵌套断言；无进展即终止（不依赖次数上限）
+        before = core
+        core = _strip_trailing_lookaround(_strip_leading_lookaround(core)).strip()
+        if core == before:
+            break
+    return core
+
+
 def _h_word_text(word: object) -> str:
-    """取检测词的显示文本：DictWordMatcher 取 .word，普通 str 原样（兼容旧 list[str] 口径）。"""
-    return word.word if isinstance(word, DictWordMatcher) else str(word)
+    """取检测词的显示文本：DictWordMatcher 取 .word，普通 str 原样（兼容旧 list[str] 口径）。
+
+    正则词条再经 _literal_core 提取字面核心，使提示词展示「逼」而非环视正则全文。
+    """
+    if isinstance(word, DictWordMatcher):
+        return _literal_core(word.word) if word.is_regex else word.word
+    return str(word)
 
 
 def _h_level(
