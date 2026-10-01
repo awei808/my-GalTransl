@@ -12,11 +12,15 @@ import tempfile
 import unittest
 from unittest import mock
 
+from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.mcp_tools import (
     MCP_TOOL_DEFS,
     _H_DENY_MESSAGE,
+    _READ_ONLY_TOOL_NAMES,
+    _attach_project_dir_warning,
     call_mcp_tool,
     enforce_h_gate,
+    validate_project_dir,
     write_metadata,
     write_route_map,
 )
@@ -243,7 +247,9 @@ class JobToolTests(unittest.TestCase):
     """作业域工具：HTTP 契约与错误文案（mock，不发真实请求）。"""
 
     def setUp(self) -> None:
+        # 作业域工具同样受 L3 校验，故需一个可识别项目（_make_project 建 config.inc.yaml）
         self.project_dir = tempfile.mkdtemp(prefix="gt_job_")
+        _make_project(self.project_dir)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.project_dir, ignore_errors=True)
@@ -300,6 +306,160 @@ class JobToolTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 call_mcp_tool("galtransl_stop_job", {"project_dir": self.project_dir})
         self.assertIn("GalTransl 后端", str(ctx.exception))
+
+
+class ProjectDirValidationTests(unittest.TestCase):
+    """L3 路径白名单：写工具只接受可识别的 GalTransl 项目。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="gt_l3_")
+        _make_project(self.project_dir)
+        # 空目录：存在但不是可识别项目
+        self.bare_dir = tempfile.mkdtemp(prefix="gt_l3bare_")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project_dir, ignore_errors=True)
+        shutil.rmtree(self.bare_dir, ignore_errors=True)
+
+    def test_valid_project_is_accepted(self) -> None:
+        self.assertEqual(validate_project_dir(self.project_dir), "config.inc.yaml")
+
+    def test_bare_directory_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            validate_project_dir(self.bare_dir)
+        self.assertIn("不是可识别的 GalTransl 项目", str(ctx.exception))
+
+    def test_detect_config_file_fallback_does_not_whitelist_empty_dir(self) -> None:
+        # detect_config_file 找不到时会回退返回 config.yaml，故必须再确认文件真实存在；
+        # 否则任意空目录都会被判为合法项目（本测试锁定该性质）
+        self.assertEqual(detect_config_file(self.bare_dir), "config.yaml")
+        self.assertFalse(os.path.isfile(os.path.join(self.bare_dir, "config.yaml")))
+        with self.assertRaises(ValueError):
+            validate_project_dir(self.bare_dir)
+
+    def test_config_yaml_also_accepted(self) -> None:
+        # config.inc.yaml 优先，但只有 config.yaml 的项目同样合法
+        with open(os.path.join(self.bare_dir, "config.yaml"), "w", encoding="utf-8") as f:
+            f.write("common:\n  language: zh-cn\n")
+        self.assertEqual(validate_project_dir(self.bare_dir), "config.yaml")
+
+    def test_all_four_write_tools_reject_bare_directory(self) -> None:
+        cases = [
+            ("galtransl_write_route_map", {"mermaid": 'flowchart TD\n  A["x"]'}),
+            ("galtransl_save_metadata", {"kind": "filemeta", "filename": "x", "entry": {}}),
+            ("galtransl_submit_job", {"translator": "t"}),
+            ("galtransl_stop_job", {}),
+        ]
+        for tool, extra in cases:
+            with self.subTest(tool=tool):
+                with self.assertRaises(ValueError):
+                    call_mcp_tool(tool, {"project_dir": self.bare_dir, **extra})
+
+    def test_repo_root_cannot_be_written(self) -> None:
+        # 回归：审查实测把 project_dir 指向仓库根就能在 <repo>/transl_cache 下落盘
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with self.assertRaises(ValueError):
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {"project_dir": repo_root, "kind": "globalprompt", "entry": {"a": 1}},
+            )
+
+    def test_valid_project_still_writable(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_save_metadata",
+            {"project_dir": self.project_dir, "kind": "globalprompt", "entry": {"概要": "校园"}},
+        )
+        self.assertTrue(result["success"])
+
+    def test_config_inc_takes_priority_over_config_yaml(self) -> None:
+        # 两者并存时取 config.inc.yaml（锁定 detect_config_file 的候选顺序，
+        # 将来有人改顺序会立刻暴露）
+        with open(os.path.join(self.bare_dir, "config.inc.yaml"), "w", encoding="utf-8") as f:
+            f.write("common: {}\n")
+        with open(os.path.join(self.bare_dir, "config.yaml"), "w", encoding="utf-8") as f:
+            f.write("common: {}\n")
+        self.assertEqual(validate_project_dir(self.bare_dir), "config.inc.yaml")
+
+    def test_empty_config_file_still_counts_as_project(self) -> None:
+        # 判据是存在性而非内容合法性（fail-open 取舍，与 H 门禁一致）
+        with open(os.path.join(self.bare_dir, "config.yaml"), "w", encoding="utf-8"):
+            pass
+        self.assertEqual(validate_project_dir(self.bare_dir), "config.yaml")
+
+    def test_public_write_functions_self_validate(self) -> None:
+        # write_route_map / write_metadata 是公开入口，不能只依赖处理器层的校验，
+        # 否则直接调用者（未来复用方）可绕过 L3
+        with self.assertRaises(ValueError):
+            write_metadata(self.bare_dir, "globalprompt", "", {"a": 1})
+        with self.assertRaises(ValueError):
+            write_route_map(self.bare_dir, {"mermaid": 'flowchart TD\n  A["x"]'})
+
+
+class ReadToolProjectDirWarningTests(unittest.TestCase):
+    """只读工具对非法项目只告警不阻断。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="gt_warn_")
+        _make_project(self.project_dir)
+        self.bare_dir = tempfile.mkdtemp(prefix="gt_warnbare_")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project_dir, ignore_errors=True)
+        shutil.rmtree(self.bare_dir, ignore_errors=True)
+
+    def test_bare_dir_yields_warning_not_error(self) -> None:
+        result = call_mcp_tool("galtransl_search_scripts", {"project_dir": self.bare_dir, "query": "x"})
+        self.assertFalse(result["project_dir_valid"])
+        self.assertIn("project_dir_hint", result)
+
+    def test_valid_project_reports_true(self) -> None:
+        result = call_mcp_tool("galtransl_search_scripts", {"project_dir": self.project_dir, "query": "x"})
+        self.assertTrue(result["project_dir_valid"])
+
+    def test_read_only_set_is_eleven_and_disjoint_from_write(self) -> None:
+        writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 11)
+        self.assertEqual(_READ_ONLY_TOOL_NAMES & writes, frozenset())
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 15)
+
+    def test_write_tool_success_is_not_annotated_with_warning(self) -> None:
+        # 写工具已硬校验，成功返回体不应再被附加 project_dir_valid
+        result = call_mcp_tool(
+            "galtransl_save_metadata",
+            {"project_dir": self.project_dir, "kind": "globalprompt", "entry": {"概要": "校园"}},
+        )
+        self.assertTrue(result["success"])
+        self.assertNotIn("project_dir_valid", result)
+
+    def test_warning_early_returns(self) -> None:
+        # (1) 工具自身已含该键 → 不覆盖（保护工具自有字段）
+        self.assertEqual(
+            _attach_project_dir_warning(
+                "galtransl_search_scripts",
+                {"project_dir": self.bare_dir},
+                {"project_dir_valid": "SELF"},
+            )["project_dir_valid"],
+            "SELF",
+        )
+        # (2) 结果非 dict → 原样返回
+        self.assertEqual(
+            _attach_project_dir_warning("galtransl_search_scripts", {"project_dir": self.bare_dir}, "raw"),
+            "raw",
+        )
+        # (3) 非只读工具 → 不加
+        self.assertEqual(
+            _attach_project_dir_warning("galtransl_save_metadata", {"project_dir": self.bare_dir}, {}),
+            {},
+        )
+        # (4) 调用未带 project_dir → 不加
+        self.assertEqual(
+            _attach_project_dir_warning("galtransl_search_scripts", {"query": "x"}, {}),
+            {},
+        )
+
+    def test_list_projects_has_no_project_dir_and_no_warning(self) -> None:
+        result = call_mcp_tool("galtransl_list_projects", {})
+        self.assertNotIn("project_dir_valid", result)
 
 
 class WriteToolRegistrationTests(unittest.TestCase):

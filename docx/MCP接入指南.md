@@ -206,10 +206,14 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
 ## 8. 安全说明
 
 - 服务仅在本机以 stdio 子进程方式运行，**不监听任何网络端口**。
-- **路径边界要说清**：读取文件时经 `safe_under_project` 做归属校验（拒绝 `../` 与绝对路径），
-  `save_metadata` / `write_route_map` 的 `filename` 也经穿越校验；
-  但 **`project_dir` 本身没有白名单**——它必须由用户显式指定为翻译项目目录，越界责任在使用方。
-  写工具会把产物写在「传入的 `project_dir`」之下，**不会**校验该目录是否为合法 GalTransl 项目。
+- **路径边界要说清**：
+  - 读取文件时经 `safe_under_project` 做归属校验（拒绝 `../` 与绝对路径），
+    `save_metadata` / `write_route_map` 的 `filename` 也经穿越校验。
+  - **写工具有路径白名单**：4 个写工具硬校验 `project_dir` 是「可识别的 GalTransl 项目」
+    （目录下确实存在 `config.inc.yaml` 或 `config.yaml`），否则拒绝执行。这挡住了
+    「把 `project_dir` 指向仓库根/系统目录后落盘」这类误用。
+  - **只读工具不硬拦**：仅要求目录存在，非法项目时在返回体给出 `project_dir_valid: false`
+    与 `project_dir_hint`（只告警不阻断），以免破坏「指向父目录批量查看」等既有用法。
 - **H 内容**：
   - **读路径未做 H 门禁过滤**（只读工具会原样返回 H 原文/译文），需由 agent 自行遵守 `skills/galtransl-mcp/SKILL.md` §1 的约束。
   - **写工具已做硬门禁**：`write_route_map` / `save_metadata` 会检查目标缓存文件是否落在 H 区间

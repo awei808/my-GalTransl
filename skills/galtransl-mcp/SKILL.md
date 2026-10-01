@@ -61,7 +61,9 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | API 域名 / 端点 | `GalTransl.log` 可能含 `API URL: <domain>/chat/completions`（检测接口，info 级）与 `Call <domain> ...`（每次调用，debug 级） |
 
 - `project_dir` **禁止**指向 GalTransl 程序目录、仓库根目录、系统目录、盘符根或他人目录；它必须是用户明确指定的**翻译项目目录**。
-- 路径防护的口径要说清：只有 `read_translation_file` / `read_source_script` 经 `safe_under_project()` 校验（拒绝绝对路径与 `../`）；**`project_dir` 本身没有白名单校验**，越界责任在使用方。写工具（`save_metadata`）会对 `filename` 做穿越校验，但同样不校验 `project_dir` 本身。
+- **写工具的路径白名单（0.6.0）**：4 个写工具会硬校验 `project_dir` 是「可识别的 GalTransl 项目」——即目录下**确实存在** `config.inc.yaml` 或 `config.yaml`，否则拒绝执行。所以把 `project_dir` 指向仓库根、系统目录或空目录时，写工具会直接报错，不会误写外部文件。
+- **只读工具不硬拦**：它们只要求目录存在，非法项目时在返回体里给出 `project_dir_valid: false` + `project_dir_hint`（仅告警，不阻断检索）。看到该字段请先与用户确认路径是否正确，不要据此继续扩大检索范围。
+- 路径防护的口径要说清：只有 `read_translation_file` / `read_source_script` 经 `safe_under_project()` 校验（拒绝绝对路径与 `../`）；写工具（`save_metadata`）会对 `filename` 做穿越校验，并对 `project_dir` 做上述白名单校验。
 - `galtransl_search_logs` 在 `source: "frontend"` 且项目内无 `frontend.log` 时，会**回退读工作区根目录**的 `frontend.log`。禁止借该回退去读项目外的日志。
 - 密钥在日志中是脱敏的（`maskToken()` → `sk-abc...wxyz`），但仍**不得**索取、推断、复述或外传任何密钥、令牌、API 端点；日志里命中疑似凭据的行一律不引用原文。
 
@@ -84,6 +86,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 **明确的禁止项**：
 
 - 这些工具**不提供**任意路径读写、**不提供**命令执行、**不修改**程序配置与 API 密钥。
+- 写工具只接受**可识别的 GalTransl 项目目录**（含 `config.inc.yaml`/`config.yaml`）。指向别处会被拒绝，**不要**为了绕过而去找一个含配置文件的目录顶替——`project_dir` 必须是用户指定的那一个。
 - 禁止绕过 MCP 去达成其它写效果：不得直接调 GalTransl HTTP 写端点（`PUT /api/projects/:id/config`、`/cache/save`、`/cache/replace`、`/cache/delete-*` 等），不得直接编辑项目目录下的文件。上面 4 个工具本身走后端是**实现细节**，不代表你也获得了直接打这些端点的授权。
 - 用户要求「帮我改一下字典/译文/配置」时，说明本 MCP 无此能力并请其在 GalTransl 界面操作；**不要**用任何间接手段代劳。
 - `submit_job` 是有副作用且耗时的操作：**不要**在用户只是「看看进度」「评估一下」时调用。

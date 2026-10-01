@@ -45,6 +45,14 @@
 - 双击 AI 建议没有让用户知道有这个功能的提示
 - 0.5.4：新增左侧按钮“剧情路线图-简易agent界面” **已完成**（视图名 route-agent，按钮文案「路线图工作台」：RouteMapViewer 只渲染不显示源码、渲染失败/无 mermaid 退化为按路线分组的有序矩形列表；节点/矩形右键（或左键）多选文件加入底边栏 agent；AI 仅持 3 工具：read_route_map/write_route_map（整体覆盖+校验原子写）/search_file_metadata（POST /metadata/search），终端不经 AI 直连 /api/jobs；任务支持 file_filter 文件子集与 config_overrides 注入覆盖（Service→LLMTranslate 唯一过滤点，复用 globalPromptFiles 匹配口径）；JobState//runtime 透出任务范围，翻译控制台显示「文件范围: 仅 N 个文件」；执行配置按项目存 localStorage；agent 会话翻译运行中 409、同项目单飞）
   - 0.6.0 修订：**内置简易 agent 已整体移除**（`server_agent.py`、`/agent/chat`、`AgentPanel.tsx`、`AGENT_SYSTEM_PROMPT`、agent 反向互斥），路线图工作台**保留视图**但底边栏只剩「执行终端」；路线图读写逻辑迁入 `GalTransl/mcp_tools.py`（`read_route_map`/`write_route_map`），Agent 能力统一改由外置 dsh + MCP 提供。
+- **0.6.0 批次 3（L3 路径白名单）已完成**：
+  - 新增 `mcp_tools.validate_project_dir`：判据沿用 `_tool_list_projects` 的既有口径——`detect_config_file()` 解析到的配置文件必须**真实存在**。注意该函数找不到时会回退返回 `config.yaml`，故不能只用它做判定，否则任意空目录都会通过。
+  - 写工具（4 个）经 `_require_write_project_dir` **硬拒绝**非法项目；实测把 `project_dir` 指向仓库根时 `save_metadata` 已被拦住，不再落盘（此即审查实证过的缺陷）。
+  - 只读工具（11 个）**只告警不阻断**：在 `call_mcp_tool` 集中补 `project_dir_valid`（非法时另附 `project_dir_hint`），而非改 11 个处理器——集中一处避免遗漏，将来新增只读工具自动获得该行为。只读工具名集合以 `MCP_TOOL_DEFS` 的 `kind` 为唯一真相源（`_READ_ONLY_TOOL_NAMES`）。
+  - 未纳入路径黑名单（不拒绝仓库根/盘符根/系统目录）：改用「有配置文件」这一条判据更准，加黑名单反而会误伤「工作区根下确实存在合法项目」的用法。
+  - 用户提示：只读工具的 `project_dir_hint` 只用于提醒 agent 与用户确认路径，不得据此继续扩大检索范围。
+  - `write_route_map` / `write_metadata` 作为**公开函数自身也调 `validate_project_dir`**：不能只依赖处理器层校验，否则未来复用方（或测试直接调用）可绕过 L3。回归测试见 `test_public_write_functions_self_validate`。
+  - 判据边界：只认 `config.inc.yaml` / `config.yaml`（`.yml` 后缀不认，与全仓库既有约定一致）；判据是**文件存在性**而非内容合法性（空 config 也算合法项目）。
 - **0.6.0 批次 2（写工具）已完成**：
   - `SERVER_INSTRUCTIONS` 已改写为「15 个工具：11 个只读检索 + 4 个写操作」，并明确写工具边界；`READ_ONLY_ANNOTATIONS` 上方说明同步改为按 `kind` 派生。
   - `_def()` 的 `kind` 参数（默认 `"read"`）已落地；4 个写工具均显式传 `kind="write"`，`tool_annotations()` 对 write 返回空 dict。回归测试见 `tests/test_mcp_tools.py::test_write_tools_are_never_annotated_read_only`。

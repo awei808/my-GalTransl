@@ -19,6 +19,10 @@ from GalTransl.mcp_tools import read_route_map, route_map_path, write_route_map
 class RouteMapToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.project_dir = tempfile.mkdtemp(prefix="gt_route_map_")
+        # write_route_map 是公开入口，自身做 L3 项目校验（0.6.0 批次 3），
+        # 故测试须提供可识别项目的最小配置
+        with open(os.path.join(self.project_dir, "config.yaml"), "w", encoding="utf-8") as f:
+            f.write("common:\n  gpt:\n    dict: []\ndictionary:\n  gpt:\n    dict: []\n")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.project_dir, ignore_errors=True)

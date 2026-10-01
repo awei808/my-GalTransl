@@ -42,13 +42,61 @@ _LOG_SOURCES = ("engine", "frontend")
 # ---------- 公共辅助 ----------
 
 def _require_project_dir(arguments: Dict[str, Any]) -> str:
-    """取出并校验 project_dir 参数。"""
+    """取出并校验 project_dir 参数（只读工具用：仅要求存在且是目录）。
+
+    只读工具**不**要求「合法项目」——指向父目录批量查看、或项目尚未生成配置时
+    先看缓存都是合理用法，硬拦会变成破坏性变更。合法性问题改为在返回体里以
+    `project_dir_valid` 告警（见 `_attach_project_dir_warning`）。
+    """
     raw = str(arguments.get("project_dir", "") or "").strip()
     if not raw:
         raise ValueError("project_dir is required")
     if not os.path.isdir(raw):
         raise ValueError(f"project_dir 不存在或不是目录: {raw}")
     return os.path.normpath(raw)
+
+
+def validate_project_dir(project_dir: str) -> str:
+    """校验目录是「可识别的 GalTransl 项目」，否则抛 ValueError。
+
+    判据沿用 `_tool_list_projects` 的既有口径：`detect_config_file()` 能解析到
+    真实存在的 config.inc.yaml / config.yaml。注意 `detect_config_file` 在都找不到时
+    会**回退返回 "config.yaml"**，故必须再确认文件真实存在，否则任意空目录都会通过。
+
+    这是写工具的硬边界：没有它，agent 把 project_dir 指向仓库根就能在
+    `<repo>/transl_cache/` 下落盘（审查实测过）。
+
+    判据是**文件存在性**而非内容合法性——0 字节或内容损坏的 config.yaml 仍算合法项目
+    （fail-open，与 H 门禁同样的取舍）。本函数只负责挡「指向仓库根/系统目录/子目录」，
+    不负责校验项目配置是否可用；后者由后续读取配置的代码各自处理，避免「配置损坏的
+    项目连修复都做不了」。
+    """
+    config_name = detect_config_file(project_dir)
+    if not os.path.isfile(os.path.join(project_dir, config_name)):
+        raise ValueError(
+            f"project_dir 不是可识别的 GalTransl 项目（未找到 config.inc.yaml / config.yaml）：{project_dir}。"
+            "为避免误写外部目录，写工具只接受含配置文件的翻译项目目录。"
+        )
+    return config_name
+
+
+def _require_write_project_dir(arguments: Dict[str, Any]) -> str:
+    """写工具专用的 project_dir 校验：存在 + 是目录 + 是可识别项目。"""
+    project_dir = _require_project_dir(arguments)
+    validate_project_dir(project_dir)
+    return project_dir
+
+
+def _project_dir_warning(project_dir: str) -> Dict[str, Any]:
+    """只读工具的合法性告警：非法项目时返回提示字段，合法时返回空 dict。
+
+    只告警不阻断——只读不产生副作用，风险等级低于写入。
+    """
+    try:
+        validate_project_dir(project_dir)
+    except ValueError as exc:
+        return {"project_dir_valid": False, "project_dir_hint": str(exc)}
+    return {"project_dir_valid": True}
 
 
 def _clamp_page(value: Any, default: int, hard: int) -> int:
@@ -371,12 +419,12 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
 # ---------- 写工具（0.6.0 新增，kind=write） ----------
 
 def _tool_write_route_map(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    project_dir = _require_project_dir(arguments)
+    project_dir = _require_write_project_dir(arguments)
     return write_route_map(project_dir, arguments)
 
 
 def _tool_save_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    project_dir = _require_project_dir(arguments)
+    project_dir = _require_write_project_dir(arguments)
     entry = arguments.get("entry")
     if not isinstance(entry, dict):
         raise ValueError("entry 必须是 JSON 对象（要写入的完整元数据）")
@@ -391,7 +439,7 @@ def _tool_save_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def _tool_submit_job(arguments: Dict[str, Any]) -> Dict[str, Any]:
     from GalTransl.mcp_backend_client import post_json
 
-    project_dir = _require_project_dir(arguments)
+    project_dir = _require_write_project_dir(arguments)
     payload: Dict[str, Any] = {
         "project_dir": project_dir,
         "translator": str(arguments.get("translator", "") or "").strip(),
@@ -417,7 +465,7 @@ def _tool_stop_job(arguments: Dict[str, Any]) -> Dict[str, Any]:
     from GalTransl.mcp_backend_client import post_json
     from GalTransl.server_runtime import encode_project_dir
 
-    project_dir = _require_project_dir(arguments)
+    project_dir = _require_write_project_dir(arguments)
     result = post_json(f"/api/projects/{encode_project_dir(project_dir)}/stop", {})
     LOGGER.info(f"[mcp] 已请求停止任务 project={project_dir}")
     return {"success": bool(result.get("success", True)), "project_dir": project_dir, "detail": result}
@@ -451,6 +499,8 @@ def write_route_map(project_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """
     from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
 
+    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
+    validate_project_dir(project_dir)
     args = args if isinstance(args, dict) else {}
     path = route_map_path(project_dir)
     old: Dict[str, Any] = {}
@@ -605,6 +655,8 @@ def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, 
     走本模块自带的 .tmp + os.replace 原子写（HTTP 侧 filemeta/batchmeta 端点为直写，
     无原子性），并复用与 HTTP 端点同口径的文件名校验。
     """
+    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
+    validate_project_dir(project_dir)
     if not isinstance(entry, dict):
         raise ValueError("entry 必须是 JSON 对象")
     if kind == "plotroute":
@@ -938,10 +990,35 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
 }
 
 
+# 只读工具名集合：以 MCP_TOOL_DEFS 的 kind 为唯一真相源，避免与注册表脱节
+_READ_ONLY_TOOL_NAMES = frozenset(
+    item["name"] for item in MCP_TOOL_DEFS if item.get("kind") == "read"
+)
+
+
+def _attach_project_dir_warning(
+    name: str, args: Dict[str, Any], result: Dict[str, Any]
+) -> Dict[str, Any]:
+    """给只读工具的成功结果补 `project_dir_valid` 告警（不阻断）。
+
+    集中在此处而非 11 个处理器里，避免遗漏：新增只读工具会自动获得该行为。
+    仅当调用确实带了 project_dir 且返回体是 dict 时补；写工具已硬校验，不再重复。
+    """
+    if name not in _READ_ONLY_TOOL_NAMES or "project_dir" not in args:
+        return result
+    raw = str(args.get("project_dir", "") or "").strip()
+    if not raw or not os.path.isdir(raw):
+        return result
+    if not isinstance(result, dict) or "project_dir_valid" in result:
+        return result
+    return {**result, **_project_dir_warning(os.path.normpath(raw))}
+
+
 def call_mcp_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """按工具名分发到实现；未知工具抛 KeyError，参数错误抛 ValueError。
 
     返回值为可直接 JSON 序列化的 dict，调用方（stdio server）负责包装成 MCP 结果。
+    只读工具额外附带 `project_dir_valid` 告警（见 `_attach_project_dir_warning`）。
     """
     handler = _TOOL_HANDLERS.get(name)
     if handler is None:
@@ -949,5 +1026,6 @@ def call_mcp_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> Dict
     args = arguments if isinstance(arguments, dict) else {}
     started = time.time()
     result = handler(args)
+    result = _attach_project_dir_warning(name, args, result)
     LOGGER.info(f"[mcp] {name} 完成（{time.time() - started:.2f}s）")
     return result
