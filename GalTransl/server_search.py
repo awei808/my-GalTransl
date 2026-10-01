@@ -408,7 +408,7 @@ def search_dict_entries(
     }
 
 
-# 元数据检索（pass1/pass2）：供路线图工作台 agent 的「查找文件元数据」工具使用
+# 元数据检索（pass1/pass2）：供 HTTP /metadata/search 与 MCP 元数据工具共用
 _META_SEARCH_SCOPES = ("filemeta", "batchmeta", "all")
 _META_SEARCH_DEFAULT_MAX = 50
 _META_SEARCH_HARD_MAX = 500

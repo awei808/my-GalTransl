@@ -219,19 +219,12 @@
   gap: 4px;
 }
 
-.route-agent-dock-tabs button {
-  padding: 4px 12px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.route-agent-dock-tabs button.active {
-  background: var(--bg-tertiary, rgba(128, 128, 128, 0.15));
-  color: var(--text-primary);
+/* 底边栏只剩执行终端一个面板，用标题取代原 tab 按钮 */
+.route-agent-dock-title {
+  padding: 4px 0;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-primary);
 }
 
 .route-agent-selected {
@@ -307,111 +300,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-/* Agent 对话 */
-.agent-panel {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 10px 12px;
-  gap: 8px;
-}
-
-.agent-messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.agent-empty {
-  color: var(--text-secondary);
-  font-size: 13px;
-  padding: 8px 2px;
-}
-
-.agent-msg {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.agent-msg--user {
-  align-self: flex-end;
-  background: var(--bg-tertiary, rgba(108, 92, 231, 0.16));
-}
-
-.agent-msg--assistant {
-  align-self: flex-start;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-}
-
-.agent-msg--pending {
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-.agent-msg-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.agent-step {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-}
-
-.agent-step--fail {
-  color: #e17055;
-  border-color: #e17055;
-}
-
-.agent-input-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-.agent-input {
-  flex: 1;
-  resize: none;
-  min-height: 44px;
-  max-height: 120px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
-}
-
-.agent-send {
-  padding: 9px 20px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent, #6c5ce7);
-  color: #fff;
-  cursor: pointer;
-}
-
-.agent-send:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* 执行终端 */

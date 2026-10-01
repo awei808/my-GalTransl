@@ -86,7 +86,6 @@ from GalTransl.server_cache import (
     _validate_build,
     recheck_pass3_cache_files,
 )
-from GalTransl.server_agent import handle_agent_chat
 from GalTransl.server_search import search_cache_entries, search_metadata
 from GalTransl.server_scaffold import _workspace_root
 from GalTransl.server_jobs import JobRegistry
@@ -443,19 +442,6 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             _REVIEW_SUGGEST_LOCK.release()
         return
 
-    # POST /api/projects/:id/agent/chat —— 路线图工作台简易 agent（3 工具循环，同步返回）
-    if sub_path == "/agent/chat":
-        if handler.command != "POST":
-            handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
-            return
-        try:
-            payload = handler._read_json_body()
-        except json.JSONDecodeError:
-            handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        handle_agent_chat(handler, registry, project_dir, payload)
-        return
-
     # GET /api/projects/:id/cache
     if sub_path == "/cache":
         cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
@@ -715,7 +701,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
     # 批次级元数据存储为 pass2_cache/{filename}.batch.json
     # 全局提示词仍为 pass0_cache/GlobalPrompt.json
 
-    # POST /api/projects/:id/metadata/search —— 文件/批次元数据文本检索（路线图工作台 agent 工具）
+    # POST /api/projects/:id/metadata/search —— 文件/批次元数据文本检索
     if sub_path == "/metadata/search":
         if handler.command != "POST":
             handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)

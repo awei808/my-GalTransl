@@ -1,6 +1,6 @@
-"""MCP 工具层：面向外部 agent 的只读能力（0.5.1）。
+"""MCP 工具层：面向外部 agent 的能力（0.5.1 起只读检索；0.6.0 增路线图读写）。
 
-11 个工具，全部为纯函数风格：显式接收 project_dir，仅读磁盘，返回可 JSON 序列化的 dict。
+11 个检索工具为纯读磁盘的纯函数风格：显式接收 project_dir，返回可 JSON 序列化的 dict。
 本模块不依赖任何 MCP 传输实现，供独立 stdio server（run_mcp_server.py）与未来内置 agent 共用，
 避免上游「工具全走 HTTP 打自家 REST」的架构绕路。
 """
@@ -366,6 +366,86 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ---------- 路线图读写（供 MCP 写工具与后续 agent 复用） ----------
+
+def route_map_path(project_dir: str) -> str:
+    """剧情路线图（PlotRouteMap.json）的绝对路径。"""
+    return os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "PlotRouteMap.json")
+
+
+def read_route_map(project_dir: str) -> Dict[str, Any]:
+    """读取 PlotRouteMap.json；不存在返回 exists=False（不视为错误）。"""
+    path = route_map_path(project_dir)
+    if not os.path.isfile(path):
+        return {"exists": False, "entry": None}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            entry = json.load(f)
+    except Exception as exc:
+        return {"exists": False, "entry": None, "error": f"读取失败: {exc}"}
+    return {"exists": True, "entry": entry if isinstance(entry, dict) else {}}
+
+
+def write_route_map(project_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """整体覆盖写入路线图：未提供字段保留旧值，mermaid 经生成端同口径校验后原子落盘。
+
+    校验口径与 ForPlotRouteMap 生成侧一致（_normalize_result + _validate_mermaid），
+    避免 AI 写入手写路线图绕过生成侧约束。空内容与非法 mermaid 一律拒绝。
+    """
+    from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
+
+    args = args if isinstance(args, dict) else {}
+    path = route_map_path(project_dir)
+    old: Dict[str, Any] = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                old = loaded
+        except Exception:
+            old = {}
+
+    outline = args.get("用户大纲")
+    merged = {
+        "结构类型": str(args.get("结构类型") or old.get("结构类型") or ""),
+        "用户大纲": str(outline if outline is not None else old.get("用户大纲") or ""),
+        "mermaid": str(args.get("mermaid") or "").strip(),
+        "文件归属": args["文件归属"] if isinstance(args.get("文件归属"), dict) else old.get("文件归属") or {},
+        "节点剧情": args["节点剧情"] if isinstance(args.get("节点剧情"), dict) else old.get("节点剧情") or {},
+    }
+    normalized = ForPlotRouteMap._normalize_result(merged)
+    if not normalized["mermaid"] and not normalized["文件归属"]:
+        raise ValueError("写入被拒绝：mermaid 与 文件归属 不能同时为空")
+    if normalized["mermaid"] and not ForPlotRouteMap._validate_mermaid(normalized["mermaid"]):
+        raise ValueError(
+            "写入被拒绝：mermaid 校验失败。首行必须以 flowchart 或 graph 开头；"
+            "subgraph id 只能包含字母/数字/下划线/连字符（可含中文），禁止空格等其它字符。"
+        )
+    final = {
+        "结构类型": merged["结构类型"],
+        "用户大纲": merged["用户大纲"],
+        "mermaid": normalized["mermaid"],
+        "文件归属": normalized["文件归属"],
+        "节点剧情": normalized["节点剧情"],
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(final, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    LOGGER.info(
+        f"[mcp] 路线图已更新: mermaid {len(normalized['mermaid'])} 字符，"
+        f"文件归属 {len(normalized['文件归属'])} 项，节点剧情 {len(normalized['节点剧情'])} 项"
+    )
+    return {
+        "success": True,
+        "mermaid_chars": len(normalized["mermaid"]),
+        "file_count": len(normalized["文件归属"]),
+        "route_count": len(normalized["节点剧情"]),
+    }
+
+
 # ---------- 约束下发（instructions / annotations） ----------
 
 SERVER_INSTRUCTIONS = """GalTransl 术语与译文检索服务（只读，11 个工具）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
@@ -404,13 +484,23 @@ def tool_annotations(tool_def: Dict[str, Any]) -> Dict[str, Any]:
 
 # ---------- 工具定义与分发 ----------
 
-def _def(name: str, description: str, properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
-    """构造单条 MCP 工具定义（字段名对齐 MCP Tool：name / description / inputSchema）。"""
+def _def(
+    name: str,
+    description: str,
+    properties: Dict[str, Any],
+    required: List[str],
+    kind: str = "read",
+) -> Dict[str, Any]:
+    """构造单条 MCP 工具定义（字段名对齐 MCP Tool：name / description / inputSchema）。
+
+    kind 决定 tool_annotations() 下发的注解：read → read_only_hint=True。
+    写类工具必须显式传 kind="write"，否则会被误标为只读、可能让客户端跳过用户确认。
+    """
     return {
         "name": name,
         "description": description,
         "input_schema": {"type": "object", "properties": properties, "required": required},
-        "kind": "read",
+        "kind": kind,
     }
 
 

@@ -5,7 +5,7 @@ import { buildRoutes, getMermaid, parseNodes, ROUTE_COLORS, type PlotRouteMap } 
 /**
  * 路线图工作台的路线图渲染器：只显示 mermaid 渲染结果，不显示源码。
  * 渲染失败或无 mermaid 时退化为按路线分组的有序矩形列表；
- * 节点/矩形右键（或左键）切换选中，把文件加入底边栏 agent。
+ * 节点/矩形右键（或左键）切换选中，把文件加入底边栏执行范围。
  */
 export function RouteMapViewer(props: {
   entry: MetadataEntry | null;
@@ -204,7 +204,7 @@ export function RouteMapViewer(props: {
 
   return (
     <div class="route-viewer" ref={viewerRef} onDragOver={(e) => e.preventDefault()}>
-      <Show when={!isEmpty()} fallback={<div class="route-viewer-empty">尚未生成剧情路线图，可先运行完整流水线或让 Agent 创建。</div>}>
+      <Show when={!isEmpty()} fallback={<div class="route-viewer-empty">尚未生成剧情路线图，可先运行完整流水线，或由外部 Agent 经 MCP 创建。</div>}>
         <Show
           when={!useFallback()}
           fallback={
@@ -257,7 +257,7 @@ export function RouteMapViewer(props: {
         <button type="button" onClick={zoomFit} title="适屏">
           适屏
         </button>
-        <span class="route-viewer-hint">右键节点可把文件加入 Agent</span>
+        <span class="route-viewer-hint">右键节点可把文件加入执行范围</span>
       </div>
       <Show when={tooltip()}>
         {(t) => (

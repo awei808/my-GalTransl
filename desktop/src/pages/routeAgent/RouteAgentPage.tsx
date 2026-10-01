@@ -4,19 +4,17 @@ import { fetchPerFileMetadata } from "../../lib/api/project";
 import { getErrorMessage } from "../../lib/errors";
 import { appState } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
-import { AgentPanel } from "./AgentPanel";
 import { RouteMapViewer } from "./RouteMapViewer";
 import { RunPanel } from "./RunPanel";
 
 /**
  * 路线图工作台：上半区渲染剧情路线图（节点右键多选文件），
- * 底边栏承载简易 agent 对话与翻译后端执行终端。
+ * 底边栏是按指令提交翻译任务的执行终端（不经 AI，直连 /api/jobs）。
  */
 export function RouteAgentPage() {
   const [entry, setEntry] = createSignal<MetadataEntry | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [selectedFiles, setSelectedFiles] = createSignal<string[]>([]);
-  const [dockTab, setDockTab] = createSignal<"agent" | "run">("agent");
   const [dockHeight, setDockHeight] = createSignal(320);
   let removeResizeListeners: (() => void) | null = null;
 
@@ -85,7 +83,7 @@ export function RouteAgentPage() {
         <div>
           <h2 class="page-title">路线图工作台</h2>
           <p class="page-description">
-            查看剧情路线图，右键节点选择文件加入 Agent；由 Agent 修改路线图或直接执行翻译后端。
+            查看剧情路线图，右键节点选择文件加入执行范围，再由执行终端按指令提交翻译后端。
           </p>
         </div>
         <button type="button" class="route-agent-refresh" disabled={loading()} onClick={() => void refresh()}>
@@ -99,20 +97,7 @@ export function RouteAgentPage() {
           <section class="route-agent-dock" style={{ height: `${dockHeight()}px` }}>
             <div class="route-agent-dock-header">
               <div class="route-agent-dock-tabs">
-                <button
-                  type="button"
-                  classList={{ active: dockTab() === "agent" }}
-                  onClick={() => setDockTab("agent")}
-                >
-                  Agent 对话
-                </button>
-                <button
-                  type="button"
-                  classList={{ active: dockTab() === "run" }}
-                  onClick={() => setDockTab("run")}
-                >
-                  执行终端
-                </button>
+                <span class="route-agent-dock-title">执行终端</span>
               </div>
               <div class="route-agent-selected">
                 <Show when={selectedFiles().length > 0} fallback={<span class="route-agent-selected-empty">未选择文件</span>}>
@@ -141,9 +126,7 @@ export function RouteAgentPage() {
               </div>
             </div>
             <div class="route-agent-dock-body">
-              <Show when={dockTab() === "agent"} fallback={<RunPanel projectId={appState.activeProjectId!} selectedFiles={selectedFiles()} />}>
-                <AgentPanel projectId={appState.activeProjectId!} onRouteMapChanged={() => void refresh()} />
-              </Show>
+              <RunPanel projectId={appState.activeProjectId!} selectedFiles={selectedFiles()} />
             </div>
           </section>
         </div>

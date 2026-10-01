@@ -38,7 +38,6 @@ import type {
   MetadataType,
   MetadataSearchResponse,
   PerFileMetadataResponse,
-  AgentChatResponse,
   StopProjectResponse,
   CommonDictionaryManagerResponse,
 } from "./types";
@@ -515,17 +514,7 @@ export async function fetchProjectLogs(
 
 // ---- 路线图工作台 ----
 
-/** 路线图工作台 agent 对话（后端同步执行工具循环，最长 6 轮 × 120s，放宽超时到 780s 覆盖后端上限） */
-export async function sendAgentChat(projectId: string, body: { message: string; model?: string }) {
-  return apiRequest<AgentChatResponse>(`/api/projects/${projectId}/agent/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    timeoutMs: 780000,
-  });
-}
-
-/** 检索文件/批次元数据（与 agent「查找文件元数据」工具同源实现） */
+/** 检索文件/批次元数据 */
 export async function searchProjectMetadata(
   projectId: string,
   body: { query: string; scope?: "filemeta" | "batchmeta" | "all"; max_results?: number },

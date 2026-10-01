@@ -75,8 +75,6 @@ export type {
   BackendProfilesMap,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
-  AgentChatStep,
-  AgentChatResponse,
   MetadataSearchMatch,
   MetadataSearchResponse,
 } from "./types";
@@ -142,7 +140,6 @@ export {
   getAiTranslateUrl,
   fetchNameDict,
   fetchProjectLogs,
-  sendAgentChat,
   searchProjectMetadata,
 } from "./project";
 

@@ -88,20 +88,7 @@ export type SubmitJobPayload = {
   config_overrides?: Record<string, unknown>;
 };
 
-// ---- 路线图工作台 agent ----
-
-export type AgentChatStep = {
-  tool: string;
-  args: Record<string, unknown>;
-  ok: boolean;
-  result: Record<string, unknown>;
-};
-
-export type AgentChatResponse = {
-  reply: string;
-  steps: AgentChatStep[];
-  model: string;
-};
+// ---- 路线图工作台 ----
 
 export type MetadataSearchMatch = {
   file: string;

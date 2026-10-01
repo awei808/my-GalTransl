@@ -193,7 +193,7 @@ export function RunPanel(props: { projectId: string; selectedFiles: string[] }) 
                 checked={cfg().filesMode === "selected"}
                 onChange={() => updateConfig({ filesMode: "selected" })}
               />
-              Agent 所选（{props.selectedFiles.length}）
+              路线图所选（{props.selectedFiles.length}）
             </label>
             <label>
               <input

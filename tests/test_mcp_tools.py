@@ -101,6 +101,18 @@ class ConstraintDeliveryTests(unittest.TestCase):
         derived["read_only_hint"] = False
         self.assertTrue(READ_ONLY_ANNOTATIONS["read_only_hint"])
 
+    def test_def_kind_defaults_to_read_and_accepts_write(self) -> None:
+        # kind 默认 read 保兼容；显式传 write 后必须不再被标注为只读，
+        # 否则客户端可能跳过用户确认直接执行写入。
+        from GalTransl.mcp_tools import _def
+
+        read_def = _def("t", "d", {}, [])
+        self.assertEqual(read_def["kind"], "read")
+        self.assertEqual(tool_annotations(read_def), READ_ONLY_ANNOTATIONS)
+        write_def = _def("t", "d", {}, [], kind="write")
+        self.assertEqual(write_def["kind"], "write")
+        self.assertEqual(tool_annotations(write_def), {})
+
     def test_instructions_length_is_bounded(self) -> None:
         # 防膨胀：instructions 过长有被客户端截断的风险（当前实测 1175 字节）
         self.assertLessEqual(len(SERVER_INSTRUCTIONS.encode("utf-8")), 2000)

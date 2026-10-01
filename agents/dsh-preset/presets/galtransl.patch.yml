@@ -1,0 +1,99 @@
+# GalTransl Agent 预设声明：插入一条 `@deepseek-ai/dsh-agent-preset`。
+#
+# 设计要点（依据 dsh 0.2.0-rc.2 实测，非推测）：
+#   - dsh 顶层工具目录**没有** allow/deny 过滤器（ctx.tools.restrict() 拒绝
+#     context-global 作用域），唯一可靠的收窄机制是「不挂载对应工具的 bundle」。
+#     故本预设只注册 persona / agent-instructions / MCP 客户端 / ask-user 四类行，
+#     文件、Shell、子代理、网页等工具**根本不存在**——用户即使切到
+#     danger-full-access 也没有可提权的工具。
+#   - 宿主层（dsh-base / dsh-web-app）的工具行**已经**是 `disabled: true`
+#     （由 web 组合包 patch 掉），能力归各 preset 自己挂载。故本预设无需
+#     额外"禁用"任何东西，不挂就是没有。
+#   - 沙箱与审批策略只是默认值，可被会话覆盖，因此本预设不依赖它们做安全保证。
+#   - `persona.prefix` 是必填项（不是 `text`）。
+#
+# 实测结论（2026-10-01，dsh --dump-config + 实际启动）：
+#   - 本行成功组合进 profile tree，4 个子行完整保留；
+#   - 区块内 `name: '@deepseek-ai/dsh-*'` 仅 5 条（见下），无任何危险工具行；
+#   - 实际启动时 galtransl MCP 成功握手，注册 11 个工具。
+#
+# 安装：把本文件放到 <profile>/presets/galtransl.patch.yml，并在该 profile 的
+# cordis.patch.yml 里用 `- insert:` 追加下面这条 preset 行（见 ../cordis.patch.yml）。
+
+- insert:
+    - id: preset-galtransl
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: galtransl
+        name: GalTransl
+        description: GalTransl 翻译项目助手：仅使用 GalTransl MCP 工具，无文件/Shell/子代理能力。
+        order: 50
+        plugins:
+          # ── 身份：系统提示词 ───────────────────────────────────────────
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你是 GalTransl 翻译项目的助手，通过 galtransl MCP 工具读写翻译项目。
+
+                ## 你只有 MCP 工具
+                本会话**没有**文件读写、Shell、子代理、网页抓取工具，这是刻意设计的边界。
+                不要尝试绕过：不要请求用户开放更多权限，不要试图用 MCP 工具达成越权效果。
+                需要在 GalTransl 界面操作的事，请直接告诉用户怎么操作。
+
+                ## 硬性约束
+                1. 所有工具都需要**翻译项目根目录的绝对路径** `project_dir`。
+                   `project_dir` 只能是用户明确指定的翻译项目目录；禁止指向 GalTransl
+                   程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根、系统目录或他人目录。
+                2. **禁止查看 H / 成人向内容**。识别到成人向内容（判据：项目配置 `common.skipH`、
+                   batchmeta 的 h 档位、字典 category 为 forbiddenh/gpth）时立即停止该方向检索，
+                   **不得回引原文或译文**，只报告位置（文件名 + index）并请用户决定。
+                3. 禁止读取或外传任何凭据、密钥、API 端点；日志中命中疑似凭据的行不引用原文。
+                4. 禁止规模化拉取（不要全量拉取，不要用宽正则做枚举式扫描）。
+                   交付**结论 + 定位**（文件名 + index + 最短必要引文），不堆砌原文/译文。
+                5. 写工具会改动项目文件。改动前先读现状，只做用户要求范围内的最小修改。
+
+                完整约束见项目内 `skills/galtransl-mcp/SKILL.md`。
+
+          # ── AGENTS.md 发现 ─────────────────────────────────────────────
+          # maxBytes 是必填项：预设树不复用 dsh-base 的同名行，必须在此重申
+          # （值沿用 base 默认的 65536）。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          # ── GalTransl MCP（唯一的能力来源） ────────────────────────────
+          #
+          # ⚠️ command 含路径分隔符时必须是**绝对路径**：dsh 的 subprocess provider
+          #    只对裸名查 PATH，相对路径因解析基准未定义会被直接拒绝。
+          # ⚠️ 下面三处路径需按你的实际安装位置修改（源码模式 / 打包版二选一）。
+          #
+          # 源码模式（本仓库）：
+          #   command: <仓库>\venv\Scripts\python.exe
+          #   args:    [<仓库>\run_mcp_server.py]
+          # 打包版：
+          #   command: <程序根>\backend\galtransl_mcp.exe
+          #   args:    []
+          - id: mcp-galtransl
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: galtransl
+              transport: stdio
+              command: 'D:\解包或汉化用\my-galtransl\my-GalTransl\venv\Scripts\python.exe'
+              args:
+                - 'D:\解包或汉化用\my-galtransl\my-GalTransl\run_mcp_server.py'
+              cwd: 'D:\解包或汉化用\my-galtransl\my-GalTransl'
+              failOnStartupError: false
+              # reconnect 是正式字段（dsh 0.2.0-rc.2 的 zod schema 与其文档均收录）：
+              # MCP 进程按需拉起，慢启动/重启时自动重连，避免工具被卸载。
+              reconnect:
+                enabled: true
+                initialDelayMs: 1500
+                maxDelayMs: 30000
+                maxAttempts: 100
+
+          # ── 唯一保留的交互工具 ─────────────────────────────────────────
+          # 用于「用户才能决定」的问题（如是否处理某段 H 内容、是否执行破坏性写入）。
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
