@@ -50,6 +50,8 @@ from pathlib import Path
 
 # 中文 Windows 下 stdout/stderr 默认 GBK，打印非 ASCII 字符（如 ✓、中文）会
 # 触发 UnicodeEncodeError。强制以 UTF-8 输出，避免构建脚本自身崩溃。
+#
+# ⚠️ 下方两句是模块级副作用：导入本模块即改写调用方 stdio 编码，测试勿直接 import。
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -693,6 +695,91 @@ def smoke_test_backend() -> bool:
                 proc.kill()
 
 
+def expected_mcp_tool_count() -> int:
+    """从工具定义派生工具数，供冒烟测试比对（避免把数字写死而随版本过时）。
+
+    用源码 AST 取值而非 import：构建脚本跑在系统 Python 下，未必装齐
+    `GalTransl.mcp_tools` 的运行时依赖；AST 只读字面量，无副作用。
+    只读工具是 `MCP_TOOL_DEFS = [...]`（带类型注解，故为 AnnAssign），
+    写工具另在 `_WRITE_TOOL_DEFS` 里定义后经 `.extend` 追加，两者都要计入。
+    """
+    source = ROOT / "GalTransl" / "mcp_tools.py"
+    if not source.exists():
+        return 0
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log_warn(f"解析 mcp_tools.py 失败，跳过工具数比对: {exc}")
+        return 0
+
+    def _name_of(node: ast.AST) -> str:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+        else:
+            return ""
+        return target.id if isinstance(target, ast.Name) else ""
+
+    lists: Dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.List):
+            name = _name_of(node)
+            if name:
+                lists[name] = len(node.value.elts)
+
+    total = lists.get("MCP_TOOL_DEFS", 0)
+    # 只认**模块级直接语句**形态的 `MCP_TOOL_DEFS.extend(<字面量列表名>)`。
+    # 用 tree.body 而非 ast.walk：嵌在循环/条件里的 extend 执行次数不定，字数算不准。
+    extend_targets: List[str] = []
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "extend"
+            and isinstance(node.value.func.value, ast.Name)
+            and node.value.func.value.id == "MCP_TOOL_DEFS"
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Name)
+        ):
+            extend_targets.append(node.value.args[0].id)
+
+    # 一致性哨兵：任何非「字面量 + 单个模块级 extend(字面量)」的写法（`+=`、append、
+    # 循环内 extend、推导式等）都会让推算**偏低**，此时宁可返回 0（= 跳过比对）也不能
+    # 拿错值去判构建成败——用猜出来的数字报"工具数过时"比不检查更糟。
+    allowed_extends = {
+        id(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "extend"
+        and isinstance(node.value.func.value, ast.Name)
+        and node.value.func.value.id == "MCP_TOOL_DEFS"
+        and node.value.args
+        and isinstance(node.value.args[0], ast.Name)
+    }
+    if len(extend_targets) > 1 or any(name not in lists for name in extend_targets):
+        log_warn("mcp_tools.py 的工具追加写法无法可靠派生工具数，跳过比对")
+        return 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "MCP_TOOL_DEFS":
+                log_warn("mcp_tools.py 用了 `+=` 追加工具，无法可靠派生工具数，跳过比对")
+                return 0
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in ("append", "insert", "extend") and isinstance(node.func.value, ast.Name):
+                if node.func.value.id == "MCP_TOOL_DEFS" and id(node) not in allowed_extends:
+                    log_warn("mcp_tools.py 的工具追加不是模块级 extend(字面量)，无法可靠派生工具数，跳过比对")
+                    return 0
+    # 名字存在但不是字面量列表（如推导式/条件构造）时，lists 里不会有它
+    if "MCP_TOOL_DEFS" not in lists:
+        log_warn("mcp_tools.py 的 MCP_TOOL_DEFS 不是字面量列表，无法派生工具数，跳过比对")
+        return 0
+    return total + sum(lists[name] for name in extend_targets)
+
+
 def smoke_test_mcp() -> bool:
     """用 stdio 发一次 initialize，验证 MCP exe 能完成协议握手。
 
@@ -737,12 +824,44 @@ def smoke_test_mcp() -> bool:
             log_err("MCP 冒烟失败：无响应输出")
             return False
         payload = json.loads(lines[0])
+        # 先看 JSON-RPC 层错误：否则服务端回 error 时 result 为空，
+        # 会被下面误报成「缺少 tools 能力」，掩盖真因（如协议版本不支持）
+        rpc_error = payload.get("error")
+        if rpc_error:
+            log_err(
+                f"MCP 冒烟失败：initialize 返回 JSON-RPC 错误 "
+                f"[{rpc_error.get('code')}] {rpc_error.get('message')}"
+            )
+            return False
         result = payload.get("result") or {}
-        if "tools" in (result.get("capabilities") or {}):
-            log_ok(f"MCP 冒烟通过 (protocolVersion={result.get('protocolVersion')})")
-            return True
-        log_err(f"MCP 冒烟失败：响应缺少 tools 能力 → {lines[0][:200]}")
-        return False
+        if "tools" not in (result.get("capabilities") or {}):
+            log_err(f"MCP 冒烟失败：响应缺少 tools 能力 → {lines[0][:200]}")
+            return False
+        # 约束文案是 agent 侧安全契约的一部分（写工具边界/H 门禁/路径白名单），
+        # 打包版漏带会让外接 agent 失去这些提示，故与握手一并断言
+        instructions = result.get("instructions") or ""
+        if not instructions.strip():
+            log_err("MCP 冒烟失败：initialize 未回带 instructions（约束文案丢失）")
+            return False
+        # instructions 里的工具数若与实际定义脱节，会让 agent 误判自身能力
+        expected_count = expected_mcp_tool_count()
+        if not expected_count:
+            # 派生失败时不阻断构建（可能只是 mcp_tools.py 结构变了），但要显式告警，
+            # 否则这条比对会静默失效而没人发现
+            log_warn("无法从 mcp_tools.py 派生工具数，跳过 instructions 工具数比对")
+        elif not re.search(rf"（\s*{expected_count}\s*个工具", instructions):
+            # 用「（N 个工具」这一具体格式，而非宽松的「N 个」子串：
+            # 后者下 expected=11 会命中「11 个只读」而误判通过
+            log_err(
+                f"MCP 冒烟失败：instructions 未声明 {expected_count} 个工具（口径过时）"
+                f" → {instructions[:120]}"
+            )
+            return False
+        log_ok(
+            f"MCP 冒烟通过 (protocolVersion={result.get('protocolVersion')}, "
+            f"instructions={len(instructions)} 字)"
+        )
+        return True
     except Exception as exc:
         log_err(f"MCP 冒烟异常: {type(exc).__name__}: {exc}")
         return False

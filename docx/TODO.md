@@ -45,9 +45,20 @@
 - 双击 AI 建议没有让用户知道有这个功能的提示
 - 0.5.4：新增左侧按钮“剧情路线图-简易agent界面” **已完成**（视图名 route-agent，按钮文案「路线图工作台」：RouteMapViewer 只渲染不显示源码、渲染失败/无 mermaid 退化为按路线分组的有序矩形列表；节点/矩形右键（或左键）多选文件加入底边栏 agent；AI 仅持 3 工具：read_route_map/write_route_map（整体覆盖+校验原子写）/search_file_metadata（POST /metadata/search），终端不经 AI 直连 /api/jobs；任务支持 file_filter 文件子集与 config_overrides 注入覆盖（Service→LLMTranslate 唯一过滤点，复用 globalPromptFiles 匹配口径）；JobState//runtime 透出任务范围，翻译控制台显示「文件范围: 仅 N 个文件」；执行配置按项目存 localStorage；agent 会话翻译运行中 409、同项目单飞）
   - 0.6.0 修订：**内置简易 agent 已整体移除**（`server_agent.py`、`/agent/chat`、`AgentPanel.tsx`、`AGENT_SYSTEM_PROMPT`、agent 反向互斥），路线图工作台**保留视图**但底边栏只剩「执行终端」；路线图读写逻辑迁入 `GalTransl/mcp_tools.py`（`read_route_map`/`write_route_map`），Agent 能力统一改由外置 dsh + MCP 提供。
+- **0.6.0 批次 5（打包 MCP exe）已完成**：
+  - 排查结论：构建链路（`build_release_py312.py` 的 `build_mcp` / `assemble_release` / `smoke_test_mcp`）**本已实现**，本批是补验证与收口，而非新写。
+  - **冒烟测试补 `instructions` 断言**（原为 `MCP约束下发计划.md` 的 R9 / §6 第 5 项待办）：现在验 `initialize` 握手 + `instructions` **非空** + **工具数口径**。理由：`instructions` 承载 agent 侧安全契约（写工具边界 / H 门禁 / 路径白名单），打包版漏带或口径过时原先不会被构建发现。
+  - 工具数**从 `GalTransl/mcp_tools.py` 的 AST 派生**（`expected_mcp_tool_count()`），不写死数字；且刻意不 import 该模块——构建脚本跑在系统 Python 下，未必装齐运行时依赖。回归测试见 `tests/test_build_release_mcp.py`（13 用例）。
+  - **删除 `galtransl_mcp.spec`** 并加入 `.gitignore`（与 `galtransl_backend.spec` 对称）：它已不被任何脚本引用（构建走内联 PyInstaller 命令），且硬编码绝对路径、换机器即失效。`docx/MCP接入指南.md` 里那条「手工 PyInstaller」命令同步删除，避免给出已失效的指引。
+  - **踩到并记录的坑**：`build_release_py312.py` 在模块级执行 `sys.stdout.reconfigure(encoding="utf-8")`。测试若直接 `import` 它，会改写整个测试进程的 stdio 编码，导致后续 HTTP/日志类用例批量抛 `UnicodeDecodeError`（实测把全套从 2002 passed 打成上千 errors）。已在该处加注释，并在测试里改用「ast 取函数源码后单独 exec」隔离副作用。
+  - **审查发现并修掉的 3 处强度问题**（都不影响功能，但会让防护形同虚设）：
+    - **派生函数在结构漂移时会返回「错值」而非 0**：审查实证 `MCP_TOOL_DEFS += [...]` 时真值 7 却返回 3，而调用方会拿这个数字去判构建失败——**用猜出来的数字报「工具数过时」比不检查更糟**。已加一致性哨兵：只认「字面量 + 单个模块级 `extend(字面量)`」这一种形态，其余（`+=` / 循环内 extend / `append` / 推导式 / 条件内 extend / 多次 extend / 内联字面量）一律降级为 0（跳过比对）并告警。八种写法已全部加测试钉住。
+    - **源码字符串断言是假阳性**：原用 `assertIn("expected_mcp_tool_count()", source)` 判断冒烟是否用了它——把实现整段注释掉后测试**仍然通过**（命中的是注释里的函数名）。已改为解析 `smoke_test_mcp` 的 AST 函数体，确认真有可执行语句；负向验证：注释掉实现后由 0 失败变为 **3 失败**。
+    - **工具数匹配口径有假通过风险**：原 `f"{n} 个" in instructions` 下，`n=11` 会命中「11 个只读」→ **半量错值反而 PASS**。已改为严格正则 `（\s*N\s*个工具`（与 `SERVER_INSTRUCTIONS` 实际格式一致）。
+    - 另修：JSON-RPC `error` 响应原先会被误报成「缺少 tools 能力」，掩盖真因（如协议版本不支持）；现在先判 `payload["error"]` 并打印 code/message。
 - **0.6.0 批次 4（dsh 预设包交付形态）已完成**：
   - 修掉一个**真实漂移缺陷**：预设本体原先在两处手工维护（`cordis.patch.yml` 与 `presets/galtransl.patch.yml`），审查时发现两份的 persona 提示词**已经不一致**，且都是 0.5.1 时代旧文案（称「11 个只读工具」「无写能力」）。
-  - 改为**单一真相源**：`agents/dsh-preset/galtransl.preset.yml`（顶层数组的条目清单，即 `cordis:include` 的目标格式）。`cordis.patch.yml` 改由 `tools/build_dsh_preset.py` 生成（带「请勿手改」头），`--check` 校验同步。回归测试见 `tests/test_dsh_preset_package.py`（17 用例，含防漂移与安全性质断言）。
+  - 改为**单一真相源**：`agents/dsh-preset/galtransl.preset.yml`（顶层数组的条目清单，即 `cordis:include` 的目标格式）。`cordis.patch.yml` 改由 `tools/build_dsh_preset.py` 生成（带「请勿手改」头），`--check` 校验同步。回归测试见 `tests/test_dsh_preset_package.py`（23 用例，含防漂移与安全性质断言）。
   - 交付形态从「用户手改自己 profile 的 `cordis.patch.yml`」改为 **home 层 `$DSH_HOME/cordis.patch.yml` + `cordis:include`**：用户只需**新建 1 个文件**，不碰自己 profile 任何现有配置，且一个文件覆盖所有 profile（home 层对全部 profile 生效，文件缺失时静默跳过不影响启动）。
   - **实测确认的两个 include 坑**（已写入 README，非推测）：① 被 include 的文件必须放在 `$DSH_HOME\profiles\` 内，否则文件里的裸包名 `@deepseek-ai/dsh-*` 解析失败报 `failed to import`（被 include 的树走宿主模块管线，不按自身目录解析）② `path` 相对 profile 目录解析而非 patch 文件，且 `Include` 要求 `file:` URL scheme，写裸 Windows 路径报 `ERR_INVALID_URL_SCHEME`。
   - 另查明：**dsh 不存在用户级预设目录**（`registry` 「neither scans directories nor accepts preset paths」）；遗留的 `$DSH_HOME\.agent-presets\` 已不被读取。官方另一条路径是把预设打包成 bundle 用 `plugin_manager` 的 `install_bundle` 安装，但它在 Host 进程执行插件代码、需 Full access，与「不给 agent 写权限」的初衷相悖，故未采用。

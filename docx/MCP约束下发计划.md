@@ -168,7 +168,7 @@ GalTransl 术语与译文检索服务（只读，11 个工具）。所有工具�
 | R6 | **`tool_annotations` 对非 read 工具返回空**导致下发 `{}` | 传参处显式 `or None`，避免下发空对象（空对象在部分客户端会被判为"未声明"而非"只读"） |
 | R7 | **改 `_LIST_TOOLS_TIMEOUT_NOTE` 名字导致引用漏改** | 全仓仅 `run_mcp_server.py:46`（定义）与 `:111`（使用）两处，改后 grep 确认为 0 残留 |
 | R8 | **工具清单口径漂移** | 既有 `test_defs_and_handlers_match` 锁 defs↔handlers 一一对应；新增断言只加"annotations 由 kind 派生"，不改既有断言 |
-| R9 | **打包版行为不一致** | `galtransl_mcp.spec` 打包的是 `run_mcp_server.py`，改动随打包生效；构建脚本的 `smoke_test_mcp()` 只验 `initialize` 握手——**建议在冒烟里加一条 `instructions` 非空断言**（可选，见 §6） |
+| R9 | **打包版行为不一致** | ~~`galtransl_mcp.spec` 打包的是 `run_mcp_server.py`，改动随打包生效；构建脚本的 `smoke_test_mcp()` 只验 `initialize` 握手——**建议在冒烟里加一条 `instructions` 非空断言**（可选，见 §6）~~ **已于 0.6.0 批次 5 实施**：冒烟新增 `instructions` 非空断言 + 工具数口径比对（工具数从 `mcp_tools.py` AST 派生，不写死）；`galtransl_mcp.spec` 已删除并进 `.gitignore` |
 | R10 | **文案含中文**，部分客户端/模型对中文系统提示处理不佳 | 项目既有 11 个工具 description 与接入文档均为中文，保持一致优先；如需英文版可后置（见 §6） |
 
 ---
@@ -181,7 +181,7 @@ GalTransl 术语与译文检索服务（只读，11 个工具）。所有工具�
 | 2 | `kind: "read"` 由死字段变为 annotations 来源 | 消除"声明了却不生效"的字段，为 0.6.0 白名单复用 |
 | 3 | 给每个工具补 `title`（如"检索译文缓存"） | 客户端展示更可读；纯展示，零风险 |
 | 4 | `description` 统一补"（只读）" | 与 annotations 双重声明 |
-| 5 | 构建冒烟加 `instructions` 非空断言 | 防止打包版漏带约束 |
+| 5 | 构建冒烟加 `instructions` 非空断言 | ~~防止打包版漏带约束~~ **已于 0.6.0 批次 5 实施** |
 | 6 | 提供英文版 `instructions`（按客户端 locale 切换不可行，只能二选一或双语） | 外接客户端多为英文界面；但双语会显著加长（R1） |
 
 ---

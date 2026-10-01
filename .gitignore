@@ -20,6 +20,7 @@ app_settings.json
 /release/
 /.venv-build/
 galtransl_backend.spec
+galtransl_mcp.spec
 /build
 /dist
 
