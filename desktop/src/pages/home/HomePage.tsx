@@ -1,6 +1,6 @@
 import { createSignal, For, Show, onMount } from "solid-js";
 import { Icon } from "../../components/icons";
-import { setAppState, openProject, navigateTo } from "../../stores/appStore";
+import { setAppState, openProject, navigateTo, navigateToGuide } from "../../stores/appStore";
 import { toast } from "../../stores/toastStore";
 import { fetchVersion } from "../../lib/api/general";
 import { fetchJobs } from "../../lib/api/general";
@@ -134,8 +134,8 @@ export function HomePage() {
         <div class="home-info">
           <p>
             项目地址：
-                <a href="https://github.com/awei808/my-GalTransL" target="_blank" rel="noopener">
-                  github.com/awei808/my-GalTransL
+                <a href="https://github.com/awei808/my-GalTransl" target="_blank" rel="noopener">
+                  github.com/awei808/my-GalTransl
                 </a>
           </p>
         </div>
@@ -146,6 +146,37 @@ export function HomePage() {
       </div>
 
       <div class="home-panels">
+        {/* ── 快速上手 ── */}
+        <div class="home-panel">
+          <h3 class="home-panel-title">快速上手</h3>
+          <div class="home-steps">
+            <div class="home-step clickable" onClick={() => navigateTo("new-project")}>
+              <span class="home-step-num">1</span>
+              <span class="home-step-text">
+                <b>新建项目</b>
+                <small>用向导创建项目并导入剧本</small>
+              </span>
+            </div>
+            <div class="home-step clickable" onClick={() => navigateTo("backend-profiles")}>
+              <span class="home-step-num">2</span>
+              <span class="home-step-text">
+                <b>配置 API</b>
+                <small>填入接口地址与密钥</small>
+              </span>
+            </div>
+            <div class="home-step clickable" onClick={() => navigateTo("translate")}>
+              <span class="home-step-num">3</span>
+              <span class="home-step-text">
+                <b>启动翻译</b>
+                <small>九阶段流水线自动执行</small>
+              </span>
+            </div>
+            <button class="home-guide-link" onClick={() => navigateToGuide("01-getting-started.md")}>
+              查看完整指南 →
+            </button>
+          </div>
+        </div>
+
         {/* ── 最近项目 ── */}
         <div class="home-panel">
           <h3 class="home-panel-title">最近项目</h3>

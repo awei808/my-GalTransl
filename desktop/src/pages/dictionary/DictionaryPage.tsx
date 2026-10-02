@@ -53,6 +53,7 @@ import type {
   ConditionItem,
 } from "../../components/dict/dictUtils";
 import { getErrorMessage } from "../../lib/errors";
+import { GuideLink } from "../../components/GuideLink";
 import { runPageAutosave, autosaveInfo, autosaveError } from "../../lib/usePageAutosave";
 
 const TABS: { key: string; label: string }[] = [
@@ -1064,7 +1065,10 @@ export function DictionaryPage() {
 
   return (
     <div class="page page-dict">
-      <h2 class="page-title">字典管理</h2>
+      <div class="page-title-row">
+        <h2 class="page-title">字典管理</h2>
+        <GuideLink guide="05-dictionary.md" />
+      </div>
       <p class="page-description">{isProject() ? "项目字典" : "公共字典"} — 管理翻译用词对照表</p>
       <p class="dict-scene-hint">
         GPT 字典文件名以 <code>_h</code> 结尾（如 <code>GPT字典_h.txt</code>）表示 h 场景词典，以 <code>_非h</code> 结尾（如 <code>GPT字典_非h.txt</code>）表示非 h 场景词典；未带后缀的视为非 h 场景。

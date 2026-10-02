@@ -20,6 +20,7 @@ import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize, fe
 import { decodeProjectDir } from "../../lib/api/client";
 import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload, getGitSuggestAcknowledged, setGitSuggestAcknowledged } from "../../lib/api/preferences";
 import { projectName } from "../home/homeUtils";
+import { GuideLink } from "../../components/GuideLink";
 import type {
   ModelCheckResult,
   ProjectRuntimeResponse,
@@ -755,6 +756,9 @@ export function TranslateConsole() {
                 </button>
               </Show>
             </div>
+
+            {/* 使用指南入口 */}
+            <GuideLink guide="03-translate-console.md" />
 
             {/* 模型可用性检测 */}
             <div class="model-check">

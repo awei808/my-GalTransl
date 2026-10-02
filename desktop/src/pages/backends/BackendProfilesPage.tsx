@@ -18,6 +18,7 @@ import {
   syncLocalBackendProfilesToServer,
 } from "../../lib/api/backendProfiles";
 import { getErrorMessage } from "../../lib/errors";
+import { GuideLink } from "../../components/GuideLink";
 
 interface TokenEntry {
   endpoint?: string;
@@ -311,7 +312,10 @@ export function BackendProfilesPage() {
 
   return (
     <div class="page page-backend-profiles">
-      <h2 class="page-title">API 配置</h2>
+      <div class="page-title-row">
+        <h2 class="page-title">API 配置</h2>
+        <GuideLink guide="02-backend-profiles.md" />
+      </div>
       <p class="page-description">
         管理 API 地址、模型、密钥等连接配置。OpenAI 兼容接口支持从接口拉取可用模型名。
       </p>

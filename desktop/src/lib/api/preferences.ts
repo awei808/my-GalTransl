@@ -681,3 +681,23 @@ export function setGitSuggestAcknowledged(projectId: string): void {
     // 存储失败（隐私模式/超限）静默忽略
   }
 }
+
+// ---- 校对页「双击获取 AI 建议」一次性提示（本机记录，提示过就不再弹） ----
+
+const AI_SUGGEST_TIP_KEY = "galtransl:ai-suggest-tip";
+
+export function getAiSuggestTipShown(): boolean {
+  try {
+    return localStorage.getItem(AI_SUGGEST_TIP_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setAiSuggestTipShown(): void {
+  try {
+    localStorage.setItem(AI_SUGGEST_TIP_KEY, "1");
+  } catch {
+    // 存储失败（隐私模式/超限）静默忽略
+  }
+}

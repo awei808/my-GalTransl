@@ -31,6 +31,7 @@ vi.mock("../lib/api/project", async (importOriginal) => {
 vi.mock("../lib/api/general", () => ({ fetchProblemTypes: vi.fn() }));
 
 import { requestAiSuggest } from "../lib/api/project";
+import { toast } from "../stores/toastStore";
 import { fetchProblemTypes } from "../lib/api/general";
 
 const baseEntry: CacheEntry = {
@@ -195,4 +196,56 @@ describe("ReviewPage 双击 → AI 建议 → 采纳链路", () => {
     });
     expect(document.querySelector(".entry-btn--swap")).not.toBeNull();
   });
+});
+
+describe("ReviewPage 首次进入的「双击 AI 建议」提示", () => {
+  const PID = "projA";
+  const FILE = "pass3_cache/t01.txt.json";
+  const TIP_TEXT = "小技巧：双击条目空白处，可让 AI 给出该句的建议译文";
+
+  beforeEach(() => {
+    vi.mocked(fetchProblemTypes).mockResolvedValue([]);
+    setAppState({
+      activeProjectId: PID,
+      activeConfigFileName: "config.yaml",
+      activeFilePath: FILE,
+      dirtyFiles: [],
+      activeView: "review",
+      pendingView: null,
+    });
+    localStorage.removeItem("galtransl:ai-suggest-tip");
+  });
+
+  async function mountWithMocks() {
+    const { fetchCacheFile, fetchCacheHranges, fetchNameDict } = await import("../lib/api/project");
+    vi.mocked(fetchCacheFile).mockResolvedValue({
+      project_dir: PID,
+      filename: FILE,
+      entries: [{ ...baseEntry }],
+    } as never);
+    vi.mocked(fetchCacheHranges).mockResolvedValue({
+      h_ranges: [],
+      batch_exists: false,
+      has_h: false,
+    } as never);
+    vi.mocked(fetchNameDict).mockResolvedValue({ project_dir: PID, name_dict: {} } as never);
+    return render(() => <ReviewPage />);
+  }
+
+  it("首次进入延时弹提示并落本地标记，已提示过则不再弹", async () => {
+    const toastInfo = vi.spyOn(toast, "info");
+    const view = await mountWithMocks();
+    await new Promise((r) => setTimeout(r, 1700));
+    expect(toastInfo).toHaveBeenCalledWith(TIP_TEXT);
+    expect(localStorage.getItem("galtransl:ai-suggest-tip")).toBe("1");
+
+    // 卸载后重挂：标记已在，不再提示
+    toastInfo.mockClear();
+    view.unmount();
+    await mountWithMocks();
+    await new Promise((r) => setTimeout(r, 1700));
+    expect(toastInfo).not.toHaveBeenCalledWith(TIP_TEXT);
+    toastInfo.mockRestore();
+    localStorage.removeItem("galtransl:ai-suggest-tip");
+  }, 15000);
 });

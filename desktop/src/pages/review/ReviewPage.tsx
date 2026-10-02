@@ -13,7 +13,7 @@ import {
   fetchNameDict,
   requestAiSuggest,
 } from "../../lib/api/project";
-import { getCachePageSizePreference } from "../../lib/api/preferences";
+import { getCachePageSizePreference, getAiSuggestTipShown, setAiSuggestTipShown } from "../../lib/api/preferences";
 import { toast } from "../../stores/toastStore";
 import { getErrorMessage } from "../../lib/errors";
 import { runPageAutosave, autosaveInfo, autosaveError } from "../../lib/usePageAutosave";
@@ -35,6 +35,7 @@ import { ViewFilterDropdown } from "./ViewFilterDropdown";
 import { applyProblemTypeFilter, ALL_FIELDS } from "./reviewUtils";
 import { displaySpeakerName } from "./reviewColor";
 import { ProblemTypeFilterDropdown } from "../../components/ProblemTypeFilterDropdown";
+import { GuideLink } from "../../components/GuideLink";
 import {
   isMetaKvEditorElement,
   shouldYieldToNative,
@@ -129,6 +130,8 @@ export function ReviewPage() {
   let lastSaveFailed = false;
   // 元数据切换令牌：每次 effect 触发递增，过期切换闭包（保存/加载响应）直接丢弃
   let metaSwitchToken = 0;
+  // 「双击获取 AI 建议」一次性提示的定时器（卸载时清理，避免对已卸载组件弹 toast）
+  let aiSuggestTipTimer: ReturnType<typeof setTimeout> | undefined;
   // 非法 JSON 已提示标志：连续非法输入只提示一次，避免 onInput 逐键 toast 轰炸
   let metaJsonInvalidShown = false;
   // 当前打开的元数据文件完整路径（切换保存时用于推导旧文件的 metaType/sourceFile）
@@ -254,6 +257,13 @@ export function ReviewPage() {
     void fetchProblemTypes().then((r) => {
       if (r) setProblemTypes(r);
     });
+    // 双击空白处获取 AI 建议是隐藏交互，首次进入延后一次性提示（不干扰首屏其他 toast）
+    if (!getAiSuggestTipShown()) {
+      aiSuggestTipTimer = setTimeout(() => {
+        toast.info("小技巧：双击条目空白处，可让 AI 给出该句的建议译文");
+        setAiSuggestTipShown();
+      }, 1500);
+    }
   });
 
   // 展开字段 Enter 监听器：不依赖 onMount（HMR 后组件不重新挂载），用 createEffect 确保始终注册
@@ -269,6 +279,7 @@ export function ReviewPage() {
     setAppState("reviewJumpToIndex", null);
     // 取消未完成的高亮定位 rAF，避免卸载后继续查询 DOM
     if (flashRAFId) cancelAnimationFrame(flashRAFId);
+    if (aiSuggestTipTimer) clearTimeout(aiSuggestTipTimer);
     // ── 卸载自动保存 ──
     // 先失焦提交聚焦中的主译文/展开字段草稿（onBlur 同步写入 entries），
     // 兜底程序化切页等未触发 blur 的场景，保证落盘的是最新内容
@@ -1734,6 +1745,7 @@ export function ReviewPage() {
             </button>
           </Show>
         </Show>
+        <GuideLink guide="04-review.md" />
       </div>
 
       {/* ── 条目列表 ── */}

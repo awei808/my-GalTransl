@@ -42,7 +42,9 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
 }));
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  // clearAllMocks 而非 restoreAllMocks：restore 会抹掉 vi.mock 工厂里设置的
+  // mockResolvedValue 实现，导致本文件第二个渲染 HomePage 的用例拿到 undefined
+  vi.clearAllMocks();
 });
 
 describe("首页「新建项目向导」入口", () => {
@@ -59,6 +61,41 @@ describe("首页「新建项目向导」入口", () => {
     fireEvent.click(cta!);
     expect(appState.activeView).toBe("new-project");
     expect(appState.sidebarOpen).toBe(false);
+  });
+});
+
+describe("首页「快速上手」面板", () => {
+  beforeEach(() => {
+    setAppState({ activeView: "home", sidebarOpen: true });
+  });
+
+  function stepByText(text: string): Element {
+    const step = Array.from(document.querySelectorAll(".home-step")).find((el) =>
+      el.textContent?.includes(text),
+    );
+    expect(step, `快速上手应包含步骤「${text}」`).toBeTruthy();
+    return step!;
+  }
+
+  it("渲染三步且点击可跳转对应页面", () => {
+    render(() => <HomePage />);
+    fireEvent.click(stepByText("新建项目"));
+    expect(appState.activeView).toBe("new-project");
+    setAppState("activeView", "home");
+    fireEvent.click(stepByText("配置 API"));
+    expect(appState.activeView).toBe("backend-profiles");
+    setAppState("activeView", "home");
+    fireEvent.click(stepByText("启动翻译"));
+    expect(appState.activeView).toBe("translate");
+  });
+
+  it("「查看完整指南」打开指南页的入门篇目", () => {
+    render(() => <HomePage />);
+    const link = document.querySelector(".home-guide-link") as HTMLElement;
+    expect(link).toBeTruthy();
+    fireEvent.click(link);
+    expect(appState.activeView).toBe("guide");
+    expect(appState.guideTarget).toBe("01-getting-started.md");
   });
 });
 
