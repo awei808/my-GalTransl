@@ -7,6 +7,11 @@ import { ensureDesktopBackendReady, encodeProjectDir, isBackendReachable } from 
 import { fetchProjectFiles } from "../lib/api/project";
 import { invokeGlobalSave } from "../lib/globalSave";
 import { McpStatusLight } from "./McpStatusLight";
+import { openExternal } from "../lib/openExternal";
+import { navigateToGuide } from "../stores/appStore";
+
+/** 仓库主页地址（帮助菜单「项目地址」用） */
+const REPO_URL = "https://github.com/awei808/my-GalTransl";
 
 interface MenuItem {
   label: string;
@@ -14,6 +19,8 @@ interface MenuItem {
   disabled?: boolean | (() => boolean);
   separator?: boolean;
   action?: () => void;
+  /** 外链地址：点击时用系统浏览器打开（不走 action） */
+  href?: string;
 }
 
 interface MenuDef {
@@ -181,9 +188,9 @@ const menus: MenuDef[] = [
   {
     label: "帮助",
     items: [
-      { label: "关于 GalTransl", action: () => {} },
-      { label: "项目地址", action: () => {} },
-      { label: "翻译指南", action: () => {} },
+      { label: "关于 GalTransl", action: () => navigateToGuide("00-about.md") },
+      { label: "项目地址", href: REPO_URL },
+      { label: "翻译指南", action: () => navigateToGuide() },
     ],
   },
 ];
@@ -213,6 +220,10 @@ export function TitleBar() {
   function handleItemClick(item: MenuItem) {
     if (itemDisabled(item) || item.separator) return;
     setOpenMenu(null);
+    if (item.href) {
+      openExternal(item.href);
+      return;
+    }
     item.action?.();
   }
 

@@ -55,7 +55,8 @@ export type ActiveView =
   | "prompt-templates"
   | "mcp"
   | "project-config"
-  | "route-agent";
+  | "route-agent"
+  | "guide";
 
 export type ConnectionPhase = "offline" | "connecting" | "online" | "reconnecting";
 
@@ -76,6 +77,7 @@ export const NO_SIDEBAR_VIEWS: readonly ActiveView[] = [
   "plugins",
   "new-project",
   "route-agent",
+  "guide",
 ];
 
 export interface AppState {
@@ -121,6 +123,8 @@ export interface AppState {
   replaceRequest: ReplaceRequest | null;
   /** 设置类页面滚动目标标识（ActivityBar 快捷按钮点击后写入，目标页面渲染完成后滚动并自动清空） */
   settingsScrollTarget: string | null;
+  /** 使用指南页要打开的指南文件名（各页「指南」入口写入，GuidePage 消费后自动清空） */
+  guideTarget: string | null;
 
   // 应用级「可见文本」查找（浏览器式 Ctrl+F，扫描 main-area 当前渲染文本）
   globalFindOpen: boolean;
@@ -156,6 +160,7 @@ export const defaultState: AppState = {
   reviewJumpToIndex: null,
   replaceRequest: null,
   settingsScrollTarget: null,
+  guideTarget: null,
   globalFindOpen: false,
   globalFindQuery: "",
   globalFindIndex: -1,
@@ -190,6 +195,19 @@ export function navigateTo(view: ActiveView) {
     // 离开设置类视图时清除残留的滚动目标，避免切回时误触发滚动
     setAppState("settingsScrollTarget", null);
   }
+  if (view !== "guide") {
+    // 离开指南页时清除残留的指南目标，避免下次打开时误打开旧篇目
+    setAppState("guideTarget", null);
+  }
+}
+
+/**
+ * 打开使用指南页。可指定篇目文件名（如 "04-review.md"）；不指定则由 GuidePage
+ * 自行选择（默认第一篇）。传 null 可显式清掉之前残留的目标。
+ */
+export function navigateToGuide(guideName?: string | null) {
+  setAppState("guideTarget", guideName ?? null);
+  navigateTo("guide");
 }
 
 /**

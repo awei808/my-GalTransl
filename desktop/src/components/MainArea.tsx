@@ -13,6 +13,7 @@ import { PluginsPage } from "../pages/plugins/PluginsPage";
 import { PromptTemplatesPage } from "../pages/prompts/PromptTemplatesPage";
 import { McpSettingsPage } from "../pages/mcp/McpSettingsPage";
 import { RouteAgentPage } from "../pages/routeAgent/RouteAgentPage";
+import { GuidePage } from "../pages/guide/GuidePage";
 
 export function MainArea() {
   const view = () => appState.activeView;
@@ -58,6 +59,9 @@ export function MainArea() {
         </Match>
         <Match when={view() === "project-config"}>
           <ProjectConfigPage />
+        </Match>
+        <Match when={view() === "guide"}>
+          <GuidePage />
         </Match>
       </Switch>
     </main>

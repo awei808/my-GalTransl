@@ -2,8 +2,8 @@ import "./styles/styles.css";
 import "./styles/custom-background.css";
 
 import { onMount, onCleanup, Show, createEffect } from "solid-js";
-import { open } from "@tauri-apps/plugin-shell";
 import { customBackground, applyCustomBackgroundPreference } from "./lib/customBackground";
+import { openExternal } from "./lib/openExternal";
 import { TitleBar } from "./components/TitleBar";
 import { ActivityBar } from "./components/ActivityBar";
 import { SidebarPanel } from "./components/SidebarPanel";
@@ -24,7 +24,7 @@ function handleExternalLinkClick(e: MouseEvent) {
   // 外部 http(s) 链接走系统浏览器，避免 Tauri 内嵌弹窗（弹窗关闭会误触发窗口 Destroyed）
   if (/^https?:\/\//i.test(href)) {
     e.preventDefault();
-    open(href).catch(() => window.open(href, "_blank", "noopener"));
+    openExternal(href);
   }
 }
 

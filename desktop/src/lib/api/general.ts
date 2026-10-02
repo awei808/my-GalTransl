@@ -98,6 +98,19 @@ export async function fetchTranslationGuidelines() {
   return response.guidelines;
 }
 
+// ---- User guides ----
+
+/** 使用指南篇目列表（guides/ 目录下的 .md 文件名，已排序） */
+export async function fetchGuides() {
+  const response = await apiRequest<{ guides: string[] }>("/api/guides");
+  return response.guides;
+}
+
+/** 读取单篇使用指南内容；文件名未在白名单内时后端返回 404 */
+export async function fetchGuideContent(name: string) {
+  return apiRequest<{ name: string; content: string }>(`/api/guides/${encodeURIComponent(name)}`);
+}
+
 // ---- App settings ----
 
 export async function fetchAppSettings() {
