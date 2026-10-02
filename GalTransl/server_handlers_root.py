@@ -100,6 +100,23 @@ def do_get(handler: Any, registry: JobRegistry) -> None:
     if path == "/api/mcp-status":
         handler._send_json(read_heartbeat())
         return
+    if path == "/api/mcp-tools":
+        # MCP 工具清单（名称/描述/读写类别）：供设置页渲染工具开关，以后端为唯一真源
+        from GalTransl.mcp_tools import MCP_TOOL_DEFS
+
+        handler._send_json(
+            {
+                "tools": [
+                    {
+                        "name": item["name"],
+                        "description": item["description"],
+                        "kind": item.get("kind", "read"),
+                    }
+                    for item in MCP_TOOL_DEFS
+                ]
+            }
+        )
+        return
     if path == "/api/version/check":
         latest_version = new_version[0] if new_version else None
         handler._send_json(

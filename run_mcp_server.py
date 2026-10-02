@@ -33,6 +33,7 @@ from mcp.types import (
 )
 
 from GalTransl import GALTRANSL_VERSION
+from GalTransl.AppSettings import load_app_settings
 from GalTransl.mcp_heartbeat import (
     HEARTBEAT_INTERVAL_SECONDS,
     remove_heartbeat,
@@ -40,8 +41,10 @@ from GalTransl.mcp_heartbeat import (
 )
 from GalTransl.mcp_tools import (
     MCP_TOOL_DEFS,
-    SERVER_INSTRUCTIONS,
+    MCPToolDisabledError,
+    build_server_instructions,
     call_mcp_tool,
+    enabled_tool_defs,
     tool_annotations,
 )
 
@@ -50,6 +53,31 @@ SERVER_DESCRIPTION = (
     "GalTransl 翻译项目管理（17 个工具：13 只读检索 + 4 受限写入）："
     "翻译缓存、原始脚本、字典、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
 )
+
+
+def _build_startup_instructions() -> str:
+    """按启动时的设置构建会话说明（H 门禁条款与工具计数随设置联动）。"""
+    settings = load_app_settings()
+    return build_server_instructions(
+        h_gate_enabled=bool(settings.get("mcpHGateEnabled", True)),
+        disabled_tools=settings.get("mcpDisabledTools", []),
+    )
+
+
+def _build_startup_description() -> str:
+    """按启动时启用集合构建 serverInfo 描述（工具数随禁用设置联动）。"""
+    defs = enabled_tool_defs()
+    n_read = sum(1 for item in defs if item["kind"] == "read")
+    n_write = len(defs) - n_read
+    return (
+        f"GalTransl 翻译项目管理（{len(defs)} 个工具：{n_read} 只读检索 + {n_write} 受限写入）："
+        "翻译缓存、原始脚本、字典、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
+    )
+
+
+# instructions 随 initialize 一次性下发，只能反映启动时的设置快照；
+# 工具清单与调用拦截仍实时读设置（见 handle_list_tools / call_mcp_tool）
+SERVER_INSTRUCTIONS = _build_startup_instructions()
 
 
 def _accepted_annotations(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -84,8 +112,11 @@ def _to_mcp_tool(item: Dict[str, Any]) -> Tool:
 async def handle_list_tools(
     ctx: ServerRequestContext, params: Any = None
 ) -> ListToolsResult:
-    """返回工具清单，字段口径与 mcp_tools.MCP_TOOL_DEFS 保持一致。"""
-    return ListToolsResult(tools=[_to_mcp_tool(item) for item in MCP_TOOL_DEFS])
+    """返回工具清单，字段口径与 mcp_tools.MCP_TOOL_DEFS 保持一致。
+
+    按用户设置过滤已禁用工具（实时读取 app_settings.json，改动即时生效）。
+    """
+    return ListToolsResult(tools=[_to_mcp_tool(item) for item in enabled_tool_defs()])
 
 
 async def handle_call_tool(
@@ -103,6 +134,11 @@ async def handle_call_tool(
     except KeyError:
         return CallToolResult(
             content=[TextContent(type="text", text=f"未知工具: {name}")],
+            is_error=True,
+        )
+    except MCPToolDisabledError as exc:
+        return CallToolResult(
+            content=[TextContent(type="text", text=str(exc))],
             is_error=True,
         )
     except ValueError as exc:
@@ -125,7 +161,8 @@ async def handle_call_tool(
 async def _heartbeat_loop() -> None:
     """定期刷新心跳文件，供后端/前端判断「当前是否有外部 agent 连着」。"""
     while True:
-        write_heartbeat(len(MCP_TOOL_DEFS))
+        # 工具数按启用集合实时统计，与 tools/list 口径一致
+        write_heartbeat(len(enabled_tool_defs()))
         await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
@@ -133,12 +170,12 @@ async def main() -> None:
     server = Server(
         name=SERVER_NAME,
         version=GALTRANSL_VERSION,
-        description=SERVER_DESCRIPTION,
+        description=_build_startup_description(),
         instructions=SERVER_INSTRUCTIONS,
         on_list_tools=handle_list_tools,
         on_call_tool=handle_call_tool,
     )
-    write_heartbeat(len(MCP_TOOL_DEFS))
+    write_heartbeat(len(enabled_tool_defs()))
     heartbeat_task = asyncio.create_task(_heartbeat_loop())
     try:
         async with stdio_server() as (read_stream, write_stream):

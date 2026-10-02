@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from GalTransl.mcp_tools import (
     DEFAULT_PAGE_SIZE,
@@ -16,6 +17,23 @@ from GalTransl.mcp_tools import (
     call_mcp_tool,
     tool_annotations,
 )
+
+
+# 门禁设置随全局 app_settings.json 变化，模块级固定为默认值以隔离开发机真实设置
+_gate_settings_patcher = None
+
+
+def setUpModule() -> None:
+    global _gate_settings_patcher
+    _gate_settings_patcher = mock.patch(
+        "GalTransl.mcp_tools.load_app_settings",
+        return_value={"mcpHGateEnabled": True, "mcpDisabledTools": []},
+    )
+    _gate_settings_patcher.start()
+
+
+def tearDownModule() -> None:
+    _gate_settings_patcher.stop()
 
 
 def _write_text(path: str, text: str) -> None:

@@ -35,7 +35,7 @@ ACCEPTABLE_STATUS = {
 ROOT_GET_ROUTES = [
     "/", "/api/version", "/api/version/check", "/api/translators", "/api/jobs",
     "/api/app-settings", "/api/project-config-template", "/api/pipeline-stages",
-    "/api/prompt-templates",
+    "/api/prompt-templates", "/api/mcp-tools",
     "/api/backend-profiles", "/api/plugins", "/api/problem-types",
     "/api/translation-guidelines", "/api/projects/workspace-root",
     "/api/dictionaries/common",

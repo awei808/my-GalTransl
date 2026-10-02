@@ -26,6 +26,23 @@ from GalTransl.mcp_tools import (
 )
 
 
+# 门禁设置随全局 app_settings.json 变化，模块级固定为默认值以隔离开发机真实设置
+_gate_settings_patcher = None
+
+
+def setUpModule() -> None:
+    global _gate_settings_patcher
+    _gate_settings_patcher = mock.patch(
+        "GalTransl.mcp_tools.load_app_settings",
+        return_value={"mcpHGateEnabled": True, "mcpDisabledTools": []},
+    )
+    _gate_settings_patcher.start()
+
+
+def tearDownModule() -> None:
+    _gate_settings_patcher.stop()
+
+
 def _make_project(root: str, h_words: list | None = None) -> None:
     """构造最小可识别项目：config.inc.yaml + 译前/译后字典 + 项目 H 词库。"""
     os.makedirs(os.path.join(root, "transl_cache"), exist_ok=True)

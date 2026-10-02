@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Collection, Dict, List, Optional
 
 from GalTransl import (
     CACHE_FOLDERNAME,
@@ -22,6 +22,7 @@ from GalTransl import (
     PASS2_CACHE_DIR,
     PASS3_CACHE_DIR,
 )
+from GalTransl.AppSettings import load_app_settings
 from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.Frontend.pipeline_stages import to_payload as _pipeline_stages_payload
 from GalTransl.backend_security import safe_under_project
@@ -633,6 +634,30 @@ def write_route_map(project_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ---------- 设置联动（app_settings.json，与后端 UI 同一份文件） ----------
+
+class MCPToolDisabledError(Exception):
+    """工具被用户在 GalTransl 设置中禁用（call_mcp_tool 分发前抛出）。"""
+
+
+def mcp_h_gate_enabled() -> bool:
+    """H 门禁开关（实时读设置；读失败回退默认开启，保持既有安全行为）。"""
+    return bool(load_app_settings().get("mcpHGateEnabled", True))
+
+
+def disabled_mcp_tool_names() -> frozenset:
+    """用户禁用的工具名集合（黑名单口径：未列入者默认启用）。"""
+    return frozenset(load_app_settings().get("mcpDisabledTools", []))
+
+
+def enabled_tool_defs() -> List[Dict[str, Any]]:
+    """按禁用黑名单过滤后的工具定义（供 tools/list 与心跳统计共用）。"""
+    disabled = disabled_mcp_tool_names()
+    if not disabled:
+        return list(MCP_TOOL_DEFS)
+    return [item for item in MCP_TOOL_DEFS if item["name"] not in disabled]
+
+
 # ---------- H 门禁（写工具硬拦截） ----------
 
 _H_DENY_MESSAGE = (
@@ -706,7 +731,11 @@ def enforce_h_gate(project_dir: str, *, cache_filename: str = "", texts: Optiona
 
     两条判据任一成立即拒绝：(1) 目标缓存文件落在 H 区间；(2) 待写入文本命中 H 词库。
     元数据类写入（filemeta/batchmeta）本身不含对话原文，故主要靠文件维度判定。
+    用户可在设置中关闭门禁（mcpHGateEnabled），关闭时直接放行。
     """
+    if not mcp_h_gate_enabled():
+        LOGGER.debug("[mcp] H 门禁已被用户关闭，跳过 H 校验")
+        return
     if cache_filename and _entry_has_h(project_dir, cache_filename):
         LOGGER.warning(f"[mcp] H 门禁拦截写入: {cache_filename}")
         raise ValueError(_H_DENY_MESSAGE)
@@ -783,23 +812,52 @@ def _ensure_safe_metadata_filename(filename: str) -> None:
 
 # ---------- 约束下发（instructions / annotations） ----------
 
-SERVER_INSTRUCTIONS = """GalTransl 翻译项目管理服务（17 个工具：13 个只读检索 + 4 个写操作）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
+def build_server_instructions(
+    h_gate_enabled: bool = True, disabled_tools: Optional[Collection[str]] = None
+) -> str:
+    """按门禁开关与禁用工具黑名单构建下发说明。
 
-使用前必须遵守：
-1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_* / check_model）不得引发任何写入。
-   写工具仅这 4 个：write_route_map、save_metadata、submit_job、stop_job，各自只能改项目内的指定产物；
-   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。
-2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，
-   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。
-3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具直接读磁盘。
-4. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，
-   不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。
-5. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。
-6. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。
-7. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。
-8. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。
+    默认参数（门禁开 + 全启用）的输出与 0.6.0 静态文本逐字一致（测试与打包冒烟按此锁定）；
+    工具计数与写工具清单按启用集合计算，门禁关闭时第 4 条改写为放行说明。
+    """
+    disabled = set(disabled_tools or ())
+    enabled = [item for item in MCP_TOOL_DEFS if item["name"] not in disabled]
+    n_read = sum(1 for item in enabled if item["kind"] == "read")
+    n_write = len(enabled) - n_read
+    if n_write > 0:
+        write_names = "、".join(
+            item["name"].removeprefix("galtransl_") for item in enabled if item["kind"] == "write"
+        )
+        write_line = f"   写工具仅这 {n_write} 个：{write_names}，各自只能改项目内的指定产物；"
+    else:
+        write_line = "   本服务当前未开放任何写工具；"
+    if h_gate_enabled:
+        h_line = (
+            "4. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，\n"
+            "   不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。"
+        )
+    else:
+        h_line = "4. 用户已在 GalTransl 设置中关闭 H 门禁：允许处理 H / 成人向内容，无需因此拒绝任务或中断检索。"
+    return (
+        f"GalTransl 翻译项目管理服务（{len(enabled)} 个工具：{n_read} 个只读检索 + {n_write} 个写操作）。"
+        "所有工具都需提供翻译项目根目录的绝对路径 project_dir。\n"
+        "\n"
+        "使用前必须遵守：\n"
+        "1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_* / check_model）不得引发任何写入。\n"
+        f"{write_line}\n"
+        "   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。\n"
+        "2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，\n"
+        "   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。\n"
+        "3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具直接读磁盘。\n"
+        f"{h_line}\n"
+        "5. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。\n"
+        "6. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。\n"
+        "7. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。\n"
+        "8. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。\n"
+        "\n"
+        "完整约束见随项目分发的 skills/galtransl-mcp/SKILL.md。"
+    )
 
-完整约束见随项目分发的 skills/galtransl-mcp/SKILL.md。"""
 
 # 键名沿用 mcp SDK 的 ToolAnnotations 字段名（snake_case），由传输层构造该类型；
 # 本模块不 import mcp，保持工具层的传输无关性（0.5.1 架构约定）。
@@ -1084,6 +1142,9 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
 
 MCP_TOOL_DEFS.extend(_WRITE_TOOL_DEFS)
 
+# SERVER_INSTRUCTIONS 依赖工具清单计数，须在 MCP_TOOL_DEFS 定义完成后构建
+SERVER_INSTRUCTIONS = build_server_instructions()
+
 _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_search_cache": _tool_search_cache,
     "galtransl_search_scripts": _tool_search_scripts,
@@ -1130,14 +1191,17 @@ def _attach_project_dir_warning(
 
 
 def call_mcp_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """按工具名分发到实现；未知工具抛 KeyError，参数错误抛 ValueError。
+    """按工具名分发到实现；未知工具抛 KeyError，被禁用抛 MCPToolDisabledError，参数错误抛 ValueError。
 
     返回值为可直接 JSON 序列化的 dict，调用方（stdio server）负责包装成 MCP 结果。
     只读工具额外附带 `project_dir_valid` 告警（见 `_attach_project_dir_warning`）。
+    禁用名单实时读设置：用户在界面关掉工具后，下一次调用即被拒绝（防绕过 tools/list 缓存）。
     """
     handler = _TOOL_HANDLERS.get(name)
     if handler is None:
         raise KeyError(f"unknown tool: {name}")
+    if name in disabled_mcp_tool_names():
+        raise MCPToolDisabledError(f"工具已由用户在 GalTransl 设置中禁用: {name}")
     args = arguments if isinstance(arguments, dict) else {}
     started = time.time()
     result = handler(args)

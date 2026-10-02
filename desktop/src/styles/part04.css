@@ -387,6 +387,65 @@
   margin-top: 4px;
 }
 
+/* ── MCP 门禁 / 工具开关 ── */
+/* 列布局变体：标签独占一行，hint/工具列表换行排在其下 */
+.settings-field--column {
+  flex-wrap: wrap;
+}
+
+.settings-field--column > .settings-hint,
+.settings-field--column > .settings-error,
+.settings-field--column > .mcp-tool-toolbar,
+.settings-field--column > .mcp-tool-group {
+  width: 100%;
+}
+
+.mcp-tool-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mcp-tool-group-title {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin: 8px 0 2px;
+}
+
+.mcp-tool-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.mcp-tool-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.mcp-tool-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-tool-name {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  color: var(--color-text-primary);
+}
+
+.mcp-tool-desc {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── 问题检测项 ── */
 .settings-problem-types {
   display: flex;

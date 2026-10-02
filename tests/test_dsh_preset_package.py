@@ -160,11 +160,29 @@ class PersonaFieldTests(unittest.TestCase):
             with self.subTest(tool=definition["name"]):
                 self.assertIn(definition["name"].replace("galtransl_", ""), prefix)
 
-    def test_persona_states_h_gate_and_deny_handling(self) -> None:
-        # H 门禁会被 agent 撞上，提示词必须说明「被拒就如实转告，不要改写措辞重试」
+    def test_persona_h_guidance_defers_to_mcp_instructions(self) -> None:
+        # H 门禁可在 GalTransl 设置中开闭，服务说明随设置变化；persona 是静态文本，
+        # 必须写成条件式并锚定服务说明——否则关门禁后 persona 仍在替用户拒绝 H 任务。
+        # 无条件的旧口径「写工具有 H 硬门禁」不得回归。
         prefix = self._persona_prefix()
-        self.assertIn("H 硬门禁", prefix)
-        self.assertIn("重试", prefix)
+        self.assertIn("以 galtransl MCP 服务的使用说明", prefix)
+        self.assertIn("用户已在 GalTransl 设置中关闭 H 门禁", prefix)
+        self.assertIn("不要**改写措辞重试", prefix)  # 被拒行为预案保留（含否定词，门禁开时生效）
+        self.assertNotIn("写工具有 H 硬门禁", prefix)
+
+    def test_persona_h_anchors_match_instruction_texts(self) -> None:
+        # 跨模块互锁：persona 引用的两态锚定词必须逐字命中 build_server_instructions
+        # 的对应文案（任一侧改文案忘了同步另一侧时立即暴露）
+        from GalTransl.mcp_tools import build_server_instructions
+
+        prefix = self._persona_prefix()
+        self.assertIn("禁止查看 H", build_server_instructions())
+        self.assertIn(
+            "用户已在 GalTransl 设置中关闭 H 门禁",
+            build_server_instructions(h_gate_enabled=False),
+        )
+        self.assertIn("禁止查看 H", prefix)
+        self.assertIn("用户已在 GalTransl 设置中关闭 H 门禁", prefix)
 
     def test_persona_states_project_dir_write_validation(self) -> None:
         # L3 白名单会让写工具报错，提示词应预告这一点，避免 agent 反复试错

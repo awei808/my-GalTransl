@@ -11,6 +11,7 @@ import type {
   InputStatsResult,
   Job,
   JobsResponse,
+  McpToolInfo,
   ModelCheckResult,
   PluginInfo,
   PluginsResponse,
@@ -109,6 +110,14 @@ export async function updateAppSettings(settings: AppSettings) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
   });
+}
+
+// ---- MCP tools ----
+
+/** 获取 MCP 工具清单（名称/描述/读写类别，后端为唯一真源），供设置页渲染工具开关 */
+export async function fetchMcpTools() {
+  const response = await apiRequest<{ tools: McpToolInfo[] }>("/api/mcp-tools");
+  return response.tools;
 }
 
 // ---- Prompt templates ----

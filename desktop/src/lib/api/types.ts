@@ -617,6 +617,16 @@ export type AppSettings = {
   maxConcurrentJobs?: number;
   writeApiCallLog?: boolean;
   writeFrontendLog?: boolean;
+  /** MCP 写工具的 H 门禁开关（默认开启；MCP 独立进程实时读同一份 app_settings.json） */
+  mcpHGateEnabled?: boolean;
+  /** 被禁用的 MCP 工具名黑名单（未列入者默认启用） */
+  mcpDisabledTools?: string[];
+};
+
+export type McpToolInfo = {
+  name: string;
+  description: string;
+  kind: "read" | "write";
 };
 
 export type ThemeMode =

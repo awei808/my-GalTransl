@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onMount, Show } from "solid-js";
+import { createSignal, createEffect, onMount, Show, For } from "solid-js";
 import { appState, setAppState, navigateTo, getActiveConfigFileName } from "../../stores/appStore";
 import {
   getThemeModePreference,
@@ -29,10 +29,10 @@ import {
   CACHE_PAGE_SIZE_MIN,
   CACHE_PAGE_SIZE_MAX,
 } from "../../lib/api/preferences";
-import { fetchVersion, fetchVersionCheck, fetchAppSettings, updateAppSettings } from "../../lib/api/general";
+import { fetchVersion, fetchVersionCheck, fetchAppSettings, updateAppSettings, fetchMcpTools } from "../../lib/api/general";
 import { APP_SETTINGS_TAXONOMY } from "../../lib/settings-taxonomy";
 import { fetchProjectConfig, updateProjectConfig } from "../../lib/api/project";
-import type { ThemeMode } from "../../lib/api/types";
+import type { AppSettings, McpToolInfo, ThemeMode } from "../../lib/api/types";
 import { applyThemePreference } from "../../lib/theme";
 import { compressImageToDataUrl } from "./imageCompress";
 import { getErrorMessage } from "../../lib/errors";
@@ -82,6 +82,14 @@ export function SettingsPage() {
   const [apiLogSaving, setApiLogSaving] = createSignal(false);
   const [apiLogError, setApiLogError] = createSignal("");
 
+  // ── MCP 门禁 ──（后端全局 app_settings.json；MCP 独立进程实时读同一份文件）
+  const [mcpHGate, setMcpHGate] = createSignal(true);
+  const [mcpDisabledTools, setMcpDisabledTools] = createSignal<string[]>([]);
+  const [mcpTools, setMcpTools] = createSignal<McpToolInfo[]>([]);
+  const [mcpToolsLoading, setMcpToolsLoading] = createSignal(false);
+  const [mcpSaving, setMcpSaving] = createSignal(false);
+  const [mcpError, setMcpError] = createSignal("");
+
   onMount(() => {
     fetchVersion()
       .then((v) => {
@@ -99,12 +107,23 @@ export function SettingsPage() {
       .catch((e: Error) => setVerError(e.message))
       .finally(() => setCheckingVer(false));
 
-    // 加载后端全局日志开关（api_calls.log）
+    // 加载后端全局日志开关（api_calls.log）与 MCP 门禁设置
     setApiLogLoading(true);
     fetchAppSettings()
-      .then((s) => setWriteApiCallLog(s.writeApiCallLog ?? false))
+      .then((s) => {
+        setWriteApiCallLog(s.writeApiCallLog ?? false);
+        setMcpHGate(s.mcpHGateEnabled ?? true);
+        setMcpDisabledTools(s.mcpDisabledTools ?? []);
+      })
       .catch(() => {})
       .finally(() => setApiLogLoading(false));
+
+    // MCP 工具清单（后端为唯一真源），供工具开关列表渲染
+    setMcpToolsLoading(true);
+    fetchMcpTools()
+      .then((tools) => setMcpTools(tools))
+      .catch(() => {})
+      .finally(() => setMcpToolsLoading(false));
   });
 
   // ── 处理函数 ──
@@ -295,19 +314,69 @@ export function SettingsPage() {
     }
   }
 
-  async function applyApiCallLog(enabled: boolean) {
+  // ── 全局设置保存：本地先行（乐观更新）+ 串行化排队写后端 ──
+  // /api/app-settings 是全量覆盖写：api_calls.log 与 MCP 门禁共用同一条队列，
+  // 否则两个区块并发的 read-modify-write 会互相覆盖字段；连续快速切换同理。
+  let settingsSaveChain: Promise<unknown> = Promise.resolve();
+  let settingsSavePending = 0;
+
+  function queueSettingsSave(
+    patch: Partial<AppSettings>,
+    label: string,
+    setError: (msg: string) => void,
+  ) {
+    settingsSavePending += 1;
+    setMcpSaving(true);
     setApiLogSaving(true);
-    setApiLogError("");
-    try {
-      const cur = await fetchAppSettings();
-      const next = { ...cur, writeApiCallLog: enabled };
-      await updateAppSettings(next);
-      setWriteApiCallLog(enabled);
-    } catch (e) {
-      setApiLogError(`保存 api_calls.log 设置失败：${getErrorMessage(e)}`);
-    } finally {
-      setApiLogSaving(false);
-    }
+    settingsSaveChain = settingsSaveChain
+      .then(async () => {
+        const cur = await fetchAppSettings();
+        await updateAppSettings({ ...cur, ...patch });
+        setError("");
+      })
+      .catch((e: Error) => {
+        setError(`保存${label}失败：${getErrorMessage(e)}`);
+        // 仅最后一笔失败时回读服务端纠偏，避免回弹用户在失败后刚点的状态
+        if (settingsSavePending === 1) {
+          return fetchAppSettings()
+            .then((s) => {
+              setWriteApiCallLog(s.writeApiCallLog ?? false);
+              setMcpHGate(s.mcpHGateEnabled ?? true);
+              setMcpDisabledTools(s.mcpDisabledTools ?? []);
+            })
+            .catch(() => {});
+        }
+      })
+      .finally(() => {
+        settingsSavePending -= 1;
+        if (settingsSavePending <= 0) {
+          setMcpSaving(false);
+          setApiLogSaving(false);
+        }
+      });
+  }
+
+  function applyApiCallLog(enabled: boolean) {
+    setWriteApiCallLog(enabled);
+    queueSettingsSave({ writeApiCallLog: enabled }, " api_calls.log 设置", setApiLogError);
+  }
+
+  function applyMcpHGate(enabled: boolean) {
+    setMcpHGate(enabled);
+    queueSettingsSave({ mcpHGateEnabled: enabled }, " MCP 门禁设置", setMcpError);
+  }
+
+  function toggleMcpTool(name: string, enabled: boolean) {
+    const next = enabled
+      ? mcpDisabledTools().filter((n) => n !== name)
+      : [...mcpDisabledTools(), name];
+    setMcpDisabledTools(next);
+    queueSettingsSave({ mcpDisabledTools: next }, " MCP 门禁设置", setMcpError);
+  }
+
+  function enableAllMcpTools() {
+    setMcpDisabledTools([]);
+    queueSettingsSave({ mcpDisabledTools: [] }, " MCP 门禁设置", setMcpError);
   }
 
   return (
@@ -335,13 +404,92 @@ export function SettingsPage() {
             <span class="settings-label">插件管理</span>
             <span class="settings-about-value settings-about-link">查看已安装插件 →</span>
           </div>
-          <div
-            class="settings-field"
-            style="cursor:pointer; border-bottom:none"
-            onClick={() => navigateTo("prompt-templates")}
-          >
+          <div class="settings-field" style="cursor:pointer" onClick={() => navigateTo("prompt-templates")}>
             <span class="settings-label">提示词模板</span>
             <span class="settings-about-value settings-about-link">编辑默认提示词 →</span>
+          </div>
+
+          <div class="settings-field settings-field--column">
+            <span class="settings-label">
+              MCP H 门禁
+              <span class="settings-hint-inline">（拦截外部 agent 经 MCP 写入 H 内容）</span>
+            </span>
+            <label class="settings-toggle">
+              <input
+                type="checkbox"
+                checked={mcpHGate()}
+                disabled={mcpSaving()}
+                onChange={(e) => applyMcpHGate(e.currentTarget.checked)}
+              />
+              <span class="settings-toggle-knob" />
+            </label>
+            <p class="settings-hint">
+              关闭后，外部 agent 经 MCP 写入路线图/元数据时不再拦截 H 内容；不影响翻译流程自身的 H 词过滤。
+            </p>
+          </div>
+
+          <div class="settings-field settings-field--column" style="border-bottom:none">
+            <span class="settings-label">
+              MCP 工具开关
+              <span class="settings-hint-inline">
+                （控制外部 agent 可用的工具；保存后下一次 MCP 调用即生效，建议重开 agent 会话刷新工具清单）
+              </span>
+            </span>
+            <Show when={mcpError()}>
+              <div class="settings-error">{mcpError()}</div>
+            </Show>
+            <Show
+              when={mcpTools().length > 0}
+              fallback={
+                <p class="settings-hint">
+                  {mcpToolsLoading() ? "工具清单加载中…" : "工具清单加载失败，请确认后端已运行。"}
+                </p>
+              }
+            >
+              <div class="mcp-tool-toolbar">
+                <button
+                  class="btn btn--sm"
+                  onClick={enableAllMcpTools}
+                  disabled={mcpSaving() || mcpDisabledTools().length === 0}
+                >
+                  全部启用
+                </button>
+                <span class="settings-hint">
+                  已启用 {mcpTools().filter((t) => !mcpDisabledTools().includes(t.name)).length}/
+                  {mcpTools().length}
+                </span>
+              </div>
+              <For each={[{ kind: "read" as const, title: "只读检索" }, { kind: "write" as const, title: "写入" }]}>
+                {(group) => (
+                  <div class="mcp-tool-group">
+                    <div class="mcp-tool-group-title">
+                      {group.title}（{mcpTools().filter((t) => t.kind === group.kind).length} 个）
+                    </div>
+                    <For each={mcpTools().filter((t) => t.kind === group.kind)}>
+                      {(tool) => (
+                        <div class="mcp-tool-row">
+                          <div class="mcp-tool-text">
+                            <span class="mcp-tool-name">{tool.name}</span>
+                            <span class="mcp-tool-desc" title={tool.description}>
+                              {tool.description}
+                            </span>
+                          </div>
+                          <label class="settings-toggle">
+                            <input
+                              type="checkbox"
+                              checked={!mcpDisabledTools().includes(tool.name)}
+                              disabled={mcpSaving()}
+                              onChange={(e) => toggleMcpTool(tool.name, e.currentTarget.checked)}
+                            />
+                            <span class="settings-toggle-knob" />
+                          </label>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                )}
+              </For>
+            </Show>
           </div>
         </section>
 
@@ -638,7 +786,7 @@ export function SettingsPage() {
                 type="checkbox"
                 checked={writeApiCallLog()}
                 disabled={apiLogLoading() || apiLogSaving()}
-                onChange={(e) => void applyApiCallLog(e.currentTarget.checked)}
+                onChange={(e) => applyApiCallLog(e.currentTarget.checked)}
               />
               <span class="settings-toggle-knob" />
             </label>

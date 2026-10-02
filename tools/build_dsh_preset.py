@@ -92,7 +92,8 @@ def main() -> int:
     if current == rendered:
         print(f"已是最新，无需改动：{target}")
         return 0
-    target.write_text(rendered, encoding="utf-8")
+    # newline 固定 LF：.gitattributes 规定 *.yml eol=lf，Windows 默认 CRLF 会与之相悖
+    target.write_text(rendered, encoding="utf-8", newline="\n")
     print(f"已生成：{target}")
     return 0
 
