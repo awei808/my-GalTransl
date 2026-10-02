@@ -150,15 +150,13 @@ class MetadataWriteToolTests(unittest.TestCase):
             write_metadata(self.project_dir, "filemeta", "../evil", {})
         self.assertFalse(os.path.isfile(victim))
 
-    def test_plotroute_and_globalprompt_kinds(self) -> None:
-        write_metadata(self.project_dir, "plotroute", "", {"mermaid": 'flowchart TD\n  A["x"]'})
-        write_metadata(self.project_dir, "globalprompt", "", {"概要": "无"})
-        self.assertTrue(
-            os.path.isfile(os.path.join(self.project_dir, "transl_cache", "pass0_cache", "PlotRouteMap.json"))
-        )
-        self.assertTrue(
-            os.path.isfile(os.path.join(self.project_dir, "transl_cache", "pass0_cache", "GlobalPrompt.json"))
-        )
+    def test_plotroute_and_globalprompt_kinds_are_closed(self) -> None:
+        # 收窄：plotroute 必须走 write_route_map（mermaid 校验），globalprompt 由流水线生成；
+        # 旧版 save_metadata 可整包覆盖写这两个产物，绕过 mermaid 校验，已堵死
+        for kind in ("plotroute", "globalprompt"):
+            with self.subTest(kind=kind):
+                with self.assertRaises(ValueError):
+                    write_metadata(self.project_dir, kind, "", {"mermaid": "不是 mermaid"})
 
 
 class HGateTests(unittest.TestCase):
@@ -194,9 +192,11 @@ class HGateTests(unittest.TestCase):
             os.path.isfile(os.path.join(self.project_dir, "transl_cache", "pass0_cache", "PlotRouteMap.json"))
         )
 
-    def test_metadata_with_h_text_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            write_metadata(self.project_dir, "globalprompt", "", {"剧情": "攀上顶峰"})
+    def test_save_metadata_kind_enum_is_narrowed(self) -> None:
+        # 工具 schema 的 kind 枚举必须与 write_metadata 的白名单一致（plotroute/globalprompt 不再暴露）
+        save_def = next(d for d in MCP_TOOL_DEFS if d["name"] == "galtransl_save_metadata")
+        self.assertEqual(save_def["input_schema"]["properties"]["kind"]["enum"], ["filemeta", "batchmeta"])
+        self.assertIn("write_route_map", save_def["description"])
 
     def test_h_gate_message_tells_agent_to_defer_to_user(self) -> None:
         # 拒绝文案必须引导 agent 如实转告用户，而非静默重试
@@ -307,6 +307,92 @@ class JobToolTests(unittest.TestCase):
                 call_mcp_tool("galtransl_stop_job", {"project_dir": self.project_dir})
         self.assertIn("GalTransl 后端", str(ctx.exception))
 
+    def test_get_job_status_filters_by_project_and_slims_runtime(self) -> None:
+        jobs_payload = {
+            "jobs": [
+                {
+                    "job_id": "b",
+                    "project_dir": self.project_dir,
+                    "status": "running",
+                    "translator": "ForGal-full-pipeline",
+                    "config_file_name": "config.inc.yaml",
+                    "file_filter": ["01_a.json"],
+                    "created_at": "2",
+                    "started_at": "2",
+                    "finished_at": None,
+                    "success": False,
+                    "error": None,
+                },
+                {"job_id": "other", "project_dir": "D:/somewhere_else", "status": "completed"},
+            ]
+        }
+        runtime_payload = {
+            "stage": "翻译执行",
+            "stage_index": 7,
+            "stage_total": 9,
+            "current_file": "01_a.json",
+            "summary": {"total": 10, "translated": 4, "percent": 40.0},
+            # 大字段必须被白名单挡在返回体外（上下文纪律）
+            "translation_previews": {"w1": "不透传"},
+            "recent_successes": ["不透传"],
+        }
+        with mock.patch(
+            "GalTransl.mcp_backend_client.get_json", side_effect=[jobs_payload, runtime_payload]
+        ) as m:
+            result = call_mcp_tool("galtransl_get_job_status", {"project_dir": self.project_dir})
+        self.assertEqual(result["active_job"]["job_id"], "b")
+        self.assertEqual(result["active_job"]["file_filter"], ["01_a.json"])
+        self.assertEqual([job["job_id"] for job in result["recent_jobs"]], ["b"])
+        self.assertEqual(result["runtime"]["stage"], "翻译执行")
+        self.assertEqual(result["runtime"]["summary"]["percent"], 40.0)
+        self.assertNotIn("translation_previews", result["runtime"])
+        self.assertNotIn("recent_successes", result["runtime"])
+        self.assertEqual(m.call_args_list[0].args[0], "/api/jobs")
+        self.assertTrue(m.call_args_list[1].args[0].endswith("/runtime"))
+
+    def test_get_job_status_no_jobs_yields_null_active(self) -> None:
+        with mock.patch(
+            "GalTransl.mcp_backend_client.get_json",
+            side_effect=[{"jobs": []}, {"stage": "", "summary": {}}],
+        ):
+            result = call_mcp_tool("galtransl_get_job_status", {"project_dir": self.project_dir})
+        self.assertIsNone(result["active_job"])
+        self.assertEqual(result["recent_jobs"], [])
+
+    def test_check_model_posts_expected_payload(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.post_json", return_value={"success": True}) as m:
+            result = call_mcp_tool(
+                "galtransl_check_model",
+                {"project_dir": self.project_dir, "translator": "ForGal-full-pipeline"},
+            )
+        self.assertTrue(result["check"]["success"])
+        path, payload = m.call_args.args
+        self.assertTrue(path.startswith("/api/projects/"))
+        self.assertTrue(path.endswith("/check-model"))
+        self.assertEqual(payload["translator"], "ForGal-full-pipeline")
+        # config 未传时按项目探测（本 fixture 建的是 config.inc.yaml）
+        self.assertEqual(payload["config_file_name"], "config.inc.yaml")
+        self.assertEqual(result["config_file_name"], "config.inc.yaml")
+
+    def test_check_model_requires_translator(self) -> None:
+        with self.assertRaises(ValueError):
+            call_mcp_tool("galtransl_check_model", {"project_dir": self.project_dir})
+
+    def test_check_model_passes_optional_fields(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.post_json", return_value={}) as m:
+            call_mcp_tool(
+                "galtransl_check_model",
+                {
+                    "project_dir": self.project_dir,
+                    "translator": "t",
+                    "config_file_name": "config.yaml",
+                    "backend_profile": "p1",
+                },
+            )
+        payload = m.call_args.args[1]
+        self.assertEqual(payload["config_file_name"], "config.yaml")
+        self.assertEqual(payload["backend_profile"], "p1")
+
 
 class ProjectDirValidationTests(unittest.TestCase):
     """L3 路径白名单：写工具只接受可识别的 GalTransl 项目。"""
@@ -361,13 +447,13 @@ class ProjectDirValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             call_mcp_tool(
                 "galtransl_save_metadata",
-                {"project_dir": repo_root, "kind": "globalprompt", "entry": {"a": 1}},
+                {"project_dir": repo_root, "kind": "filemeta", "filename": "a", "entry": {"a": 1}},
             )
 
     def test_valid_project_still_writable(self) -> None:
         result = call_mcp_tool(
             "galtransl_save_metadata",
-            {"project_dir": self.project_dir, "kind": "globalprompt", "entry": {"概要": "校园"}},
+            {"project_dir": self.project_dir, "kind": "batchmeta", "filename": "01_a", "entry": {"视角": "第一人称"}},
         )
         self.assertTrue(result["success"])
 
@@ -390,7 +476,7 @@ class ProjectDirValidationTests(unittest.TestCase):
         # write_route_map / write_metadata 是公开入口，不能只依赖处理器层的校验，
         # 否则直接调用者（未来复用方）可绕过 L3
         with self.assertRaises(ValueError):
-            write_metadata(self.bare_dir, "globalprompt", "", {"a": 1})
+            write_metadata(self.bare_dir, "filemeta", "a", {"a": 1})
         with self.assertRaises(ValueError):
             write_route_map(self.bare_dir, {"mermaid": 'flowchart TD\n  A["x"]'})
 
@@ -416,17 +502,17 @@ class ReadToolProjectDirWarningTests(unittest.TestCase):
         result = call_mcp_tool("galtransl_search_scripts", {"project_dir": self.project_dir, "query": "x"})
         self.assertTrue(result["project_dir_valid"])
 
-    def test_read_only_set_is_eleven_and_disjoint_from_write(self) -> None:
+    def test_read_only_set_is_thirteen_and_disjoint_from_write(self) -> None:
         writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 11)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 13)
         self.assertEqual(_READ_ONLY_TOOL_NAMES & writes, frozenset())
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 15)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 17)
 
     def test_write_tool_success_is_not_annotated_with_warning(self) -> None:
         # 写工具已硬校验，成功返回体不应再被附加 project_dir_valid
         result = call_mcp_tool(
             "galtransl_save_metadata",
-            {"project_dir": self.project_dir, "kind": "globalprompt", "entry": {"概要": "校园"}},
+            {"project_dir": self.project_dir, "kind": "batchmeta", "filename": "01_a", "entry": {"视角": "第三人称"}},
         )
         self.assertTrue(result["success"])
         self.assertNotIn("project_dir_valid", result)

@@ -1,9 +1,10 @@
-"""MCP 工具层：面向外部 agent 的能力（0.5.1 只读检索；0.6.0 增写工具）。
+"""MCP 工具层：面向外部 agent 的能力（0.5.1 只读检索；0.6.0 增写工具与作业域查询）。
 
-11 个检索工具为纯读磁盘的纯函数风格；4 个写工具（路线图/元数据/提交/停止任务）
-同样以显式 project_dir 为边界，写入范围仅限项目内指定产物，无任意路径写、无命令执行。
+11 个检索工具为纯读磁盘的纯函数风格；2 个作业域查询（任务状态/模型探测）与 4 个写工具
+（路线图/元数据/提交/停止任务）经 HTTP 回后端（见 mcp_backend_client）。
+所有工具以显式 project_dir 为边界，写入范围仅限项目内指定产物，无任意路径写、无命令执行。
 本模块不依赖任何 MCP 传输实现，供独立 stdio server（run_mcp_server.py）与未来内置 agent 共用，
-避免上游「工具全走 HTTP 打自家 REST」的架构绕路（例外：作业域 2 个工具需回后端，见 mcp_backend_client）。
+避免上游「工具全走 HTTP 打自家 REST」的架构绕路。
 """
 from __future__ import annotations
 
@@ -309,6 +310,10 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
     input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+    # 文件名清单一并返回：read_translation_file / read_source_script 都需要 filename，
+    # 概览是 agent 拿到清单的主要入口（count 由清单派生，避免双重遍历）
+    script_names = _list_files(input_dir, ".json") if os.path.isdir(input_dir) else []
+    cache_names = _list_files(cache_dir, ".json") if os.path.isdir(cache_dir) else []
     # 配置口径以真实项目为准：common 段承载 language / workersPerProject / gpt.* 扁平键
     common = config.get("common") if isinstance(config.get("common"), dict) else {}
     internals = config.get("internals") if isinstance(config.get("internals"), dict) else {}
@@ -328,8 +333,10 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "translation_guideline": common.get("gpt.translation_guideline", ""),
         "stage_backends": stage_backends,
         "pipeline_internals": pipeline_internals,
-        "script_files": len(_list_files(input_dir, ".json")) if os.path.isdir(input_dir) else 0,
-        "cache_files": len(_list_files(cache_dir, ".json")) if os.path.isdir(cache_dir) else 0,
+        "script_files": len(script_names),
+        "cache_files": len(cache_names),
+        "script_file_names": script_names,
+        "cache_file_names": cache_names,
         "has_name_dict": os.path.isfile(os.path.join(project_dir, "name替换表.csv"))
         or os.path.isfile(os.path.join(project_dir, "name替换表.xlsx")),
         "pipeline_stages": _pipeline_stages_payload(),
@@ -375,10 +382,10 @@ def _tool_read_source_script(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """读取三档元数据：globalprompt / filemeta / batchmeta。"""
+    """读取元数据：globalprompt / plotroute / filemeta / batchmeta。"""
     project_dir = _require_project_dir(arguments)
     kind = str(arguments.get("kind", "globalprompt") or "globalprompt").strip()
-    if kind not in ("globalprompt", "filemeta", "batchmeta", "all"):
+    if kind not in ("globalprompt", "plotroute", "filemeta", "batchmeta", "all"):
         raise ValueError(f"unsupported metadata kind: {kind}")
 
     def _load(path: str) -> Dict[str, Any]:
@@ -394,6 +401,9 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
         result["globalprompt"] = _load(
             os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json")
         )
+    if kind in ("plotroute", "all"):
+        # 复用 write_route_map 同源的读取（不存在返回 exists=False，不视为错误）
+        result["plotroute"] = read_route_map(project_dir)
     if kind == "all":
         pass1_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS1_CACHE_DIR)
         pass2_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR)
@@ -469,6 +479,70 @@ def _tool_stop_job(arguments: Dict[str, Any]) -> Dict[str, Any]:
     result = post_json(f"/api/projects/{encode_project_dir(project_dir)}/stop", {})
     LOGGER.info(f"[mcp] 已请求停止任务 project={project_dir}")
     return {"success": bool(result.get("success", True)), "project_dir": project_dir, "detail": result}
+
+
+# 作业状态返回体只取这些字段（to_dict 的全量字段里 file_filter/config_overrides 对 agent 有用，其余裁掉）
+_JOB_SUMMARY_FIELDS = (
+    "job_id",
+    "status",
+    "success",
+    "translator",
+    "config_file_name",
+    "file_filter",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "error",
+)
+
+# runtime 端点响应里的预览/TTFT/逐句事件对 agent 无用且体量大，只透传进度摘要
+_RUNTIME_SUMMARY_FIELDS = ("stage", "stage_index", "stage_total", "current_file", "summary")
+
+
+def _tool_get_job_status(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    from GalTransl.mcp_backend_client import get_json
+    from GalTransl.server_runtime import _normalize_project_dir, encode_project_dir
+
+    project_dir = _require_project_dir(arguments)
+    target = _normalize_project_dir(project_dir)
+    jobs_raw = get_json("/api/jobs").get("jobs")
+    mine = [
+        job
+        for job in (jobs_raw if isinstance(jobs_raw, list) else [])
+        if isinstance(job, dict) and _normalize_project_dir(str(job.get("project_dir", ""))) == target
+    ]
+    active = [job for job in mine if job.get("status") in ("pending", "running")]
+
+    def _slim(job: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: job.get(key) for key in _JOB_SUMMARY_FIELDS}
+
+    runtime_raw = get_json(f"/api/projects/{encode_project_dir(project_dir)}/runtime")
+    runtime = {key: runtime_raw.get(key) for key in _RUNTIME_SUMMARY_FIELDS}
+    return {
+        "project_dir": project_dir,
+        "active_job": _slim(active[0]) if active else None,
+        "recent_jobs": [_slim(job) for job in mine[:5]],
+        "runtime": runtime,
+    }
+
+
+def _tool_check_model(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    from GalTransl.mcp_backend_client import post_json
+    from GalTransl.server_runtime import encode_project_dir
+
+    project_dir = _require_project_dir(arguments)
+    translator = str(arguments.get("translator", "") or "").strip()
+    if not translator:
+        raise ValueError("translator 必填（如 ForGal-full-pipeline）")
+    config_file_name = (
+        str(arguments.get("config_file_name", "") or "").strip() or detect_config_file(project_dir)
+    )
+    payload: Dict[str, Any] = {"translator": translator, "config_file_name": config_file_name}
+    backend_profile = str(arguments.get("backend_profile", "") or "").strip()
+    if backend_profile:
+        payload["backend_profile"] = backend_profile
+    result = post_json(f"/api/projects/{encode_project_dir(project_dir)}/check-model", payload)
+    return {"project_dir": project_dir, "config_file_name": config_file_name, "check": result}
 
 
 # ---------- 路线图读写（供 MCP 写工具与后续 agent 复用） ----------
@@ -650,31 +724,26 @@ _METADATA_SUBDIRS = {
 
 
 def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, Any]) -> Dict[str, Any]:
-    """原子写入单文件元数据；kind 支持 filemeta / batchmeta / plotroute / globalprompt。
+    """原子写入单文件元数据；kind 仅支持 filemeta / batchmeta。
 
     走本模块自带的 .tmp + os.replace 原子写（HTTP 侧 filemeta/batchmeta 端点为直写，
     无原子性），并复用与 HTTP 端点同口径的文件名校验。
+    plotroute 必须走 write_route_map（mermaid 同口径校验 + 字段合并），globalprompt
+    由流水线生成——两者在此拒绝，避免绕过路线图校验的弱化写路径。
     """
     # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
     validate_project_dir(project_dir)
     if not isinstance(entry, dict):
         raise ValueError("entry 必须是 JSON 对象")
-    if kind == "plotroute":
-        enforce_h_gate(project_dir, texts=[json.dumps(entry, ensure_ascii=False)])
-        path = route_map_path(project_dir)
-    elif kind == "globalprompt":
-        enforce_h_gate(project_dir, texts=[json.dumps(entry, ensure_ascii=False)])
-        path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json")
-    elif kind in _METADATA_SUBDIRS:
-        name = str(filename or "").strip()
-        if not name:
-            raise ValueError(f"kind={kind} 时 filename 必填")
-        sub_dir, suffix = _METADATA_SUBDIRS[kind]
-        _ensure_safe_metadata_filename(name)
-        enforce_h_gate(project_dir, cache_filename=name)
-        path = os.path.join(project_dir, CACHE_FOLDERNAME, sub_dir, f"{name}{suffix}")
-    else:
-        raise ValueError(f"未知 kind: {kind}（可选 filemeta/batchmeta/plotroute/globalprompt）")
+    if kind not in _METADATA_SUBDIRS:
+        raise ValueError(f"未知 kind: {kind}（可选 filemeta/batchmeta；剧情路线图请走 write_route_map）")
+    name = str(filename or "").strip()
+    if not name:
+        raise ValueError(f"kind={kind} 时 filename 必填")
+    sub_dir, suffix = _METADATA_SUBDIRS[kind]
+    _ensure_safe_metadata_filename(name)
+    enforce_h_gate(project_dir, cache_filename=name)
+    path = os.path.join(project_dir, CACHE_FOLDERNAME, sub_dir, f"{name}{suffix}")
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp_path = path + ".tmp"
@@ -714,19 +783,21 @@ def _ensure_safe_metadata_filename(filename: str) -> None:
 
 # ---------- 约束下发（instructions / annotations） ----------
 
-SERVER_INSTRUCTIONS = """GalTransl 翻译项目管理服务（15 个工具：11 个只读检索 + 4 个写操作）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
+SERVER_INSTRUCTIONS = """GalTransl 翻译项目管理服务（17 个工具：13 个只读检索 + 4 个写操作）。所有工具都需提供翻译项目根目录的绝对路径 project_dir。
 
 使用前必须遵守：
-1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_*）不得引发任何写入。
+1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_* / check_model）不得引发任何写入。
    写工具仅这 4 个：write_route_map、save_metadata、submit_job、stop_job，各自只能改项目内的指定产物；
    本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。
-2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎。
-3. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，
+2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，
+   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。
+3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具直接读磁盘。
+4. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，
    不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。
-4. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。
-5. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。
-6. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。
-7. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。
+5. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。
+6. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。
+7. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。
+8. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。
 
 完整约束见随项目分发的 skills/galtransl-mcp/SKILL.md。"""
 
@@ -739,15 +810,28 @@ READ_ONLY_ANNOTATIONS: Dict[str, Any] = {
     "open_world_hint": False,
 }
 
+# check_model 会向外部模型端点发真实探测请求：不改用户环境，但访问开放世界——
+# 若沿用 READ_ONLY_ANNOTATIONS 的 open_world_hint=False，客户端可能据此免确认放行外部调用
+PROBE_ANNOTATIONS: Dict[str, Any] = {
+    "read_only_hint": True,
+    "destructive_hint": False,
+    "idempotent_hint": True,
+    "open_world_hint": True,
+}
+
 
 def tool_annotations(tool_def: Dict[str, Any]) -> Dict[str, Any]:
-    """按工具 kind 派生 MCP annotations：read → 只读声明，其它 → 空 dict。
+    """按工具定义派生 MCP annotations：定义自带覆盖 > kind 派生。
 
-    11 个检索工具只读本地磁盘、不改环境、同参数重复调用无额外副作用、不访问开放世界，
-    故统一映射为 READ_ONLY_ANNOTATIONS。写工具（kind=write）返回空 dict —— 绝不能下发
-    read_only_hint=True，否则客户端可能据此跳过用户确认直接执行写入。
-    返回副本，调用方改写不会污染模块级常量。
+    只读检索工具只读本地磁盘或经 HTTP 读后端状态、不改环境、同参数重复调用无额外
+    副作用，故 kind=read 统一映射为 READ_ONLY_ANNOTATIONS；例外由定义级 annotations
+    覆盖（check_model 对外发探测请求 → PROBE_ANNOTATIONS）。
+    写工具（kind=write）返回空 dict —— 绝不能下发 read_only_hint=True，否则客户端
+    可能据此跳过用户确认直接执行写入。返回副本，调用方改写不会污染模块级常量。
     """
+    override = tool_def.get("annotations")
+    if isinstance(override, dict) and override:
+        return dict(override)
     if str(tool_def.get("kind", "")) == "read":
         return dict(READ_ONLY_ANNOTATIONS)
     return {}
@@ -761,18 +845,23 @@ def _def(
     properties: Dict[str, Any],
     required: List[str],
     kind: str = "read",
+    annotations: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """构造单条 MCP 工具定义（字段名对齐 MCP Tool：name / description / inputSchema）。
 
-    kind 决定 tool_annotations() 下发的注解：read → read_only_hint=True。
+    kind 决定 tool_annotations() 的默认注解：read → READ_ONLY_ANNOTATIONS。
     写类工具必须显式传 kind="write"，否则会被误标为只读、可能让客户端跳过用户确认。
+    annotations 为定义级覆盖（如 check_model 的探测注解），仅在有值时写入条目。
     """
-    return {
+    item = {
         "name": name,
         "description": description,
         "input_schema": {"type": "object", "properties": properties, "required": required},
         "kind": kind,
     }
+    if annotations:
+        item["annotations"] = dict(annotations)
+    return item
 
 
 _PROJECT_PROP = {"type": "string", "description": "项目根目录绝对路径"}
@@ -892,18 +981,41 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_get_project_metadata",
-        "读取元数据：kind=globalprompt（全局分析）/ filemeta（文件元数据，需 filename）/ "
-        "batchmeta（批次元数据，需 filename）/ all（含可用文件名清单）。",
+        "读取元数据：kind=globalprompt（全局分析）/ plotroute（剧情路线图）/ "
+        "filemeta（文件元数据，需 filename）/ batchmeta（批次元数据，需 filename）/ all（含可用文件名清单）。",
         {
             "project_dir": _PROJECT_PROP,
             "kind": {
                 "type": "string",
-                "enum": ["globalprompt", "filemeta", "batchmeta", "all"],
+                "enum": ["globalprompt", "plotroute", "filemeta", "batchmeta", "all"],
                 "description": "要读取的元数据种类，默认 globalprompt",
             },
             "filename": {"type": "string", "description": "kind=filemeta/batchmeta 时必填"},
         },
         ["project_dir"],
+    ),
+    _def(
+        "galtransl_get_job_status",
+        "查询某项目最近的翻译任务与实时进度摘要（当前阶段、进度百分比、worker 数、速度、ETA）。"
+        "submit_job 之后可用它观察进度。需 GalTransl 后端在运行。",
+        {"project_dir": _PROJECT_PROP},
+        ["project_dir"],
+    ),
+    _def(
+        "galtransl_check_model",
+        "校验某项目所选后端的模型/令牌可用性。会向模型端点发起一次真实探测请求（消耗极小额度），"
+        "建议在 submit_job 前调用，避免提交后才发现配置失效。需 GalTransl 后端在运行。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "translator": {"type": "string", "description": "翻译引擎 ID，如 ForGal-full-pipeline"},
+            "config_file_name": {
+                "type": "string",
+                "description": "配置文件名，默认按项目探测（config.inc.yaml 优先）",
+            },
+            "backend_profile": {"type": "string", "description": "API 配置名（可选）"},
+        },
+        ["project_dir", "translator"],
+        annotations=PROBE_ANNOTATIONS,
     ),
 ]
 
@@ -926,16 +1038,17 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_save_metadata",
-        "原子写入单文件元数据。kind=filemeta/batchmeta 需 filename（不含扩展名），"
-        "kind=plotroute/globalprompt 不要 filename。entry 为要写入的完整 JSON 对象（整体覆盖）。",
+        "原子写入单文件元数据，kind=filemeta（文件级）或 batchmeta（批次级），均需 filename（不含扩展名）。"
+        "entry 为要写入的完整 JSON 对象（整体覆盖）。"
+        "剧情路线图请走 galtransl_write_route_map（带 mermaid 校验）；全局分析由流水线生成，不开放写入。",
         {
             "project_dir": _PROJECT_PROP,
             "kind": {
                 "type": "string",
-                "enum": ["filemeta", "batchmeta", "plotroute", "globalprompt"],
+                "enum": ["filemeta", "batchmeta"],
                 "description": "元数据种类",
             },
-            "filename": {"type": "string", "description": "kind=filemeta/batchmeta 时必填，不含扩展名"},
+            "filename": {"type": "string", "description": "必填，不含扩展名"},
             "entry": {"type": "object", "description": "要写入的完整元数据对象"},
         },
         ["project_dir", "kind", "entry"],
@@ -983,6 +1096,8 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_read_translation_file": _tool_read_translation_file,
     "galtransl_read_source_script": _tool_read_source_script,
     "galtransl_get_project_metadata": _tool_get_project_metadata,
+    "galtransl_get_job_status": _tool_get_job_status,
+    "galtransl_check_model": _tool_check_model,
     "galtransl_write_route_map": _tool_write_route_map,
     "galtransl_save_metadata": _tool_save_metadata,
     "galtransl_submit_job": _tool_submit_job,

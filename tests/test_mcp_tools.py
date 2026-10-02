@@ -1,6 +1,6 @@
 """mcp_tools 工具层单测（0.5.1 MCP 外部 agent 接入）。
 
-覆盖：工具定义与分发表一致性、JSON Schema 合法性、参数校验、11 个工具的行为。
+覆盖：工具定义与分发表一致性、JSON Schema 合法性、参数校验、17 个工具的行为。
 """
 import json
 import os
@@ -37,10 +37,10 @@ class ToolDefinitionTests(unittest.TestCase):
         def_names = {item["name"] for item in MCP_TOOL_DEFS}
         self.assertEqual(def_names, set(_TOOL_HANDLERS))
 
-    def test_tool_count_is_fifteen(self) -> None:
-        # 0.5.1：11 个只读检索；0.6.0：+4 个写工具（路线图/元数据/提交/停止任务）
-        self.assertEqual(len(MCP_TOOL_DEFS), 15)
-        self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "read"), 11)
+    def test_tool_count_is_seventeen(self) -> None:
+        # 0.5.1：11 个只读检索；0.6.0：+4 个写工具；0.6.x：+2 个作业域查询（状态/模型探测）
+        self.assertEqual(len(MCP_TOOL_DEFS), 17)
+        self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "read"), 13)
         self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "write"), 4)
 
     def test_all_names_are_prefixed_and_unique(self) -> None:
@@ -94,15 +94,21 @@ class ConstraintDeliveryTests(unittest.TestCase):
         # 文案必须与工具面一致：存在写工具时不得声称「全部工具只读」，
         # 否则 agent 会被诱导拒绝使用写工具
         self.assertNotIn("全部工具只读", SERVER_INSTRUCTIONS)
-        self.assertIn("11 个只读检索 + 4 个写操作", SERVER_INSTRUCTIONS)
+        self.assertIn("13 个只读检索 + 4 个写操作", SERVER_INSTRUCTIONS)
 
     def test_read_only_annotations_keys_match_sdk(self) -> None:
         # 键名必须与 mcp SDK ToolAnnotations 字段一致（SDK 升级改名时立即暴露）
+        from GalTransl.mcp_tools import PROBE_ANNOTATIONS
+
         self.assertEqual(
             set(READ_ONLY_ANNOTATIONS),
             {"read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"},
         )
+        # 两个常量必须同步演进，防止某一方在 SDK 改名后漂移出白名单
+        self.assertEqual(set(PROBE_ANNOTATIONS), set(READ_ONLY_ANNOTATIONS))
         for value in READ_ONLY_ANNOTATIONS.values():
+            self.assertIsInstance(value, bool)
+        for value in PROBE_ANNOTATIONS.values():
             self.assertIsInstance(value, bool)
 
     def test_tool_annotations_derives_from_kind(self) -> None:
@@ -110,6 +116,10 @@ class ConstraintDeliveryTests(unittest.TestCase):
             if item["kind"] != "read":
                 continue
             with self.subTest(tool=item["name"]):
+                if item.get("annotations"):
+                    # 定义级覆盖（check_model 的探测注解）优先于 kind 派生
+                    self.assertNotEqual(item["annotations"], READ_ONLY_ANNOTATIONS)
+                    continue
                 self.assertEqual(tool_annotations(item), READ_ONLY_ANNOTATIONS)
         # write 与缺 kind 的桩一律返回空 dict
         self.assertEqual(tool_annotations({"name": "x", "kind": "write"}), {})
@@ -120,6 +130,21 @@ class ConstraintDeliveryTests(unittest.TestCase):
         derived = tool_annotations(MCP_TOOL_DEFS[0])
         derived["read_only_hint"] = False
         self.assertTrue(READ_ONLY_ANNOTATIONS["read_only_hint"])
+
+    def test_check_model_declares_open_world(self) -> None:
+        # check_model 会向外部模型端点发真实探测请求：保持只读声明，但必须声明 open_world，
+        # 否则客户端可能据 open_world_hint=False 免确认放行一次外部调用
+        from GalTransl.mcp_tools import PROBE_ANNOTATIONS
+
+        check_def = next(d for d in MCP_TOOL_DEFS if d["name"] == "galtransl_check_model")
+        self.assertEqual(tool_annotations(check_def), PROBE_ANNOTATIONS)
+        self.assertTrue(PROBE_ANNOTATIONS["read_only_hint"])
+        self.assertTrue(PROBE_ANNOTATIONS["open_world_hint"])
+        # 其余只读工具仍是不访问开放世界的默认注解
+        for item in MCP_TOOL_DEFS:
+            if item["kind"] == "read" and item["name"] != "galtransl_check_model":
+                with self.subTest(tool=item["name"]):
+                    self.assertFalse(tool_annotations(item)["open_world_hint"])
 
     def test_def_kind_defaults_to_read_and_accepts_write(self) -> None:
         # kind 默认 read 保兼容；显式传 write 后必须不再被标注为只读，
@@ -132,9 +157,12 @@ class ConstraintDeliveryTests(unittest.TestCase):
         write_def = _def("t", "d", {}, [], kind="write")
         self.assertEqual(write_def["kind"], "write")
         self.assertEqual(tool_annotations(write_def), {})
+        # 定义级 annotations 覆盖 kind 派生（check_model 的探测注解依赖此机制）
+        probe_def = _def("t", "d", {}, [], annotations={"read_only_hint": False})
+        self.assertEqual(tool_annotations(probe_def), {"read_only_hint": False})
 
     def test_instructions_length_is_bounded(self) -> None:
-        # 防膨胀：instructions 过长有被客户端截断的风险（当前实测 1175 字节）
+        # 防膨胀：instructions 过长有被客户端截断的风险（当前实测 1847 字节）
         self.assertLessEqual(len(SERVER_INSTRUCTIONS.encode("utf-8")), 2000)
 
     def test_instructions_tool_count_matches_defs(self) -> None:
@@ -327,6 +355,10 @@ class ProjectReadToolTests(ProjectFixture):
         self.assertEqual(result["pipeline_internals"], {"enableGenDic": True})
         self.assertTrue(result["has_name_dict"])
         self.assertEqual(result["script_files"], 1)
+        self.assertEqual(result["script_file_names"], ["a.txt.json"])
+        # 缓存清单含 pass0/pass1 子目录产物，read_translation_file 可据此拿 filename
+        self.assertIn("test.json", result["cache_file_names"])
+        self.assertIn(os.path.join("pass0_cache", "GlobalPrompt.json").replace("\\", "/"), result["cache_file_names"])
         self.assertTrue(result["pipeline_stages"]["stages"])
 
     def test_overview_prefers_inc_config_variant(self) -> None:
@@ -376,10 +408,25 @@ class ProjectReadToolTests(ProjectFixture):
         self.assertTrue(result["globalprompt"]["exists"])
         self.assertEqual(result["globalprompt"]["entry"], {"故事背景": "校园"})
 
+    def test_get_project_metadata_plotroute(self) -> None:
+        # plotroute 读路径与 write_route_map 配对：写之前的「先读现状」靠它
+        result = self._call("galtransl_get_project_metadata", kind="plotroute")
+        self.assertFalse(result["plotroute"]["exists"])
+        _write_json(
+            os.path.join(self.project, "transl_cache", "pass0_cache", "PlotRouteMap.json"),
+            {"mermaid": "flowchart TD", "文件归属": {"a.json": "共通线"}},
+        )
+        result = self._call("galtransl_get_project_metadata", kind="plotroute")
+        self.assertTrue(result["plotroute"]["exists"])
+        self.assertEqual(result["plotroute"]["entry"]["mermaid"], "flowchart TD")
+
     def test_get_project_metadata_all_lists_available_files(self) -> None:
         result = self._call("galtransl_get_project_metadata", kind="all")
         self.assertEqual(result["filemeta_files"], ["a.meta.json"])
         self.assertEqual(result["batchmeta_files"], [])
+        # all 档同时带回 globalprompt 与 plotroute，供 agent 一次拿全
+        self.assertIn("globalprompt", result)
+        self.assertIn("plotroute", result)
 
     def test_get_project_metadata_filemeta_requires_filename(self) -> None:
         with self.assertRaises(ValueError):

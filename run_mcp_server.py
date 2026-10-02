@@ -1,7 +1,7 @@
 """GalTransl MCP Server（stdio 传输）。
 
 以标准 MCP 协议向外部 agent（CodeBuddy / Claude Desktop / Cherry Studio 等）暴露
-GalTransl 的只读工具（工具清单见 GalTransl/mcp_tools.py）。
+GalTransl 的检索与受限写入工具（工具清单见 GalTransl/mcp_tools.py）。
 
 独立进程运行：仅读磁盘上的项目文件，**不需要 GalTransl 后端在跑**。
 运行环境需同时具备 `mcp` 包与 GalTransl 的依赖（本项目开发环境已同时满足）。
@@ -47,8 +47,8 @@ from GalTransl.mcp_tools import (
 
 SERVER_NAME = "galtransl"
 SERVER_DESCRIPTION = (
-    "GalTransl 翻译项目管理（15 个工具：11 只读检索 + 4 受限写入）："
-    "翻译缓存、原始脚本、字典、人名表、日志、元数据、路线图、启停翻译任务"
+    "GalTransl 翻译项目管理（17 个工具：13 只读检索 + 4 受限写入）："
+    "翻译缓存、原始脚本、字典、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
 )
 
 

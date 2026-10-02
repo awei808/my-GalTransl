@@ -3,7 +3,7 @@
 > 版本：0.5.1 起提供只读检索；0.6.0 起增加 4 个受限写工具。让外部 agent
 > （CodeBuddy / Claude Desktop / Cherry Studio / dsh 等 MCP 客户端）
 > 检索 GalTransl 项目的术语、译文、字典、人名表、日志与元数据，并写入路线图/元数据、启停翻译任务。
-> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（15 个工具）。
+> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（17 个工具）。
 
 ---
 
@@ -15,10 +15,11 @@
 - 某角色名是否已进译名表、正文用名是否与译名表一致
 - 某类问题译文（残留日文、词频过高…）分布在哪些文件、哪些行
 
-**能力边界**：11 个只读检索工具不需要后端运行（直接读项目文件）；
+**能力边界**：11 个本地只读检索工具不需要后端运行（直接读项目文件）；
+2 个作业域查询工具（任务状态 / 模型探测）只读后端状态、不落盘；
 4 个写工具（路线图 / 元数据 / 提交任务 / 停止任务）只能改项目内的指定产物，
 **不提供任意路径读写、不提供命令执行、不修改程序配置**。
-其中提交/停止任务需要 GalTransl 后端在运行。
+其中任务状态查询 / 模型探测 / 提交 / 停止这 4 个需要 GalTransl 后端在运行（作业状态只在后端进程内）。
 
 > 0.6.0 起本 MCP 是 GalTransl 官方的 Agent 接入方式：程序本体不再内置 Agent。
 
@@ -34,7 +35,7 @@
 | GalTransl 的依赖 | `PyYAML` / `orjson` / `requests` 等（见 `requirements.txt`） |
 
 本项目内已有两个可用环境，均实测通过（`initialize` 协商 + 工具清单 + 真实项目检索；
-接入验收时是 11 个只读工具，**0.6.0 起为 15 个**）：
+接入验收时是 11 个只读工具，**0.6.0 起为 15 个、0.6.x 起为 17 个**）：
 
 | 环境 | 说明 |
 |---|---|
@@ -115,9 +116,9 @@ pip install "mcp>=2.0,<3.0"
 
 ---
 
-## 4. 可用工具（15 个 = 11 只读 + 4 写入）
+## 4. 可用工具（17 个 = 13 只读 + 4 写入）
 
-### 只读检索（不需要后端运行）
+### 只读检索（本地 11 项免后端；作业域 2 项需后端）
 
 | 工具 | 用途 |
 |---|---|
@@ -131,14 +132,16 @@ pip install "mcp>=2.0,<3.0"
 | `galtransl_get_project_overview` | 项目概览（目标语言、每请求条数、注入块开关、流水线阶段） |
 | `galtransl_read_translation_file` | 读取缓存文件条目（分页） |
 | `galtransl_read_source_script` | 读取原始脚本文件条目（分页） |
-| `galtransl_get_project_metadata` | 读元数据（globalprompt / filemeta / batchmeta） |
+| `galtransl_get_project_metadata` | 读元数据（globalprompt / plotroute / filemeta / batchmeta） |
+| `galtransl_get_job_status` | 查任务状态与实时进度摘要（阶段/百分比/worker/速度）——**需后端运行** |
+| `galtransl_check_model` | 校验模型/令牌可用性——**需后端运行**；发一次真实探测请求（消耗极小额度），建议 submit_job 前调用 |
 
 ### 写入（0.6.0 新增，受 H 门禁与路径约束）
 
 | 工具 | 用途 | 备注 |
 |---|---|---|
 | `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 需先读现状；mermaid 经生成侧校验；未提供字段保留旧值 |
-| `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta / plotroute / globalprompt |
+| `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta（plotroute 走 `write_route_map`，globalprompt 由流水线生成不开放写） |
 | `galtransl_submit_job` | 提交翻译任务 | **需后端运行**；会真实消耗 API 额度，仅在用户明确要求时调用 |
 | `galtransl_stop_job` | 停止项目当前任务 | **需后端运行**；无任务时 409 |
 
