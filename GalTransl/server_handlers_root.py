@@ -3,6 +3,7 @@
 搬迁内容：
 - do_GET / do_POST / do_PUT / do_DELETE 的 30 个 /api 路由（含版本、translators、
   jobs、backend-profiles、plugins、problem-types、translation-guidelines、
+  guides（使用指南）、
   dictionaries/common、openai-models、projects/init、log、dictionaries/parse 等）；
 - 请求解析与辅助：_handle_init_project / _handle_import_files / _parse_multipart_files /
   _parse_json_import_files / _collect_files_from_source_paths / _handle_parse_dictionary；
@@ -65,7 +66,13 @@ from GalTransl.server_dict import (
     _read_common_dict_category_map,
     _write_common_dict_category_map,
 )
-from GalTransl.server_meta import _list_problem_types, _list_translation_guidelines, _scan_plugins
+from GalTransl.server_meta import (
+    _list_guides,
+    _list_problem_types,
+    _list_translation_guidelines,
+    _read_guide,
+    _scan_plugins,
+)
 from GalTransl.server_scaffold import (
     _create_project_layout,
     _resolve_new_project_dir,
@@ -198,6 +205,22 @@ def do_get(handler: Any, registry: JobRegistry) -> None:
 
     if path == "/api/translation-guidelines":
         handler._send_json({"guidelines": _list_translation_guidelines()})
+        return
+
+    # 使用指南：列表 + 单篇读取（文件名白名单口径，见 _read_guide）
+    if path == "/api/guides":
+        handler._send_json({"guides": _list_guides()})
+        return
+
+    if path.startswith("/api/guides/"):
+        name = unquote(path.split("/", 3)[-1])
+        try:
+            handler._send_json({"name": name, "content": _read_guide(name)})
+        except FileNotFoundError:
+            handler._send_json({"error": "guide not found"}, status=HTTPStatus.NOT_FOUND)
+        except Exception as exc:
+            LOGGER.warning(f"读取指南 {name} 失败: {exc}")
+            handler._send_json({"error": f"failed to read guide: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
         return
 
     if path == "/api/projects/workspace-root":

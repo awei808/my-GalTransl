@@ -143,6 +143,7 @@ RELEASE_DIR = ROOT / "release"
 PLUGINS_DIR = ROOT / "plugins"
 DICT_DIR = ROOT / "Dict"
 GUIDELINES_DIR = ROOT / "translation_guidelines"
+GUIDES_DIR = ROOT / "guides"
 RES_DIR = ROOT / "res"
 
 BACKEND_ENTRY = ROOT / "run_backend.py"
@@ -606,6 +607,13 @@ def assemble_release(
     if GUIDELINES_DIR.exists():
         copy_dir_filtered(GUIDELINES_DIR, BUILD_DIR / "translation_guidelines")
         log_ok("指南 -> translation_guidelines/")
+
+    # 使用指南（帮助菜单「翻译指南」的内容载体）
+    if GUIDES_DIR.exists():
+        copy_dir_filtered(GUIDES_DIR, BUILD_DIR / "guides")
+        log_ok("使用指南 -> guides/")
+    else:
+        missing.append("guides/ 目录")
 
     # 资源
     if RES_DIR.exists():

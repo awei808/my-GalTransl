@@ -3,6 +3,7 @@
 职责：
 - 问题类型目录（_PROBLEM_TYPE_CATALOG / _list_problem_types）；
 - 翻译指南列表（_list_translation_guidelines）；
+- 使用指南列表与读取（_list_guides / _read_guide）；
 - 插件清单扫描（_scan_plugins）；
 - 项目人名替换表加载与查询（_load_project_name_dict / _lookup_name）。
 
@@ -138,6 +139,32 @@ def _list_translation_guidelines() -> list[str]:
         if lower.endswith(".md") or lower.endswith(".txt"):
             result.append(name)
     return result
+
+
+def _list_guides() -> list[str]:
+    """List user guide filenames under the ``guides`` folder (markdown only)."""
+    guides_dir = os.path.join(resolve_app_dir(), "guides")
+    if not os.path.isdir(guides_dir):
+        return []
+    result: list[str] = []
+    for name in sorted(os.listdir(guides_dir)):
+        full = os.path.join(guides_dir, name)
+        if os.path.isfile(full) and name.lower().endswith(".md"):
+            result.append(name)
+    return result
+
+
+def _read_guide(name: str) -> str:
+    """Read one user guide file by name.
+
+    仅接受 ``_list_guides()`` 列出的文件名（白名单口径），目录穿越与
+    非 markdown 文件一律以 FileNotFoundError 拒绝，由路由层转 404。
+    """
+    if name not in _list_guides():
+        raise FileNotFoundError(name)
+    path = os.path.join(resolve_app_dir(), "guides", name)
+    with open(path, "r", encoding="utf-8-sig") as f:
+        return f.read()
 
 
 def _scan_plugins() -> list[dict[str, Any]]:

@@ -37,7 +37,8 @@ ROOT_GET_ROUTES = [
     "/api/app-settings", "/api/project-config-template", "/api/pipeline-stages",
     "/api/prompt-templates", "/api/mcp-tools",
     "/api/backend-profiles", "/api/plugins", "/api/problem-types",
-    "/api/translation-guidelines", "/api/projects/workspace-root",
+    "/api/translation-guidelines", "/api/guides", "/api/guides/_probe_.md",
+    "/api/projects/workspace-root",
     "/api/dictionaries/common",
 ]
 
