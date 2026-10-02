@@ -19,7 +19,7 @@
 
 
 # 存在且上线前必须修复的bug/值得优化项
-- 首页如何开始和引导用户，
+- ~~首页如何开始和引导用户~~ **已完成**（首页「快速上手」三步卡：新建项目 → 配置 API → 启动翻译，各自可点击跳转；底部「查看完整指南 →」进使用指南入门篇）
 - 考虑合并自动生成字典功能至全局分析中，合并批次划分至文件元数据获取中；
 - 考虑取消翻译后端的强制绑多轮的限制，采用单轮对话
 - 输入框代码不复用，需优化
@@ -37,7 +37,7 @@
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
 - MCP 的 list_projects 只枚举 workspace 根，建在自定义位置的项目不会出现在该 MCP 工具列表里（UI 不受影响）。
-- 双击 AI 建议没有让用户知道有这个功能的提示
+- ~~双击 AI 建议没有让用户知道有这个功能的提示~~ **已完成**（首次进入校对页延时 toast 一次性提示，localStorage 标记只提示一次；校对指南篇同步说明该交互）
 - 0.5.4：新增左侧按钮“剧情路线图-简易agent界面” **已完成**（视图名 route-agent，按钮文案「路线图工作台」：RouteMapViewer 只渲染不显示源码、渲染失败/无 mermaid 退化为按路线分组的有序矩形列表；节点/矩形右键（或左键）多选文件加入底边栏 agent；AI 仅持 3 工具：read_route_map/write_route_map（整体覆盖+校验原子写）/search_file_metadata（POST /metadata/search），终端不经 AI 直连 /api/jobs；任务支持 file_filter 文件子集与 config_overrides 注入覆盖（Service→LLMTranslate 唯一过滤点，复用 globalPromptFiles 匹配口径）；JobState//runtime 透出任务范围，翻译控制台显示「文件范围: 仅 N 个文件」；执行配置按项目存 localStorage；agent 会话翻译运行中 409、同项目单飞）
   - 0.6.0 修订：**内置简易 agent 已整体移除**（`server_agent.py`、`/agent/chat`、`AgentPanel.tsx`、`AGENT_SYSTEM_PROMPT`、agent 反向互斥），路线图工作台**保留视图**但底边栏只剩「执行终端」；路线图读写逻辑迁入 `GalTransl/mcp_tools.py`（`read_route_map`/`write_route_map`），Agent 能力统一改由外置 dsh + MCP 提供。
 - **0.6.0 批次 6（文档收尾与一致性）已完成**：
@@ -122,7 +122,7 @@
 # 未来的大更新项
 - 0.4.1：跟进原项目进度，对原先缺失的功能修补，追加类似上有项目的视觉效果
 - 0.4.2：翻译控制台视觉效果总更新、字典界面视觉效果更新、首页新增“新建项目向导”
-- 0.4.3：恢复命令行版本的适配 **已完成**（CLI 恢复进度条/交互提示与配置文件自动探测，新增 -c/--config、--version 参数；补齐 CLI 工具引擎 recheck 全部重检 / check-batch-size 批次划分预检 / build-output 构建输出，新增 rebuildr / rebuilda 缓存重建引擎），补充翻译指南和项目地址的内容
+- 0.4.3：恢复命令行版本的适配 **已完成**（CLI 恢复进度条/交互提示与配置文件自动探测，新增 -c/--config、--version 参数；补齐 CLI 工具引擎 recheck 全部重检 / check-batch-size 批次划分预检 / build-output 构建输出，新增 rebuildr / rebuilda 缓存重建引擎），补充翻译指南和项目地址的内容 **已完成**（0.6.x：新增 guides/ 使用指南视图——后端 /api/guides 只读端点 + 前端 guide 视图，帮助菜单「翻译指南 / 项目地址 / 关于」三项接通，四页页内「指南」入口 + 首页上手卡）
 - 0.4.4：已有后端完善：对元数据的消费采用按需注入而非全量（如不将全局分析中的所有角色形象注入，仅注入文件元数据中包含的角色的角色形象）
 - 0.4.5：在翻译结果后处理阶段划分ai初步处理阶段：处理换行等基本问题、标注疑似错误、修正翻译风格；新增后端“词语色彩一致性检查”；允许每个阶段接入不同api接口
 - 0.4.6：字典支持正则且不会重复检查有重叠的词语 **已完成**（全部字典类型支持 `re:` 正则；`check_dic_use` 消费式去重，新增 `dictionary.skipOverlapCheck` 配置可回退旧口径；清理废弃代码：file_metadata 死注入链、/files 旧元数据兼容块、Sakura 端点队列死代码、相关过时措辞）；
