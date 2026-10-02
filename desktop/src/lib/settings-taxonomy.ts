@@ -324,7 +324,7 @@ export interface AppSettingsSectionMeta {
 
 /** 程序设置页分类骨架（与项目设置页命名一致） */
 export const APP_SETTINGS_TAXONOMY: AppSettingsSectionMeta[] = [
-  { id: "ai-api", title: "AI API 调用接口相关", desc: "后端连接、翻译插件与提示词模板。" },
+  { id: "ai-api", title: "AI API 调用接口相关", desc: "后端连接、翻译插件、提示词模板与 MCP 服务。" },
   { id: "backend", title: "后端服务配置（元数据 / 翻译 / 问题修复）", desc: "后端与问题修复后端的跳转与选择。" },
   { id: "display", title: "前端显示相关", desc: "主题、背景、字号与首页记忆。" },
   { id: "log", title: "日志相关", desc: "控制各类日志是否写入文件；error.log 始终写入。" },

@@ -245,6 +245,7 @@ describe("navigateTo 侧栏状态清理（整页视图不残留侧栏）", () =>
       "logs",
       "backend-profiles",
       "prompt-templates",
+      "mcp",
       "plugins",
       "project-config",
     ] as const;
@@ -278,6 +279,7 @@ describe("navigateTo 侧栏状态清理（整页视图不残留侧栏）", () =>
       "project-config",
       "backend-profiles",
       "prompt-templates",
+      "mcp",
       "plugins",
       "new-project",
       "route-agent",

@@ -152,6 +152,7 @@ const menus: MenuDef[] = [
       { label: "", separator: true },
       { label: "API 配置", action: () => navigateTo("backend-profiles") },
       { label: "提示词模板", action: () => navigateTo("prompt-templates") },
+      { label: "MCP 设置", action: () => navigateTo("mcp") },
       { label: "插件管理", action: () => navigateTo("plugins") },
       { label: "", separator: true },
       {

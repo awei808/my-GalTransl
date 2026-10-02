@@ -117,7 +117,7 @@
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善
 - 新增：对于行数小于20的文件，不用处理元数据
 - 翻译控制台的文件进度显示不完善：当前阶段完成后且未完成所有翻译任务时，显示的是“排队中”，而不是“已完成某个阶段”
-- **设置界面新增mcp门禁设置** **已完成**（位置在 AI API 调用接口相关-提示词模板下方：① MCP H 门禁开关（`app_settings.json` 的 `mcpHGateEnabled`，关闭后 `enforce_h_gate` 直接放行，SERVER_INSTRUCTIONS 第 4 条随开关改写为放行说明）；② MCP 工具逐个开关（`mcpDisabledTools` 黑名单，工具清单经新端点 `/api/mcp-tools` 下发供渲染；`tools/list`/调用分发/心跳均按启用集合过滤，调用被禁工具返回「已由用户禁用」，实时读设置无需重启；instructions/工具计数为 MCP 进程启动快照，重开 agent 会话刷新）。设置文件经 `resolve_app_dir()` 与打包版同目录，MCP 独立进程与后端读同一份；dsh 预设 persona 的 H 段同步改为条件式（以 MCP 服务说明为准，随门禁开关联动，未见到说明时保守按禁止处理），工具面段注明实际可用工具以会话挂载清单为准）
+- **设置界面新增mcp门禁设置** **已完成**（独立页面：设置页「AI API 调用接口相关」分区提示词模板下方留「MCP 服务与门禁 →」入口，标题栏「翻译」菜单同步加「MCP 设置」；页面含① MCP H 门禁开关（`app_settings.json` 的 `mcpHGateEnabled`，关闭后 `enforce_h_gate` 直接放行，SERVER_INSTRUCTIONS 第 4 条随开关改写为放行说明）；② MCP 工具逐个开关（`mcpDisabledTools` 黑名单，工具清单经新端点 `/api/mcp-tools` 下发供渲染；`tools/list`/调用分发/心跳均按启用集合过滤，调用被禁工具返回「已由用户禁用」，实时读设置无需重启；instructions/工具计数为 MCP 进程启动快照，重开 agent 会话刷新）。设置文件经 `resolve_app_dir()` 与打包版同目录，MCP 独立进程与后端读同一份；dsh 预设 persona 的 H 段同步改为条件式（以 MCP 服务说明为准，随门禁开关联动，未见到说明时保守按禁止处理），工具面段注明实际可用工具以会话挂载清单为准）
 
 # 未来的大更新项
 - 0.4.1：跟进原项目进度，对原先缺失的功能修补，追加类似上有项目的视觉效果

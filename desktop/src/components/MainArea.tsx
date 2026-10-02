@@ -11,6 +11,7 @@ import { ProjectConfigPage } from "../pages/project-config/ProjectConfigPage";
 import { BackendProfilesPage } from "../pages/backends/BackendProfilesPage";
 import { PluginsPage } from "../pages/plugins/PluginsPage";
 import { PromptTemplatesPage } from "../pages/prompts/PromptTemplatesPage";
+import { McpSettingsPage } from "../pages/mcp/McpSettingsPage";
 import { RouteAgentPage } from "../pages/routeAgent/RouteAgentPage";
 
 export function MainArea() {
@@ -48,6 +49,9 @@ export function MainArea() {
         </Match>
         <Match when={view() === "prompt-templates"}>
           <PromptTemplatesPage />
+        </Match>
+        <Match when={view() === "mcp"}>
+          <McpSettingsPage />
         </Match>
         <Match when={view() === "route-agent"}>
           <RouteAgentPage />

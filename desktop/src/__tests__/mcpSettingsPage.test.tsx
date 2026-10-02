@@ -1,25 +1,19 @@
 /**
- * 设置页 MCP 门禁区块：H 门禁开关与 MCP 工具开关的渲染与写回。
+ * MCP 设置页（独立页面，视图 mcp）：H 门禁开关与 MCP 工具开关的渲染与写回。
  *
- * 仅 mock API 层（general / project），验证乐观更新 + 串行保存把完整设置
- * 提交到 PUT /api/app-settings，以及工具清单按只读/写入分组渲染。
+ * 仅 mock API 层（general），验证乐观更新 + 串行保存把完整设置提交到
+ * PUT /api/app-settings，以及工具清单按只读/写入分组渲染。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
-import { SettingsPage } from "../pages/settings/SettingsPage";
+import { McpSettingsPage } from "../pages/mcp/McpSettingsPage";
 import { fetchAppSettings, updateAppSettings, fetchMcpTools } from "../lib/api/general";
 import type { AppSettings, McpToolInfo } from "../lib/api/types";
 
 vi.mock("../lib/api/general", () => ({
-  fetchVersion: vi.fn().mockResolvedValue({ version: "0.6.0", author: "awei808" }),
-  fetchVersionCheck: vi.fn().mockResolvedValue({ version: "0.6.0", update_available: false }),
   fetchAppSettings: vi.fn(),
   updateAppSettings: vi.fn(),
   fetchMcpTools: vi.fn(),
-}));
-vi.mock("../lib/api/project", () => ({
-  fetchProjectConfig: vi.fn().mockResolvedValue({ config: {} }),
-  updateProjectConfig: vi.fn(),
 }));
 
 const mockedFetchSettings = vi.mocked(fetchAppSettings);
@@ -51,7 +45,7 @@ function toolRowByName(container: HTMLElement, name: string) {
   );
 }
 
-describe("设置页 MCP 门禁区块", () => {
+describe("MCP 设置页", () => {
   beforeEach(() => {
     mockedFetchSettings.mockReset();
     mockedUpdateSettings.mockReset();
@@ -65,13 +59,14 @@ describe("设置页 MCP 门禁区块", () => {
     cleanup();
   });
 
-  it("工具清单按只读/写入分组渲染，开关状态反映禁用黑名单", async () => {
+  it("页面标题渲染，工具清单按只读/写入分组，开关状态反映禁用黑名单", async () => {
     mockedFetchSettings.mockResolvedValue({
       ...defaultSettings(),
       mcpHGateEnabled: false,
       mcpDisabledTools: ["galtransl_submit_job"],
     });
-    const { container } = render(() => <SettingsPage />);
+    const { container } = render(() => <McpSettingsPage />);
+    expect(container.querySelector(".page-title")?.textContent).toBe("MCP 服务与门禁");
     await waitFor(() => {
       expect(container.querySelectorAll(".mcp-tool-row").length).toBe(2);
     });
@@ -103,7 +98,7 @@ describe("设置页 MCP 门禁区块", () => {
       mcpHGateEnabled: false,
       mcpDisabledTools: ["galtransl_submit_job"],
     });
-    const { container } = render(() => <SettingsPage />);
+    const { container } = render(() => <McpSettingsPage />);
     await waitFor(() => {
       expect(container.querySelectorAll(".mcp-tool-row").length).toBe(2);
     });
@@ -128,7 +123,7 @@ describe("设置页 MCP 门禁区块", () => {
   });
 
   it("切换 H 门禁开关并保存", async () => {
-    const { container } = render(() => <SettingsPage />);
+    const { container } = render(() => <McpSettingsPage />);
     await waitFor(() => {
       expect(container.querySelectorAll(".mcp-tool-row").length).toBe(2);
     });
@@ -151,7 +146,7 @@ describe("设置页 MCP 门禁区块", () => {
       ...defaultSettings(),
       mcpDisabledTools: ["galtransl_search_cache", "galtransl_submit_job"],
     });
-    const { container } = render(() => <SettingsPage />);
+    const { container } = render(() => <McpSettingsPage />);
     await waitFor(() => {
       expect(container.querySelectorAll(".mcp-tool-row").length).toBe(2);
     });
@@ -170,7 +165,7 @@ describe("设置页 MCP 门禁区块", () => {
   });
 
   it("保存失败：展示错误并回读服务端纠偏本地状态", async () => {
-    const { container } = render(() => <SettingsPage />);
+    const { container } = render(() => <McpSettingsPage />);
     await waitFor(() => {
       expect(container.querySelectorAll(".mcp-tool-row").length).toBe(2);
     });

@@ -53,6 +53,7 @@ export type ActiveView =
   | "backend-profiles"
   | "plugins"
   | "prompt-templates"
+  | "mcp"
   | "project-config"
   | "route-agent";
 
@@ -71,6 +72,7 @@ export const NO_SIDEBAR_VIEWS: readonly ActiveView[] = [
   "project-config",
   "backend-profiles",
   "prompt-templates",
+  "mcp",
   "plugins",
   "new-project",
   "route-agent",
