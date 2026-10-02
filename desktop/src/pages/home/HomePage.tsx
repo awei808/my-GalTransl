@@ -150,27 +150,27 @@ export function HomePage() {
         <div class="home-panel">
           <h3 class="home-panel-title">快速上手</h3>
           <div class="home-steps">
-            <div class="home-step clickable" onClick={() => navigateTo("new-project")}>
+            <button class="home-step clickable" onClick={() => navigateTo("new-project")}>
               <span class="home-step-num">1</span>
               <span class="home-step-text">
                 <b>新建项目</b>
                 <small>用向导创建项目并导入剧本</small>
               </span>
-            </div>
-            <div class="home-step clickable" onClick={() => navigateTo("backend-profiles")}>
+            </button>
+            <button class="home-step clickable" onClick={() => navigateTo("backend-profiles")}>
               <span class="home-step-num">2</span>
               <span class="home-step-text">
                 <b>配置 API</b>
                 <small>填入接口地址与密钥</small>
               </span>
-            </div>
-            <div class="home-step clickable" onClick={() => navigateTo("translate")}>
+            </button>
+            <button class="home-step clickable" onClick={() => navigateTo("translate")}>
               <span class="home-step-num">3</span>
               <span class="home-step-text">
                 <b>启动翻译</b>
                 <small>九阶段流水线自动执行</small>
               </span>
-            </div>
+            </button>
             <button class="home-guide-link" onClick={() => navigateToGuide("01-getting-started.md")}>
               查看完整指南 →
             </button>

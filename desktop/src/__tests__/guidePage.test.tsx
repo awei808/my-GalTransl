@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
 import { GuidePage } from "../pages/guide/GuidePage";
+import { GuideLink } from "../components/GuideLink";
 import { fetchGuideContent, fetchGuides, fetchVersion } from "../lib/api/general";
 import { appState, setAppState } from "../stores/appStore";
 
@@ -111,11 +112,54 @@ describe("使用指南页", () => {
     expect(container.querySelector(".guide-retry-btn")).toBeTruthy();
   });
 
-  it("内容加载失败显示错误信息", async () => {
+  it("内容加载失败显示错误信息与重试入口，点击重试重新加载", async () => {
     mockedFetchContent.mockRejectedValue(new Error("404"));
     const { container } = render(() => <GuidePage />);
     await waitFor(() => {
       expect(container.textContent).toContain("指南内容加载失败");
     });
+    const retry = container.querySelector(".guide-error-box .guide-retry-btn") as HTMLElement;
+    expect(retry, "内容错误态应有重试按钮").toBeTruthy();
+    mockedFetchContent.mockClear();
+    mockedFetchContent.mockImplementation((name) => Promise.resolve(content(name)));
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(mockedFetchContent).toHaveBeenCalledWith("00-about.md");
+    });
+  });
+
+  it("已在指南页时 guideTarget 变化 → 切换到指定篇目并消费目标", async () => {
+    const { container } = render(() => <GuidePage />);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".guide-menu-item").length).toBe(3);
+    });
+    setAppState("guideTarget", "04-review.md");
+    await waitFor(() => {
+      expect(mockedFetchContent).toHaveBeenCalledWith("04-review.md");
+    });
+    expect(appState.guideTarget).toBeNull();
+    expect(container.querySelector(".guide-menu-item.active")?.textContent).toContain("04-review.md");
+  });
+});
+
+describe("GuideLink 组件", () => {
+  beforeEach(() => {
+    setAppState({ activeView: "home", guideTarget: null });
+  });
+
+  it("点击后跳转指南页并携带目标篇目", () => {
+    render(() => <GuideLink guide="05-dictionary.md" />);
+    const btn = document.querySelector(".guide-link") as HTMLElement;
+    expect(btn).toBeTruthy();
+    fireEvent.click(btn);
+    expect(appState.activeView).toBe("guide");
+    expect(appState.guideTarget).toBe("05-dictionary.md");
+  });
+
+  it("不传 guide 时目标为空（由指南页自行选默认篇目）", () => {
+    render(() => <GuideLink />);
+    fireEvent.click(document.querySelector(".guide-link") as HTMLElement);
+    expect(appState.activeView).toBe("guide");
+    expect(appState.guideTarget).toBeNull();
   });
 });

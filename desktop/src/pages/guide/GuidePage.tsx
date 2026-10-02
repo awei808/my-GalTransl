@@ -41,16 +41,18 @@ export function GuidePage() {
       const names = await fetchGuides();
       setGuides(names);
       setListState("ready");
-      prefetchTitles(names);
-      // 列表就绪后仍未选中：优先打开 guideTarget 指定篇目（消费即清，避免残留），
-      // 否则选第一篇。guideTarget 可能已被下方 effect 提前消费（读到 null），
-      // 也可能因列表未就绪而留待此处处理，两条路径都收口在这一次选择。
-      if (!selected() && names.length > 0) {
-        const target = appState.guideTarget;
-        setAppState("guideTarget", null);
-        const first = target && names.includes(target) ? target : names[0];
+      // 列表就绪后消费 guideTarget（消费即清；空目录也消费，避免残留）。
+      // guideTarget 可能已被下方 effect 提前消费（读到 null），也可能因列表
+      // 未就绪而留待此处处理，两条路径都收口在这一次读取。
+      const target = appState.guideTarget;
+      setAppState("guideTarget", null);
+      const first = target && names.includes(target) ? target : names[0];
+      if (!selected() && first) {
+        prefetchTitles(names, first);
         setSelected(first);
         void loadContent(first);
+      } else {
+        prefetchTitles(names);
       }
     } catch (e) {
       setListState("error");
@@ -58,10 +60,11 @@ export function GuidePage() {
     }
   }
 
-  /** 后台预取各篇标题，避免目录里未打开过的篇目显示原始文件名；失败保留文件名 */
-  function prefetchTitles(names: string[]) {
+  /** 后台预取各篇标题，避免目录里未打开过的篇目显示原始文件名；失败保留文件名。
+      skip 为即将由 loadContent 加载的篇目（避免同一篇重复请求）。 */
+  function prefetchTitles(names: string[], skip?: string) {
     for (const name of names) {
-      if (titles()[name]) continue;
+      if (name === skip || titles()[name]) continue;
       fetchGuideContent(name)
         .then((res) => setTitles((t) => ({ ...t, [name]: guideTitle(name, res.content) })))
         .catch(() => {});
@@ -103,7 +106,8 @@ export function GuidePage() {
   }
 
   function select(name: string) {
-    if (name === selected()) return;
+    // 已选中且内容正常时不重复请求；内容处于错误态时允许再次点击重试
+    if (name === selected() && contentState() !== "error") return;
     setSelected(name);
     void loadContent(name);
   }
@@ -167,11 +171,22 @@ export function GuidePage() {
             when={contentState() === "ready"}
             fallback={
               <div class="guide-placeholder">
-                <p>
-                  {contentState() === "loading"
-                    ? "加载中…"
-                    : `指南内容加载失败：${contentError() || "请检查后端服务。"}`}
-                </p>
+                {contentState() === "loading" ? (
+                  <p>加载中…</p>
+                ) : (
+                  <div class="guide-error-box">
+                    <p>{`指南内容加载失败：${contentError() || "请检查后端服务。"}`}</p>
+                    <button
+                      class="guide-retry-btn"
+                      onClick={() => {
+                        const current = selected();
+                        if (current) void loadContent(current);
+                      }}
+                    >
+                      重试
+                    </button>
+                  </div>
+                )}
               </div>
             }
           >

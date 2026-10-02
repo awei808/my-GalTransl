@@ -12,6 +12,7 @@ import {
   markClean as mc,
   openProject,
   navigateTo,
+  navigateToGuide,
   NO_SIDEBAR_VIEWS,
 } from "../stores/appStore";
 
@@ -289,5 +290,14 @@ describe("navigateTo 侧栏状态清理（整页视图不残留侧栏）", () =>
       expect(NO_SIDEBAR_VIEWS, `${view} 应无侧栏`).toContain(view);
     }
     expect(NO_SIDEBAR_VIEWS).not.toContain("review");
+  });
+
+  it("离开 guide 视图清除残留的 guideTarget，进入 guide 时不清", () => {
+    setAppState({ activeView: "home", guideTarget: null });
+    navigateToGuide("04-review.md");
+    expect(appState.activeView).toBe("guide");
+    expect(appState.guideTarget).toBe("04-review.md");
+    navigateTo("home");
+    expect(appState.guideTarget).toBeNull();
   });
 });
