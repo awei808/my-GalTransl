@@ -60,6 +60,18 @@ describe("使用指南页", () => {
     expect(container.querySelector(".guide-version")?.textContent).toBe("0.6.0");
   });
 
+  it("目录标题后台预取：未打开过的篇目也显示标题而非文件名", async () => {
+    const { container } = render(() => <GuidePage />);
+    await waitFor(() => {
+      expect(container.querySelectorAll(".guide-menu-item").length).toBe(3);
+    });
+    // 预取完成后，全部条目标题来自各篇一级标题（mock 内容为 "# <name> 标题"）
+    await waitFor(() => {
+      const texts = [...container.querySelectorAll(".guide-menu-item")].map((el) => el.textContent);
+      expect(texts.some((t) => t?.includes("04-review.md 标题"))).toBe(true);
+    });
+  });
+
   it("点击目录项加载对应篇目", async () => {
     const { container } = render(() => <GuidePage />);
     await waitFor(() => {

@@ -41,6 +41,7 @@ export function GuidePage() {
       const names = await fetchGuides();
       setGuides(names);
       setListState("ready");
+      prefetchTitles(names);
       // 列表就绪后仍未选中：优先打开 guideTarget 指定篇目（消费即清，避免残留），
       // 否则选第一篇。guideTarget 可能已被下方 effect 提前消费（读到 null），
       // 也可能因列表未就绪而留待此处处理，两条路径都收口在这一次选择。
@@ -54,6 +55,16 @@ export function GuidePage() {
     } catch (e) {
       setListState("error");
       console.error("加载指南列表失败", e);
+    }
+  }
+
+  /** 后台预取各篇标题，避免目录里未打开过的篇目显示原始文件名；失败保留文件名 */
+  function prefetchTitles(names: string[]) {
+    for (const name of names) {
+      if (titles()[name]) continue;
+      fetchGuideContent(name)
+        .then((res) => setTitles((t) => ({ ...t, [name]: guideTitle(name, res.content) })))
+        .catch(() => {});
     }
   }
 
