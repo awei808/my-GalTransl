@@ -305,6 +305,22 @@ def get_file_list(directory: str) -> list[str]:
     return file_list
 
 
+# gt_input 体积超过该值时建议用户用 git 管理翻译项目目录（桌面端弹窗 / CLI 文字提醒）
+GIT_SUGGEST_INPUT_SIZE_BYTES = 1024 * 1024
+
+
+def get_dir_total_size(directory: str) -> int:
+    """递归统计目录下所有文件的字节总大小；目录不存在返回 0。"""
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(directory):
+        for file in filenames:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, file))
+            except OSError:
+                continue
+    return total
+
+
 def process_escape(text: str) -> str:
     return codecs.escape_decode(bytes(text, "utf-8"))[0].decode("utf-8")
 

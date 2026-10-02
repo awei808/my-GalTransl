@@ -8,6 +8,7 @@ import type {
   CheckBatchSizeResult,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
+  InputStatsResult,
   Job,
   JobsResponse,
   ModelCheckResult,
@@ -170,12 +171,19 @@ export async function checkBatchSize(payload: {
   );
 }
 
+// ---- Input stats precheck (输入目录体积统计，用于 git 管理建议) ----
+
+export async function fetchInputStats(projectId: string): Promise<InputStatsResult> {
+  return apiRequest<InputStatsResult>(`/api/projects/${projectId}/input-stats`);
+}
+
 // Re-export types for convenience
 export type {
   AppSettings,
   CheckBatchSizeResult,
   FetchOpenAIModelsPayload,
   FetchOpenAIModelsResponse,
+  InputStatsResult,
   Job,
   ModelCheckResult,
   PluginInfo,

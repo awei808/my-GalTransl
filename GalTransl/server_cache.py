@@ -18,8 +18,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from typing import Any, Optional, Tuple
@@ -393,6 +395,104 @@ def _fmt_indices(indices: list[Any]) -> str:
 
 
 
+# 快照备份：写/删端点改写缓存前把旧文件复制到 .snapshots/，滚动保留最近 N 份供误操作回滚
+SNAPSHOT_DIRNAME = ".snapshots"
+SNAPSHOT_KEEP_PER_FILE = 10
+SNAPSHOT_MIN_INTERVAL_SECONDS = 60.0
+_SNAPSHOT_LOCK = threading.Lock()
+_SNAPSHOT_STAMP_RE = re.compile(r"\d{8}-\d{6}-\d{6}")
+
+
+def _record_snapshot_runtime_error(project_dir: str, message: str, rel_path: str) -> None:
+    """快照失败上报工作台最近错误卡片；懒导入 server 避免循环依赖，失败静默。"""
+    if not project_dir:
+        return
+    try:
+        from GalTransl.server import record_runtime_error
+
+        record_runtime_error(project_dir, kind="cache", message=message, filename=rel_path, level="warning")
+    except Exception:
+        return
+
+
+def snapshot_cache_file(cache_dir: str, rel_path: str, project_dir: str = "") -> Optional[str]:
+    """把缓存文件当前内容复制到 .snapshots/ 下（best-effort，任何失败不阻断调用方的写入/删除）。
+
+    Args:
+        cache_dir: 缓存根目录（transl_cache）。
+        rel_path: 缓存文件相对 cache_dir 的路径（须已通过端点路径校验）。
+        project_dir: 项目目录，用于快照失败时上报工作台错误卡片。
+
+    Returns:
+        快照文件绝对路径；源不存在或失败时返回 None。
+    """
+    rel_norm = rel_path.replace("\\", "/").strip("/")
+    if not rel_norm:
+        return None
+    source = os.path.join(cache_dir, *rel_norm.split("/"))
+    if not os.path.isfile(source):
+        return None
+    try:
+        with _SNAPSHOT_LOCK:
+            return _snapshot_locked(cache_dir, rel_norm, source)
+    except Exception as e:
+        warn = f"[snapshot]备份缓存失败（不影响本次写删）：{rel_norm}: {e}"
+        LOGGER.warning(warn)
+        _record_snapshot_runtime_error(project_dir, warn, rel_norm)
+        return None
+
+
+def _snapshot_locked(cache_dir: str, rel_norm: str, source: str) -> str:
+    """在模块锁内执行的快照主体：合并窗口替换 + 复制 + 滚动清理。
+
+    排序与合并窗口均以文件名时间戳为准：copy2 保留的是源文件 mtime，
+    git restore 等场景会回拨 mtime，不能反映快照创建顺序。
+    """
+    now = datetime.now()
+    stamp = now.strftime("%Y%m%d-%H%M%S-%f")
+    snapshot_dir = os.path.join(cache_dir, SNAPSHOT_DIRNAME)
+    dest = os.path.join(snapshot_dir, *rel_norm.split("/")) + f".{stamp}.bak"
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+    # 收集同一源文件的既有快照：文件名中段必须是时间戳，
+    # 避免 foo.json 的前缀误配到 foo.json.meta.json 的快照
+    base = os.path.basename(rel_norm)
+    peer_dir = os.path.dirname(dest)
+    peer_stamps: dict[str, str] = {}
+    for name in os.listdir(peer_dir):
+        if not name.startswith(base + ".") or not name.endswith(".bak"):
+            continue
+        stamp_text = name[len(base) + 1 : -len(".bak")]
+        if not _SNAPSHOT_STAMP_RE.fullmatch(stamp_text):
+            continue
+        peer_stamps[name] = stamp_text
+
+    # 合并窗口：60 秒内已有快照则替换之，避免校对页高频保存刷穿保留槽位
+    if peer_stamps:
+        newest_name = max(peer_stamps, key=peer_stamps.get)
+        try:
+            newest_dt = datetime.strptime(peer_stamps[newest_name], "%Y%m%d-%H%M%S-%f")
+            if (now - newest_dt).total_seconds() < SNAPSHOT_MIN_INTERVAL_SECONDS:
+                os.remove(os.path.join(peer_dir, newest_name))
+                del peer_stamps[newest_name]
+        except (ValueError, OSError) as e:
+            LOGGER.warning(f"[snapshot]合并窗口处理失败：{newest_name}: {e}")
+
+    shutil.copy2(source, dest)
+    LOGGER.debug(f"[snapshot]已备份 {rel_norm} -> {os.path.basename(dest)}")
+
+    # 滚动保留：按文件名时间戳（定宽，字典序即时序）只留最近 N 份
+    peer_stamps[os.path.basename(dest)] = stamp
+    if len(peer_stamps) > SNAPSHOT_KEEP_PER_FILE:
+        oldest = sorted(peer_stamps, key=peer_stamps.get)[:-SNAPSHOT_KEEP_PER_FILE]
+        for name in oldest:
+            try:
+                os.remove(os.path.join(peer_dir, name))
+            except OSError as e:
+                LOGGER.warning(f"[snapshot]清理过期快照失败：{name}: {e}")
+    return dest
+
+
 def _collect_cache_files(cache_dir: str) -> list[str]:
     """递归收集可构建的翻译缓存文件（相对 cache_dir 的 '/' 路径），跳过元数据。
 
@@ -400,7 +500,9 @@ def _collect_cache_files(cache_dir: str) -> list[str]:
     pass1 *.meta.json、pass2 *.batch.json 为元数据，不参与构建。
     """
     files: list[str] = []
-    for root, _dirs, names in os.walk(cache_dir):
+    for root, dirs, names in os.walk(cache_dir):
+        # 点开头目录（如 .snapshots 快照备份）永不参与构建/搜索
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
         for name in sorted(names):
             if not name.endswith(".json"):
                 continue
@@ -967,6 +1069,9 @@ def _list_dir_entries(
     if not os.path.isdir(dir_path):
         return entries
     for name in sorted(os.listdir(dir_path)):
+        if name.startswith("."):
+            # 隐藏点开头条目（如 .snapshots 快照目录、.DS_Store）
+            continue
         if skip_suffixes and name.endswith(tuple(skip_suffixes)):
             continue
         full = os.path.join(dir_path, name)
@@ -1000,6 +1105,9 @@ def _build_cache_tree(dir_path: str, prefix: str = "", count_entries: bool = Tru
     if not os.path.isdir(dir_path):
         return nodes
     for name in sorted(os.listdir(dir_path)):
+        if name.startswith("."):
+            # 点开头条目不进缓存树（如 .snapshots 快照备份目录）
+            continue
         if name.endswith(CACHE_TEMP_SUFFIX):
             # 快照中间文件残留：没有条目数、读不全，不作为缓存文件展示
             continue

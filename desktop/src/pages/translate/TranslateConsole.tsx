@@ -16,9 +16,9 @@ import {
   clearRuntimeNotices,
   stopProjectTranslation,
 } from "../../lib/api/project";
-import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize } from "../../lib/api/general";
+import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize, fetchInputStats } from "../../lib/api/general";
 import { decodeProjectDir } from "../../lib/api/client";
-import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload } from "../../lib/api/preferences";
+import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload, getGitSuggestAcknowledged, setGitSuggestAcknowledged } from "../../lib/api/preferences";
 import { projectName } from "../home/homeUtils";
 import type {
   ModelCheckResult,
@@ -445,7 +445,7 @@ export function TranslateConsole() {
           tone: "warning",
         })
         .then((r) => {
-          if (r.confirmed) doSubmit();
+          if (r.confirmed) doSubmitAfterGitHint();
         });
       return;
     }
@@ -474,16 +474,48 @@ export function TranslateConsole() {
                 tone: "warning",
               })
               .then((res) => {
-                if (res.confirmed) doSubmit();
+                if (res.confirmed) doSubmitAfterGitHint();
               });
           } else {
-            doSubmit();
+            doSubmitAfterGitHint();
           }
         })
-        .catch(() => doSubmit()); // 预检失败不阻断翻译
+        .catch(() => doSubmitAfterGitHint()); // 预检失败不阻断翻译
       return;
     }
-    doSubmit();
+    doSubmitAfterGitHint();
+  }
+
+  // git 管理建议预检：输入目录超阈值且本项目未确认过时弹窗提示，确认后记录并继续提交
+  function doSubmitAfterGitHint() {
+    const pid = appState.activeProjectId;
+    if (!pid || getGitSuggestAcknowledged(pid)) {
+      doSubmit();
+      return;
+    }
+    fetchInputStats(pid)
+      .then((stats) => {
+        if (!stats.suggest_git) {
+          doSubmit();
+          return;
+        }
+        const mb = (stats.total_bytes / 1048576).toFixed(1);
+        confirm
+          .show({
+            title: "建议使用 git 管理",
+            message: `检测到输入文件共 ${mb} MB。较大的翻译项目建议在项目目录启用 git 管理（翻译缓存与输出均为本地产物），便于误操作后回滚。仍要启动翻译吗？`,
+            tone: "info",
+            confirmText: "仍要启动",
+            cancelText: "取消",
+          })
+          .then((r) => {
+            if (r.confirmed) {
+              setGitSuggestAcknowledged(pid);
+              doSubmit();
+            }
+          });
+      })
+      .catch(() => doSubmit()); // 体积统计失败不阻断翻译
   }
 
   function doSubmit() {

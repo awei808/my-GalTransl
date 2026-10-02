@@ -33,6 +33,7 @@ from GalTransl import (
 )
 from GalTransl.Cache import CACHE_TEMP_SUFFIX
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
+from GalTransl.Utils import GIT_SUGGEST_INPUT_SIZE_BYTES, get_dir_total_size
 from GalTransl.server_runtime import (
     RUNTIME_PROGRESS_CACHE,
     RUNTIME_REGISTRY,
@@ -85,6 +86,7 @@ from GalTransl.server_cache import (
     _run_problem_detection,
     _validate_build,
     recheck_pass3_cache_files,
+    snapshot_cache_file,
 )
 from GalTransl.server_search import search_cache_entries, search_metadata
 from GalTransl.server_scaffold import _workspace_root
@@ -454,6 +456,26 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
         })
         return
 
+    # GET /api/projects/:id/input-stats — 输入目录体积统计（前端据此建议用 git 管理项目）
+    if sub_path == "/input-stats":
+        if handler.command != "GET":
+            handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+            return
+        # 不加载完整 CProjectConfig 保持轻量：标准项目用 gt_input，旧项目回退 json_jp
+        input_dir = os.path.join(project_dir, INPUT_FOLDERNAME)
+        if not os.path.isdir(input_dir):
+            input_dir = os.path.join(project_dir, "json_jp")
+        total_bytes = get_dir_total_size(input_dir)
+        file_count = sum(len(files) for _r, _d, files in os.walk(input_dir)) if os.path.isdir(input_dir) else 0
+        handler._send_json({
+            "input_dir": input_dir,
+            "total_bytes": total_bytes,
+            "file_count": file_count,
+            "threshold_bytes": GIT_SUGGEST_INPUT_SIZE_BYTES,
+            "suggest_git": total_bytes > GIT_SUGGEST_INPUT_SIZE_BYTES,
+        })
+        return
+
     # POST /api/projects/:id/cache/check — 重新运行问题检测；persist=true 时写回缓存文件（单文件范围）
     if sub_path == "/cache/check":
         if handler.command != "POST":
@@ -604,6 +626,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             modified_indices: list[Any] = []
             deleted_indices: list[Any] = []
             swapped_indices: list[Any] = []
+            audit_ok = True
             try:
                 with open(file_path, "rb") as _old_f:
                     old_entries = orjson.loads(_old_f.read())
@@ -626,8 +649,14 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                                 swapped_indices.append(ne.get("index"))
                             elif _entry_modified(oe, ne):
                                 modified_indices.append(ne.get("index"))
+                else:
+                    # 类型不匹配时无法比对，视同审计失败：照常快照兜底
+                    audit_ok = False
             except Exception:
-                pass
+                audit_ok = False
+            # 内容有变化（或审计失败无法判定）才快照旧文件，无编辑的自动保存不消耗快照槽位
+            if modified_indices or deleted_indices or swapped_indices or not audit_ok:
+                snapshot_cache_file(cache_dir, norm, project_dir)
             with open(file_path, "wb") as f:
                 f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
             if modified_indices or deleted_indices or swapped_indices:
@@ -932,6 +961,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                 handler._send_json({"error": "invalid entry index"}, status=HTTPStatus.BAD_REQUEST)
                 return
             deleted = data.pop(entry_index)
+            snapshot_cache_file(cache_dir, filename, project_dir)
             with open(file_path, "wb") as f:
                 f.write(orjson.dumps(data, option=orjson.OPT_INDENT_2))
             _append_engine_log(
@@ -976,6 +1006,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     not_found_files.append(rel)
                     continue
                 try:
+                    snapshot_cache_file(cache_dir, rel, project_dir)
                     os.remove(abs_target)
                     deleted_files.append(rel)
                 except OSError:
@@ -1101,6 +1132,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                         # 此前该端点从不落盘、前端也不保存，替换结果只在响应里，实际不生效；
                         # 写盘失败直接抛出（500），不再被"跳过损坏文件"的容错吞掉
                         if not dry_run and file_changed:
+                            snapshot_cache_file(cache_dir, rel, project_dir)
                             tmp_path = fp + ".tmp"
                             with open(tmp_path, "wb") as f:
                                 f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))
@@ -1208,6 +1240,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                         file_changed = True
 
             if not dry_run and file_changed:
+                snapshot_cache_file(cache_dir, norm, project_dir)
                 tmp_path = fp + ".tmp"
                 with open(tmp_path, "wb") as f:
                     f.write(orjson.dumps(entries, option=orjson.OPT_INDENT_2))

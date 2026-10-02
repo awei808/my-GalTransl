@@ -661,3 +661,23 @@ export function saveRouteAgentPlan(projectId: string, plan: Record<string, unkno
     // 存储失败（隐私模式/超限）静默忽略
   }
 }
+
+// ---- git 管理建议（按项目记录已确认，启动翻译时不再弹窗） ----
+
+const GIT_SUGGEST_ACK_KEY = "galtransl:git-suggest-ack";
+
+export function getGitSuggestAcknowledged(projectId: string): boolean {
+  try {
+    return localStorage.getItem(`${GIT_SUGGEST_ACK_KEY}:${projectId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setGitSuggestAcknowledged(projectId: string): void {
+  try {
+    localStorage.setItem(`${GIT_SUGGEST_ACK_KEY}:${projectId}`, "1");
+  } catch {
+    // 存储失败（隐私模式/超限）静默忽略
+  }
+}

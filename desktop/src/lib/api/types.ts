@@ -51,6 +51,20 @@ export type CheckBatchSizeResult = {
   applicable: boolean;
 };
 
+/** 输入目录体积统计（GET /api/projects/:id/input-stats 返回） */
+export type InputStatsResult = {
+  /** 实际统计的输入目录路径 */
+  input_dir: string;
+  /** 输入目录文件字节总大小 */
+  total_bytes: number;
+  /** 输入目录文件数 */
+  file_count: number;
+  /** 建议阈值（字节） */
+  threshold_bytes: number;
+  /** 超过阈值时为 true，建议用户用 git 管理翻译项目 */
+  suggest_git: boolean;
+};
+
 export type Job = {
   config_file_name: string;
   created_at: string;

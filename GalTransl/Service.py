@@ -15,6 +15,7 @@ from GalTransl.ConfigHelper import ALL_STAGE_BACKEND_KEYS, CProjectConfig
 from GalTransl.Runner import run_galtransl
 from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.AppSettings import load_app_settings
+from GalTransl.Utils import GIT_SUGGEST_INPUT_SIZE_BYTES, get_dir_total_size
 
 
 def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
@@ -365,6 +366,16 @@ async def run_job_async(
                 LOGGER.info(f"[cache]启动前清理了 {stale} 个残留临时文件（*.json.tmp）")
         except Exception as ex:  # 清理失败不该挡住翻译
             LOGGER.warning(f"[cache]清理残留临时文件失败：{str(ex)}")
+        # CLI 模式提示：输入体积较大建议用 git 管理项目目录（桌面端由前端确认弹窗覆盖）
+        input_dir = getattr(cfg, "inputPath", "")
+        if not cfg.non_interactive and input_dir and os.path.isdir(input_dir):
+            input_total = get_dir_total_size(input_dir)
+            if input_total > GIT_SUGGEST_INPUT_SIZE_BYTES:
+                threshold_mb = GIT_SUGGEST_INPUT_SIZE_BYTES / 1048576
+                LOGGER.info(
+                    f"提示：输入文件共 {input_total / 1048576:.1f} MB（> {threshold_mb:g} MB），"
+                    f"建议在项目目录使用 git 管理，便于误操作后回滚。"
+                )
         await run_galtransl(cfg, spec.translator, stop_event=stop_event)
         current_state.status = "completed"
         current_state.success = True
