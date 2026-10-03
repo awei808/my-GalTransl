@@ -1,7 +1,8 @@
 """MCP 工具层：面向外部 agent 的能力（0.5.1 只读检索；0.6.0 增写工具与作业域查询）。
 
-11 个检索工具为纯读磁盘的纯函数风格；2 个作业域查询（任务状态/模型探测）与 4 个写工具
-（路线图/元数据/提交/停止任务）经 HTTP 回后端（见 mcp_backend_client）。
+检索类与术语表读取为纯读磁盘的纯函数风格；作业域工具（任务状态/模型探测、提交/停止任务）
+经 HTTP 回后端（JobRegistry 只存在于后端进程内，见 mcp_backend_client），
+路线图/元数据/术语表写工具在本地原子落盘。
 所有工具以显式 project_dir 为边界，写入范围仅限项目内指定产物，无任意路径写、无命令执行。
 本模块不依赖任何 MCP 传输实现，供独立 stdio server（run_mcp_server.py）与未来内置 agent 共用，
 避免上游「工具全走 HTTP 打自家 REST」的架构绕路。
@@ -10,8 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
-from typing import Any, Callable, Collection, Dict, List, Optional
+from typing import Any, Callable, Collection, Dict, List, Optional, Set, Tuple
 
 from GalTransl import (
     CACHE_FOLDERNAME,
@@ -24,13 +26,27 @@ from GalTransl import (
 )
 from GalTransl.AppSettings import load_app_settings
 from GalTransl.ConfigHelper import detect_config_file
+from GalTransl.Dictionary import (
+    _COMMENT_PREFIXES,
+    _is_separator_line,
+    _safe_escape,
+    parse_dict_line,
+)
 from GalTransl.Frontend.pipeline_stages import to_payload as _pipeline_stages_payload
 from GalTransl.backend_security import safe_under_project
 from GalTransl.server_config_schema import _read_yaml_file
+from GalTransl.server_dict import (
+    DICT_PROJECT_MARKER,
+    _collect_project_dict_payload,
+    _ensure_project_dict_file_configured,
+    _is_safe_dict_filename,
+)
 from GalTransl.server_meta import _list_problem_types, _load_project_name_dict
 from GalTransl.server_scaffold import _workspace_root
 from GalTransl.server_search import (
     DEFAULT_MAX_RESULTS,
+    _dict_file_categories,
+    _make_matcher,
     search_cache_entries,
     search_dict_entries,
     search_source_scripts,
@@ -435,6 +451,18 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _tool_read_glossary(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_project_dir(arguments)
+    return read_glossary(
+        project_dir,
+        filename=str(arguments.get("filename", "") or "").strip(),
+        query=arguments.get("query", ""),
+        use_regex=bool(arguments.get("regex", False)),
+        offset=arguments.get("offset", 0),
+        limit=arguments.get("limit", DEFAULT_PAGE_SIZE),
+    )
+
+
 # ---------- 写工具（0.6.0 新增，kind=write） ----------
 
 def _tool_write_route_map(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -452,6 +480,16 @@ def _tool_save_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
         str(arguments.get("kind", "") or "").strip(),
         str(arguments.get("filename", "") or "").strip(),
         entry,
+    )
+
+
+def _tool_write_glossary(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_write_project_dir(arguments)
+    return write_glossary(
+        project_dir,
+        str(arguments.get("file", "") or "").strip(),
+        str(arguments.get("mode", "") or "").strip(),
+        arguments.get("entries"),
     )
 
 
@@ -818,6 +856,405 @@ def _ensure_safe_metadata_filename(filename: str) -> None:
         raise ValueError(f"非法元数据文件名（Windows 保留名）：{filename}")
 
 
+# ---------- 术语表（GPT 字典）读写 ----------
+
+# 术语表 = config 的 dictionary.gpt.dict 中带 (project_dir) 前缀的项目 GPT 字典文件；
+# 公共 Dict/ 下的 GPT 字典不在此工具的写入范围内（由 galtransl_search_dict 覆盖读取）。
+_GLOSSARY_MODES = ("upsert", "delete")
+_GLOSSARY_NEW_FILE_HEADER = "//术语表（GPT 字典）：格式为 日文|中文|解释（解释可不写）；本行为注释，不参与翻译"
+# 制表符/换行会破坏行结构；其余为 str.splitlines() 的行界字符（\v \f \x1c-\x1e \x85 \u2028 \u2029），
+# 落盘后下次按行读取会把一行拆成两行，一并拒绝。
+_GLOSSARY_FORBIDDEN_CHARS = ("\t", "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+_GLOSSARY_OTHER_CATEGORY_LABELS = (
+    ("pre_dict_files", "译前字典"),
+    ("post_dict_files", "译后字典"),
+    ("forbidden_dict_files_h", "禁用词（H）"),
+    ("forbidden_dict_files_nh", "禁用词（非 H）"),
+)
+# 与 _ensure_safe_metadata_filename 同口径：挡 NTFS 交换数据流（冒号）与 Windows 保留名
+_GLOSSARY_WINDOWS_RESERVED = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
+
+
+def _ensure_safe_glossary_filename(filename: str) -> None:
+    """术语表文件名硬校验：在 _is_safe_dict_filename 之上补冒号（NTFS ADS）与 Windows 保留名。"""
+    if not _is_safe_dict_filename(filename):
+        raise ValueError(f"非法术语表文件名: {filename}")
+    if ":" in filename:
+        raise ValueError(f"非法术语表文件名（不得含冒号）：{filename}")
+    if filename.split(".")[0].upper() in _GLOSSARY_WINDOWS_RESERVED:
+        raise ValueError(f"非法术语表文件名（Windows 保留名）：{filename}")
+
+
+def _glossary_files(payload: Dict[str, Any]) -> List[str]:
+    """从字典载荷取出项目术语表文件名（去 (project_dir) 前缀，保持配置顺序）。"""
+    return [
+        str(key).replace(DICT_PROJECT_MARKER, "").strip()
+        for key in payload.get("gpt_dict_files", []) or []
+    ]
+
+
+def _glossary_other_category(payload: Dict[str, Any], filename: str) -> str:
+    """filename 若被配置为其它类别的项目字典，返回该类别中文名（否则空串）。
+
+    术语表工具只写 gpt.dict：把 gpt 行写进译后/禁用词字典会静默失效（对方解析口径不同）。
+    """
+    for list_key, label in _GLOSSARY_OTHER_CATEGORY_LABELS:
+        keys = [
+            str(key).replace(DICT_PROJECT_MARKER, "").strip()
+            for key in payload.get(list_key, []) or []
+        ]
+        if filename in keys:
+            return label
+    return ""
+
+
+def read_glossary(
+    project_dir: str,
+    filename: str = "",
+    query: str = "",
+    use_regex: bool = False,
+    offset: Any = 0,
+    limit: Any = DEFAULT_PAGE_SIZE,
+) -> Dict[str, Any]:
+    """读取项目术语表（gpt.dict 中的项目 GPT 字典）词条，供整表浏览与筛选。
+
+    与 `search_dict_entries` 的分工：后者跨全部字典类别且必须给 query；本函数限定术语表，
+    允许整表分页浏览。注释行 / 空行 / 分隔线不产条目；line_no 为文件内绝对行号，
+    用于向用户报告词条位置（`write_glossary` 按 src 匹配，不按行号）。
+
+    Args:
+        filename: 只读某个术语表文件（项目根目录下的文件名）；空串读全部项目术语表。
+        query: 筛选词，匹配原文 / 译名 / 解释任一列；空串返回全部。
+        use_regex: True 时 query 按正则解释（非法正则抛 ValueError）。
+        offset / limit: 分页参数，收敛口径与其它分页读工具一致。
+    """
+    config_name = detect_config_file(project_dir)
+    config_path = os.path.join(project_dir, config_name)
+    if not os.path.isfile(config_path):
+        # 只读工具不硬拦非项目目录：返回空结果 + 提示，由调用方决定
+        return {
+            "project_dir": project_dir,
+            "config_file_name": config_name,
+            "config_exists": False,
+            "files": [],
+            "missing_files": [],
+            "total": 0,
+            "offset": 0,
+            "limit": DEFAULT_PAGE_SIZE,
+            "returned": 0,
+            "has_more": False,
+            "entries": [],
+            "hint": "项目未找到 config.inc.yaml / config.yaml，无法确定术语表文件清单；"
+                    "请确认 project_dir 指向项目根目录。",
+        }
+
+    target = str(filename or "").strip()
+    if target:
+        _ensure_safe_glossary_filename(target)
+    payload = _collect_project_dict_payload(project_dir, config_name)
+    files = _glossary_files(payload)
+    if target:
+        other = _glossary_other_category(payload, target)
+        if other:
+            raise ValueError(f"不是术语表文件: {target}（它是{other}）")
+        if target not in files:
+            raise ValueError(
+                f"不是项目术语表文件: {target}"
+                "（术语表 = config 的 dictionary.gpt.dict 中带 (project_dir) 前缀的文件）"
+            )
+        files = [target]
+
+    query_text = str(query or "").strip()
+    matcher: Optional[Callable[[str], bool]] = None
+    if query_text:
+        try:
+            matcher = _make_matcher(query_text, use_regex)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {query_text}（{exc}）")
+
+    categories = _dict_file_categories(payload)
+    entries: List[Dict[str, Any]] = []
+    missing_files: List[str] = []
+    for name in files:
+        path = os.path.join(project_dir, name)
+        if not os.path.isfile(path):
+            missing_files.append(name)
+            continue
+        category = categories.get(f"{DICT_PROJECT_MARKER}{name}", "gpt")
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        for line_no, line in enumerate(lines, start=1):
+            row = parse_dict_line(line, category)
+            if row.type != "gpt":
+                continue
+            src = row.values[0] if len(row.values) > 0 else ""
+            dst = row.values[1] if len(row.values) > 1 else ""
+            if matcher and not (matcher(src) or matcher(dst) or matcher(row.note)):
+                continue
+            entries.append({
+                "file": name,
+                "line_no": line_no,
+                "src": src,
+                "dst": dst,
+                "note": row.note,
+                "is_regex": row.is_regex,
+                "regex_error": row.regex_error,
+            })
+    page_info = _paginate(entries, {"offset": offset, "limit": limit})
+    offset_val, limit_val = page_info["offset"], page_info["limit"]
+    return {
+        "project_dir": project_dir,
+        "config_file_name": config_name,
+        "config_exists": True,
+        "files": files,
+        "missing_files": missing_files,
+        **page_info,
+        "entries": entries[offset_val:offset_val + limit_val] if limit_val > 0 else [],
+    }
+
+
+def _validate_glossary_field(value: Any, label: str) -> str:
+    """校验术语表字段可安全落盘（单字段维度），配合 `_ensure_glossary_roundtrip` 做整行自检。
+
+    拒绝控制字符（含 ``str.splitlines()`` 的行界字符，落盘后会把一行拆成两行）与转义漂移
+    （如字面 ``\\n`` 会被解析端还原成换行）。
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{label} 必须是字符串")
+    if any(ch in value for ch in _GLOSSARY_FORBIDDEN_CHARS):
+        raise ValueError(f"{label} 不能包含制表符、换行或其它行界字符")
+    if _safe_escape(value) != value:
+        raise ValueError(f"{label} 含转义序列（如 \\n），与读回值不一致，请改用字面文本")
+    return value
+
+
+def _ensure_glossary_roundtrip(expected: List[str], label: str) -> None:
+    """把字段按落盘口径序列化成一行后按解析口径自检：必须能被原样读回。
+
+    挡住单字段校验发现不了的拼接类漂移：非末位字段以反斜杠结尾会把 ``\\|`` 还原成
+    字面竖线（读回 dst 丢失）、字段含 4 连续空格会被解析端当列分隔——这些都会导致
+    写入值与读回值不一致、后续按 src 匹配永远落空。
+    """
+    line = "|".join(_encode_glossary_field(field) for field in expected)
+    row = parse_dict_line(line, "gpt")
+    values = list(row.values) + [""] * (len(expected) - len(row.values))
+    if row.type != "gpt" or values[: len(expected)] != list(expected):
+        raise ValueError(f"{label} 无法按术语表格式原样写回并读回（请检查反斜杠结尾、连续空格等字符）")
+
+
+def _encode_glossary_field(value: str) -> str:
+    """字段内字面竖线写作 ``\\|``（与解析端 _split_dict_line 互逆）。"""
+    return value.replace("|", "\\|")
+
+
+def _serialize_glossary_line(src: str, dst: str, note: str) -> str:
+    """把词条序列化为一行术语表文本（note 为空时只写两列）。"""
+    fields = [src, dst] + ([note] if note else [])
+    return "|".join(_encode_glossary_field(field) for field in fields)
+
+
+def _read_glossary_file(project_dir: str, filename: str) -> Tuple[List[str], str, bool]:
+    """读取术语表原始行与行尾风格；返回 (lines, eol, exists)。
+
+    以 newline="" 读取以保留原始行尾，写入时按同一风格回写，避免整文件行尾漂移。
+    """
+    path = os.path.join(project_dir, filename)
+    if not os.path.isfile(path):
+        return [], "\n", False
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
+        raw = f.read()
+    return raw.splitlines(), ("\r\n" if "\r\n" in raw else "\n"), True
+
+
+def _save_glossary_file(project_dir: str, filename: str, lines: List[str], eol: str) -> int:
+    """原子写入术语表（.tmp + os.replace），返回新内容字节数。
+
+    写入内容统一以单个行尾结尾：原文件末尾无换行时，会在首次改动时补上。
+    """
+    path = os.path.join(project_dir, filename)
+    content = eol.join(lines) + eol
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    os.replace(tmp_path, path)
+    return len(content.encode("utf-8"))
+
+
+def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> Dict[str, Any]:
+    """按词条增改 / 删除项目术语表（GPT 字典），原子落盘并保留原有注释与其它行。
+
+    只处理调用方列出的词条：upsert 按 src 匹配（命中则原地替换、未命中追加），
+    delete 按 src 删行；**不提供整体覆盖**——读取是分页的，整体覆盖会在分页场景
+    静默删掉未读词条。文件未登记进 dictionary.gpt.dict 时自动登记，
+    否则写入的内容不会被翻译引擎使用。
+
+    Args:
+        filename: 项目根目录下的术语表文件名（必填，避免在多个术语表文件间误写）。
+        mode: upsert（新增或更新）/ delete（删除）；空串按 upsert。
+        entries: ``[{"src": ..., "dst": ..., "note": ...}]``；note 省略表示更新时
+            保留原备注，显式传空串表示清空备注。
+    """
+    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
+    config_name = validate_project_dir(project_dir)
+    resolved_mode = str(mode or "").strip() or "upsert"
+    if resolved_mode not in _GLOSSARY_MODES:
+        raise ValueError(f"未知 mode: {resolved_mode}（可选 upsert/delete）")
+    name = str(filename or "").strip()
+    if not name:
+        raise ValueError("file 必填（项目术语表文件名，如 项目GPT字典.txt）")
+    _ensure_safe_glossary_filename(name)
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("entries 必须是非空数组")
+
+    normalized: List[Tuple[str, str, str, bool]] = []
+    for i, item in enumerate(entries):
+        if not isinstance(item, dict):
+            raise ValueError(f"entries[{i}] 必须是对象")
+        src = _validate_glossary_field(item.get("src", ""), f"entries[{i}].src")
+        if not src.strip():
+            raise ValueError(f"entries[{i}].src 不能为空")
+        if src.lstrip().startswith(_COMMENT_PREFIXES):
+            raise ValueError(f"entries[{i}].src 以 // 开头，会被解析为注释行而静默失效")
+        if _is_separator_line(src):
+            raise ValueError(f"entries[{i}].src 是装饰分隔线，会被解析为注释行而静默失效")
+        note_provided = "note" in item
+        note = _validate_glossary_field(item.get("note", ""), f"entries[{i}].note") if note_provided else ""
+        dst = ""
+        if resolved_mode == "upsert":
+            dst = _validate_glossary_field(item.get("dst", ""), f"entries[{i}].dst")
+            if not dst.strip():
+                raise ValueError(f"entries[{i}].dst 不能为空（术语表词条须给出译名）")
+            # 整行自检：写入的行必须能被解析端原样读回，否则后续 upsert 匹配不上
+            _ensure_glossary_roundtrip([src, dst] + ([note] if note else []), f"entries[{i}]")
+        else:
+            # delete 只用 src 匹配：空 dst 仅作列占位，验证 src 作为非末位字段不被转义/空格规则改写
+            _ensure_glossary_roundtrip([src, ""], f"entries[{i}].src")
+        normalized.append((src, dst, note, note_provided))
+
+    payload = _collect_project_dict_payload(project_dir, config_name)
+    gpt_files = _glossary_files(payload)
+    # H 门禁先于配置登记与落盘：命中即拒绝，保证不留任何副作用
+    enforce_h_gate(
+        project_dir,
+        texts=[text for src, dst, note, _np in normalized for text in (src, dst, note) if text],
+    )
+
+    registered = False
+    if name not in gpt_files:
+        other = _glossary_other_category(payload, name)
+        if other:
+            raise ValueError(f"{name} 是{other}，不是术语表文件；术语表请用 dictionary.gpt.dict 中的项目文件")
+        if resolved_mode == "delete":
+            raise ValueError(
+                f"{name} 未登记为项目术语表文件（dictionary.gpt.dict）；"
+                "请先用 galtransl_read_glossary 查看现有术语表文件名"
+            )
+        _ensure_project_dict_file_configured(project_dir, config_name, "gpt", name)
+        registered = True
+        LOGGER.info(f"[mcp] 术语表文件已登记进 config：{config_name} → gpt.dict: {name}")
+
+    lines, eol, exists = _read_glossary_file(project_dir, name)
+    # 新建文件与 0 字节空文件都补注释头，避免产出无说明的空术语表
+    if resolved_mode == "upsert" and not lines:
+        lines = [_GLOSSARY_NEW_FILE_HEADER]
+
+    # 仅 gpt 行参与匹配；注释 / 空行 / 分隔线 / 其它行原样保留
+    parsed: Dict[str, List[Dict[str, Any]]] = {}
+    for idx, line in enumerate(lines):
+        row = parse_dict_line(line, "gpt")
+        if row.type != "gpt" or not row.values:
+            continue
+        parsed.setdefault(row.values[0], []).append({"idx": idx, "row": row})
+
+    added = updated = unchanged = 0
+    not_found: List[str] = []
+    removed: Set[int] = set()
+    for src, dst, note, note_provided in normalized:
+        hits = parsed.get(src)
+        if resolved_mode == "delete":
+            if not hits:
+                if src not in not_found:
+                    not_found.append(src)
+                continue
+            for hit in hits:
+                removed.add(hit["idx"])
+            continue
+        if not hits:
+            lines.append(_serialize_glossary_line(src, dst, note))
+            parsed[src] = [{"idx": len(lines) - 1, "row": parse_dict_line(lines[-1], "gpt")}]
+            added += 1
+            continue
+        for hit in hits:
+            old_row = hit["row"]
+            new_line = _serialize_glossary_line(src, dst, note if note_provided else old_row.note)
+            if new_line == lines[hit["idx"]]:
+                unchanged += 1
+                continue
+            lines[hit["idx"]] = new_line
+            hit["row"] = parse_dict_line(new_line, "gpt")
+            updated += 1
+
+    deleted = len(removed)
+    if removed:
+        lines = [line for idx, line in enumerate(lines) if idx not in removed]
+
+    changed = (added + updated + deleted) > 0
+    target_path = os.path.join(project_dir, name)
+    if changed:
+        size = _save_glossary_file(project_dir, name, lines, eol)
+    else:
+        size = os.path.getsize(target_path) if os.path.isfile(target_path) else 0
+
+    # 同名词条还存在于其它项目术语表文件时只报告不阻断（H / 非 H 术语表本就允许同词不同译）
+    also_found_in: List[Dict[str, Any]] = []
+    if resolved_mode == "upsert":
+        wanted = {src for src, _dst, _note, _np in normalized}
+        for other_name in gpt_files:
+            if other_name == name:
+                continue
+            other_path = os.path.join(project_dir, other_name)
+            if not os.path.isfile(other_path):
+                continue
+            try:
+                with open(other_path, "r", encoding="utf-8", errors="replace") as f:
+                    other_lines = f.read().splitlines()
+            except OSError:
+                continue
+            for line_no, line in enumerate(other_lines, start=1):
+                row = parse_dict_line(line, "gpt")
+                if row.type != "gpt" or not row.values or row.values[0] not in wanted:
+                    continue
+                also_found_in.append({
+                    "file": other_name,
+                    "line_no": line_no,
+                    "dst": row.values[1] if len(row.values) > 1 else "",
+                })
+
+    LOGGER.info(
+        f"[mcp] 术语表已更新: {name} mode={resolved_mode}"
+        f"（新增 {added}、更新 {updated}、未变 {unchanged}、删除 {deleted}，{size} 字节）"
+    )
+    return {
+        "success": True,
+        "project_dir": project_dir,
+        "file": name,
+        "mode": resolved_mode,
+        "added": added,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deleted": deleted,
+        "not_found": not_found,
+        "also_found_in": also_found_in,
+        "registered_in_config": registered,
+        "total_lines": len(lines),
+        "bytes": size,
+    }
+
+
 # ---------- 约束下发（instructions / annotations） ----------
 
 def build_server_instructions(
@@ -1046,6 +1483,23 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
         ["project_dir", "filename"],
     ),
     _def(
+        "galtransl_read_glossary",
+        "浏览项目术语表（GPT 字典，config 的 dictionary.gpt.dict 中带 (project_dir) 的项目文件）词条："
+        "支持整表分页浏览与按词筛选（匹配原文/译名/解释任一列）。"
+        "写入请用 galtransl_write_glossary（需先读现状拿到文件名）。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "filename": {
+                "type": "string",
+                "description": "只读某个术语表文件（项目根目录下的文件名，如 项目GPT字典.txt）；不传则读全部项目术语表",
+            },
+            "query": {"type": "string", "description": "筛选词（匹配原文/译名/解释任一列），留空则浏览全部"},
+            "regex": _REGEX_PROP,
+            **_PAGE_PROPS,
+        },
+        ["project_dir"],
+    ),
+    _def(
         "galtransl_get_project_metadata",
         "读取元数据：kind=globalprompt（全局分析）/ plotroute（剧情路线图）/ "
         "filemeta（文件元数据，需 filename）/ batchmeta（批次元数据，需 filename）/ "
@@ -1122,6 +1576,38 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
         kind="write",
     ),
     _def(
+        "galtransl_write_glossary",
+        "按词条增改 / 删除项目术语表（GPT 字典）文件，原子落盘并保留原有注释与其它词条。"
+        "mode=upsert（默认，按 src 匹配：已存在则原地更新，不存在则追加）/ delete（按 src 删除）。"
+        "file 必须显式指定为项目根目录下的术语表文件名（先用 galtransl_read_glossary 读取现状与文件名）；"
+        "未登记在 dictionary.gpt.dict 的文件会自动登记，否则翻译不会使用该文件。"
+        "每次只处理列出的词条，不做整体覆盖；note 省略表示更新时保留原备注，传空串表示清空。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "file": {"type": "string", "description": "术语表文件名（项目根目录下），如 项目GPT字典.txt"},
+            "mode": {
+                "type": "string",
+                "enum": ["upsert", "delete"],
+                "description": "upsert=新增或更新（默认），delete=删除匹配 src 的词条",
+            },
+            "entries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "src": {"type": "string", "description": "词条原文（匹配键），非空"},
+                        "dst": {"type": "string", "description": "译名，upsert 必填；支持 re: 正则词条"},
+                        "note": {"type": "string", "description": "解释/备注，可省略（省略时更新保留原备注）"},
+                    },
+                    "required": ["src"],
+                },
+                "description": "要写入的词条数组",
+            },
+        },
+        ["project_dir", "file", "entries"],
+        kind="write",
+    ),
+    _def(
         "galtransl_submit_job",
         "提交 GalTransl 翻译任务（会真实启动翻译、消耗 API 额度）。"
         "**仅在用户明确要求开始翻译时调用**；调用前应与用户确认项目与引擎。"
@@ -1165,11 +1651,13 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_get_project_overview": _tool_get_project_overview,
     "galtransl_read_translation_file": _tool_read_translation_file,
     "galtransl_read_source_script": _tool_read_source_script,
+    "galtransl_read_glossary": _tool_read_glossary,
     "galtransl_get_project_metadata": _tool_get_project_metadata,
     "galtransl_get_job_status": _tool_get_job_status,
     "galtransl_check_model": _tool_check_model,
     "galtransl_write_route_map": _tool_write_route_map,
     "galtransl_save_metadata": _tool_save_metadata,
+    "galtransl_write_glossary": _tool_write_glossary,
     "galtransl_submit_job": _tool_submit_job,
     "galtransl_stop_job": _tool_stop_job,
 }
@@ -1186,7 +1674,7 @@ def _attach_project_dir_warning(
 ) -> Dict[str, Any]:
     """给只读工具的成功结果补 `project_dir_valid` 告警（不阻断）。
 
-    集中在此处而非 11 个处理器里，避免遗漏：新增只读工具会自动获得该行为。
+    集中在此处而非各只读处理器里，避免遗漏：新增只读工具会自动获得该行为。
     仅当调用确实带了 project_dir 且返回体是 dict 时补；写工具已硬校验，不再重复。
     """
     if name not in _READ_ONLY_TOOL_NAMES or "project_dir" not in args:

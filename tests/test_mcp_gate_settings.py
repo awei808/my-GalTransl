@@ -148,8 +148,10 @@ class GateOffWriteIntegrationTests(unittest.TestCase):
             "文件归属": {"01_a.json": "共通线"},
             "节点剧情": {"共通线": "两人攀上了顶峰"},
         }
-        with self.assertRaises(ValueError):
-            write_route_map(self.project_dir, args)
+        # 门禁开需显式 mock：不依赖本机真实 app_settings.json（用户可能已关闭门禁）
+        with _settings_patch():
+            with self.assertRaises(ValueError):
+                write_route_map(self.project_dir, args)
         self.assertFalse(os.path.isfile(route_map_path(self.project_dir)))
 
         with _settings_patch(mcpHGateEnabled=False):
@@ -207,16 +209,17 @@ class BuildServerInstructionsTests(unittest.TestCase):
     def test_default_matches_constant(self) -> None:
         self.assertEqual(build_server_instructions(), SERVER_INSTRUCTIONS)
 
-    def test_default_matches_060_golden_text(self) -> None:
-        # 金样本：0.6.0 的静态文本原文。build_server_instructions 重构自它，
-        # 默认参数输出必须逐字一致，防止未来编辑 f-string 拼接时静默漂移。
+    def test_default_matches_golden_text(self) -> None:
+        # 金样本：0.6.0 静态文本原文（术语表批次只改动工具计数与写工具清单两行）。
+        # build_server_instructions 重构自它，默认参数输出必须逐字一致，
+        # 防止未来编辑 f-string 拼接时静默漂移。
         golden = (
-            "GalTransl 翻译项目管理服务（17 个工具：13 个只读检索 + 4 个写操作）。"
+            "GalTransl 翻译项目管理服务（19 个工具：14 个只读检索 + 5 个写操作）。"
             "所有工具都需提供翻译项目根目录的绝对路径 project_dir。\n"
             "\n"
             "使用前必须遵守：\n"
             "1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_* / check_model）不得引发任何写入。\n"
-            "   写工具仅这 4 个：write_route_map、save_metadata、submit_job、stop_job，各自只能改项目内的指定产物；\n"
+            "   写工具仅这 5 个：write_route_map、save_metadata、write_glossary、submit_job、stop_job，各自只能改项目内的指定产物；\n"
             "   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。\n"
             "2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，\n"
             "   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。\n"

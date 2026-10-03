@@ -18,7 +18,7 @@
 &ensp;&ensp;&ensp;&ensp;This project is a personal refactored version that reuses parts of the original project's implementation. The following known security risks exist; please be aware before use:
 
 - **File read/write is unauthenticated by default**: The interface can read and read/write files at arbitrary paths by default. Reason: the original project already had this issue. Mitigation: the backend only binds `127.0.0.1` with a CORS whitelist, so the remote attack surface is small — do not expose the local service on untrusted networks.
-  > The above applies to the **HTTP interface**. The **MCP service is a separate entry point with tighter limits**: its 15 tools can only operate on the translation project given by `project_dir` — no arbitrary-path read/write, no command execution, no program-config changes. The 4 write tools additionally enforce a **path allowlist** (non-project directories are rejected) and a **hard H gate**. See the [MCP Integration Guide](docx/MCP接入指南.md) (Chinese).
+  > The above applies to the **HTTP interface**. The **MCP service is a separate entry point with tighter limits**: its 19 tools can only operate on the translation project given by `project_dir` — no arbitrary-path read/write, no command execution, no program-config changes. The 5 write tools additionally enforce a **path allowlist** (non-project directories are rejected) and a **hard H gate**. See the [MCP Integration Guide](docx/MCP接入指南.md) (Chinese).
 - **API keys are shown in plaintext**: The API keys in the project configuration are stored and displayed in plaintext. Reason: the original project already had this issue. Impact: at most it causes key leakage, and only happens when the local machine is maliciously compromised or the project configuration (including keys) is actively shared — do not share configurations containing keys with others or commit them to public repositories.
 
 ## Differences from the Original Project
@@ -51,12 +51,12 @@
   7. Built-in **proofreading workbench**: sentence-by-sentence review/edit, problem detection, alternative translation swap, undo/redo, cross-file find-replace
   8. Focused on the Galgame text translation scenario; other general file formats (srt, epub, etc.) may not work properly
   9. Supports **plugin system**: custom file formats and text processing pipelines, highly extensible
-  10. 🔌 **MCP service (v0.6.0)** — the program ships with **no built-in Agent**; capabilities are exposed over **MCP** as **15 tools** (11 read-only lookups + 4 restricted writes) for any MCP-capable client. The official external Agent is [DeepSeek Harness (dsh)](agents/dsh-preset/README.md), with a ready-to-install preset package. See the [MCP Integration Guide](docx/MCP接入指南.md) (Chinese)
+  10. 🔌 **MCP service (v0.6.0)** — the program ships with **no built-in Agent**; capabilities are exposed over **MCP** as **19 tools** (14 read-only lookups + 5 restricted writes, including glossary read/write) for any MCP-capable client. The official external Agent is [DeepSeek Harness (dsh)](agents/dsh-preset/README.md), with a ready-to-install preset package. See the [MCP Integration Guide](docx/MCP接入指南.md) (Chinese)
 
 <b>❗❗When publishing translations made with this tool without full manual proofreading/polishing, please clearly label them as "GPT translation/AI translation patch", not "personal translation" or "AI localization".</b>
 
 ## Recent Updates
-* 2026.10: Updated v0.6.0 — the program **no longer bundles an Agent**; capabilities are instead exposed over **MCP** (**15 tools**: 11 read-only lookups + 4 restricted writes). The official external Agent is [DeepSeek Harness (dsh)](agents/dsh-preset/README.md), shipped with a ready-to-install preset package. Write tools enforce a **hard H gate** and a **path allowlist** (non-project directories are rejected). The built-in lightweight agent inside the plot-route workbench was removed (the workbench view itself is kept; it was **introduced in 0.5.4**)
+* 2026.10: Updated v0.6.0 — the program **no longer bundles an Agent**; capabilities are instead exposed over **MCP** (**19 tools**: 14 read-only lookups + 5 restricted writes, including glossary read/write). The official external Agent is [DeepSeek Harness (dsh)](agents/dsh-preset/README.md), shipped with a ready-to-install preset package. Write tools enforce a **hard H gate** and a **path allowlist** (non-project directories are rejected). The built-in lightweight agent inside the plot-route workbench was removed (the workbench view itself is kept; it was **introduced in 0.5.4**)
 * 2026.9: Updated v0.5.4, plot-route workbench (visual viewing + launching translation over a file subset); global analysis reworked into **per-route sharded aggregation** (parallel, with shard reuse), falling back to full-text analysis
 * 2026.9: Updated v0.5.1, added the **MCP read-only lookup layer** (`server_search.py`, 11 tools)
 * 2026.9: Updated v0.5.0, added **per-stage API configuration** and **prompt injection block toggles**; pipeline stage list consolidated to a single source
@@ -76,7 +76,7 @@
 * [Getting Started Tutorial](#getting-started-tutorial): Full process introduction on making a machine-translated patch. **If you only want to know how to use this tool, jump directly to section 2.2 of Chapter 2**
 * [Configuration and Engine Settings](#configuration-and-engine-settings): Introduction to translation backend (OpenAI-compatible interface / SakuraLLM) configuration
 * [GalTransl Core Features](#galtransl-core-features): GPT dictionary, cache, ordinary dictionary, problem finding, etc.
-* **MCP & external Agent**: [MCP Integration Guide](docx/MCP接入指南.md) (Chinese; 15 tools, capability boundaries and setup), [dsh preset package](agents/dsh-preset/README.md) (one-step install for the official external Agent)
+* **MCP & external Agent**: [MCP Integration Guide](docx/MCP接入指南.md) (Chinese; 19 tools, capability boundaries and setup), [dsh preset package](agents/dsh-preset/README.md) (one-step install for the official external Agent)
 
 ## Environment Preparation
   * **Desktop Version (Recommended)**

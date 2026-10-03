@@ -244,6 +244,55 @@
   border-style: dashed;
 }
 
+/* 行删除操作列：固定窄列（宽度由 colgroup 给定），按钮悬停/键盘聚焦时显形 */
+.dict-table thead th.dict-table-actions-col,
+.dict-cell-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dict-row-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-base);
+  opacity: 0;
+  transition: all var(--duration-fast);
+}
+
+.dict-table tbody tr:hover .dict-row-del,
+.dict-table tbody tr:focus-within .dict-row-del {
+  opacity: 1;
+}
+
+.dict-row-del:hover {
+  color: var(--color-status-error);
+  background: var(--color-bg-error);
+  border-color: var(--color-status-error);
+}
+
+.dict-row-del:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* 注释行的操作格与标题条同底、去掉列竖线，保持分区线横向连续 */
+.dict-row--comment td.dict-cell-actions {
+  background: color-mix(in srgb, var(--color-bg-subtle) 60%, transparent);
+  border-left: none;
+}
+
+.dict-row--divider td.dict-cell-actions {
+  background: color-mix(in srgb, var(--color-bg-info) 65%, transparent);
+}
+
 .name-entry-arrow {
   color: var(--color-text-tertiary);
   font-size: var(--font-base);

@@ -1,12 +1,12 @@
 ---
 name: galtransl-mcp
-description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语与译文（翻译缓存、原始脚本、字典、人名表、日志、元数据），并可写入路线图/元数据、启停翻译任务。含外接 agent 必须遵守的硬性约束与禁止查看清单（H 内容、凭据与端点、越界路径、写操作边界、规模化拉取）。当需要核查某个术语译法是否统一、某个角色名是否已收录、某段原文的现有译文、某条问题译文的位置，或想了解项目配置与流水线阶段、修改剧情路线图、启动/停止翻译时使用。使用本 MCP 前必须先读「硬性约束与禁止查看」一节。
+description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语与译文（翻译缓存、原始脚本、字典与术语表、人名表、日志、元数据），并可写入路线图/元数据、按词条增改术语表、启停翻译任务。含外接 agent 必须遵守的硬性约束与禁止查看清单（H 内容、凭据与端点、越界路径、写操作边界、规模化拉取）。当需要核查某个术语译法是否统一、某个角色名是否已收录、某段原文的现有译文、某条问题译文的位置，或想了解项目配置与流水线阶段、修改剧情路线图、维护术语表词条、启动/停止翻译时使用。使用本 MCP 前必须先读「硬性约束与禁止查看」一节。
 ---
 
 # GalTransl 翻译项目工具（MCP）
 
-本技能通过 MCP 服务 `galtransl` 访问本机 GalTransl 项目。17 个工具中 13 个为**只读**检索，
-4 个为**受限写入**（路线图、元数据、启停翻译）。所有工具都需要**项目根目录的绝对路径**（`project_dir`），例如
+本技能通过 MCP 服务 `galtransl` 访问本机 GalTransl 项目。19 个工具中 14 个为**只读**检索，
+5 个为**受限写入**（路线图、元数据、术语表、启停翻译）。所有工具都需要**项目根目录的绝对路径**（`project_dir`），例如
 `D:\解包或汉化用\xp3专用汉化文件夹\gal翻译\test-dev`。
 
 只读检索工具不需要 GalTransl 后端在运行——它们直接读取项目目录下的文件。
@@ -15,13 +15,13 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 ## 硬性约束与禁止查看（先读本节，再调工具）
 
-本节是外接 agent 的**行为契约**。13 个只读工具不因「只读」就可以随便读——下列内容是**禁止查看**的；
-4 个写工具也各有明确边界，不得视为通用写权限。
+本节是外接 agent 的**行为契约**。14 个只读工具不因「只读」就可以随便读——下列内容是**禁止查看**的；
+5 个写工具也各有明确边界，不得视为通用写权限。
 
 ### 1. 禁止查看：H / 成人向内容（最高优先级）
 
 **事实依据（0.6.0 实测）**：MCP **读路径仍然没有 H 门禁过滤**——只读工具会原样返回 H 原文/译文。
-但**写工具已有硬门禁**：`galtransl_write_route_map` / `galtransl_save_metadata` 在写入前会检查
+但**写工具已有硬门禁**：`galtransl_write_route_map` / `galtransl_save_metadata` / `galtransl_write_glossary` 在写入前会检查
 目标缓存文件是否落在 H 区间、待写入文本是否命中项目 H 词库（`forbiddenDictH`），命中即**拒绝写入并返回错误**。
 即：**读要自己守规矩，写由服务兜底**。
 
@@ -62,7 +62,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | API 域名 / 端点 | `GalTransl.log` 可能含 `API URL: <domain>/chat/completions`（检测接口，info 级）与 `Call <domain> ...`（每次调用，debug 级） |
 
 - `project_dir` **禁止**指向 GalTransl 程序目录、仓库根目录、系统目录、盘符根或他人目录；它必须是用户明确指定的**翻译项目目录**。
-- **写工具的路径白名单（0.6.0）**：4 个写工具会硬校验 `project_dir` 是「可识别的 GalTransl 项目」——即目录下**确实存在** `config.inc.yaml` 或 `config.yaml`，否则拒绝执行。所以把 `project_dir` 指向仓库根、系统目录或空目录时，写工具会直接报错，不会误写外部文件。
+- **写工具的路径白名单（0.6.0）**：5 个写工具会硬校验 `project_dir` 是「可识别的 GalTransl 项目」——即目录下**确实存在** `config.inc.yaml` 或 `config.yaml`，否则拒绝执行。所以把 `project_dir` 指向仓库根、系统目录或空目录时，写工具会直接报错，不会误写外部文件。
 - **只读工具不硬拦**：它们只要求目录存在，非法项目时在返回体里给出 `project_dir_valid: false` + `project_dir_hint`（仅告警，不阻断检索）。看到该字段请先与用户确认路径是否正确，不要据此继续扩大检索范围。
 - 路径防护的口径要说清：只有 `read_translation_file` / `read_source_script` 经 `safe_under_project()` 校验（拒绝绝对路径与 `../`）；写工具（`save_metadata`）会对 `filename` 做穿越校验，并对 `project_dir` 做上述白名单校验。
 - `galtransl_search_logs` 在 `source: "frontend"` 且项目内无 `frontend.log` 时，会**回退读工作区根目录**的 `frontend.log`。禁止借该回退去读项目外的日志。
@@ -73,14 +73,15 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - `galtransl_list_projects` 会列出工作区根下**所有**可识别项目。**禁止**把它当作「可自由浏览的清单」——只能用于定位用户当前指定的那一个项目。
 - 禁止跨项目聚合、比对或导出内容；禁止遍历用户未提及的项目。
 
-### 4. 写操作边界（0.6.0 起有 4 个写工具）
+### 4. 写操作边界（术语表批次后共 5 个写工具）
 
-写能力**仅限**下列 4 个工具，每个都只能改项目内的指定产物：
+写能力**仅限**下列 5 个工具，每个都只能改项目内的指定产物：
 
 | 写工具 | 能做什么 | 边界 |
 |---|---|---|
 | `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 只能写 `transl_cache/pass0_cache/PlotRouteMap.json`；mermaid 经生成侧同口径校验 |
 | `galtransl_save_metadata` | 原子写单文件元数据 | 只能写 `pass1_cache/*.meta.json`、`pass2_cache/*.batch.json`（kind=filemeta/batchmeta）；剧情路线图须走 `write_route_map`（mermaid 校验），全局分析由流水线生成不开放写入；`filename` 经穿越校验 |
+| `galtransl_write_glossary` | 按词条增改 / 删除项目术语表（GPT 字典） | `file` 必填且只能是 config `dictionary.gpt.dict` 中的项目文件（未登记时会自动登记）；`mode` = upsert / delete，按 `src` 匹配；只处理列出的词条，**不做整体覆盖**；保留原注释与其它词条；`note` 省略表示更新时保留原备注 |
 | `galtransl_submit_job` | 提交翻译任务（**会真实消耗 API 额度**） | 仅在用户明确要求时调用；调用前确认项目与引擎 |
 | `galtransl_stop_job` | 停止项目当前任务 | 无运行中任务时后端返回 409 |
 
@@ -88,8 +89,8 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 - 这些工具**不提供**任意路径读写、**不提供**命令执行、**不修改**程序配置与 API 密钥。
 - 写工具只接受**可识别的 GalTransl 项目目录**（含 `config.inc.yaml`/`config.yaml`）。指向别处会被拒绝，**不要**为了绕过而去找一个含配置文件的目录顶替——`project_dir` 必须是用户指定的那一个。
-- 禁止绕过 MCP 去达成其它写效果：不得直接调 GalTransl HTTP 写端点（`PUT /api/projects/:id/config`、`/cache/save`、`/cache/replace`、`/cache/delete-*` 等），不得直接编辑项目目录下的文件。上面 4 个工具本身走后端是**实现细节**，不代表你也获得了直接打这些端点的授权。
-- 用户要求「帮我改一下字典/译文/配置」时，说明本 MCP 无此能力并请其在 GalTransl 界面操作；**不要**用任何间接手段代劳。
+- 禁止绕过 MCP 去达成其它写效果：不得直接调 GalTransl HTTP 写端点（`PUT /api/projects/:id/config`、`/cache/save`、`/cache/replace`、`/cache/delete-*` 等），不得直接编辑项目目录下的文件。上面 5 个工具本身走后端是**实现细节**，不代表你也获得了直接打这些端点的授权。
+- 用户要求「帮我改一下译文/配置/公共字典」时，说明本 MCP 无此能力并请其在 GalTransl 界面操作（项目**术语表**例外：用 `write_glossary` 按词条增改）；**不要**用任何间接手段代劳。
 - `submit_job` 是有副作用且耗时的操作：**不要**在用户只是「看看进度」「评估一下」时调用。
 
 ### 5. 禁止：规模化拉取（上下文纪律）
@@ -108,7 +109,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 > 该内容不在 galtransl MCP 的授权范围内（<禁区名>）。我没有任意路径读写或执行命令的能力，也不会绕过去做。可以在 GalTransl 界面本地处理，或由你明确授权具体范围后我再继续。
 
-## 工具清单（17 个）
+## 工具清单（19 个）
 
 ### 搜索（只读）
 
@@ -129,7 +130,8 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | `galtransl_get_project_overview` | 项目概览：目标语言、每请求条数、注入块开关、文件清单、流水线阶段 | — |
 | `galtransl_read_translation_file` | 读取某个缓存文件的条目（分页） | `filename`、`offset`、`limit` |
 | `galtransl_read_source_script` | 读取某个原始脚本文件的条目（分页） | `filename`、`offset`、`limit` |
-| `galtransl_get_project_metadata` | 读元数据：`globalprompt` / `plotroute` / `filemeta` / `batchmeta` / `all` | `kind`、`filename` |
+| `galtransl_read_glossary` | 浏览项目术语表（GPT 字典）词条：整表分页 / 按词筛选（原文/译名/解释任一列） | `filename`（可选，限定单个术语表文件）、`query`、`regex`、`offset`、`limit` |
+| `galtransl_get_project_metadata` | 读元数据：`globalprompt` / `plotroute` / `filemeta` / `batchmeta` / `routeanalysis` / `all` | `kind`、`filename` |
 | `galtransl_get_job_status` | 查**任务状态与实时进度**（阶段/百分比/worker/速度；**需后端**） | — |
 | `galtransl_check_model` | 校验模型/令牌可用性（**发一次真实探测请求；需后端**） | `translator`、`config_file_name`、`backend_profile` |
 
@@ -139,6 +141,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 |---|---|---|
 | `galtransl_write_route_map` | 整体覆盖写剧情路线图（未提供字段保留旧值） | `mermaid`、`文件归属`、`节点剧情`、`结构类型`、`用户大纲` |
 | `galtransl_save_metadata` | 原子写元数据 | `kind`(filemeta/batchmeta)、`filename`、`entry` |
+| `galtransl_write_glossary` | 按词条增改 / 删除项目术语表（**不做整体覆盖**） | `file`（术语表文件名，必填）、`mode`(upsert/delete)、`entries`(`src`/`dst`/`note`) |
 | `galtransl_submit_job` | 提交翻译任务（**需后端运行；消耗额度**） | `translator`（必填）、`config_file_name`、`backend_profile`、`file_filter` |
 | `galtransl_stop_job` | 停止项目当前任务（**需后端运行**） | — |
 
@@ -173,7 +176,14 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 2. `galtransl_write_route_map` — **整体覆盖**写入：未被要求修改的字段（`结构类型`/`用户大纲`/`文件归属`/`节点剧情`）必须原样带回，禁止凭空删减路线或文件。
 3. 若返回 H 门禁错误 → 如实转告用户，不要改写措辞重试。
 
-### 6. 启动 / 停止翻译（写，消耗额度）
+### 6. 维护项目术语表（写）
+
+1. `galtransl_read_glossary` — **先读现状**：拿到术语表文件清单与现有词条（结果里的 `file` + `line_no` 用于定位）。
+2. `galtransl_write_glossary` — `file` 必须用读取结果里的文件名；`mode: "upsert"` 按 `src` 匹配增改（已存在则原地更新，不存在则追加）、`delete` 删除；每次只提交要求改动的词条，禁止用空 entries 或删光词条的方式「清空重写」。
+3. 返回体 `also_found_in` 非空表示同名词条还存在于其它术语表文件（H / 非 H 场景本就允许同词不同译）；有冲突疑义时先与用户确认，不要自作主张删改另一份。
+4. 若返回 H 门禁错误 → 如实转告用户，不要改写措辞重试。
+
+### 7. 启动 / 停止翻译（写，消耗额度）
 
 1. 先与用户确认**项目**与**引擎**（`translator`，如 `ForGal-full-pipeline`）；`galtransl_get_project_overview` 可帮助确认项目结构。
 2. 可选：`galtransl_check_model` 预检模型/令牌可用性（会发一次真实请求），避免提交后才发现配置失效。
@@ -183,7 +193,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 ## 注意事项
 
-- **只读 + 受限写入**：13 个只读工具 + 4 个写工具（边界见 §4）。需要改字典/译文/配置时，请指导用户在 GalTransl 界面里操作。
+- **只读 + 受限写入**：14 个只读工具 + 5 个写工具（边界见 §4）。项目术语表可用 `write_glossary` 按词条增改；需要改译文/公共字典/配置时，请指导用户在 GalTransl 界面里操作。
 - **H 内容**：读路径**无 H 门禁过滤**（须自行遵守 §1）；写工具**有硬门禁**，命中 H 区间或 H 词库即拒绝写入——但门禁 **fail-open**，项目未配 H 词库时不拦，详见 §1 的失效边界。
 - **作业域工具需后端**：`get_job_status` / `check_model` / `submit_job` / `stop_job` 需要 GalTransl 程序在运行；后端未启动时会返回「无法连接 GalTransl 后端」的中文错误，此时转告用户启动程序即可，不要反复重试。`check_model` 会向模型端点发起一次真实探测请求（消耗极小额度），不要在无谓的场景反复调用。
 - **结果上限**：搜索类工具默认最多返回 200 条（硬顶 2000），超出时返回体里 `truncated` 为 `true`，`total` 才是全部命中数。需要更多就加 `regex` 收窄检索词，或提高 `max_results`。
@@ -192,4 +202,4 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - **返回字段易误读**：`search_cache` 结果里的 `post_src` 实际装的是**页面可见原文**（`pre_src` 优先），`pre_dst` 装的是 `pre_dst`/`pre_zh`/`proofread_dst` 首个非空；这与 `read_translation_file` 返回的原始条目字段口径**不同**，不要混用。`search_dict` 结果的检索词/替换词键名是 `src`/`dst`，另有 `origin`（project/common）与 `category`（pre/gpth/gptnh/gpt/post/forbiddenh/forbiddennh）。
 - **`list_problems` 的 `problem_type` 是正则关键词**，不是枚举值（留空时用 `.+` 命中所有非空 `problem`）；完整枚举清单看返回体里的 `available_problem_types`。
 - **`lookup_name` 的 `name` 在 schema 里声明为 `string`**（实现虽容忍数组，但按 schema 校验的客户端会拒绝）：请传单个字符串、多次调用。
-- **`get_project_metadata` / `read_*` 的 `filename` 只传裸文件名**（不带路径、不带 `.meta.json`/`.batch.json` 后缀）。`save_metadata` 的 `filename` 有穿越校验，但同样只应传裸文件名。
+- **`get_project_metadata` / `read_*` 的 `filename` 只传裸文件名**（不带路径、不带 `.meta.json`/`.batch.json` 后缀；`read_glossary` 的 `filename` 传术语表文件名，如 `项目GPT字典.txt`）。`save_metadata` 的 `filename` 有穿越校验，但同样只应传裸文件名。

@@ -50,8 +50,8 @@ from GalTransl.mcp_tools import (
 
 SERVER_NAME = "galtransl"
 SERVER_DESCRIPTION = (
-    "GalTransl 翻译项目管理（17 个工具：13 只读检索 + 4 受限写入）："
-    "翻译缓存、原始脚本、字典、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
+    "GalTransl 翻译项目管理（19 个工具：14 只读检索 + 5 受限写入）："
+    "翻译缓存、原始脚本、字典与术语表、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
 )
 
 

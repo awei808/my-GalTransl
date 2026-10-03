@@ -48,6 +48,7 @@ import {
 } from "../../components/dict/dictUtils";
 import type {
   DictRow,
+  DictRowType,
   DictTab,
   DictColumnDef,
   ConditionItem,
@@ -403,15 +404,24 @@ export function DictionaryPage() {
   // 解析请求序列号：仅接受最新一次解析结果，避免异步竞态覆盖编辑态
   let parseSeq = 0;
 
+  // parsedRows 对应的草稿文本（新鲜度标记）：列数守卫只在该文本与当前草稿一致时才作判定，
+  // 避免文本模式编辑或切文件后的请求窗口里用陈旧行误判「混排」而挡住卡片视图
+  let parsedFromText = "";
+
   // 解析当前字典文本为结构化行（走后端，本地不再解析）
   async function refreshParsed(): Promise<void> {
     // 人名替换行格式与 pre/gpt/post 不同，后端 parse 接口不支持 names category，
-    // 且 names 视图由 nameEntries 渲染、不走 parsedRows，直接跳过
-    if (activeTab() === "names") return;
+    // 且 names 视图由 nameEntries 渲染、不走 parsedRows，直接跳过（并作废在途解析响应）
+    if (activeTab() === "names") {
+      parseSeq++;
+      return;
+    }
     const seq = ++parseSeq;
+    const content = draftText();
     try {
-      const rows = await parseDictContent(draftText(), activeTab() as DictTab);
+      const rows = await parseDictContent(content, activeTab() as DictTab);
       if (seq !== parseSeq) return;  // 丢弃过期响应，避免覆盖最新编辑/切换结果
+      parsedFromText = content;
       setParsedRows(rows);
     } catch {
       // 解析失败保留上一次结果，避免编辑态崩溃
@@ -500,8 +510,10 @@ export function DictionaryPage() {
     }
     const all = [...rows];
     all[ri] = next;
+    const text = rowsToText(all);
+    parsedFromText = text;
     setParsedRows(all);
-    setDraftText(rowsToText(all));
+    setDraftText(text);
   }
 
   /** 当前表格列定义（表头/colgroup 的单一事实源）：取首个数据行类型；无数据行时按 tab 回退 normal 格式 */
@@ -510,6 +522,18 @@ export function DictionaryPage() {
     const row = parsedRows().find((r) => r.type !== "blank" && r.type !== "comment");
     if (!row) return getTableColumns("normal", tab as DictTab);
     return getTableColumns(row.type, tab as DictTab);
+  }
+
+  /** 表格行类型是否自洽：非空非注释行的**行类型**必须一致。预处理 tab 可混排普通/条件/场景行，
+      固定布局会把超出表头的列压成 0 宽（操作格同理），不自洽时退回文本模式 */
+  function cardColumnsConsistent(): boolean {
+    const rows = parsedRows();  // 无条件读取：解析落地后守卫才能复评（陈旧分支提前返回会漏订阅）
+    // 解析结果滞后于当前草稿（文本模式编辑或切文件后的请求窗口）时不作判定，交给解析落地后复评
+    if (parsedFromText !== draftText()) return true;
+    const types = new Set(
+      rows.filter((r) => r.type !== "blank" && r.type !== "comment").map((r) => r.type),
+    );
+    return types.size <= 1;
   }
 
   /** 表格单元格渲染：按列定义的编辑器类型分发（含条件行结构化控件，保留原卡片编辑能力） */
@@ -676,14 +700,37 @@ export function DictionaryPage() {
     return <span />;
   }
 
+  /** 卡片模式删除单行：本地移除后重建草稿文本，落盘沿用既有保存/自动保存路径 */
+  function deleteRow(row: DictRow) {
+    const rows = parsedRows();
+    const idx = rows.indexOf(row);
+    if (idx < 0) return;  // 行已过期（期间重新解析过），忽略
+    parseSeq++;  // 作废飞行中的解析响应，避免其返回后恢复已删除的行
+    const next = rows.filter((_, i) => i !== idx);
+    const text = rowsToText(next);
+    parsedFromText = text;  // 本地行集与文本同步更新，保鲜度标记不滞后
+    setParsedRows(next);
+    setDraftText(text);
+  }
+
+  /** 操作格 colspan：列数自洽（见卡片守卫）时恒为 1；Math.max 兜底，避免出现 0/负数 colspan */
+  function actionColspan(type: DictRowType): number {
+    const rowCols = getTableColumns(type, activeTab() as DictTab).length;
+    return Math.max(1, cardColumnDefs().length + 1 - rowCols);
+  }
+
+  /** 新行模板：卡片视图要求行类型一致，故按**当前显示的行集**主体行类型追加同构空行（无行时按 tab 默认） */
+  function newRowTemplate(): string {
+    const row = parsedRows().find((r) => r.type !== "blank" && r.type !== "comment");
+    if (row?.type === "conditional") return `${row.target || "pre_src"}||||`;
+    if (row?.type === "situation") return `${row.values[0] || "mono"}||`;
+    return activeTab() === "gpt" ? "||" : "|";
+  }
+
   function addEntry() {
     const text = draftText().trim();
-    const tab = activeTab();
-    if (tab === "gpt") {
-      setDraftText(text ? text + "\n||" : "||");
-    } else {
-      setDraftText(text ? text + "\n|" : "|");
-    }
+    const template = newRowTemplate();
+    setDraftText(text ? `${text}\n${template}` : template);
     if (viewMode() === "card") {
       refreshParsed();
     }
@@ -914,12 +961,16 @@ export function DictionaryPage() {
     }
   });
 
-  // 后处理(post)字典暂不支持表格视图：强制文本模式，规避混类型行在表格中的列错位。
-  // 临时规避开关，后续若实现每行自适应列数可移除（对照问题1）。
+  // 后处理(post)字典与行类型混排的文件不支持表格视图：强制文本模式，
+  // 规避固定布局下超出表头的列被压成 0 宽（含删除操作列），并提示用户
   createEffect(() => {
-    if (activeTab() === "post" && viewMode() === "card") {
+    if (viewMode() !== "card") return;
+    if (activeTab() !== "post" && !cardColumnsConsistent()) {
+      toast.info("该字典行格式不统一（普通/条件/场景行混排），暂不支持卡片视图");
       setViewMode("text");
+      return;
     }
+    if (activeTab() === "post") setViewMode("text");
   });
 
   // 切到卡片模式时基于当前文本重新解析（text 模式编辑后切换需刷新）
@@ -1314,12 +1365,14 @@ export function DictionaryPage() {
                           {cardColumnDefs().map((col) => (
                             <col style={col.width ? { width: col.width } : undefined} />
                           ))}
+                          <col style={{ width: "64px" }} />
                         </colgroup>
                         <thead>
                           <tr>
                             {cardColumnDefs().map((col) => (
                               <th>{col.label}</th>
                             ))}
+                            <th class="dict-table-actions-col">操作</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1376,6 +1429,19 @@ export function DictionaryPage() {
                                           </td>
                                         )}
                                       </Index>
+                                      <td
+                                        class="dict-cell-actions"
+                                        colspan={actionColspan(rowSignal().type)}
+                                      >
+                                        <button
+                                          class="dict-row-del"
+                                          title="删除该条目"
+                                          aria-label={`删除条目：${rowSignal().values[0] ?? ""}`}
+                                          onClick={() => deleteRow(rowSignal())}
+                                        >
+                                          删除
+                                        </button>
+                                      </td>
                                     </tr>
                                   }
                                 >
@@ -1390,6 +1456,17 @@ export function DictionaryPage() {
                                   >
                                     <td colspan={cardColumnDefs().length} class="dict-cell-comment">
                                       {rowSignal().values[0]}
+                                    </td>
+                                    {/* 注释行文字格保持整行 colspan，操作格占余下 1 列（总列数 = 表头 + 1） */}
+                                    <td class="dict-cell-actions">
+                                      <button
+                                        class="dict-row-del"
+                                        title="删除该条目"
+                                        aria-label={`删除注释：${rowSignal().values[0] ?? ""}`}
+                                        onClick={() => deleteRow(rowSignal())}
+                                      >
+                                        删除
+                                      </button>
                                     </td>
                                   </tr>
                                 </Show>

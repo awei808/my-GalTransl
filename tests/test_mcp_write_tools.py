@@ -1,4 +1,4 @@
-"""MCP 写工具单测（0.6.0 新增的 4 个 kind=write 工具）。
+"""MCP 写工具单测（0.6.0 新增写工具，术语表批次后共 5 个 kind=write 工具）。
 
 覆盖三条主线：
 1. 路线图/元数据写入的正确性与原子性（含路径穿越拒绝）；
@@ -446,10 +446,11 @@ class ProjectDirValidationTests(unittest.TestCase):
             f.write("common:\n  language: zh-cn\n")
         self.assertEqual(validate_project_dir(self.bare_dir), "config.yaml")
 
-    def test_all_four_write_tools_reject_bare_directory(self) -> None:
+    def test_all_write_tools_reject_bare_directory(self) -> None:
         cases = [
             ("galtransl_write_route_map", {"mermaid": 'flowchart TD\n  A["x"]'}),
             ("galtransl_save_metadata", {"kind": "filemeta", "filename": "x", "entry": {}}),
+            ("galtransl_write_glossary", {"file": "项目GPT字典.txt", "entries": [{"src": "a", "dst": "b"}]}),
             ("galtransl_submit_job", {"translator": "t"}),
             ("galtransl_stop_job", {}),
         ]
@@ -519,11 +520,11 @@ class ReadToolProjectDirWarningTests(unittest.TestCase):
         result = call_mcp_tool("galtransl_search_scripts", {"project_dir": self.project_dir, "query": "x"})
         self.assertTrue(result["project_dir_valid"])
 
-    def test_read_only_set_is_thirteen_and_disjoint_from_write(self) -> None:
+    def test_read_only_set_is_fourteen_and_disjoint_from_write(self) -> None:
         writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 13)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 14)
         self.assertEqual(_READ_ONLY_TOOL_NAMES & writes, frozenset())
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 17)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 19)
 
     def test_write_tool_success_is_not_annotated_with_warning(self) -> None:
         # 写工具已硬校验，成功返回体不应再被附加 project_dir_valid
@@ -566,13 +567,14 @@ class ReadToolProjectDirWarningTests(unittest.TestCase):
 
 
 class WriteToolRegistrationTests(unittest.TestCase):
-    def test_four_write_tools_registered(self) -> None:
+    def test_five_write_tools_registered(self) -> None:
         writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
         self.assertEqual(
             writes,
             {
                 "galtransl_write_route_map",
                 "galtransl_save_metadata",
+                "galtransl_write_glossary",
                 "galtransl_submit_job",
                 "galtransl_stop_job",
             },
