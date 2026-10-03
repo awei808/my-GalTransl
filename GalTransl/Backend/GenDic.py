@@ -1,7 +1,9 @@
-import json, time, asyncio, os, traceback, re
+import json, time, asyncio, os, traceback, re, hashlib
+from contextlib import asynccontextmanager
+from datetime import datetime
 from math import log
 from opencc import OpenCC
-from typing import List, Set, Dict, Optional, Tuple, Any
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from alive_progress import alive_bar
@@ -25,11 +27,15 @@ from GalTransl.Backend.Prompts import (
 import collections
 from threading import Lock
 from GalTransl.TerminalOutput import should_print_translation_logs, terminal_progress
-from GalTransl.server_runtime import set_live_snippets
+from GalTransl.server_runtime import WORKER_ID_CTX, set_live_snippets
 
 # 维护状态：已重新纳入正常迭代维护（设计文档 gendic_terms_mode_design.md）。
 # 当前同时支持 segments 模式（旧，传完整片段给 AI）与 terms 模式（新，本地提取词表后逐词翻译），
 # 由配置 internals.gendic.mode 切换（默认 terms）。
+
+# 断点续跑分片缓存：缓存目录名与 schema 版本（分片结构变化时递增使旧分片全部失效）
+GENDIC_SHARD_DIR_NAME = "gendic_cache"
+GENDIC_SHARD_SCHEMA = 1
 
 # 正则补充层：连续片假名字串（含・）
 _KATAKANA_SEQ_RE = re.compile(r"[ァ-ヶー・]{2,}")
@@ -537,6 +543,8 @@ class GenDic(BaseEngine):
         # 复用基类 _coerce_positive_int（非法值回退默认、0 抬为 1，避免 Semaphore(0) 死锁）
         _w = config.getKey("workersPerProject")
         self.wokers = self._coerce_positive_int(_w, 1)
+        # worker 槽位池：并发任务取槽绑定 WORKER_ID_CTX（提示词/结果预览按 worker 分板块）
+        self._free_worker_slots = list(range(self.wokers))
         self.counter_lock = Lock()
         self.list_lock = Lock()
         self.progress_lock = Lock()
@@ -588,6 +596,10 @@ class GenDic(BaseEngine):
         # 平常词黑名单（代词/语气词/口语等，默认空集，用户按需添加）
         raw_ban = config.getKey("internals.gendic.ban_words", None)
         self.gendic_ban_words = set(raw_ban) if isinstance(raw_ban, (list, set, tuple)) else set()
+        # 断点续跑分片缓存：transl_cache/gendic_cache；forceRegenDic 同时跳过分片复用重算
+        self.gendic_force_regen = bool(config.getKey("internals.pipeline.forceRegenDic", False))
+        self._shard_hit_count = 0
+        self._shard_miss_count = 0
 
     def _load_existing_gpt_terms(self) -> Dict[str, Tuple[str, str]]:
         result_path = os.path.join(self.pj_config.getProjectDir(), "项目GPT字典-生成.txt")
@@ -639,6 +651,26 @@ class GenDic(BaseEngine):
             update_runtime_status(self.runtime_project_dir, **kwargs)
         except Exception:
             return
+
+    @asynccontextmanager
+    async def _bind_worker_slot(self) -> AsyncIterator[int]:
+        """将当前任务绑定到空闲 worker 槽位（信号量已保证并发 ≤ 槽位数，取槽不阻塞）。"""
+        slot = self._free_worker_slots.pop(0)
+        token = WORKER_ID_CTX.set(str(slot))
+        try:
+            yield slot
+        finally:
+            WORKER_ID_CTX.reset(token)
+            self._free_worker_slots.append(slot)
+
+    def _push_translation_preview(self, text: str) -> None:
+        """运行中按 worker 推送结果预览（worker 身份取自 WORKER_ID_CTX），失败静默。"""
+        if not text:
+            return
+        try:
+            set_live_snippets(self.runtime_project_dir, translation_preview=text)
+        except Exception:
+            pass
 
     def _load_existing_generated_terms(self, result_path: str) -> Set[str]:
         terms: Set[str] = set()
@@ -780,6 +812,110 @@ class GenDic(BaseEngine):
         finally:
             self.progress_append_path = ""
 
+    def _shard_dir(self) -> str:
+        """断点续跑分片缓存目录：transl_cache/gendic_cache。"""
+        return os.path.join(self.pj_config.getCachePath(), GENDIC_SHARD_DIR_NAME)
+
+    def _cleanup_stale_shard_tmp(self) -> None:
+        """运行启动时清掉分片目录残留的 *.json.tmp（此刻本项目无并发写入者，同 Cache.py 口径）。"""
+        try:
+            shard_dir = self._shard_dir()
+            if not os.path.isdir(shard_dir):
+                return
+            removed = 0
+            for name in os.listdir(shard_dir):
+                if not name.endswith(".json.tmp"):
+                    continue
+                try:
+                    os.remove(os.path.join(shard_dir, name))
+                    removed += 1
+                except OSError:
+                    pass
+            if removed:
+                LOGGER.info(f"[GenDic] 启动前清理了 {removed} 个残留分片临时文件（*.json.tmp）")
+        except Exception:
+            LOGGER.warning("[GenDic] 清理残留分片临时文件失败", exc_info=True)
+
+    def _model_identity_salt(self) -> str:
+        """令牌池内模型名集合（排序拼接）：换模型/换后端时指纹自动失效重算。"""
+        pool = getattr(self, "tokenProvider", None)
+        try:
+            tokens = getattr(pool, "tokens", None) or []
+            names = sorted({t.model_name for _, t in tokens if t and getattr(t, "model_name", "")})
+        except Exception:
+            names = []
+        return ",".join(names)
+
+    def _shard_fingerprint(self, system: str, prompt: str) -> str:
+        """分片指纹：schema 版本 + 模型名集合 + 完整请求文本（system+user）的 sha256。"""
+        material = "\x00".join([str(GENDIC_SHARD_SCHEMA), self._model_identity_salt(), system or "", prompt or ""])
+        return hashlib.sha256(material.encode("utf-8", "ignore")).hexdigest()
+
+    def _shard_path(self, mode: str, task_index: int) -> str:
+        return os.path.join(self._shard_dir(), f"{mode}-b{int(task_index)}.json")
+
+    def _load_shard(self, mode: str, task_index: int, fingerprint: str) -> List[Tuple[str, str, str]]:
+        """读取断点分片：文件存在且 schema/指纹匹配才复用；损坏或过期一律按未命中重算。
+
+        Returns:
+            [(src, dst, note)]，未命中返回空列表。
+        """
+        if getattr(self, "gendic_force_regen", False):
+            return []
+        path = self._shard_path(mode, task_index)
+        try:
+            if not os.path.exists(path):
+                return []
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            LOGGER.warning(f"[GenDic][{mode}] 分片 {task_index} 断点缓存损坏，忽略并重算", exc_info=True)
+            return []
+        if not isinstance(data, dict) or data.get("schema") != GENDIC_SHARD_SCHEMA or data.get("fingerprint") != fingerprint:
+            LOGGER.debug(f"[GenDic][{mode}] 分片 {task_index} 断点缓存指纹不匹配，重算")
+            return []
+        entries = data.get("entries")
+        if not isinstance(entries, list):
+            return []
+        out: List[Tuple[str, str, str]] = []
+        for e in entries:
+            if isinstance(e, (list, tuple)) and len(e) >= 2 and e[0] and e[1]:
+                out.append((str(e[0]), str(e[1]), str(e[2]) if len(e) >= 3 else ""))
+        # 只缓存过非空结果，空 entries 视为脏数据
+        return out
+
+    def _save_shard(self, mode: str, task_index: int, fingerprint: str, entries: List[Tuple[str, str, str]]) -> None:
+        """原子写入断点分片（.tmp + os.replace）；失败仅告警不影响主流程。"""
+        try:
+            shard_dir = self._shard_dir()
+            os.makedirs(shard_dir, exist_ok=True)
+            path = self._shard_path(mode, task_index)
+            tmp_path = f"{path}.tmp"
+            data = {
+                "schema": GENDIC_SHARD_SCHEMA,
+                "mode": mode,
+                "fingerprint": fingerprint,
+                "trans_by": self.get_last_chatbot_model() or "GenDic",
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                # dict 形状（非 list）：进度扫描只把 list 形状 JSON 当句子条目解析，避免污染翻译进度
+                "entries": [[src, dst, note] for src, dst, note in entries],
+            }
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            LOGGER.debug(f"[GenDic][{mode}] 已写断点分片 {path}")
+        except Exception:
+            LOGGER.warning(f"[GenDic][{mode}] 写断点分片 {task_index} 失败（不影响主流程）", exc_info=True)
+
+    def _log_shard_summary(self) -> None:
+        """运行结束汇总断点缓存命中情况（无任何命中/未命中时不输出）。
+
+        terms/llm 模式在 batch_translate 分派处 finally 调用，segments 模式在其流程
+        finally 调用，各恰好一次；计数器保留供调用方在 batch_translate 返回后读取。
+        """
+        if self._shard_hit_count or self._shard_miss_count:
+            LOGGER.info(f"[GenDic] 断点缓存：命中 {self._shard_hit_count} 批，新请求 {self._shard_miss_count} 批")
+
     def _record_runtime_success(self, index: int, source_preview: str, translation_preview: str) -> None:
         super()._record_runtime_success(
             self.progress_display_name,
@@ -818,6 +954,17 @@ class GenDic(BaseEngine):
             prompt = prompt.replace("{input}", text)
         if "{hint}" in prompt:
             prompt = prompt.replace("{hint}", hint)
+
+        # 断点续跑：指纹命中直接回放分片词条，不再请求 LLM
+        fingerprint = self._shard_fingerprint(self.system_prompt, prompt)
+        cached = self._load_shard("segments", task_index, fingerprint)
+        if cached:
+            self._shard_hit_count += 1
+            LOGGER.info(f"[GenDic][segments] 分片 {task_index} 命中断点缓存，跳过 LLM 请求")
+            self._push_translation_preview("\n".join(f"{s}|{d}|{n}" for s, d, n in cached))
+            self._accumulate_segment_entries(cached)
+            return True
+        self._shard_miss_count += 1
 
         self._check_stop_requested()
         try:
@@ -892,23 +1039,34 @@ class GenDic(BaseEngine):
             )
             return False
 
-        for idx, (src, dst, note) in enumerate(valid_entries):
-            if idx < 3:
-                self._record_runtime_success(
-                    index=task_index,
-                    source_preview=src,
-                    translation_preview=f"{dst}｜{note}",
-                )
+        if valid_entries:
+            # 断点续跑：仅缓存非空结果（NULL-NULL 空响应不入缓存）
+            self._save_shard("segments", task_index, fingerprint, valid_entries)
+
+        self._push_translation_preview(
+            "\n".join(f"{src}|{dst}|{note}" for src, dst, note in valid_entries)
+        )
+
+        for src, dst, note in valid_entries[:3]:
+            self._record_runtime_success(
+                index=task_index,
+                source_preview=src,
+                translation_preview=f"{dst}｜{note}",
+            )
+        self._accumulate_segment_entries(valid_entries)
+        return True
+
+    def _accumulate_segment_entries(self, valid_entries: List[Tuple[str, str, str]]) -> None:
+        """segments 模式词条累积（计数/投票/首见入列）；正常解析与断点回放共用。"""
+        for src, dst, note in valid_entries:
             with self.counter_lock:
                 self.dic_counter[src] += 1
                 self.dic_votes[src][(dst, note)] += 1
                 if self.dic_counter[src] == 1:
                     with self.list_lock:
                         self.dic_list.append([src, dst, note])
-                elif self.dic_counter[src] == 2:
-                    if should_print_translation_logs(self.pj_config):
-                        print(f"{src}\t{dst}\t{note}")
-        return True
+                elif self.dic_counter[src] == 2 and should_print_translation_logs(self.pj_config):
+                    print(f"{src}\t{dst}\t{note}")
 
     def _load_tokenizer(self):
         """加载 vaporetto 分词模型（解压到临时目录），失败返回 None。"""
@@ -1063,7 +1221,7 @@ class GenDic(BaseEngine):
     async def llm_translate_terms_batch(
         self, batch_terms: List[Tuple[str, int, str]], context_hint: str, task_index: int
     ) -> Dict[str, Tuple[str, str]]:
-        """terms 模式单批翻译：构造 GENDIC_TERMS_PROMPT → ask_chatbot → 解析。"""
+        """terms 模式单批翻译：构造 GENDIC_TERMS_PROMPT → 断点分片查缓存 → ask_chatbot → 解析。"""
         self._check_stop_requested()
         lines = [f"{i + 1}. {w}" for i, (w, _, _) in enumerate(batch_terms)]
         prompt = GENDIC_TERMS_PROMPT.replace("{terms}", "\n".join(lines))
@@ -1072,6 +1230,14 @@ class GenDic(BaseEngine):
         else:
             # context 关闭：整段移除「上下文提示」块，避免残留空标题
             prompt = re.sub(r"## 上下文提示[^\n]*\n\{context_hint\}\n\n", "", prompt)
+        # 断点续跑：指纹命中直接复用分片词条，不再请求 LLM
+        fingerprint = self._shard_fingerprint(GENDIC_SYSTEM, prompt)
+        cached = self._load_shard("terms", task_index, fingerprint)
+        if cached:
+            self._shard_hit_count += 1
+            LOGGER.info(f"[GenDic][terms] 批次 {task_index} 命中断点缓存，跳过 LLM 请求")
+            return {src: (dst, note) for src, dst, note in cached}
+        self._shard_miss_count += 1
         self._check_stop_requested()
         try:
             rsp, token = await self.ask_chatbot(
@@ -1101,6 +1267,12 @@ class GenDic(BaseEngine):
             return {}
         input_words = [w for w, _, _ in batch_terms]
         matched, _ = self._parse_terms_response(rsp, input_words)
+        if matched:
+            # 断点续跑：仅缓存非空结果，空结果批次留待下次重算
+            self._save_shard(
+                "terms", task_index, fingerprint,
+                [(w, dst, note) for w, (dst, note) in matched.items()],
+            )
         return matched
 
     async def _batch_translate_terms(self, json_list: list) -> bool:
@@ -1176,30 +1348,51 @@ class GenDic(BaseEngine):
             results: Dict[str, Tuple[str, str]] = {}
             missing: Set[str] = set(w for w, _, _ in ordered)
             completed = 0
+            inflight = 0
 
             async def process_batch(batch: list, task_index: int) -> None:
-                nonlocal completed
-                async with sem:
-                    self._check_stop_requested()
+                nonlocal completed, inflight
+                async with sem, self._bind_worker_slot():
+                    inflight += 1
                     try:
-                        matched = await self.llm_translate_terms_batch(batch, _ctx_hint(batch), task_index)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        if isinstance(e, JobCancelledError):
+                        self._check_stop_requested()
+                        self._update_runtime(
+                            stage="GenDic 术语提取中",
+                            current_file=f"已完成 {completed}/{len(batches)} 批",
+                            workers_active=inflight,
+                        )
+                        try:
+                            matched = await self.llm_translate_terms_batch(batch, _ctx_hint(batch), task_index)
+                        except asyncio.CancelledError:
                             raise
-                        LOGGER.error(f"[GenDic][terms] 批次 {task_index} 处理异常: {e}")
-                        return
-                    for w, pair in matched.items():
-                        results[w] = pair
-                        missing.discard(w)
-                    completed += 1
-                    self._append_runtime_progress(task_index, bool(matched))
-                    self._update_runtime(
-                        stage="GenDic 术语提取中",
-                        current_file=f"已完成 {completed}/{len(batches)} 批",
-                        workers_active=max(0, self.wokers - completed),
-                    )
+                        except Exception as e:
+                            if isinstance(e, JobCancelledError):
+                                raise
+                            LOGGER.error(f"[GenDic][terms] 批次 {task_index} 处理异常: {e}")
+                            completed += 1
+                            self._append_runtime_progress(task_index, False, str(e))
+                            self._update_runtime(
+                                stage="GenDic 术语提取中",
+                                current_file=f"已完成 {completed}/{len(batches)} 批",
+                                workers_active=inflight,
+                            )
+                            return
+                        for w, pair in matched.items():
+                            results[w] = pair
+                            missing.discard(w)
+                        if matched:
+                            self._push_translation_preview(
+                                "\n".join(f"{src}|{dst}|{note}" for src, (dst, note) in matched.items())
+                            )
+                        completed += 1
+                        self._append_runtime_progress(task_index, bool(matched))
+                        self._update_runtime(
+                            stage="GenDic 术语提取中",
+                            current_file=f"已完成 {completed}/{len(batches)} 批",
+                            workers_active=inflight,
+                        )
+                    finally:
+                        inflight -= 1
 
             tasks = [asyncio.create_task(process_batch(b, i)) for i, b in enumerate(batches)]
             try:
@@ -1298,6 +1491,41 @@ class GenDic(BaseEngine):
             entries.append((src, dst, note))
         return entries
 
+    async def _llm_extract_chunk(self, chunk: str, task_index: int) -> Tuple[bool, str, List[Tuple[str, str, str]]]:
+        """llm 全权模式单块提取：断点分片命中直接复用；否则请求 LLM 并解析，结果非空写回分片。
+
+        Returns:
+            (是否成功, 失败原因, 词条列表)；失败时词条为空列表。
+        """
+        from GalTransl.Service import JobCancelledError
+
+        prompt = GENDIC_LLM_EXTRACT_PROMPT.replace("{chunk}", chunk)
+        fingerprint = self._shard_fingerprint(GENDIC_SYSTEM, prompt)
+        cached = self._load_shard("llm", task_index, fingerprint)
+        if cached:
+            self._shard_hit_count += 1
+            LOGGER.info(f"[GenDic][llm] 块 {task_index} 命中断点缓存，跳过 LLM 请求")
+            return True, "", cached
+        self._shard_miss_count += 1
+        try:
+            rsp, _token = await self.ask_chatbot(
+                prompt=prompt,
+                system=GENDIC_SYSTEM,
+                file_name=self.progress_display_name,
+                max_retry_count=self.gendic_max_api_retries,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if isinstance(e, JobCancelledError):
+                raise
+            LOGGER.error(f"[GenDic][llm] 块 {task_index} 请求失败: {e}")
+            return False, str(e), []
+        entries = self._parse_llm_extract_response(rsp)
+        if entries:
+            self._save_shard("llm", task_index, fingerprint, entries)
+        return True, "", entries
+
     async def _llm_extract_translate(self, json_list: list) -> bool:
         """llm 全权模式：无损压缩全文 → 切块 → AI 每块提取术语（含翻译）→ 汇总去重 → 过滤截断 → 落盘。"""
         from GalTransl.Service import JobCancelledError
@@ -1322,36 +1550,45 @@ class GenDic(BaseEngine):
             sem = asyncio.Semaphore(self.wokers)
             results: Dict[str, Tuple[str, str]] = {}
             completed = 0
+            inflight = 0
 
             async def process_chunk(chunk: str, task_index: int) -> None:
-                nonlocal completed
-                async with sem:
-                    self._check_stop_requested()
-                    prompt = GENDIC_LLM_EXTRACT_PROMPT.replace("{chunk}", chunk)
+                nonlocal completed, inflight
+                async with sem, self._bind_worker_slot():
+                    inflight += 1
                     try:
-                        rsp, _token = await self.ask_chatbot(
-                            prompt=prompt,
-                            system=GENDIC_SYSTEM,
-                            file_name=self.progress_display_name,
-                            max_retry_count=self.gendic_max_api_retries,
+                        self._check_stop_requested()
+                        self._update_runtime(
+                            stage="GenDic LLM 提取中",
+                            current_file=f"已完成 {completed}/{len(chunks)} 块",
+                            workers_active=inflight,
                         )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as e:
-                        if isinstance(e, JobCancelledError):
-                            raise
-                        LOGGER.error(f"[GenDic][llm] 块 {task_index} 请求失败: {e}")
-                        return
-                    for src, dst, note in self._parse_llm_extract_response(rsp):
-                        if src not in results:
-                            results[src] = (dst, note)
-                    completed += 1
-                    self._append_runtime_progress(task_index, True)
-                    self._update_runtime(
-                        stage="GenDic LLM 提取中",
-                        current_file=f"已完成 {completed}/{len(chunks)} 块",
-                        workers_active=max(0, self.wokers - completed),
-                    )
+                        ok, error_message, entries = await self._llm_extract_chunk(chunk, task_index)
+                        if not ok:
+                            completed += 1
+                            self._append_runtime_progress(task_index, False, error_message)
+                            self._update_runtime(
+                                stage="GenDic LLM 提取中",
+                                current_file=f"已完成 {completed}/{len(chunks)} 块",
+                                workers_active=inflight,
+                            )
+                            return
+                        for src, dst, note in entries:
+                            if src not in results:
+                                results[src] = (dst, note)
+                        if entries:
+                            self._push_translation_preview(
+                                "\n".join(f"{src}|{dst}|{note}" for src, dst, note in entries)
+                            )
+                        completed += 1
+                        self._append_runtime_progress(task_index, True)
+                        self._update_runtime(
+                            stage="GenDic LLM 提取中",
+                            current_file=f"已完成 {completed}/{len(chunks)} 块",
+                            workers_active=inflight,
+                        )
+                    finally:
+                        inflight -= 1
 
             tasks = [asyncio.create_task(process_chunk(c, i)) for i, c in enumerate(chunks)]
             try:
@@ -1414,10 +1651,15 @@ class GenDic(BaseEngine):
 
         # terms/segments/llm 多模式分派（默认 terms）
         mode = getattr(self, "gendic_mode", "terms")
-        if mode == "terms":
-            return await self._batch_translate_terms(json_list)
-        if mode == "llm":
-            return await self._llm_extract_translate(json_list)
+        # 断点续跑：清掉分片目录残留临时文件（此刻本项目无并发写入者）
+        self._cleanup_stale_shard_tmp()
+        try:
+            if mode == "terms":
+                return await self._batch_translate_terms(json_list)
+            if mode == "llm":
+                return await self._llm_extract_translate(json_list)
+        finally:
+            self._log_shard_summary()
 
         word_counter: Dict[str, int] = {}
         name_set: Set[str] = set()
@@ -1529,7 +1771,7 @@ class GenDic(BaseEngine):
             completed_tasks = 0
 
             async def process_item_async(idx):
-                async with sem:
+                async with sem, self._bind_worker_slot():
                     self._check_stop_requested()
                     try:
                         item = segment_list[idx]
@@ -1583,6 +1825,8 @@ class GenDic(BaseEngine):
             self._update_runtime(stage="GenDic 停止处理中", current_file="整理当前结果", workers_active=0)
         finally:
             self._cleanup_runtime_progress()
+            # 断点汇总放 finally：取消/异常路径同样输出（terms/llm 模式在分派处 finally 输出）
+            self._log_shard_summary()
 
         result_path = os.path.join(self.pj_config.getProjectDir(), "项目GPT字典-生成.txt")
         existing_file_terms = self._load_existing_generated_terms(result_path)

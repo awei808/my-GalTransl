@@ -80,6 +80,14 @@ class CacheTreeIsMetadataTests(unittest.TestCase):
         self.assertIsNotNone(n)
         self.assertFalse(n["is_metadata"])
 
+    def test_gendic_cache_file_is_metadata(self) -> None:
+        """gendic_cache 断点分片是元数据（不作为翻译缓存呈现/解析）"""
+        self._write("gendic_cache/terms-b0.json")
+        nodes = _build_cache_tree(self.root)
+        n = self._find_file(nodes, "gendic_cache/terms-b0.json")
+        self.assertIsNotNone(n)
+        self.assertTrue(n["is_metadata"])
+
 
 class CollectCacheFilesMetadataExclusionTests(unittest.TestCase):
     """回归：_collect_cache_files 跳过元数据（含 route_analysis 路线分析分片）"""
@@ -113,6 +121,20 @@ class CollectCacheFilesMetadataExclusionTests(unittest.TestCase):
         self._write("pass3_cache/00_01.txt.json")
         files = _collect_cache_files(self.root)
         self.assertEqual(files, ["pass3_cache/00_01.txt.json"])
+
+    def test_gendic_shards_excluded(self) -> None:
+        """GenDic 断点续跑分片不参与构建枚举（dict 形状，按翻译缓存解析必报错）"""
+        self._write("gendic_cache/terms-b0.json")
+        self._write("gendic_cache/llm-b1.json")
+        files = _collect_cache_files(self.root)
+        self.assertEqual(files, [])
+
+    def test_gendic_shards_not_ignored_at_cache_root(self) -> None:
+        """排除仅限 gendic_cache 子目录，缓存根目录同名文件不受影响（防误伤）"""
+        self._write("gendic_cache/terms-b0.json")
+        self._write("00_01.txt.json")
+        files = _collect_cache_files(self.root)
+        self.assertEqual(files, ["00_01.txt.json"])
 
 
 if __name__ == "__main__":
