@@ -105,6 +105,14 @@ def _is_suspicious_note(note: str) -> bool:
     return bool(re.search(r"疑似\s*[HhＨ]", note)) or "疑似非术语" in note
 
 
+def _is_suspicious_h_note(note: str) -> bool:
+    """AI 标注的疑似 H 组合（仅 H 类；疑似非术语不算 H 术语，仍走主文件 // 注释）。"""
+    return bool(re.search(r"疑似\s*[HhＨ]", note))
+
+
+# GenDic 生成的 H 术语独立文件（登记 gpt.dict 参与翻译）
+_H_RESULT_FILENAME = "项目GPT字典-生成_h.txt"
+
 # AI 备注长度上限：备注已要求写详细（词类型/词义/翻译依据），超上限视为异常输出丢弃
 _GENDIC_NOTE_MAX_LEN = 100
 
@@ -643,6 +651,36 @@ class GenDic(BaseEngine):
         except Exception:
             LOGGER.warning("[GenDic][terms] 读取生成字典 // 注释词失败", exc_info=True)
         return commented
+
+    def _load_h_result_terms(self) -> Dict[str, Tuple[str, str]]:
+        """读取 H 术语文件（_h.txt）现有词条：返回 {原词: (dst, note)}，供落盘沿用与 extract 跳过。"""
+        h_path = os.path.join(self.pj_config.getProjectDir(), _H_RESULT_FILENAME)
+        terms: Dict[str, Tuple[str, str]] = {}
+        if not os.path.exists(h_path):
+            return terms
+        try:
+            with open(h_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    line = line.replace("\t", "|")  # 容错：旧版 Tab 分隔归一兼容
+                    if not line or line.startswith("//"):
+                        continue
+                    sp = line.split("|", 2)  # note 允许含 |，与前两段分开
+                    if len(sp) >= 2 and sp[0].strip() and sp[1].strip():
+                        terms[sp[0].strip()] = (sp[1].strip(), sp[2].strip() if len(sp) > 2 else "")
+        except Exception:
+            LOGGER.warning("[GenDic] 读取 H 术语文件失败", exc_info=True)
+        return terms
+
+    def _save_h_dictionary(self, h_list: List[List[str]]) -> str:
+        """覆盖写 H 术语文件（口径同主生成文件：每次运行全新生成，避免累积重复）。"""
+        path = os.path.join(self.pj_config.getProjectDir(), _H_RESULT_FILENAME)
+        with open(path, "w", encoding="utf-8") as f:
+            # 头部用 // 注释行（# 行会被 CGptDict 当作词条解析，不能用）
+            f.write("// GenDic 生成的疑似H 术语（已登记 gpt.dict，参与翻译）；删除词条行即移除\n")
+            for item in h_list:
+                f.write(item[0] + "|" + item[1] + "|" + item[2] + "\n")
+        return path
 
     def _update_runtime(self, **kwargs: Any) -> None:
         try:
@@ -1289,6 +1327,15 @@ class GenDic(BaseEngine):
             self._commented_terms = self._load_commented_terms_from_generated()
             for w, entry in self._commented_terms.items():
                 existing_dict_map.setdefault(w, entry)
+            # H 术语沿用与迁移：上轮 _h.txt 全量沿用；旧主文件 // 行中的疑似H 迁移（均跳过重翻）
+            self._h_prev_terms = self._load_h_result_terms()
+            for w, entry in self._h_prev_terms.items():
+                existing_dict_map.setdefault(w, entry)
+            self._legacy_h_terms = {
+                w: entry for w, entry in self._commented_terms.items() if _is_suspicious_h_note(entry[1])
+            }
+            for w, entry in self._legacy_h_terms.items():
+                existing_dict_map.setdefault(w, entry)
 
             final_terms, stats, _name_set = self._extract_terms_from_project(json_list)
             if final_terms is None:
@@ -1428,32 +1475,53 @@ class GenDic(BaseEngine):
             return True
 
         # 落盘前过滤（真实测试暴露）：拟声 note / H 词表 / NULL / 空 note 的未翻译回显；
-        # AI 标注「疑似H/疑似非术语」的词：原文前加 // 注释（防止解析，用户手动删除后启用）
+        # AI 标注「疑似H」→ 写入 H 术语文件；「疑似非术语」→ 主文件 // 注释（防止解析，手动删除后启用）
         dropped = 0
         commented = 0
+        h_new = 0
         final_list: List[List[str]] = []
+        h_list: Dict[str, List[str]] = {}
+        for w, (dst, note) in (getattr(self, "_h_prev_terms", None) or {}).items():
+            h_list[w] = [w, dst, note]
+        for w, (dst, note) in (getattr(self, "_legacy_h_terms", None) or {}).items():
+            h_list.setdefault(w, [w, dst, note])
         for w, (dst, note) in results.items():
             if _is_term_droppable(w, dst, note):
                 dropped += 1
+                continue
+            if _is_suspicious_h_note(note):
+                if w not in h_list:
+                    h_list[w] = [w, dst, note]
+                    h_new += 1
                 continue
             if _is_suspicious_note(note):
                 w = "//" + w
                 commented += 1
             final_list.append([w, dst, note])
-        # 沿用上轮 // 注释词（extract 已跳过，未进 results）：写回 // 行，保持停用、避免重复翻译
+        # 沿用上轮 // 注释词（extract 已跳过，未进 results）：写回 // 行保持停用；其中疑似H 已迁移至 H 文件
         commented_terms = getattr(self, "_commented_terms", None) or {}
-        for w, (dst, note) in commented_terms.items():
+        commented_kept = {w: e for w, e in commented_terms.items() if not _is_suspicious_h_note(e[1])}
+        for w, (dst, note) in commented_kept.items():
             if any(w == item[0].lstrip("//") for item in final_list):
                 continue
             final_list.append(["//" + w, dst, note])
         if dropped:
             LOGGER.warning(f"[GenDic][terms] 落盘前过滤 {dropped} 条（拟声/H词/NULL/未翻译回显）")
-        if commented or commented_terms:
+        if commented or commented_kept:
             LOGGER.warning(
-                f"[GenDic][terms] {commented} 条本轮疑似H/非术语已注释，"
-                f"沿用 {len(commented_terms)} 条上轮注释（原文前加 //，删除 // 后启用）"
+                f"[GenDic][terms] {commented} 条本轮疑似非术语已注释，"
+                f"沿用 {len(commented_kept)} 条上轮注释（原文前加 //，删除 // 后启用）"
+            )
+        if h_list:
+            legacy_count = len(getattr(self, "_legacy_h_terms", None) or {})
+            legacy_note = f"，自旧版 // 行迁移 {legacy_count} 条" if legacy_count else ""
+            LOGGER.warning(
+                f"[GenDic][terms] 疑似H 术语共 {len(h_list)} 条（本轮 {h_new} 条{legacy_note}）"
+                f"写入 {_H_RESULT_FILENAME}，已登记 gpt.dict 参与翻译"
             )
         result_path = self._save_generated_dictionary(final_list)
+        if h_list:
+            self._save_h_dictionary(list(h_list.values()))
         added = len(final_list)
         setattr(self.pj_config, "gendic_added_count", added)
         setattr(self.pj_config, "gendic_duplicated_count", 0)
@@ -1467,6 +1535,11 @@ class GenDic(BaseEngine):
             self.pj_config.register_gpt_dict_file("项目GPT字典-生成.txt")
         except Exception as reg_err:
             LOGGER.warning(f"GenDic 字典登记到配置失败（界面可能看不到）: {reg_err}")
+        if h_list:
+            try:
+                self.pj_config.register_gpt_dict_file(_H_RESULT_FILENAME)
+            except Exception as reg_err:
+                LOGGER.warning(f"GenDic H 术语字典登记到配置失败: {reg_err}")
         self._update_runtime(stage="", current_file="", workers_active=0)
         return True
 
@@ -1613,20 +1686,37 @@ class GenDic(BaseEngine):
             return True
 
         # 不筛选词汇（用户决策）：LLM 全权模式结果简单处理后直接进词典，仅去重；
-        # AI 标注「疑似H/疑似非术语」的词原文前加 // 注释（用户手动删除后启用）
+        # AI 标注「疑似H」→ 写入 H 术语文件（沿用上轮合并覆盖写）；「疑似非术语」→ 主文件 // 注释。
+        # llm 无 droppable 过滤（不筛选），H 词表命中词若被标疑似H 也会进 H 文件生效（terms 模式直接丢弃）
+        h_prev = self._load_h_result_terms()
+        h_list: Dict[str, List[str]] = {w: [w, d, n] for w, (d, n) in h_prev.items()}
         final_list: List[List[str]] = []
         commented = 0
+        h_new = 0
         for src, (dst, note) in results.items():
+            if _is_suspicious_h_note(note):
+                if src not in h_list:
+                    h_list[src] = [src, dst, note]
+                    h_new += 1
+                continue
+            if src in h_list:
+                continue  # 已在 H 文件中的词不重复入主文件（沿用文件版本）
             if _is_suspicious_note(note):
                 src = "//" + src
                 commented += 1
             final_list.append([src, dst, note])
         if commented:
-            LOGGER.warning(f"[GenDic][llm] {commented} 条疑似H/非术语已注释（原文前加 //，删除 // 后启用）")
+            LOGGER.warning(f"[GenDic][llm] {commented} 条疑似非术语已注释（原文前加 //，删除 // 后启用）")
         max_terms = int(getattr(self, "gendic_max_terms", 0) or 0)
         if max_terms > 0 and len(final_list) > max_terms:
             final_list = final_list[:max_terms]
         result_path = self._save_generated_dictionary(final_list)
+        if h_list:
+            self._save_h_dictionary(list(h_list.values()))
+            LOGGER.warning(
+                f"[GenDic][llm] 疑似H 术语共 {len(h_list)} 条（本轮 {h_new} 条）"
+                f"写入 {_H_RESULT_FILENAME}，已登记 gpt.dict 参与翻译"
+            )
         added = len(final_list)
         setattr(self.pj_config, "gendic_added_count", added)
         setattr(self.pj_config, "gendic_duplicated_count", 0)
@@ -1640,6 +1730,11 @@ class GenDic(BaseEngine):
             self.pj_config.register_gpt_dict_file("项目GPT字典-生成.txt")
         except Exception as reg_err:
             LOGGER.warning(f"GenDic 字典登记到配置失败（界面可能看不到）: {reg_err}")
+        if h_list:
+            try:
+                self.pj_config.register_gpt_dict_file(_H_RESULT_FILENAME)
+            except Exception as reg_err:
+                LOGGER.warning(f"GenDic H 术语字典登记到配置失败: {reg_err}")
         self._update_runtime(stage="", current_file="", workers_active=0)
         return True
 

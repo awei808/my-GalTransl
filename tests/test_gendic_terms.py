@@ -23,6 +23,7 @@ from GalTransl.Backend.GenDic import (
     _is_pure_kana,
     _is_term_droppable,
     _is_suspicious_note,
+    _is_suspicious_h_note,
     _is_fictional_proper,
     _adjacency_entropy_min,
     _context_diversity,
@@ -125,12 +126,20 @@ class TermsDropRuleTests(unittest.TestCase):
         self.assertTrue(_is_term_droppable("NULL", "NULL", "NULL"))
 
     def test_suspicious_note_detected(self) -> None:
-        # AI 标注「疑似H/疑似非术语」→ 落盘时原文前加 // 注释（用户手动删除后启用）
+        # AI 标注「疑似H」→ 写入 H 术语文件；「疑似非术语」→ 主文件 // 注释
         self.assertTrue(_is_suspicious_note("术语（疑似H）"))
         self.assertTrue(_is_suspicious_note("动词短语（疑似非术语）"))
         self.assertTrue(_is_suspicious_note("疑似H"))
         self.assertFalse(_is_suspicious_note("术语"))
         self.assertFalse(_is_suspicious_note("物品"))
+
+    def test_suspicious_h_note_only_matches_h(self) -> None:
+        # H 分流判定仅识别疑似H；疑似非术语不算 H 术语（保持主文件 // 注释）
+        self.assertTrue(_is_suspicious_h_note("术语（疑似H）"))
+        self.assertTrue(_is_suspicious_h_note("疑似H"))
+        self.assertTrue(_is_suspicious_h_note("组合（疑似 h）"))
+        self.assertFalse(_is_suspicious_h_note("动词短语（疑似非术语）"))
+        self.assertFalse(_is_suspicious_h_note("术语"))
 
     def test_prompts_require_suspicious_marking(self) -> None:
         # 两个 gendic 提示词均要求 AI 在备注标注疑似 H/非术语

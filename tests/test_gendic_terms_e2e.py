@@ -118,6 +118,7 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
             f.write(CONFIG_YAML)
         cls.cfg = CProjectConfig(cls.tmp)
         cls.dic_path = os.path.join(cls.tmp, "项目GPT字典-生成.txt")
+        cls.h_path = os.path.join(cls.tmp, "项目GPT字典-生成_h.txt")
 
     @classmethod
     def tearDownClass(cls):
@@ -131,6 +132,12 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         backend = GenDic(self.cfg, "GenDic", None, None)
         backend.ask_chatbot = _FakeTermsLLM(responses)
         return backend
+
+    def _clean_generated_files(self) -> None:
+        # 清理生成字典残留：类内各用例共享 tmp 目录，// 注释/H 文件残留会影响后续用例的提取
+        for p in (self.dic_path, self.h_path):
+            if os.path.exists(p):
+                os.remove(p)
 
     def _input(self) -> list:
         # 词表期望：サキュバス/フィギュア(片假名普通名词≥2)；凛音(人名不收录)；撮影(汉字普通名词)被丢弃
@@ -163,6 +170,7 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commented, {"淫乱奴隷": ("淫乱奴隶", "术语（疑似H）")})
 
     async def test_terms_basic_flow_writes_dictionary(self) -> None:
+        self._clean_generated_files()  # 清掉前序用例预写的主文件残留，消除执行顺序依赖
         backend = self._backend([
             "日文原词|中文翻译|备注\n凛音|凛音|人名，女性\nサキュバス|魅魔|术语\nフィギュア|手办|物品\n",
         ])
@@ -210,25 +218,79 @@ class GenDicTermsE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(entries), first_count)  # 不翻倍累积
         self.assertEqual(len({l.split("|")[0] for l in entries}), first_count)  # 无重复词条
 
-    async def test_terms_suspicious_note_commented_in_dictionary(self) -> None:
-        # AI 备注标注「疑似H」→ 落盘原文前加 // 注释（防止解析，手动删 // 启用）；
+    async def test_terms_suspicious_h_terms_to_h_file(self) -> None:
+        # AI 备注标注「疑似H」→ 写入 项目GPT字典-生成_h.txt 并登记 gpt.dict；主文件不再保留；
         # 词表外行（思い切り掻き混ぜ）被 grounding 丢弃
+        for p in (self.dic_path, self.h_path):
+            if os.path.exists(p):
+                os.remove(p)
         filler = "私はフィギュアの造形が好きで、毎日模型を制作している。" * 100
         inp = [
             {"name": "凛音", "message": "淫乱奴隷を買った。淫乱奴隷だ。淫乱奴隷だ。" + filler},
             {"name": "凛音", "message": "サキュバスに会う。サキュバスだ。" + filler},
         ]
-        backend = self._backend([
-            "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\n淫乱奴隷|淫乱奴隶|术语（疑似H）\n思い切り掻き混ぜ|使劲搅拌|动词短语（疑似非术语）\n",
-        ])
+        response = "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\n淫乱奴隷|淫乱奴隶|术语（疑似H）\n思い切り掻き混ぜ|使劲搅拌|动词短语（疑似非术语）\n"
+        backend = self._backend([response])
         ok = await backend.batch_translate(inp)
         self.assertTrue(ok)
         with open(self.dic_path, encoding="utf-8") as f:
-            raw = f.read()  # 不过滤 // 行（// 正是被注释的疑似词）
-        self.assertIn("//淫乱奴隷", raw)          # 疑似H 已注释
+            raw = f.read()
         self.assertIn("サキュバス|魅魔", raw)     # 正常词不受影响
-        self.assertNotIn("\n淫乱奴隷|", raw)     # 未注释版本不存在
+        self.assertNotIn("淫乱奴隷", raw)        # 疑似H 不在主文件（含 // 注释形式）
         self.assertNotIn("思い切り掻き混ぜ", raw)  # 词表外行被 grounding 丢弃
+        with open(self.h_path, encoding="utf-8") as f:
+            h_raw = f.read()
+        self.assertIn("淫乱奴隷|淫乱奴隶|术语（疑似H）", h_raw)
+        registered = self.cfg.getDictCfgSection().get("gpt.dict") or []
+        self.assertIn("(project_dir)项目GPT字典-生成_h.txt", [str(x) for x in registered])
+        # 二次运行：H 词沿用（不丢失、不重复入主文件）
+        backend2 = self._backend([response])
+        ok2 = await backend2.batch_translate(inp)
+        self.assertTrue(ok2)
+        with open(self.h_path, encoding="utf-8") as f:
+            h_raw2 = f.read()
+        self.assertEqual(h_raw2.count("淫乱奴隷|"), 1)
+        self.assertIn("淫乱奴隷|淫乱奴隶|术语（疑似H）", h_raw2)
+        with open(self.dic_path, encoding="utf-8") as f:
+            self.assertNotIn("淫乱奴隷", f.read())
+        self.addCleanup(self._clean_generated_files)
+
+    async def test_terms_suspicious_nonterm_commented_in_main(self) -> None:
+        # 「疑似非术语」不是 H 术语：保持主文件 // 注释（原行为），不进 H 文件
+        backend = self._backend([
+            "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\nフィギュア|手办|物品（疑似非术语）\n",
+        ])
+        ok = await backend.batch_translate(self._input())
+        self.assertTrue(ok)
+        with open(self.dic_path, encoding="utf-8") as f:
+            raw = f.read()
+        self.assertIn("//フィギュア", raw)
+        self.assertIn("サキュバス|魅魔", raw)
+        if os.path.exists(self.h_path):
+            with open(self.h_path, encoding="utf-8") as f:
+                self.assertNotIn("フィギュア", f.read())
+
+    async def test_terms_legacy_h_comment_migrates_to_h_file(self) -> None:
+        # 旧版主文件 // 注释的疑似H 词：迁移到 H 文件；疑似非术语注释保留在主文件
+        if os.path.exists(self.h_path):
+            os.remove(self.h_path)
+        with open(self.dic_path, "w", encoding="utf-8") as f:
+            f.write("// 格式说明行\n//淫乱奴隷|淫乱奴隶|术语（疑似H）\n//フィギュア|手办|物品（疑似非术语）\n")
+        backend = self._backend([
+            "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\n",
+        ])
+        ok = await backend.batch_translate(self._input())
+        self.assertTrue(ok)
+        with open(self.dic_path, encoding="utf-8") as f:
+            raw = f.read()
+        self.assertIn("サキュバス|魅魔", raw)
+        self.assertNotIn("淫乱奴隷", raw)   # 疑似H 已迁移
+        self.assertIn("//フィギュア", raw)  # 疑似非术语注释保留
+        with open(self.h_path, encoding="utf-8") as f:
+            h_raw = f.read()
+        self.assertIn("淫乱奴隷|淫乱奴隶|术语（疑似H）", h_raw)
+        self.assertNotIn("フィギュア", h_raw)
+        self.addCleanup(self._clean_generated_files)
 
 
 class GenDicWorkerDisplayTests(unittest.IsolatedAsyncioTestCase):
@@ -358,6 +420,7 @@ class GenDicLlmE2ETests(unittest.IsolatedAsyncioTestCase):
             f.write(CONFIG_YAML_LLM)
         cls.cfg = CProjectConfig(cls.tmp)
         cls.dic_path = os.path.join(cls.tmp, "项目GPT字典-生成.txt")
+        cls.h_path = os.path.join(cls.tmp, "项目GPT字典-生成_h.txt")
 
     @classmethod
     def tearDownClass(cls):
@@ -399,6 +462,38 @@ class GenDicLlmE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("フィギュア|手办", joined)
         self.assertNotIn("むー", joined)  # （无法翻译）解析层丢弃
         self.assertGreaterEqual(backend.ask_chatbot.calls, 1)
+
+    async def test_llm_suspicious_h_terms_to_h_file(self) -> None:
+        # 「疑似H」→ 写入 H 术语文件并登记；「疑似非术语」保持主文件 // 注释；
+        # 二次运行 H 词沿用不丢失
+        backend = self._backend([
+            "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\n淫乱奴隷|淫乱奴隶|术语（疑似H）\nフィギュア|手办|物品（疑似非术语）\n",
+        ])
+        ok = await backend.batch_translate(self._input())
+        self.assertTrue(ok)
+        with open(self.dic_path, encoding="utf-8") as f:
+            raw = f.read()
+        self.assertIn("サキュバス|魅魔", raw)
+        self.assertIn("//フィギュア", raw)
+        self.assertNotIn("淫乱奴隷", raw)
+        with open(self.h_path, encoding="utf-8") as f:
+            h_raw = f.read()
+        self.assertIn("淫乱奴隷|淫乱奴隶|术语（疑似H）", h_raw)
+        registered = self.cfg.getDictCfgSection().get("gpt.dict") or []
+        self.assertIn("(project_dir)项目GPT字典-生成_h.txt", [str(x) for x in registered])
+        response = "日文原词|中文翻译|备注\nサキュバス|魅魔|术语\nフィギュア|手办|物品（疑似非术语）\n"
+        backend2 = self._backend([response])
+        ok2 = await backend2.batch_translate(self._input())
+        self.assertTrue(ok2)
+        with open(self.h_path, encoding="utf-8") as f:
+            h_raw2 = f.read()
+        self.assertEqual(h_raw2.count("淫乱奴隷|"), 1)  # 上轮 H 词沿用，不丢失
+        self.addCleanup(self._clean_llm_generated_files)
+
+    def _clean_llm_generated_files(self) -> None:
+        for p in (self.dic_path, self.h_path):
+            if os.path.exists(p):
+                os.remove(p)
 
     def _big_input(self) -> list:
         # 互不重复的句子（TextCompressor 仅折叠完全重复行）→ 压缩后仍足够长，切块数 ≥2
