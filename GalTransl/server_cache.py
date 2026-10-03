@@ -23,7 +23,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional, Tuple
 
 from GalTransl import (
@@ -449,9 +449,17 @@ def _snapshot_locked(cache_dir: str, rel_norm: str, source: str) -> str:
     git restore 等场景会回拨 mtime，不能反映快照创建顺序。
     """
     now = datetime.now()
-    stamp = now.strftime("%Y%m%d-%H%M%S-%f")
+    stamp_dt = now
     snapshot_dir = os.path.join(cache_dir, SNAPSHOT_DIRNAME)
-    dest = os.path.join(snapshot_dir, *rel_norm.split("/")) + f".{stamp}.bak"
+    dest = os.path.join(snapshot_dir, *rel_norm.split("/"))
+    # 同毫秒连续快照时微秒字段可能重复：撞名递增，避免覆盖既有快照
+    while True:
+        stamp = stamp_dt.strftime("%Y%m%d-%H%M%S-%f")
+        dest_with_stamp = f"{dest}.{stamp}.bak"
+        if not os.path.exists(dest_with_stamp):
+            dest = dest_with_stamp
+            break
+        stamp_dt += timedelta(microseconds=1)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
 
     # 收集同一源文件的既有快照：文件名中段必须是时间戳，

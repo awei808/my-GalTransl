@@ -111,7 +111,8 @@ internals:
     enableImprove: true           # 阶段8 修复和改进译文（后处理，按 gpt.afterTranslation 顺序执行）[True/False]
   # 全局分析（路线分片+汇总）配置
   globalanalysis:
-    maxRoutes: 12                 # 路线数上限：路线图划分超过此值时全局分析回退为压缩全文单次分析 [1-50]
+    maxRoutes: 12                 # 路线数软上限：超过仅告警不阻断，仍按分片分析（提示检查路线图是否过度划分）[1-100]
+    maxRouteInputChars: 950000    # 单条路线分析请求的压缩文本上限：超限自动按文件分块依次分析并合并（0 不限制）
     routeParallelism: 2           # 路线分析并行度（同时分析的路线数）[1-8]
     forceRegenRouteAnalysis: false # 是否强制重算全部分片（即使分片已存在且文件范围未变）[True/False]
   # ForPlotRouteMap 后端专用配置（剧情路线图）

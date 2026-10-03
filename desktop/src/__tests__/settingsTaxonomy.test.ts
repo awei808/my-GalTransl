@@ -49,11 +49,12 @@ describe("settings-taxonomy 对话翻译组", () => {
 describe("settings-taxonomy 全局分析（路线分片+汇总）组", () => {
   const SCOPE_KEYS = [
     "internals.globalanalysis.maxRoutes",
+    "internals.globalanalysis.maxRouteInputChars",
     "internals.globalanalysis.routeParallelism",
     "internals.globalanalysis.forceRegenRouteAnalysis",
   ];
 
-  it("三个键已声明在「翻译后端-完整流水线」的「全局分析（路线分片+汇总）」子组中", () => {
+  it("全部键已声明在「翻译后端-完整流水线」的「全局分析（路线分片+汇总）」子组中", () => {
     const section = PROJECT_SETTINGS_TAXONOMY.find(
       (s) => s.title === "翻译后端-完整流水线",
     );
@@ -67,7 +68,7 @@ describe("settings-taxonomy 全局分析（路线分片+汇总）组", () => {
     }
   });
 
-  it("classifyKeys 不会把三键落到「其他设置」", () => {
+  it("classifyKeys 不会把任一键落到「其他设置」", () => {
     const { unclassified } = classifyKeys(SCOPE_KEYS);
     for (const key of SCOPE_KEYS) {
       expect(unclassified).not.toContain(key);

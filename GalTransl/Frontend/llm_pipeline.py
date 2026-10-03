@@ -150,6 +150,10 @@ async def _run_stage_compress(
     stage_ctx["compressed_texts"] = compressed_texts
 
 
+# 未归属文件合成分片的固定路线名（若路线图恰好有同名路线则并入该路线）
+UNASSIGNED_ROUTE_NAME = "未归属文件"
+
+
 def resolve_global_analysis_mode(
     route_map: Optional[dict],
     compressed_texts: Dict[str, str],
@@ -157,9 +161,17 @@ def resolve_global_analysis_mode(
 ) -> Tuple[str, Dict[str, List[str]], List[str]]:
     """判定全局分析走「路线分片汇总」还是「全文回退」。
 
-    回退口径（任一命中即 fulltext，宁全勿缺）：
-    路线图缺失 / mermaid 为空（路线图未生成成功）/ 路线覆盖存在缺口
-    （有文件未归入任何路线）/ 路线数超过 max_routes。
+    回退口径（任一命中即 fulltext）：
+    路线图缺失 / mermaid 为空（路线图未生成成功）/ 划分不出任何可分析路线。
+    此外的覆盖缺口与路线数超限不再回退——全文分析在超限场景（大项目）
+    单请求必然超限，回退不可行；未归属文件合成为「未归属文件」独立分片
+    继续分片汇总（保证每个文件都被分析覆盖，不静默丢失），路线数超限由
+    调用方软告警（maxRoutes 仅为护栏提示，汇总阶段输入是分片分析结果而非
+    原文，规模可控）。
+
+    Args:
+        max_routes: 不参与本函数判定（超限告警由调用方比较 routes 数），
+            仅为兼容既有签名保留。
 
     Returns:
         (mode, routes, unmatched_keys)：mode 为 "routes"（分片汇总）或
@@ -175,11 +187,12 @@ def resolve_global_analysis_mode(
     routes = {r: fs for r, fs in routes.items() if fs}
     if not routes:
         return "fulltext", {}, unmatched
+    # 覆盖缺口：未归属文件合成独立分片（与既有同名路线冲突时并入该路线）
     covered = {p for fs in routes.values() for p in fs}
-    if any(p not in covered for p in compressed_texts):
-        return "fulltext", {}, unmatched
-    if len(routes) > max_routes:
-        return "fulltext", {}, unmatched
+    uncovered = [p for p in compressed_texts if p not in covered]
+    if uncovered:
+        bucket = routes.setdefault(UNASSIGNED_ROUTE_NAME, [])
+        bucket.extend(uncovered)
     return "routes", routes, unmatched
 
 
@@ -248,9 +261,30 @@ async def _run_stage_global_analysis(
                 f"[流水线] 路线图「文件归属」中 {len(unmatched)} 个文件"
                 f"未匹配到压缩文本：{unmatched}"
             )
-
         if mode == "routes":
-            # 第 1 步：逐路线分析（分片已就绪的自动跳过）
+            unassigned = routes.get(UNASSIGNED_ROUTE_NAME) or []
+            if unassigned:
+                LOGGER.warning(
+                    f"[流水线] {len(unassigned)} 个文件未归入任何路线，"
+                    f"已合成为「{UNASSIGNED_ROUTE_NAME}」分片参与分析：{unassigned}"
+                )
+                record_runtime_notice(
+                    projectConfig.getProjectDir(),
+                    f"全局分析：{len(unassigned)} 个文件未归入路线，"
+                    f"已合成独立分片分析",
+                )
+            if len(routes) > max_routes:
+                LOGGER.warning(
+                    f"[流水线] 路线数 {len(routes)} 超过 "
+                    f"maxRoutes={max_routes}，仍按分片分析；"
+                    f"如非预期请检查路线图是否过度划分"
+                )
+                record_runtime_notice(
+                    projectConfig.getProjectDir(),
+                    f"全局分析：路线数 {len(routes)} 超过 maxRoutes="
+                    f"{max_routes}，仍按分片分析",
+                )
+            # 第 1 步：逐路线分析（分片已就绪的自动跳过；路线映射含合成分片）
             LOGGER.info(f"[流水线] 全局分析：按 {len(routes)} 条路线分片汇总")
             gptapi_routes = ForRouteAnalysis(
                 projectConfig, "ForRouteAnalysis",
@@ -258,7 +292,8 @@ async def _run_stage_global_analysis(
             )
             try:
                 ok = await gptapi_routes.batch_translate(
-                    compressed_texts, force_regen=force_regen_ra
+                    compressed_texts, force_regen=force_regen_ra,
+                    route_file_map=routes,
                 )
             finally:
                 if hasattr(gptapi_routes, "shutdown"):
@@ -291,7 +326,7 @@ async def _run_stage_global_analysis(
             elif not str(route_map.get("mermaid", "") or "").strip():
                 reason = "路线图 mermaid 为空（路线图未生成成功），回退全文分析"
             else:
-                reason = "路线覆盖存在缺口或路线数超限，回退全文分析"
+                reason = "路线图未划分出任何可分析路线，回退全文分析"
             LOGGER.info(f"[流水线] 全局分析：{reason}")
             gptapi_global = ForGlobalPrompt(
                 projectConfig, "ForGlobalPrompt",

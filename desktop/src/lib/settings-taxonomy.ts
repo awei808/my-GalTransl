@@ -174,6 +174,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         title: "全局分析（路线分片+汇总）",
         keys: [
           "internals.globalanalysis.maxRoutes",
+          "internals.globalanalysis.maxRouteInputChars",
           "internals.globalanalysis.routeParallelism",
           "internals.globalanalysis.forceRegenRouteAnalysis",
         ],
