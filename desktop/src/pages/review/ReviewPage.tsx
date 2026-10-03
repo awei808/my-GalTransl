@@ -86,8 +86,8 @@ export function ReviewPage() {
 
   // ── 模式由打开文件所在的缓存子目录隐式决定，无需手动切换 ──
   // 缓存目录分工（见 CLAUDE.md / GalTransl.__init__）：
-  //   pass0_cache → GlobalPrompt.json  （全局提示词，单对象）
-  //   pass0_cache → GlobalPrompt     （单对象全局提示词）
+  //   pass0_cache/route_analysis → {路线名}.json （路线分析分片，单对象）
+  //   pass0_cache → PlotRouteMap.json （剧情路线图）/ GlobalPrompt.json（全局提示词，单对象）
   //   pass1_cache → *.meta.json       （per-file 文件级元数据）
   //   pass2_cache → *.batch.json      （per-file 批次级元数据）
   //   pass3_cache → *.txt.json        （翻译缓存，CacheEntry 数组）
@@ -100,6 +100,11 @@ export function ReviewPage() {
     if (!path) return { mode: "translate", metaType: "filemeta", sourceFile: "" };
     const norm = path.replace(/\\/g, "/");
     const base = norm.split("/").pop() ?? "";
+    // 路线分析分片：先于 pass0 通用判定，从 {路线名}.json 提取路线名
+    if (norm.includes("pass0_cache/route_analysis/")) {
+      const src = base.replace(/\.json$/, "");
+      return { mode: "metadata", metaType: "routeanalysis", sourceFile: src };
+    }
     if (norm.includes("pass0_cache/")) {
       // PlotRouteMap.json 为剧情路线图（mermaid 专用编辑器）；GlobalPrompt.json 仍走 globalprompt
       if (norm.endsWith("PlotRouteMap.json"))
@@ -1048,8 +1053,8 @@ export function ReviewPage() {
     metaJsonInvalidShown = false; // 恢复合法 → 重置提示标志
     setMetaEntry((prev) => {
       if (!prev) return parsed;
-      // 单对象的 GlobalPrompt/PlotRouteMap 不注入空 id（用户手写的 id 仍保留）；per-file 元数据保留只读 id
-      if (metaType() === "globalprompt" || metaType() === "plotroute") {
+      // 单对象元数据（GlobalPrompt/PlotRouteMap/路线分析分片）不注入空 id（用户手写的 id 仍保留）；per-file 元数据保留只读 id
+      if (metaType() === "globalprompt" || metaType() === "plotroute" || metaType() === "routeanalysis") {
         return { ...parsed };
       }
       const id = prev.id ?? "";

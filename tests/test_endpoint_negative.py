@@ -389,5 +389,37 @@ class MetadataFilenameTraversalTests(_Base):
         self.assertEqual(status, 200)
 
 
+class MetadataNonObjectBodyTests(_Base):
+    """metadata POST 请求体为合法 JSON 但非对象时须 400（而非落入兜底 500）。"""
+
+    def _pid(self) -> str:
+        _, init = self._init_project(f"meta_arr_{uuid.uuid4().hex[:10]}")
+        return init["project_id"]
+
+    def test_filemeta_array_body_returns_400(self) -> None:
+        pid = self._pid()
+        status, _ = self._req(
+            "POST", f"/api/projects/{pid}/metadata/filemeta/s.txt.json",
+            body=[1, 2, 3],
+        )
+        self.assertEqual(status, 400)
+
+    def test_globalprompt_scalar_body_returns_400(self) -> None:
+        pid = self._pid()
+        status, _ = self._req(
+            "POST", f"/api/projects/{pid}/metadata/globalprompt",
+            body="just a string",
+        )
+        self.assertEqual(status, 400)
+
+    def test_routeanalysis_array_body_returns_400(self) -> None:
+        pid = self._pid()
+        status, _ = self._req(
+            "POST", f"/api/projects/{pid}/metadata/routeanalysis/%E7%BA%BFA",
+            body=[{"x": 1}],
+        )
+        self.assertEqual(status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

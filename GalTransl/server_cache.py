@@ -504,8 +504,9 @@ def _snapshot_locked(cache_dir: str, rel_norm: str, source: str) -> str:
 def _collect_cache_files(cache_dir: str) -> list[str]:
     """递归收集可构建的翻译缓存文件（相对 cache_dir 的 '/' 路径），跳过元数据。
 
-    翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json）；pass0 GlobalPrompt、
-    pass1 *.meta.json、pass2 *.batch.json 为元数据，不参与构建。
+    翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json）；pass0 GlobalPrompt/
+    PlotRouteMap/route_analysis 分片、pass1 *.meta.json、pass2 *.batch.json 为
+    元数据，不参与构建。
     """
     files: list[str] = []
     for root, dirs, names in os.walk(cache_dir):
@@ -520,6 +521,9 @@ def _collect_cache_files(cache_dir: str) -> list[str]:
             if name in ("GlobalPrompt.json", "PlotRouteMap.json") or name.startswith("_"):
                 continue
             rel = os.path.relpath(os.path.join(root, name), cache_dir).replace("\\", "/")
+            # 路线分析分片为元数据，不参与构建输出/校验（否则按翻译缓存解析必报错）
+            if rel.startswith("pass0_cache/route_analysis/"):
+                continue
             files.append(rel)
     return sorted(files)
 

@@ -783,6 +783,15 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             return
 
         if handler.command == "POST":
+            # 翻译任务运行中写元数据会与流水线元数据阶段写盘互相覆盖，拒绝执行（与缓存写端点一致）
+            job = registry.get_project_job(project_dir)
+            if job is not None and job.status in {"pending", "running"}:
+                LOGGER.warning(f"[metadata] filemeta 保存被拒绝（翻译任务运行中）：{project_dir}")
+                handler._send_json(
+                    {"success": False, "error": "翻译进行中，请停止翻译后再保存元数据"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
             try:
                 payload = handler._read_json_body()
                 entry = payload.get("entry", payload)
@@ -790,10 +799,14 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     handler._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
                     return
                 os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
-                with open(_meta_path, "w", encoding="utf-8") as f:
+                # 原子写（.tmp + os.replace），避免中断留下半写文件
+                tmp_path = _meta_path + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(entry, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, _meta_path)
                 handler._send_json({"success": True, "type": "filemeta", "filename": _filename, "path": _meta_path})
-            except json.JSONDecodeError:
+            except ValueError:
+                # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
                 handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
             except Exception as exc:
                 handler._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -828,6 +841,15 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             return
 
         if handler.command == "POST":
+            # 翻译任务运行中写元数据会与流水线元数据阶段写盘互相覆盖，拒绝执行（与缓存写端点一致）
+            job = registry.get_project_job(project_dir)
+            if job is not None and job.status in {"pending", "running"}:
+                LOGGER.warning(f"[metadata] batchmeta 保存被拒绝（翻译任务运行中）：{project_dir}")
+                handler._send_json(
+                    {"success": False, "error": "翻译进行中，请停止翻译后再保存元数据"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
             try:
                 payload = handler._read_json_body()
                 entry = payload.get("entry", payload)
@@ -835,10 +857,14 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     handler._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
                     return
                 os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
-                with open(_meta_path, "w", encoding="utf-8") as f:
+                # 原子写（.tmp + os.replace），避免中断留下半写文件
+                tmp_path = _meta_path + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(entry, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, _meta_path)
                 handler._send_json({"success": True, "type": "batchmeta", "filename": _filename, "path": _meta_path})
-            except json.JSONDecodeError:
+            except ValueError:
+                # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
                 handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
             except Exception as exc:
                 handler._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -866,6 +892,15 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             return
 
         if handler.command == "POST":
+            # 翻译任务运行中写元数据会与流水线元数据阶段写盘互相覆盖，拒绝执行（与缓存写端点一致）
+            job = registry.get_project_job(project_dir)
+            if job is not None and job.status in {"pending", "running"}:
+                LOGGER.warning(f"[metadata] globalprompt 保存被拒绝（翻译任务运行中）：{project_dir}")
+                handler._send_json(
+                    {"success": False, "error": "翻译进行中，请停止翻译后再保存元数据"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
             try:
                 payload = handler._read_json_body()
                 entry = payload.get("entry", payload)
@@ -873,10 +908,14 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     handler._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
                     return
                 os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
-                with open(_meta_path, "w", encoding="utf-8") as f:
+                # 原子写（.tmp + os.replace），避免中断留下半写文件
+                tmp_path = _meta_path + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(entry, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, _meta_path)
                 handler._send_json({"success": True, "type": "globalprompt", "path": _meta_path})
-            except json.JSONDecodeError:
+            except ValueError:
+                # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
                 handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
             except Exception as exc:
                 handler._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -904,6 +943,15 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             return
 
         if handler.command == "POST":
+            # 翻译任务运行中写元数据会与流水线元数据阶段写盘互相覆盖，拒绝执行（与缓存写端点一致）
+            job = registry.get_project_job(project_dir)
+            if job is not None and job.status in {"pending", "running"}:
+                LOGGER.warning(f"[metadata] plotroute 保存被拒绝（翻译任务运行中）：{project_dir}")
+                handler._send_json(
+                    {"success": False, "error": "翻译进行中，请停止翻译后再保存元数据"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
             try:
                 payload = handler._read_json_body()
                 entry = payload.get("entry", payload)
@@ -916,7 +964,67 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     json.dump(entry, f, ensure_ascii=False, indent=2)
                 os.replace(tmp_path, _meta_path)
                 handler._send_json({"success": True, "type": "plotroute", "path": _meta_path})
-            except json.JSONDecodeError:
+            except ValueError:
+                # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
+                handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
+            except Exception as exc:
+                handler._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+        return
+
+    # GET/POST /api/projects/:id/metadata/routeanalysis/:filename （路线分析分片，文件名为安全化路线名）
+    if sub_path.startswith("/metadata/routeanalysis/"):
+        _filename = unquote(sub_path[len("/metadata/routeanalysis/"):])
+        if not _filename:
+            handler._send_json({"error": "filename required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        # 与 filemeta/batchmeta 一致的路径穿越防护：拒绝 . / .. / 含分隔符的文件名
+        if not _is_safe_dict_filename(_filename):
+            handler._send_json({"error": "invalid metadata filename"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "route_analysis", f"{_filename}.json")
+
+        if handler.command == "GET":
+            if not os.path.isfile(_meta_path):
+                handler._send_json({"exists": False, "type": "routeanalysis", "filename": _filename, "entry": None, "path": _meta_path})
+                return
+            try:
+                with open(_meta_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                handler._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            entry = data if isinstance(data, dict) else {}
+            handler._send_json({"exists": True, "type": "routeanalysis", "filename": _filename, "entry": entry, "path": _meta_path})
+            return
+
+        if handler.command == "POST":
+            # 翻译任务运行中写元数据会与流水线元数据阶段写盘互相覆盖，拒绝执行（与缓存写端点一致）
+            job = registry.get_project_job(project_dir)
+            if job is not None and job.status in {"pending", "running"}:
+                LOGGER.warning(f"[metadata] routeanalysis 保存被拒绝（翻译任务运行中）：{project_dir}")
+                handler._send_json(
+                    {"success": False, "error": "翻译进行中，请停止翻译后再保存元数据"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
+            try:
+                payload = handler._read_json_body()
+                entry = payload.get("entry", payload)
+                if not isinstance(entry, dict):
+                    handler._send_json({"error": "entry must be a JSON object"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                os.makedirs(os.path.dirname(_meta_path), exist_ok=True)
+                # 原子写（.tmp + os.replace），与 plotroute 端点及 ForRouteAnalysis 分片落盘口径一致
+                tmp_path = _meta_path + ".tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(entry, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, _meta_path)
+                handler._send_json({"success": True, "type": "routeanalysis", "filename": _filename, "path": _meta_path})
+            except ValueError:
+                # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
                 handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
             except Exception as exc:
                 handler._send_json({"error": f"保存元数据失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)

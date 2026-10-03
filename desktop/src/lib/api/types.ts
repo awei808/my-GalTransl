@@ -205,9 +205,9 @@ export type CacheHrangesResponse = {
   h_ranges: CacheHRange[];
 };
 
-/* 元数据 — per-file 模式（filemeta/batchmeta/globalprompt/plotroute），每文件独立 JSON */
+/* 元数据 — per-file 模式（filemeta/batchmeta/globalprompt/plotroute/routeanalysis），每文件独立 JSON */
 export type MetadataEntry = Record<string, unknown>;
-export type MetadataType = "filemeta" | "batchmeta" | "globalprompt" | "plotroute";
+export type MetadataType = "filemeta" | "batchmeta" | "globalprompt" | "plotroute" | "routeanalysis";
 export type PerFileMetadataResponse = {
   exists: boolean;
   type: MetadataType;

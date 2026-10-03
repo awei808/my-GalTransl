@@ -383,10 +383,10 @@ def _tool_read_source_script(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """读取元数据：globalprompt / plotroute / filemeta / batchmeta。"""
+    """读取元数据：globalprompt / plotroute / filemeta / batchmeta / routeanalysis。"""
     project_dir = _require_project_dir(arguments)
     kind = str(arguments.get("kind", "globalprompt") or "globalprompt").strip()
-    if kind not in ("globalprompt", "plotroute", "filemeta", "batchmeta", "all"):
+    if kind not in ("globalprompt", "plotroute", "filemeta", "batchmeta", "routeanalysis", "all"):
         raise ValueError(f"unsupported metadata kind: {kind}")
 
     def _load(path: str) -> Dict[str, Any]:
@@ -398,6 +398,7 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
             return {"exists": False, "path": path, "entry": None, "error": str(exc)}
 
     result: Dict[str, Any] = {"project_dir": project_dir, "kind": kind}
+    route_analysis_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "route_analysis")
     if kind in ("globalprompt", "all"):
         result["globalprompt"] = _load(
             os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "GlobalPrompt.json")
@@ -410,6 +411,7 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
         pass2_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR)
         result["filemeta_files"] = _list_files(pass1_dir, ".meta.json") if os.path.isdir(pass1_dir) else []
         result["batchmeta_files"] = _list_files(pass2_dir, ".batch.json") if os.path.isdir(pass2_dir) else []
+        result["routeanalysis_files"] = _list_files(route_analysis_dir, ".json") if os.path.isdir(route_analysis_dir) else []
     if kind == "filemeta":
         filename = str(arguments.get("filename", "") or "").strip()
         if not filename:
@@ -424,6 +426,12 @@ def _tool_get_project_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
         result["batchmeta"] = _load(
             os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR, f"{filename}.batch.json")
         )
+    if kind == "routeanalysis":
+        filename = str(arguments.get("filename", "") or "").strip()
+        if not filename:
+            raise ValueError("filename is required for kind=routeanalysis")
+        _ensure_safe_metadata_filename(filename)
+        result["routeanalysis"] = _load(os.path.join(route_analysis_dir, f"{filename}.json"))
     return result
 
 
@@ -755,8 +763,8 @@ _METADATA_SUBDIRS = {
 def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, Any]) -> Dict[str, Any]:
     """原子写入单文件元数据；kind 仅支持 filemeta / batchmeta。
 
-    走本模块自带的 .tmp + os.replace 原子写（HTTP 侧 filemeta/batchmeta 端点为直写，
-    无原子性），并复用与 HTTP 端点同口径的文件名校验。
+    走本模块自带的 .tmp + os.replace 原子写（HTTP 侧元数据端点同为该原子写口径），
+    并复用与 HTTP 端点同口径的文件名校验。
     plotroute 必须走 write_route_map（mermaid 同口径校验 + 字段合并），globalprompt
     由流水线生成——两者在此拒绝，避免绕过路线图校验的弱化写路径。
     """
@@ -1040,15 +1048,16 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
     _def(
         "galtransl_get_project_metadata",
         "读取元数据：kind=globalprompt（全局分析）/ plotroute（剧情路线图）/ "
-        "filemeta（文件元数据，需 filename）/ batchmeta（批次元数据，需 filename）/ all（含可用文件名清单）。",
+        "filemeta（文件元数据，需 filename）/ batchmeta（批次元数据，需 filename）/ "
+        "routeanalysis（路线分析分片，需 filename=安全化路线名）/ all（含可用文件名清单）。",
         {
             "project_dir": _PROJECT_PROP,
             "kind": {
                 "type": "string",
-                "enum": ["globalprompt", "plotroute", "filemeta", "batchmeta", "all"],
+                "enum": ["globalprompt", "plotroute", "filemeta", "batchmeta", "routeanalysis", "all"],
                 "description": "要读取的元数据种类，默认 globalprompt",
             },
-            "filename": {"type": "string", "description": "kind=filemeta/batchmeta 时必填"},
+            "filename": {"type": "string", "description": "kind=filemeta/batchmeta/routeanalysis 时必填"},
         },
         ["project_dir"],
     ),

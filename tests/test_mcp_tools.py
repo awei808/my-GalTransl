@@ -442,9 +442,35 @@ class ProjectReadToolTests(ProjectFixture):
         result = self._call("galtransl_get_project_metadata", kind="all")
         self.assertEqual(result["filemeta_files"], ["a.meta.json"])
         self.assertEqual(result["batchmeta_files"], [])
+        self.assertEqual(result["routeanalysis_files"], [])
         # all 档同时带回 globalprompt 与 plotroute，供 agent 一次拿全
         self.assertIn("globalprompt", result)
         self.assertIn("plotroute", result)
+
+    def test_get_project_metadata_all_lists_routeanalysis_files(self) -> None:
+        _write_json(
+            os.path.join(self.project, "transl_cache", "pass0_cache", "route_analysis", "共通线.json"),
+            {"路线名": "共通线"},
+        )
+        result = self._call("galtransl_get_project_metadata", kind="all")
+        self.assertEqual(result["routeanalysis_files"], ["共通线.json"])
+
+    def test_get_project_metadata_routeanalysis_entry(self) -> None:
+        _write_json(
+            os.path.join(self.project, "transl_cache", "pass0_cache", "route_analysis", "共通线.json"),
+            {"路线名": "共通线", "角色列表": [{"名字": "主人公"}]},
+        )
+        result = self._call("galtransl_get_project_metadata", kind="routeanalysis", filename="共通线")
+        self.assertTrue(result["routeanalysis"]["exists"])
+        self.assertEqual(result["routeanalysis"]["entry"]["路线名"], "共通线")
+
+    def test_get_project_metadata_routeanalysis_requires_filename(self) -> None:
+        with self.assertRaises(ValueError):
+            self._call("galtransl_get_project_metadata", kind="routeanalysis")
+
+    def test_get_project_metadata_routeanalysis_rejects_traversal(self) -> None:
+        with self.assertRaises(ValueError):
+            self._call("galtransl_get_project_metadata", kind="routeanalysis", filename="../evil")
 
     def test_get_project_metadata_filemeta_requires_filename(self) -> None:
         with self.assertRaises(ValueError):

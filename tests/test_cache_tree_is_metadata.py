@@ -8,7 +8,7 @@ import os
 import tempfile
 import unittest
 
-from GalTransl.server import _build_cache_tree
+from GalTransl.server import _build_cache_tree, _collect_cache_files
 
 
 class CacheTreeIsMetadataTests(unittest.TestCase):
@@ -79,6 +79,40 @@ class CacheTreeIsMetadataTests(unittest.TestCase):
         n = self._find_file(nodes, "config.json")
         self.assertIsNotNone(n)
         self.assertFalse(n["is_metadata"])
+
+
+class CollectCacheFilesMetadataExclusionTests(unittest.TestCase):
+    """回归：_collect_cache_files 跳过元数据（含 route_analysis 路线分析分片）"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        for d in ("pass0_cache/route_analysis", "pass1_cache", "pass2_cache", "pass3_cache"):
+            os.makedirs(os.path.join(self.root, d), exist_ok=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write(self, rel: str) -> None:
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{}" if "route_analysis" in rel else "[]")
+
+    def test_route_analysis_shards_excluded(self) -> None:
+        """路线分析分片不参与构建枚举，否则按翻译缓存解析必报错"""
+        self._write("pass0_cache/route_analysis/共通线.json")
+        self._write("pass0_cache/GlobalPrompt.json")
+        self._write("pass0_cache/PlotRouteMap.json")
+        files = _collect_cache_files(self.root)
+        self.assertEqual(files, [])
+
+    def test_pass3_files_still_collected(self) -> None:
+        """排除分片不得误伤 pass3 翻译缓存的枚举"""
+        self._write("pass0_cache/route_analysis/线A.json")
+        self._write("pass3_cache/00_01.txt.json")
+        files = _collect_cache_files(self.root)
+        self.assertEqual(files, ["pass3_cache/00_01.txt.json"])
 
 
 if __name__ == "__main__":

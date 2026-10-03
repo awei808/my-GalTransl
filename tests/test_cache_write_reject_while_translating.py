@@ -56,6 +56,9 @@ class _Base(unittest.TestCase):
     def _init_project(self, name: str):
         return self._req("POST", "/api/projects/init", body={"name": name})
 
+    def _mock_running(self):
+        return mock.patch.object(self.registry, "get_project_job", return_value=mock.Mock(status="running"))
+
     def _write_cache(self, project_dir: str, rel: str, entries: list) -> str:
         import orjson
 
@@ -67,9 +70,6 @@ class _Base(unittest.TestCase):
 
 
 class CacheWriteRejectedWhileTranslatingTests(_Base):
-    def _mock_running(self):
-        return mock.patch.object(self.registry, "get_project_job", return_value=mock.Mock(status="running"))
-
     def test_cache_save_rejected_while_translating(self) -> None:
         _, init = self._init_project("wr_save")
         pid = init["project_id"]
@@ -141,6 +141,82 @@ class CacheWriteRejectedWhileTranslatingTests(_Base):
             })
         self.assertEqual(status, 200)
         self.assertEqual(body["total_matches"], 1)
+
+
+class MetadataWriteRejectedWhileTranslatingTests(_Base):
+    """5 个元数据 POST 端点在翻译任务运行中一律 409 且不写盘（与缓存写端点一致）。"""
+
+    def _write_shard(self, project_dir: str, name: str, payload: dict) -> str:
+        fp = os.path.join(project_dir, "transl_cache", "pass0_cache", "route_analysis", f"{name}.json")
+        os.makedirs(os.path.dirname(fp), exist_ok=True)
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        return fp
+
+    def test_filemeta_rejected_while_translating(self) -> None:
+        _, init = self._init_project("wr_meta_f")
+        pid = init["project_id"]
+        target = os.path.join(init["project_dir"], "transl_cache", "pass1_cache", "s.txt.json.meta.json")
+        with self._mock_running():
+            status, _ = self._req(
+                "POST", f"/api/projects/{pid}/metadata/filemeta/s.txt.json",
+                body={"entry": {"id": "s.txt.json"}},
+            )
+        self.assertEqual(status, 409)
+        self.assertFalse(os.path.exists(target))
+
+    def test_batchmeta_rejected_while_translating(self) -> None:
+        _, init = self._init_project("wr_meta_b")
+        pid = init["project_id"]
+        target = os.path.join(init["project_dir"], "transl_cache", "pass2_cache", "s.txt.json.batch.json")
+        with self._mock_running():
+            status, _ = self._req(
+                "POST", f"/api/projects/{pid}/metadata/batchmeta/s.txt.json",
+                body={"entry": {"id": "s.txt.json"}},
+            )
+        self.assertEqual(status, 409)
+        self.assertFalse(os.path.exists(target))
+
+    def test_globalprompt_rejected_while_translating(self) -> None:
+        _, init = self._init_project("wr_meta_g")
+        pid = init["project_id"]
+        fp = os.path.join(init["project_dir"], "transl_cache", "pass0_cache", "GlobalPrompt.json")
+        os.makedirs(os.path.dirname(fp), exist_ok=True)
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump({"故事背景": "旧"}, f, ensure_ascii=False)
+        with self._mock_running():
+            status, _ = self._req(
+                "POST", f"/api/projects/{pid}/metadata/globalprompt",
+                body={"entry": {"故事背景": "新"}},
+            )
+        self.assertEqual(status, 409)
+        with open(fp, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["故事背景"], "旧")
+
+    def test_plotroute_rejected_while_translating(self) -> None:
+        _, init = self._init_project("wr_meta_p")
+        pid = init["project_id"]
+        target = os.path.join(init["project_dir"], "transl_cache", "pass0_cache", "PlotRouteMap.json")
+        with self._mock_running():
+            status, _ = self._req(
+                "POST", f"/api/projects/{pid}/metadata/plotroute",
+                body={"entry": {"mermaid": "flowchart TD"}},
+            )
+        self.assertEqual(status, 409)
+        self.assertFalse(os.path.exists(target))
+
+    def test_routeanalysis_rejected_while_translating(self) -> None:
+        _, init = self._init_project("wr_meta_r")
+        pid = init["project_id"]
+        fp = self._write_shard(init["project_dir"], "共通线", {"路线名": "共通线"})
+        with self._mock_running():
+            status, _ = self._req(
+                "POST", f"/api/projects/{pid}/metadata/routeanalysis/%E5%85%B1%E9%80%9A%E7%BA%BF",
+                body={"entry": {"路线名": "共通线", "剧情概要": "新"}},
+            )
+        self.assertEqual(status, 409)
+        with open(fp, encoding="utf-8") as f:
+            self.assertNotIn("剧情概要", json.load(f))
 
 
 if __name__ == "__main__":

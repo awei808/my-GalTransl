@@ -243,6 +243,76 @@ describe("ReviewPage 卸载自动保存（metadata 路）", () => {
   });
 });
 
+describe("ReviewPage routeanalysis 分片模式", () => {
+  const RA_FILE = "pass0_cache/route_analysis/共通线.json";
+  const RA_SRC = "共通线";
+
+  beforeEach(() => {
+    setAppState({ activeFilePath: RA_FILE });
+    vi.mocked(fetchPerFileMetadata).mockResolvedValue({
+      exists: true,
+      type: "routeanalysis",
+      filename: RA_SRC,
+      entry: { 路线名: RA_SRC, 文件列表: ["prologue.txt.json"], 角色列表: [] },
+    });
+    vi.mocked(savePerFileMetadata).mockResolvedValue({
+      success: true,
+      type: "routeanalysis",
+      filename: RA_SRC,
+      path: "",
+    });
+  });
+
+  /** 渲染 routeanalysis 模式并等待元数据加载完成 */
+  async function renderRaLoaded() {
+    const result = render(() => <ReviewPage />);
+    await vi.waitFor(() => {
+      expect(vi.mocked(fetchPerFileMetadata)).toHaveBeenCalledWith(PID, "routeanalysis", RA_SRC);
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelector(".meta-kv-value")).not.toBeNull();
+    });
+    return result;
+  }
+
+  /** 在键值编辑器中聚焦某字段的值并输入（不处理失焦） */
+  function editRaValue(key: string, value: string): HTMLTextAreaElement {
+    const row = Array.from(document.querySelectorAll(".meta-kv-row")).find(
+      (r) => (r.querySelector(".meta-kv-key") as HTMLInputElement | null)?.value === key,
+    );
+    if (!row) throw new Error(`找不到字段行: ${key}`);
+    const ta = row.querySelector(".meta-kv-value") as HTMLTextAreaElement;
+    ta.focus();
+    fireEvent.input(ta, { target: { value } });
+    return ta;
+  }
+
+  it("打开分片 → 以 routeanalysis/路线名 加载（modeInfoOf 先于 pass0 通用判定，不误判 globalprompt）", async () => {
+    await renderRaLoaded();
+    // 分片无 id 字段：MetadataCard 头部 id 展示为 "—"
+    expect(
+      (document.querySelector(".meta-id-text") as HTMLElement | null)?.textContent,
+    ).toContain("id: —");
+  });
+
+  it("编辑分片后失焦保存 → 以 routeanalysis/路线名 落盘，绝不误写 GlobalPrompt/翻译缓存", async () => {
+    const { unmount } = await renderRaLoaded();
+    const ta = editRaValue("路线名", "共通线（修正）");
+    fireEvent.focusOut(ta); // 失焦离开编辑器 → saveMeta(true) 落盘
+    await vi.waitFor(() => {
+      expect(vi.mocked(savePerFileMetadata)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(savePerFileMetadata)).toHaveBeenCalledWith(
+      PID,
+      "routeanalysis",
+      RA_SRC,
+      expect.objectContaining({ 路线名: "共通线（修正）" }),
+    );
+    expect(vi.mocked(saveCacheFile)).not.toHaveBeenCalled(); // 不误走 translate 保存
+    unmount();
+  });
+});
+
 describe("ReviewPage 切页确认（pendingView）", () => {
   /** 构造确认弹窗返回并渲染 translate 模式 */
   async function setupWithConfirm(result: { confirmed: boolean; action?: string }) {

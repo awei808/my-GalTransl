@@ -65,6 +65,7 @@ PROJECT_ROUTES = [
     ("GET", "/metadata/globalprompt"), ("GET", "/metadata/plotroute"),
     ("GET", "/metadata/filemeta/_probe_.json"),
     ("GET", "/metadata/batchmeta/_probe_.json"),
+    ("GET", "/metadata/routeanalysis/_probe_.json"),
     ("GET", "/build-output/_probe_.json"),
     ("POST", "/check-model"), ("POST", "/import"), ("POST", "/cache/save"),
     ("POST", "/cache/recheck-all"), ("POST", "/cache/check"),
@@ -79,6 +80,7 @@ PROJECT_ROUTES = [
     ("POST", "/metadata/filemeta/_probe_.json"),
     ("POST", "/metadata/batchmeta/_probe_.json"),
     ("POST", "/metadata/globalprompt"), ("POST", "/metadata/plotroute"),
+    ("POST", "/metadata/routeanalysis/_probe_.json"),
 ]
 
 
