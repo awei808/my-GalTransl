@@ -148,6 +148,13 @@ class TermsDropRuleTests(unittest.TestCase):
         self.assertIn("疑似H", GENDIC_LLM_EXTRACT_PROMPT)
         self.assertIn("疑似非术语", GENDIC_LLM_EXTRACT_PROMPT)
 
+    def test_llm_prompt_has_exclusion_section(self) -> None:
+        # llm 提示词含「禁止收录」小节：龙套人名/拟声词/普通物品三类禁收
+        self.assertIn("禁止收录", GENDIC_LLM_EXTRACT_PROMPT)
+        self.assertIn("龙套人名", GENDIC_LLM_EXTRACT_PROMPT)
+        self.assertIn("拟声词", GENDIC_LLM_EXTRACT_PROMPT)
+        self.assertIn("普通物品", GENDIC_LLM_EXTRACT_PROMPT)
+
     def test_untranslated_echo_with_empty_note_dropped(self) -> None:
         self.assertTrue(_is_term_droppable("マラ", "マラ", ""))
         # 有 note 的回显（如 凛音 人名）或翻译不同 保留
