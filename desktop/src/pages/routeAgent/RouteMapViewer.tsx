@@ -1,5 +1,6 @@
-import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import type { MetadataEntry } from "../../lib/api/types";
+import { attachPlotRouteViewport, isViewportPanning } from "../../lib/plotRouteViewport";
 import { buildRoutes, getMermaid, parseNodes, ROUTE_COLORS, type PlotRouteMap } from "../review/PlotRoutePanel";
 
 /**
@@ -24,6 +25,8 @@ export function RouteMapViewer(props: {
   let disposed = false;
   let graphSeq = 0;
   let renderSeq = 0;
+  /* 画布交互（滚轮缩放 / 空白处拖拽平移）解绑函数 */
+  let detachViewport: (() => void) | null = null;
 
   const selected = () => new Set(props.selectedFiles);
   const hasMermaid = () => !!(data().mermaid ?? "").trim();
@@ -41,7 +44,19 @@ export function RouteMapViewer(props: {
     ),
   );
 
+  onMount(() => {
+    if (viewerRef) {
+      detachViewport = attachPlotRouteViewport({
+        viewer: viewerRef,
+        graph: () => graphRef,
+        getZoom: zoomLevel,
+        setZoom,
+      });
+    }
+  });
+
   onCleanup(() => {
+    detachViewport?.();
     disposed = true;
     // 清理 mermaid 留在 body 的错误残留（id 为 d<graphId> 前缀）
     document.querySelectorAll('[id^="drouteAgentGraph-"]').forEach((el) => el.remove());
@@ -144,6 +159,8 @@ export function RouteMapViewer(props: {
       el.addEventListener("contextmenu", toggle);
       el.addEventListener("click", toggle);
       el.addEventListener("mouseenter", (e: MouseEvent) => {
+        /* 拖拽平移中不弹提示/高亮：划过的节点会闪动 */
+        if (isViewportPanning(viewerRef)) return;
         if (routeObj) {
           for (const a of routeObj.aliases) {
             findNodeEl(a)?.classList.add("plotroute-hl");
@@ -257,7 +274,7 @@ export function RouteMapViewer(props: {
         <button type="button" onClick={zoomFit} title="适屏">
           适屏
         </button>
-        <span class="route-viewer-hint">右键节点可把文件加入执行范围</span>
+        <span class="route-viewer-hint">右键节点加入执行范围 · 滚轮缩放 · 空白处拖动平移</span>
       </div>
       <Show when={tooltip()}>
         {(t) => (

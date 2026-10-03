@@ -160,6 +160,20 @@
   min-height: 0;
 }
 
+/* 画布区手掌光标（自绘高对比，值由 lib/plotRouteCursor.ts 启动时写入根元素）：容器/图宿主/svg
+   都显式声明，空白处不依赖继承；节点 inline pointer 与 mermaid 的 .node.clickable 优先级更高 */
+.plotroute-viewer,
+.plotroute-viewer .plotroute-graph,
+.plotroute-viewer .plotroute-graph svg {
+  cursor: var(--cursor-canvas-grab, grab);
+}
+
+/* 拖拽中：自绘握拳（is-panning 由 lib/plotRouteViewport.ts 挂上），!important 用于压过节点 inline 的 pointer */
+.plotroute-viewer.is-panning,
+.plotroute-viewer.is-panning * {
+  cursor: var(--cursor-canvas-grabbing, grabbing) !important;
+}
+
 /* SVG 保持原始渲染尺寸：超出容器由 .plotroute-viewer 产生滚动条 */
 .plotroute-graph {
   width: 100%;
@@ -172,9 +186,12 @@
   max-width: none !important;
   max-height: none !important;
   display: block;
+  /* 拖拽平移时不误选图表文字 */
+  user-select: none;
 }
 
 .plotroute-error {
+  cursor: auto;
   color: var(--color-status-error);
   padding: 16px;
   font-size: 13px;

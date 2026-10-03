@@ -126,7 +126,8 @@ def derive_route_file_map(
 ) -> Tuple[Dict[str, List[str]], List[str]]:
     """由路线图「文件归属」反推 路线 -> 压缩文本路径列表。
 
-    归属键按完整路径/文件名/去扩展名三级宽松匹配（与全局分析 file_filter 同口径）。
+    归属键按完整路径/文件名/去扩展名三级宽松匹配，未命中时再按 NFKC
+    归一兜底（与全局分析 file_filter 同口径）。
 
     Returns:
         (routes, unmatched_keys)

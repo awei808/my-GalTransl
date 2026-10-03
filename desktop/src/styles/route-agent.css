@@ -1,4 +1,4 @@
-/* 路线图工作台（route-agent 视图） */
+/* 路线图工作台（route-agent 视图）。颜色/字体/圆角一律用 tokens.css 的真实令牌（--color-* / --font-* / --radius-*）。 */
 
 .route-agent-page {
   display: flex;
@@ -19,11 +19,21 @@
 .route-agent-refresh {
   flex-shrink: 0;
   padding: 6px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
   cursor: pointer;
+}
+
+.route-agent-refresh:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-hover);
+}
+
+.route-agent-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .route-agent-no-project {
@@ -31,7 +41,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .route-agent-main {
@@ -47,9 +57,23 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-primary);
+  border-top: 1px solid var(--color-border-default);
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
+}
+
+/* 画布区手掌光标（自绘高对比，值由 lib/plotRouteCursor.ts 启动时写入根元素）：容器/图宿主/svg
+   都显式声明，空白处不依赖继承；节点 inline pointer 与 mermaid 的 .node.clickable 优先级更高 */
+.route-viewer,
+.route-viewer .route-graph,
+.route-viewer .route-graph svg {
+  cursor: var(--cursor-canvas-grab, grab);
+}
+
+/* 拖拽中：自绘握拳（is-panning 由 lib/plotRouteViewport.ts 挂上），!important 用于压过节点 inline 的 pointer */
+.route-viewer.is-panning,
+.route-viewer.is-panning * {
+  cursor: var(--cursor-canvas-grabbing, grabbing) !important;
 }
 
 .route-graph {
@@ -57,10 +81,16 @@
   padding: 12px;
 }
 
+.route-graph svg {
+  /* 拖拽平移时不误选图表文字 */
+  user-select: none;
+}
+
 .route-viewer-empty {
   padding: 48px 24px;
   text-align: center;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
+  cursor: auto;
 }
 
 .route-viewer-toolbar {
@@ -72,29 +102,33 @@
   gap: 6px;
   margin: 0 12px;
   padding: 4px 8px;
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  /* 悬浮在画布上，与同为面板底的画布靠投影区分 */
+  box-shadow: var(--shadow-md);
   z-index: 5;
+  /* 工具栏本身不是画布区域，不显示手掌光标 */
+  cursor: auto;
 }
 
 .route-viewer-toolbar button {
   min-width: 28px;
   padding: 2px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
   cursor: pointer;
 }
 
 .route-viewer-toolbar button:hover {
-  background: var(--bg-tertiary, rgba(128, 128, 128, 0.15));
+  background: var(--color-bg-hover);
 }
 
 .route-viewer-hint {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
 }
 
 .route-tooltip {
@@ -102,10 +136,10 @@
   z-index: 60;
   max-width: 320px;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-md);
   pointer-events: none;
 }
 
@@ -116,8 +150,8 @@
 }
 
 .route-tooltip-body {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -127,8 +161,13 @@
 .route-node-selected path,
 .route-node-selected circle,
 .route-node-selected polygon {
-  stroke: #e17055;
+  stroke: var(--color-brand-primary);
   stroke-width: 2.5px;
+}
+
+/* 路线悬停高亮：PlotRoutePanel 走行内 filter，工作台由本规则兜底（类只在本页添加） */
+.route-graph .plotroute-hl {
+  filter: brightness(1.25) drop-shadow(0 0 4px var(--color-brand-primary));
 }
 
 /* 矩形回退 */
@@ -137,15 +176,17 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* 回退列表不可拖拽平移，不显示手掌光标 */
+  cursor: auto;
 }
 
 .route-fallback-error {
   padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--color-status-error) 35%, transparent);
+  background: var(--color-bg-error);
+  color: var(--color-status-error);
+  font-size: var(--font-sm);
   word-break: break-all;
 }
 
@@ -157,7 +198,7 @@
 
 .route-fallback-route {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-base);
 }
 
 .route-fallback-rects {
@@ -168,10 +209,10 @@
 
 .route-rect {
   padding: 8px 12px;
-  border: 1.5px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  border: 1.5px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
   cursor: pointer;
   max-width: 260px;
   overflow: hidden;
@@ -179,9 +220,14 @@
   white-space: nowrap;
 }
 
+/* hover 仅在未选中时改底色：--selected 单类特异性低于 :hover，需显式排除 */
+.route-rect:hover:not(.route-rect--selected) {
+  background: var(--color-bg-hover);
+}
+
 .route-rect--selected {
-  background: rgba(225, 112, 85, 0.14);
-  box-shadow: 0 0 0 2px rgba(225, 112, 85, 0.55) inset;
+  background: var(--color-bg-selected);
+  box-shadow: 0 0 0 2px var(--color-brand-primary) inset;
 }
 
 /* 底边栏 */
@@ -193,7 +239,7 @@
 }
 
 .route-agent-resizer:hover {
-  background: rgba(128, 128, 128, 0.25);
+  background: var(--color-border-default);
 }
 
 .route-agent-dock {
@@ -201,8 +247,8 @@
   display: flex;
   flex-direction: column;
   min-height: 160px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  border-top: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
 }
 
 .route-agent-dock-header {
@@ -211,7 +257,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .route-agent-dock-tabs {
@@ -222,9 +268,9 @@
 /* 底边栏只剩执行终端一个面板，用标题取代原 tab 按钮 */
 .route-agent-dock-title {
   padding: 4px 0;
-  font-size: 13px;
+  font-size: var(--font-base);
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
 }
 
 .route-agent-selected {
@@ -238,13 +284,13 @@
 
 .route-agent-selected-count {
   flex-shrink: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
 }
 
 .route-agent-selected-empty {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
 }
 
 .route-agent-chips {
@@ -260,10 +306,10 @@
   align-items: center;
   gap: 4px;
   padding: 2px 6px 2px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-primary);
-  font-size: 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-subtle);
+  font-size: var(--font-sm);
   white-space: nowrap;
   max-width: 220px;
   overflow: hidden;
@@ -273,26 +319,31 @@
 .route-chip-remove {
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-base);
   line-height: 1;
   padding: 0 2px;
 }
 
 .route-chip-remove:hover {
-  color: #e17055;
+  color: var(--color-status-error);
 }
 
 .route-agent-clear {
   flex-shrink: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border-default);
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   cursor: pointer;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
+}
+
+.route-agent-clear:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-hover);
 }
 
 .route-agent-dock-body {
@@ -316,7 +367,7 @@
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .run-row {
@@ -329,21 +380,21 @@
   flex-shrink: 0;
   width: 64px;
   padding-top: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
 }
 
 .run-select {
   padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
 }
 
 .run-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
   padding-top: 6px;
 }
 
@@ -351,7 +402,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
-  font-size: 13px;
+  font-size: var(--font-base);
   padding-top: 4px;
 }
 
@@ -367,12 +418,12 @@
   min-height: 48px;
   resize: vertical;
   padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .run-injections {
@@ -382,17 +433,17 @@
 }
 
 .run-injection {
-  font-size: 12px;
+  font-size: var(--font-sm);
   gap: 6px;
 }
 
 .run-injection select {
   padding: 2px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
 }
 
 .run-advanced {
@@ -400,12 +451,12 @@
   min-height: 32px;
   resize: vertical;
   padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
 }
 
 .run-actions {
@@ -418,11 +469,15 @@
 .run-submit {
   padding: 6px 22px;
   border: none;
-  border-radius: 8px;
-  background: var(--accent, #6c5ce7);
-  color: #fff;
+  border-radius: var(--radius-md);
+  background: var(--color-brand-primary);
+  color: var(--color-text-on-brand);
   cursor: pointer;
   font-weight: 600;
+}
+
+.run-submit:hover:not(:disabled) {
+  background: var(--color-brand-primary-hover);
 }
 
 .run-submit:disabled {
@@ -432,16 +487,20 @@
 
 .run-stop {
   padding: 6px 18px;
-  border: 1px solid #e17055;
-  border-radius: 8px;
+  border: 1px solid var(--color-status-error);
+  border-radius: var(--radius-md);
   background: transparent;
-  color: #e17055;
+  color: var(--color-status-error);
   cursor: pointer;
 }
 
+.run-stop:hover {
+  background: var(--color-bg-error);
+}
+
 .run-job-status {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
 }
 
 .run-terminal {
@@ -449,9 +508,9 @@
   min-height: 0;
   overflow: auto;
   padding: 8px 12px;
-  background: var(--bg-primary);
-  font-family: ui-monospace, Consolas, "Courier New", monospace;
-  font-size: 12px;
+  background: var(--color-bg-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
   line-height: 1.55;
 }
 
@@ -461,5 +520,5 @@
 }
 
 .run-terminal-empty {
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }

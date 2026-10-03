@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 from typing import Any, Iterable, List, Optional, Tuple
 
 from GalTransl import LOGGER
@@ -601,12 +602,14 @@ def coerce_positive_int_strict(value: object, default: int) -> int:
 def select_paths_by_filter(
     paths: Iterable[str], file_filter: Optional[List[str]], tag: str = ""
 ) -> List[str]:
-    """按 file_filter 三级宽松匹配挑选路径，保留原有顺序。
+    """按 file_filter 宽松匹配挑选路径，保留原有顺序。
 
     匹配口径（宽松匹配，便于前端多选/路线化传入的各种写法）：
       1. 完整路径精确命中
       2. 文件名（basename，含扩展名）命中
       3. 去扩展名的文件名命中（如 "route_a" 匹配 "route_a.json"）
+      4. 前三级未命中时按 NFKC 归一兜底——路线图等 LLM 产物可能把全角
+         文件名规整成半角（如 "01_共通.json" vs 真实 "０１＿共通.json"）
 
     file_filter 为 None / 空时返回全部；未命中任何文件的过滤项记 warning 并忽略
     （不视为错误，避免因文件名写法差异导致整个任务中止）。
@@ -623,6 +626,30 @@ def select_paths_by_filter(
         by_basename.setdefault(base, path)
         by_stem.setdefault(os.path.splitext(base)[0], path)
 
+    # NFKC 兜底索引：仅在有键未精确命中时才构建（first-wins）
+    by_nfkc_base: dict = {}
+    by_nfkc_stem: dict = {}
+    nfkc_ready = False
+
+    def _ensure_nfkc_index() -> None:
+        nonlocal nfkc_ready
+        if nfkc_ready:
+            return
+        nfkc_ready = True
+        warned: set = set()
+        for path in all_paths:
+            base = os.path.basename(path)
+            n_base = unicodedata.normalize("NFKC", base)
+            if n_base in by_nfkc_base and n_base not in warned:
+                warned.add(n_base)
+                LOGGER.warning(
+                    f"{f'[{tag}] ' if tag else ''}"
+                    f"存在 NFKC 归一后同名的文件，兜底匹配取先出现的：{n_base!r}"
+                )
+            by_nfkc_base.setdefault(n_base, path)
+            n_stem = unicodedata.normalize("NFKC", os.path.splitext(base)[0])
+            by_nfkc_stem.setdefault(n_stem, path)
+
     seen: set = set()
     unmatched: List[str] = []
     for raw in file_filter:
@@ -636,6 +663,17 @@ def select_paths_by_filter(
             hit = by_basename[key]
         elif key in by_stem:
             hit = by_stem[key]
+        if hit is None:
+            n_key = unicodedata.normalize("NFKC", key)
+            _ensure_nfkc_index()
+            hit = by_nfkc_base.get(n_key)
+            if hit is None:
+                hit = by_nfkc_stem.get(n_key)
+            if hit is not None:
+                LOGGER.debug(
+                    f"{f'[{tag}] ' if tag else ''}"
+                    f"NFKC 归一兜底命中：{key!r} -> {os.path.basename(str(hit))!r}"
+                )
         if hit is None:
             unmatched.append(key)
             continue

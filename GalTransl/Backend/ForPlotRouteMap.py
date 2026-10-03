@@ -9,6 +9,7 @@
 import json
 import os
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from GalTransl import LOGGER, PASS0_CACHE_DIR
@@ -53,14 +54,35 @@ def load_plot_route_map(pj_config: CProjectConfig) -> Optional[dict]:
 
 
 def _get_route_for_file(plot_route_map: Optional[dict], filename: str) -> Optional[str]:
-    """查询文件所属路线；未找到返回 None。"""
+    """查询文件所属路线；未找到返回 None。
+
+    精确命中优先；未命中时按 NFKC 归一比对键名，兼容路线图由 LLM 生成时
+    把全角文件名规整成半角的情况（01_共通.json vs ０１＿共通.json）。
+    """
     if not plot_route_map:
         return None
     file_map = plot_route_map.get("文件归属")
     if not isinstance(file_map, dict):
         return None
     route = file_map.get(filename)
-    return route if isinstance(route, str) and route else None
+    if isinstance(route, str) and route.strip():
+        return route
+    folded = unicodedata.normalize("NFKC", str(filename or ""))
+    if not folded:
+        return None
+    for key, value in file_map.items():
+        if (
+            isinstance(key, str)
+            and isinstance(value, str)
+            and value.strip()
+            and unicodedata.normalize("NFKC", key) == folded
+        ):
+            LOGGER.debug(
+                f"[PlotRouteMap] {filename!r} 未精确命中，"
+                f"经 NFKC 归一匹配到路线「{value}」（键 {key!r}）"
+            )
+            return value
+    return None
 
 
 def _format_route_context(plot_route_map: Optional[dict], filename: str) -> str:
@@ -224,10 +246,17 @@ class ForPlotRouteMap(BaseEngine):
         fm_map = load_file_metadata_map(self.pj_config)
         if not fm_map:
             return
+        # 键名按 NFKC 归一对比，避免全角/半角写法差异被误报为缺失
         covered = {
-            k for k, v in data.get("文件归属", {}).items() if isinstance(v, str) and v
+            unicodedata.normalize("NFKC", k)
+            for k, v in data.get("文件归属", {}).items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()
         }
-        missing = [fid for fid in sorted(fm_map) if fid not in covered]
+        missing = [
+            fid
+            for fid in sorted(fm_map)
+            if unicodedata.normalize("NFKC", fid) not in covered
+        ]
         if missing:
             LOGGER.warning(
                 f"[PlotRouteMap] 有 {len(missing)} 个文件未纳入路线图，缺失：{missing}"

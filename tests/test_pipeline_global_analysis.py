@@ -69,6 +69,40 @@ class ResolveGlobalAnalysisModeTests(unittest.TestCase):
         self.assertEqual(routes, {})
         self.assertEqual(unmatched, ["ghost.json"])
 
+    def test_fullwidth_texts_with_halfwidth_keys_use_routes_mode(self) -> None:
+        # 路线图键半角、真实文件全角：NFKC 兜底命中后不再算覆盖缺口
+        texts = {
+            "/p/０１＿共通.json": "A文本",
+            "/p/０２＿共通.json": "B文本",
+        }
+        route_map = {
+            "mermaid": "graph TD; A-->B;",
+            "文件归属": {"01_共通.json": "主线", "02_共通.json": "TRUE END"},
+        }
+        mode, routes, unmatched = resolve_global_analysis_mode(
+            route_map, texts, max_routes=12
+        )
+        self.assertEqual(mode, "routes")
+        self.assertEqual(unmatched, [])
+        self.assertEqual(routes["主线"], ["/p/０１＿共通.json"])
+
+    def test_real_coverage_gap_still_falls_back_with_nfkc(self) -> None:
+        # 宽度兜底只救键名写法；真实未归属文件仍按「宁全勿缺」回退全文
+        texts = {
+            "/p/０１＿共通.json": "A文本",
+            "/p/０２＿共通.json": "B文本",
+        }
+        route_map = {
+            "mermaid": "graph TD; A-->B;",
+            "文件归属": {"01_共通.json": "主线"},
+        }
+        mode, routes, unmatched = resolve_global_analysis_mode(
+            route_map, texts, max_routes=12
+        )
+        self.assertEqual(mode, "fulltext")
+        self.assertEqual(routes, {})
+        self.assertEqual(unmatched, [])
+
 
 class StageRelationTests(unittest.TestCase):
     def test_global_analysis_not_skipped_when_plot_route_disabled(self) -> None:

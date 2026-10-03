@@ -10,6 +10,7 @@ from GalTransl.Backend.utils import (
     extract_json_object,
     is_h_value,
     preprocess_jsonline_response,
+    select_paths_by_filter,
 )
 
 
@@ -178,6 +179,67 @@ class CoerceHValueTests(unittest.TestCase):
         self.assertFalse(is_h_value(0.0))
         self.assertFalse(is_h_value(False))
         self.assertFalse(is_h_value(None))
+
+
+class SelectPathsByFilterTests(unittest.TestCase):
+    """三级精确匹配 + NFKC 归一兜底（全角/半角键名对撞修复）。"""
+
+    FULLWIDTH_TEXTS = {
+        "/p/０１＿共通＿０１＿０１.json": "文本",
+        "/p/フリー拠点イベント01＿01.json": "文本",
+        "/p/マガヒメ_０１.json": "文本",
+    }
+
+    def test_no_filter_returns_all(self) -> None:
+        paths = list(self.FULLWIDTH_TEXTS)
+        self.assertEqual(select_paths_by_filter(paths, None), paths)
+        self.assertEqual(select_paths_by_filter(paths, []), paths)
+
+    def test_exact_hit_without_fallback(self) -> None:
+        paths = list(self.FULLWIDTH_TEXTS)
+        result = select_paths_by_filter(paths, ["/p/マガヒメ_０１.json"])
+        self.assertEqual(result, ["/p/マガヒメ_０１.json"])
+
+    def test_fullwidth_basename_matched_via_nfkc(self) -> None:
+        # 路线图键为半角，真实文件名为全角：数字+下划线整宽度差异
+        result = select_paths_by_filter(
+            list(self.FULLWIDTH_TEXTS), ["01_共通_01_01.json"]
+        )
+        self.assertEqual(result, ["/p/０１＿共通＿０１＿０１.json"])
+
+    def test_mixed_width_matched_via_nfkc(self) -> None:
+        # 半角数字+全角下划线的混合写法（NFKC 兜底需两种都覆盖）
+        result = select_paths_by_filter(
+            list(self.FULLWIDTH_TEXTS), ["フリー拠点イベント01_01.json"]
+        )
+        self.assertEqual(result, ["/p/フリー拠点イベント01＿01.json"])
+
+    def test_nfkc_stem_fallback(self) -> None:
+        # 兜底第 4 级也支持去扩展名写法
+        result = select_paths_by_filter(list(self.FULLWIDTH_TEXTS), ["01_共通_01_01"])
+        self.assertEqual(result, ["/p/０１＿共通＿０１＿０１.json"])
+
+    def test_exact_match_takes_precedence(self) -> None:
+        # 全角/半角文件并存时，精确命中优先，不经 NFKC 兜底
+        paths = ["/p/ａ_01.json", "/p/a_01.json"]
+        result = select_paths_by_filter(paths, ["a_01.json"])
+        self.assertEqual(result, ["/p/a_01.json"])
+
+    def test_nfkc_collision_build_warns(self) -> None:
+        # 两个真实文件 NFKC 归一后同名：构建兜底索引时记 warning
+        paths = ["/p/０１.json", "/p/01.json"]
+        with self.assertLogs(level="WARNING") as logs:
+            result = select_paths_by_filter(paths, ["ghost.json"], tag="T")
+        self.assertEqual(result, [])
+        self.assertTrue(any("NFKC 归一后同名" in m for m in logs.output))
+
+    def test_unmatched_key_still_reported(self) -> None:
+        with self.assertLogs(level="WARNING") as logs:
+            result = select_paths_by_filter(
+                list(self.FULLWIDTH_TEXTS), ["ghost.json"], tag="T"
+            )
+        self.assertEqual(result, [])
+        self.assertTrue(any("ghost.json" in m for m in logs.output))
 
 
 if __name__ == "__main__":

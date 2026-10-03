@@ -139,6 +139,23 @@ class DeriveRouteFileMapTests(unittest.TestCase):
         self.assertEqual(unmatched, ["ghost.json"])
         self.assertNotIn("线X", routes)
 
+    def test_fullwidth_paths_matched_via_nfkc(self) -> None:
+        # 路线图键为半角、真实压缩文本路径为全角时经 NFKC 兜底命中
+        texts = {
+            "/p/０１＿共通＿０１＿０１.json": "文本1",
+            "/p/フリー拠点イベント01＿01.json": "文本2",
+        }
+        route_map = {
+            "文件归属": {
+                "01_共通_01_01.json": "主线",
+                "フリー拠点イベント01_01.json": "自由拠点活动",
+            }
+        }
+        routes, unmatched = derive_route_file_map(route_map, texts)
+        self.assertEqual(unmatched, [])
+        self.assertEqual(routes["主线"], ["/p/０１＿共通＿０１＿０１.json"])
+        self.assertEqual(routes["自由拠点活动"], ["/p/フリー拠点イベント01＿01.json"])
+
     def test_blank_route_name_is_unmatched(self) -> None:
         _, unmatched = derive_route_file_map(
             {"文件归属": {"a.json": "  "}}, FAKE_TEXTS

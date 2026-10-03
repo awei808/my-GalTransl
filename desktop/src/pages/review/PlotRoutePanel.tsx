@@ -1,6 +1,7 @@
 import { createSignal, createEffect, Show, onMount, onCleanup, on } from "solid-js";
 import type { MetadataEntry } from "../../lib/api/types";
 import { fetchPerFileMetadata } from "../../lib/api/project";
+import { attachPlotRouteViewport, isViewportPanning } from "../../lib/plotRouteViewport";
 import { toast } from "../../stores/toastStore";
 
 /* PlotRouteMap.json 数据模型（键与后端 ForPlotRouteMap 输出一致） */
@@ -86,6 +87,8 @@ export function PlotRoutePanel(props: {
   let graphSeq = 0;
   /* 渲染请求序号：仅采纳最新一次 render 的结果，丢弃被新渲染取代的旧结果 */
   let renderSeq = 0;
+  /* 画布交互（滚轮缩放 / 空白处拖拽平移）解绑函数 */
+  let detachViewport: (() => void) | null = null;
 
   /* props.entry 变化时的同步策略：
      1. 编辑自身回写（handleMetaContentChange 把本组件修改写回 entry）→ entry 的 mermaid
@@ -241,6 +244,8 @@ export function PlotRoutePanel(props: {
       const routeObj = route ? routes[route] : undefined;
       el.style.cursor = "pointer";
       el.addEventListener("mouseenter", (e: MouseEvent) => {
+        /* 拖拽平移中不弹提示/高亮：划过的节点会闪动 */
+        if (isViewportPanning(viewerRef)) return;
         clearHighlights();
         if (routeObj) {
           for (const a of routeObj.aliases) {
@@ -342,9 +347,18 @@ export function PlotRoutePanel(props: {
   onMount(() => {
     // 首屏渲染由 createEffect 在挂载时触发，此处仅做首次适屏
     setTimeout(() => zoomFit(), 300);
+    if (viewerRef) {
+      detachViewport = attachPlotRouteViewport({
+        viewer: viewerRef,
+        graph: () => graphRef,
+        getZoom: zoomLevel,
+        setZoom,
+      });
+    }
   });
 
   onCleanup(() => {
+    detachViewport?.();
     disposed = true;
     clearTimeout(renderTimer);
     /* 兜底：清理历史版本渲染失败时残留在 document.body 的 mermaid 临时容器，
@@ -398,21 +412,13 @@ export function PlotRoutePanel(props: {
           </div>
         </div>
 
-        <div
-          class="plotroute-panel-preview"
-          ref={viewerRef}
-          onWheel={(e) => {
-            if (!e.ctrlKey && !e.metaKey) return;
-            e.preventDefault();
-            if (e.deltaY < 0) setZoom(zoomLevel() * 1.2);
-            else setZoom(zoomLevel() / 1.2);
-          }}
-        >
+        <div class="plotroute-panel-preview">
           <div class="plotroute-panel-title">
             渲染预览
-            <span class="plotroute-hint">hover 高亮路线 · click 编辑节点 · Ctrl+滚轮缩放</span>
+            <span class="plotroute-hint">hover 高亮路线 · click 编辑节点 · 滚轮缩放 · 空白处拖动平移</span>
           </div>
-          <div class="plotroute-viewer">
+          {/* ref 挂在真正的滚动容器上：外层是 overflow:hidden，平移与锚点缩放都依赖它的 scrollLeft/Top */}
+          <div class="plotroute-viewer" ref={viewerRef}>
             <div class="plotroute-graph" ref={graphRef} />
             <Show when={renderError()}>
               <div class="plotroute-error">渲染失败：{renderError()}</div>
