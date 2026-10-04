@@ -202,8 +202,8 @@ UI_TEXT = {
         "en": "All chunks of file {0} have been translated"
     },
     "file_load_failed": {
-        "zh-cn": "文件 {0} 无法加载",
-        "en": "File {0} cannot be loaded"
+        "zh-cn": "文件 {0} 无法加载；若该文件不参与翻译，可移入输入目录下以 _ 开头的子目录（如 _excluded/）",
+        "en": "File {0} cannot be loaded; if this file is not meant to be translated, move it into a subdirectory whose name starts with an underscore under the input folder (e.g. _excluded/)"
     },
     # Pipeline-related messages
     "pipeline_start": {

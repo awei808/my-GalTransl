@@ -297,6 +297,8 @@ def get_file_name(file_path: str) -> str:
 def get_file_list(directory: str) -> list[str]:
     file_list = []
     for dirpath, dirnames, filenames in os.walk(directory):
+        # 就地修剪：_ 开头子目录（如 _excluded）为人工排除区，. 开头为隐藏目录（.git 等），均不参与翻译
+        dirnames[:] = [d for d in dirnames if not d.startswith(("_", "."))]
         for file in filenames:
             # FileMetaData.json / PlotMetadata.json / BatchMetadata.json 是元数据控制文件，不是待翻译源文件
             if file.lower() in ("filemetadata.json", "plotmetadata.json", "batchmetadata.json"):
