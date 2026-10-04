@@ -59,9 +59,16 @@ const PARSE_STUB = vi.hoisted(() => ({
       if (!line.trim()) return { type: "blank", values: [], raw: line };
       if (line.trimStart().startsWith("//")) return { type: "comment", values: [line], raw: line };
       const parts = line.split("|");
-      // 键名与后端 GalTransl.Dictionary._CONDITIONAL_KEYS / _SITUATION_KEYS 对齐
+      // %% 前缀行产出 gpt 类型行（pre 类目下不可混排类型组合的兜底守卫测试桩）
+      if (category === "pre" && line.startsWith("%%")) {
+        const gptParts = line.slice(2).split("|");
+        return { type: "gpt", values: [gptParts[0] ?? "", gptParts[1] ?? "", ""], raw: line };
+      }
+      // 键名与后端 GalTransl.Dictionary._CONDITIONAL_KEYS / _SITUATION_KEYS 对齐；
+      // pre 与 post 同构（替换类词典均支持普通/条件/场景行）
+      const isReplaceCat = category === "pre" || category === "post";
       if (
-        category === "pre" &&
+        isReplaceCat &&
         ["pre_src", "post_src", "pre_dst", "post_dst"].includes(parts[0] ?? "")
       ) {
         return {
@@ -89,7 +96,7 @@ const PARSE_STUB = vi.hoisted(() => ({
           note: parts.slice(4).join("|"),
         };
       }
-      if (category === "pre" && ["mono", "diag"].includes(parts[0] ?? "")) {
+      if (isReplaceCat && ["mono", "diag"].includes(parts[0] ?? "")) {
         return {
           type: "situation",
           values: [parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", parts.slice(3).join("|")],
@@ -97,7 +104,7 @@ const PARSE_STUB = vi.hoisted(() => ({
         };
       }
       return {
-        type: category === "pre" ? "normal" : "gpt",
+        type: isReplaceCat ? "normal" : "gpt",
         values: [parts[0] ?? "", parts[1] ?? "", parts.slice(2).join("|")],
         raw: line,
         isRegex: false,
@@ -297,9 +304,9 @@ describe("字典卡片模式行删除", () => {
     expect(ta.value).toBe("");
   });
 
-  it("预处理 tab：普通行与条件行混排（列数不自洽）时卡片视图自动退回文本模式", async () => {
+  it("预处理 tab：普通行与条件行混排时使用统一 4 列布局，卡片模式可用", async () => {
     vi.mocked(fetchProjectDictionaryManager).mockResolvedValue(
-      buildProjectRes({ name: P_PRE_A, text: PRE_MIXED_TEXT }),
+      buildProjectRes({ name: P_PRE_A, text: "// 分区注释\n" + PRE_MIXED_TEXT }),
     );
     await renderLoaded();
     fireEvent.click(tabButton("预处理"));
@@ -309,7 +316,50 @@ describe("字典卡片模式行删除", () => {
       );
     });
     fireEvent.click(viewButton("卡片"));
-    // 固定布局下超出表头的列会被压成 0 宽（含操作列），故行类型混排时不允许进入卡片视图
+    await vi.waitFor(() => {
+      expect(document.querySelector(".dict-table")).not.toBeNull();
+    });
+    // 统一 4 列布局：目标 | 正则搜索（条件+搜索合并） | 替换 | 备注
+    const headers = Array.from(document.querySelectorAll(".dict-table thead th")).map(
+      (th) => th.textContent,
+    );
+    expect(headers).toEqual(["目标", "正则搜索", "替换", "备注", "操作"]);
+    // 普通行：目标格为固定「普通」占位，合并格内仅搜索输入框
+    const normalRow = document.querySelector(".dict-table tbody tr.dict-row--normal")!;
+    expect(normalRow.querySelector(".dict-cell-fixed")?.textContent).toBe("普通");
+    expect(normalRow.querySelector(".dict-cell-regexsearch .dict-cell-conds")).toBeNull();
+    // 条件行：合并格内含条件 chips 与搜索输入框
+    const condRow = document.querySelector(".dict-table tbody tr.dict-row--conditional")!;
+    expect(condRow.querySelector(".dict-cell-regexsearch .dict-cell-conds")).not.toBeNull();
+    expect(condRow.querySelector(".dict-cell-regexsearch .dict-cell-input")).not.toBeNull();
+    // 混排下注释行仍可删除：文字格 colspan=4（表头列数）+ 操作格
+    const commentRow = document.querySelector(".dict-row--comment")!;
+    expect(commentRow.querySelector("td.dict-cell-comment")?.getAttribute("colspan")).toBe("4");
+    expect(commentRow.querySelector(".dict-row-del")).not.toBeNull();
+    // 两个数据行 + 1 个注释行均渲染删除按钮；删除条件行后其余保留
+    expect(document.querySelectorAll(".dict-row-del")).toHaveLength(3);
+    fireEvent.click(
+      document.querySelector(".dict-table tbody tr.dict-row--conditional .dict-row-del")!,
+    );
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll(".dict-row-del")).toHaveLength(2);
+    });
+    expect(document.querySelector(".dict-table tbody tr.dict-row--conditional")).toBeNull();
+    expect(document.querySelector(".dict-table tbody tr.dict-row--normal")).not.toBeNull();
+  });
+
+  it("混排含不可映射类型（普通 + gpt）时卡片视图退回文本模式（兜底守卫）", async () => {
+    vi.mocked(fetchProjectDictionaryManager).mockResolvedValue(
+      buildProjectRes({ name: P_PRE_A, text: "%%原文|译文\n搜索A|替换A" }),
+    );
+    await renderLoaded();
+    fireEvent.click(tabButton("预处理"));
+    await vi.waitFor(() => {
+      expect((document.querySelector(".dict-textarea") as HTMLTextAreaElement).value).toContain(
+        "%%原文",
+      );
+    });
+    fireEvent.click(viewButton("卡片"));
     await vi.waitFor(() => {
       expect(document.querySelector(".dict-table")).toBeNull();
     });
@@ -424,7 +474,7 @@ describe("字典卡片模式行删除", () => {
     expect(viewButton("文本").classList.contains("active")).toBe(false);
   });
 
-  it("预处理 tab：文本模式改后仍混排时，解析落地后仍自动退回文本", async () => {
+  it("预处理 tab：文本模式改后仍混排时，解析落地后仍渲染混排 4 列（陈旧行集先放行）", async () => {
     vi.mocked(fetchProjectDictionaryManager).mockResolvedValue(
       buildProjectRes({ name: P_PRE_A, text: PRE_MIXED_TEXT }),
     );
@@ -434,15 +484,45 @@ describe("字典卡片模式行删除", () => {
     await vi.waitFor(() => {
       expect(ta().value).toContain("pre_src|有|搜索B");
     });
-    // 只改一处错字：草稿变了但文件仍混排，此时点卡片会先用陈旧行集放行，
-    // 解析落地后守卫必须复评并退回文本（依赖 parsedRows 订阅）
+    // 只改一处错字：草稿变了但仍为混排，点卡片会先用陈旧行集渲染，
+    // 解析落地后须复评并保持混排 4 列卡片（依赖 parsedRows 订阅，不误退文本）
     fireEvent.input(ta(), {
       target: { value: "搜索A改|替换A\npre_src|有|搜索B|替换B|备注" },
     });
     fireEvent.click(viewButton("卡片"));
     await vi.waitFor(() => {
-      expect(document.querySelector(".dict-table")).toBeNull();
+      const headers = Array.from(document.querySelectorAll(".dict-table thead th")).map(
+        (th) => th.textContent,
+      );
+      expect(headers).toEqual(["目标", "正则搜索", "替换", "备注", "操作"]);
     });
-    expect(viewButton("文本").classList.contains("active")).toBe(true);
+    expect(viewButton("文本").classList.contains("active")).toBe(false);
+  });
+
+  it("后处理 tab：卡片按钮可用，混排文件渲染统一 4 列布局", async () => {
+    // 文件挂在 post_dict_files（dict_contents 复用同一文件桩）
+    const baseRes = buildProjectRes({ name: P_PRE_A, text: PRE_MIXED_TEXT });
+    vi.mocked(fetchProjectDictionaryManager).mockResolvedValue({
+      ...baseRes,
+      pre_dict_files: [],
+      post_dict_files: [P_PRE_A],
+    });
+    await renderLoaded();
+    fireEvent.click(tabButton("后处理"));
+    await vi.waitFor(() => {
+      expect((document.querySelector(".dict-textarea") as HTMLTextAreaElement).value).toContain(
+        "pre_src|有|搜索B",
+      );
+    });
+    // 后处理 tab 不再隐藏卡片按钮
+    expect(viewButton("卡片")).toBeTruthy();
+    fireEvent.click(viewButton("卡片"));
+    await vi.waitFor(() => {
+      expect(document.querySelector(".dict-table")).not.toBeNull();
+    });
+    const headers = Array.from(document.querySelectorAll(".dict-table thead th")).map(
+      (th) => th.textContent,
+    );
+    expect(headers).toEqual(["目标", "正则搜索", "替换", "备注", "操作"]);
   });
 });

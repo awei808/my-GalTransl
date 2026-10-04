@@ -13,6 +13,9 @@ export type ConditionItem = {
   startswith: boolean;
   endswith: boolean;
   placeholder: boolean;
+  // 正则判断词（re: 前缀，word 含 re: 与模式主体）；regexError 非空表示引擎将回退字面量
+  isRegex?: boolean;
+  regexError?: string;
 };
 
 export type DictRow = {
@@ -168,6 +171,7 @@ export function isDictSectionDivider(line: string): boolean {
 
 /**
  * 条件列子项序列化为引擎可识别的字符串（与 GalTransl.Dictionary._serialize_cond_item 对齐）。
+ * 正则项 word 自带 re: 前缀，标志按 >/</! 原样重建即可往返。
  */
 export function serializeCondItem(item: ConditionItem): string {
   if (item.placeholder) return "(同上)";
@@ -186,13 +190,25 @@ export function serializeCondItem(item: ConditionItem): string {
 export function rowToText(row: DictRow): string {
   if (row.type === "blank") return "";
   if (row.type === "comment") return row.values[0] ?? row.raw;
-  if (
-    row.type === "gpt" ||
-    row.type === "forbidden" ||
-    row.type === "normal" ||
-    row.type === "situation"
-  ) {
+  if (row.type === "gpt" || row.type === "forbidden") {
     return row.values.join("|");
+  }
+  if (row.type === "normal") {
+    // 搜索/替换列编码落盘（\、|、换行需转义还原），备注列原样
+    return [
+      encodeDictField(row.values[0] ?? ""),
+      encodeDictField(row.values[1] ?? ""),
+      row.values[2] ?? "",
+    ].join("|");
+  }
+  if (row.type === "situation") {
+    // 备注列此前会被丢弃，非空时补写；搜索/替换列编码落盘
+    const noteSuffix = row.note ? `|${row.note}` : "";
+    return [
+      row.values[0] ?? "",
+      encodeDictField(row.values[1] ?? ""),
+      encodeDictField(row.values[2] ?? ""),
+    ].join("|") + noteSuffix;
   }
   // conditional: 用结构化字段重建
   const target = row.target ?? row.values[0] ?? "";
@@ -202,8 +218,8 @@ export function rowToText(row: DictRow): string {
           .map((c, i) => (i === 0 ? serializeCondItem({ ...c, op: "" }) : `[${row.splWord || "or"}]${serializeCondItem(c)}`))
           .join("")
       : row.values[1] ?? "";
-  const search = row.values[2] ?? "";
-  const replace = row.values[3] ?? "";
+  const search = encodeDictField(row.values[2] ?? "");
+  const replace = encodeDictField(row.values[3] ?? "");
   // 备注列原样输出（不再自动加 // 前缀）；note 为空但原 rest（values[4]）非空时回退原值
   const noteSuffix = row.note
     ? `|${row.note}`
@@ -216,11 +232,13 @@ export function rowToText(row: DictRow): string {
 export type DictColumnEditor =
   | "plain"       // 按 valueIndex 渲染可编辑输入框
   | "noteOrPlain" // 备注/解释等列：按 valueIndex 渲染可编辑输入框（显示原始值）
-  | "target"      // 条件行：目标字段（行首 key）
+  | "target"      // 条件行：目标字段（行首 key）；混排布局下普通/场景行渲染固定占位
   | "condItems"   // 条件行：条件列（词 + 语义 + 连接符）
-  | "search"      // 条件行：搜索模式 + 搜索词
+  | "search"      // 条件行：搜索词（原样含 re: 前缀）
+  | "regexSearch" // 混排布局：正则搜索合并格（条件行 = 条件 chips + 搜索词，其余行仅搜索词）
   | "replace"     // 条件行：替换词列
-  | "note";       // 条件行：只读备注
+  | "replaceMixed" // 混排布局：替换词列（按行类型绑定各自 values 下标）
+  | "note";       // 条件行：只读备注（混排布局下普通行按自身备注列可编辑）
 
 /** 表格列定义：label 为表头文字，editor 决定单元格渲染与字段绑定，width 为 colgroup 列宽 */
 export type DictColumnDef = {
@@ -236,7 +254,7 @@ export type DictColumnDef = {
  * normal 因 tab 差异存在两种子格式：h/forbidden 词库为「词|备注」，其余为「搜索|替换|备注」。
  */
 export const DICT_TABLE_COLUMNS: Record<
-  "gpt" | "wordNormal" | "replaceNormal" | "forbidden" | "conditional" | "situation" | "comment",
+  "gpt" | "wordNormal" | "replaceNormal" | "forbidden" | "conditional" | "situation" | "comment" | "mixed",
   DictColumnDef[]
 > = {
   gpt: [
@@ -263,6 +281,13 @@ export const DICT_TABLE_COLUMNS: Record<
     { key: "search", label: "搜索", editor: "search", width: "18%" },
     { key: "replace", label: "替换", editor: "replace", width: "18%" },
     { key: "note", label: "备注", editor: "note", width: "18%" },
+  ],
+  // 混排 4 列布局（普通/条件/场景行混排的文件）：条件与搜索合并为「正则搜索」格
+  mixed: [
+    { key: "target", label: "目标", editor: "target", width: "16%" },
+    { key: "regexSearch", label: "正则搜索", editor: "regexSearch", width: "40%" },
+    { key: "replaceMixed", label: "替换", editor: "replaceMixed", width: "24%" },
+    { key: "note", label: "备注", editor: "note", width: "20%" },
   ],
   situation: [
     { key: "scene", label: "场景", editor: "plain", valueIndex: 0, width: "14%" },
@@ -305,33 +330,94 @@ export function regexBadgeColumnIndex(type: DictRowType): number | null {
   return null;
 }
 
-// 条件字典搜索词/条件语义辅助：解析、序列化与映射
+// 旧式位置前缀（1^/^^，上游遗留）统一为 re: 正则的转换与字段落盘编码
 
-export type SearchMode = "all" | "first" | "startswith";
+/** 正则字面转义（正则特殊字符集），供旧前缀词转正则模式使用 */
+export function escapeRegexLiteral(word: string): string {
+  return word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-export const SEARCH_MODE_OPTIONS: Array<{ value: SearchMode; label: string }> = [
-  { value: "all", label: "所有" },
-  { value: "first", label: "第一个" },
-  { value: "startswith", label: "以…开头" },
-];
-
-/**
- * 解析搜索词的引擎前缀。
- * `1^词` → first；`^^词` → startswith；`词` → all。
- */
-export function parseSearchPrefix(raw: string): { mode: SearchMode; word: string } {
-  if (raw.startsWith("1^")) return { mode: "first", word: raw.slice(2) };
-  if (raw.startsWith("^^")) return { mode: "startswith", word: raw.slice(2) };
-  return { mode: "all", word: raw };
+/** re.sub 替换模板转义：模板中仅反斜杠特殊（& 为字面量），转换 1^ 词条时替换词需经此处理 */
+export function escapeRegexTemplate(replace: string): string {
+  return replace.replace(/\\/g, "\\\\");
 }
 
 /**
- * 按模式重建搜索词引擎串（与 parseSearchPrefix 互为逆运算）。
+ * 字典字段落盘编码：保证经后端 \| 拆分与 escape 解码后还原原值
+ * （如替换模板 \1 落盘须写作 \\1，否则 \1 会被按八进制解码成控制字符）。
+ * 无特殊字符时原样返回（零 diff，不重写存量行）。
  */
-export function serializeSearchPrefix(mode: SearchMode, word: string): string {
-  if (mode === "first") return `1^${word}`;
-  if (mode === "startswith") return `^^${word}`;
-  return word;
+export function encodeDictField(field: string): string {
+  if (!/[\\|\n\r\t]/.test(field)) return field;
+  return field
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+}
+
+/** 搜索列在各行类型 values 中的下标（gpt/forbidden/comment 等无替换语义返回 null） */
+export function searchValueIndex(type: DictRowType): number | null {
+  if (type === "normal") return 0;
+  if (type === "conditional") return 2;
+  if (type === "situation") return 1;
+  return null;
+}
+
+/** 替换列在各行类型 values 中的下标 */
+export function replaceValueIndex(type: DictRowType): number | null {
+  if (type === "normal") return 1;
+  if (type === "conditional") return 3;
+  if (type === "situation") return 2;
+  return null;
+}
+
+/**
+ * 把旧式 1^/^^ 前缀词条转换为等价 re: 正则（前端唯一的旧语法写出口，卡片保存时落盘）：
+ *   1^词|替换 → re:^(.*?)词|\1替换（词做正则转义、替换词做模板转义，\1 保留匹配点前缀）
+ *   ^^词|替换 → re:^词|替换（替换不变）
+ * re: 组合词条的模式以 (?:…) 包裹，避免 ^ 锚定/惰性前缀与模式内选择符结合；
+ * 组合词条替换词含反斜杠时跳过转换（可能是捕获组引用 \1，转写后编号漂移），保留原样由引擎兼容读取。
+ * 仅处理 normal/conditional/situation：gpt 的前缀无位置语义、forbidden 不支持前缀，均不动。
+ */
+export function convertLegacySearchRows(rows: DictRow[]): { rows: DictRow[]; converted: number } {
+  let converted = 0;
+  const out = rows.map((row) => {
+    const si = searchValueIndex(row.type);
+    const ri = replaceValueIndex(row.type);
+    if (si === null || ri === null) return row;
+    const search = row.values[si] ?? "";
+    if (!search.startsWith("1^") && !search.startsWith("^^")) return row;
+    const onetime = search.startsWith("1^");
+    const rest = search.slice(2);
+    const isRegexCombo = rest.startsWith("re:");
+    const replace = row.values[ri] ?? "";
+    if (isRegexCombo && replace.includes("\\")) return row;
+    const pattern = isRegexCombo ? `(?:${rest.slice(3)})` : escapeRegexLiteral(rest);
+    const vals = [...row.values];
+    if (onetime) {
+      // 非贪婪前缀捕获组 + 起始锚 = 仅首个出现被替换（(?s) 使 . 跨行，与 str.replace 全文语义一致）
+      vals[si] = `re:(?s)^(.*?)${pattern}`;
+      // 替换词转为 re.sub 模板后反斜杠需字面化（\1 保留匹配点前缀）
+      vals[ri] = `\\1${escapeRegexTemplate(replace)}`;
+    } else {
+      // 行首限定由 ^ 锚定等价表达（锚定模式至多命中一次）；替换词同样按模板字面化
+      vals[si] = `re:^${pattern}`;
+      vals[ri] = escapeRegexTemplate(replace);
+    }
+    converted++;
+    return { ...row, values: vals, isRegex: true, regexError: "" };
+  });
+  return { rows: out, converted };
+}
+
+/** 混排 4 列布局允许的行类型：普通/条件/场景行的有效字段均可映射到统一列 */
+export const MIXABLE_ROW_TYPES: ReadonlyArray<DictRowType> = ["normal", "conditional", "situation"];
+
+export function isMixableRowTypes(types: Iterable<DictRowType>): boolean {
+  for (const t of types) if (!MIXABLE_ROW_TYPES.includes(t)) return false;
+  return true;
 }
 
 export type CondSemantic = "has" | "not" | "startswith" | "same";

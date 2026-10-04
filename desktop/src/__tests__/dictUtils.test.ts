@@ -1,14 +1,13 @@
 /**
- * dictUtils 单句填空辅助函数单元测试
- * 覆盖：搜索词前缀解析/序列化、条件语义互转、条件项序列化、结构化行序列化往返。
+ * dictUtils 纯函数单元测试
+ * 覆盖：旧式 1^/^^ 前缀转正则、字段落盘编码、条件语义互转、条件项序列化（含正则判断词）、
+ * 结构化行序列化往返、表格列定义（含混排 4 列布局）。
  */
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../lib/api/client", () => ({ apiRequest: vi.fn() }));
 
 import {
-  parseSearchPrefix,
-  serializeSearchPrefix,
   condSemanticOf,
   applyCondSemantic,
   serializeCondItem,
@@ -19,6 +18,13 @@ import {
   getFieldLabels,
   getTableColumns,
   regexBadgeColumnIndex,
+  escapeRegexLiteral,
+  escapeRegexTemplate,
+  encodeDictField,
+  convertLegacySearchRows,
+  searchValueIndex,
+  replaceValueIndex,
+  isMixableRowTypes,
   DICT_TABLE_COLUMNS,
   getTypeLabel,
   isDictSectionDivider,
@@ -62,34 +68,135 @@ describe("dictFileScene", () => {
   });
 });
 
-describe("parseSearchPrefix", () => {
-  it("识别 1^ 前缀为 first", () => {
-    expect(parseSearchPrefix('1^"')).toEqual({ mode: "first", word: '"' });
+describe("escapeRegexLiteral / escapeRegexTemplate", () => {
+  it("正则特殊字符转义，普通字符原样", () => {
+    expect(escapeRegexLiteral("C++")).toBe("C\\+\\+");
+    expect(escapeRegexLiteral("a.b*c")).toBe("a\\.b\\*c");
+    expect(escapeRegexLiteral("ねこ")).toBe("ねこ");
   });
-  it("识别 ^^ 前缀为 startswith", () => {
-    expect(parseSearchPrefix("^^词")).toEqual({ mode: "startswith", word: "词" });
-  });
-  it("无前缀为 all", () => {
-    expect(parseSearchPrefix("词")).toEqual({ mode: "all", word: "词" });
-    expect(parseSearchPrefix("")).toEqual({ mode: "all", word: "" });
+  it("替换模板仅反斜杠翻倍（& 在 re.sub 模板中为字面量）", () => {
+    expect(escapeRegexTemplate("a\\b")).toBe("a\\\\b");
+    expect(escapeRegexTemplate("a&b")).toBe("a&b");
+    expect(escapeRegexTemplate("「")).toBe("「");
   });
 });
 
-describe("serializeSearchPrefix 往返", () => {
-  it("all → 原词", () => {
-    expect(serializeSearchPrefix("all", "词")).toBe("词");
+describe("encodeDictField（字段落盘编码）", () => {
+  it("无特殊字符时原样返回（零 diff）", () => {
+    expect(encodeDictField("ねこ替换")).toBe("ねこ替换");
+    expect(encodeDictField("re:^(.*?)词")).toBe("re:^(.*?)词");
   });
-  it("first → 1^词", () => {
-    expect(serializeSearchPrefix("first", "词")).toBe("1^词");
+  it("反斜杠、竖线、换行分别转义", () => {
+    expect(encodeDictField("a\\b")).toBe("a\\\\b");
+    expect(encodeDictField("a|b")).toBe("a\\|b");
+    expect(encodeDictField("a\nb")).toBe("a\\nb");
+    expect(encodeDictField("a\rb")).toBe("a\\rb");
   });
-  it("startswith → ^^词", () => {
-    expect(serializeSearchPrefix("startswith", "词")).toBe("^^词");
+  it("组合转义顺序正确（\\1 模板落盘为 \\\\1）", () => {
+    expect(encodeDictField("\\1「")).toBe("\\\\1「");
+    expect(encodeDictField("a\\|b")).toBe("a\\\\\\|b");
   });
-  it("parse∘serialize 幂等", () => {
-    for (const raw of ["1^\"", "^^词", "词", ""]) {
-      const { mode, word } = parseSearchPrefix(raw);
-      expect(serializeSearchPrefix(mode, word)).toBe(raw);
-    }
+  it("TAB 转义（避免下次加载被 tab→| 归一化拆列）", () => {
+    expect(encodeDictField("a\tb")).toBe("a\\tb");
+  });
+});
+
+describe("convertLegacySearchRows（旧式 1^/^^ 前缀统一为等价正则）", () => {
+  const base = { raw: "", note: "", condItems: [] as ConditionItem[], splWord: "" as const };
+
+  function normalRow(search: string, replace: string): DictRow {
+    return { type: "normal", values: [search, replace, ""], ...base };
+  }
+
+  function condRow(search: string, replace: string): DictRow {
+    return { type: "conditional", values: ["post_jp", "有", search, replace, ""], ...base };
+  }
+
+  it("1^词|替换 → re:(?s)^(.*?)词|\\1替换（替换词做模板转义）", () => {
+    const { rows, converted } = convertLegacySearchRows([normalRow('1^"', "「")]);
+    expect(converted).toBe(1);
+    expect(rows[0].values[0]).toBe('re:(?s)^(.*?)"');
+    expect(rows[0].values[1]).toBe("\\1「");
+    expect(rows[0].isRegex).toBe(true);
+  });
+
+  it("^^词|替换 → re:^词|替换（替换词不变）", () => {
+    const { rows, converted } = convertLegacySearchRows([normalRow("^^ハロー", "你好")]);
+    expect(converted).toBe(1);
+    expect(rows[0].values[0]).toBe("re:^ハロー");
+    expect(rows[0].values[1]).toBe("你好");
+  });
+
+  it("^^词替换词含反斜杠时做模板转义（转为 re.sub 模板后字面化）", () => {
+    const { rows, converted } = convertLegacySearchRows([normalRow("^^X", "a\\q")]);
+    expect(converted).toBe(1);
+    expect(rows[0].values[0]).toBe("re:^X");
+    expect(rows[0].values[1]).toBe("a\\\\q");
+  });
+
+  it("条件行作用于搜索列（values[2]），场景行作用于 values[1]", () => {
+    const { rows } = convertLegacySearchRows([condRow('1^"', "「"), { type: "situation", values: ["mono", "1^词", "替换"], ...base }]);
+    expect(rows[0].values[2]).toBe('re:(?s)^(.*?)"');
+    expect(rows[0].values[3]).toBe("\\1「");
+    expect(rows[1].values[1]).toBe("re:(?s)^(.*?)词");
+    expect(rows[1].values[2]).toBe("\\1替换");
+  });
+
+  it("正则特殊字符做字面转义", () => {
+    const { rows } = convertLegacySearchRows([normalRow("1^C++", "加")]);
+    expect(rows[0].values[0]).toBe("re:(?s)^(.*?)C\\+\\+");
+  });
+
+  it("re: 组合词条模式以 (?:…) 包裹", () => {
+    const { rows } = convertLegacySearchRows([normalRow("^^re:A+", "X")]);
+    expect(rows[0].values[0]).toBe("re:^(?:A+)");
+    const r2 = convertLegacySearchRows([normalRow("1^re:b+", "X")]);
+    expect(r2.rows[0].values[0]).toBe("re:(?s)^(.*?)(?:b+)");
+  });
+
+  it("re: 组合且替换词含反斜杠时跳过转换（捕获组编号漂移风险）", () => {
+    const row = normalRow("1^re:(a+)b", "\\1x");
+    const { rows, converted } = convertLegacySearchRows([row]);
+    expect(converted).toBe(0);
+    expect(rows[0]).toBe(row);
+  });
+
+  it("gpt/forbidden/comment 行不动（前缀无位置语义或不支持）", () => {
+    const rows: DictRow[] = [
+      { type: "gpt", values: ["1^词", "译", ""], ...base },
+      { type: "forbidden", values: ["1^词", "备注"], ...base },
+      { type: "comment", values: ["1^注释"], ...base },
+    ];
+    const { rows: out, converted } = convertLegacySearchRows(rows);
+    expect(converted).toBe(0);
+    expect(out[0].values[0]).toBe("1^词");
+    expect(out[1].values[0]).toBe("1^词");
+  });
+
+  it("幂等：转换结果再次转换不变", () => {
+    const first = convertLegacySearchRows([normalRow('1^"', "「")]);
+    const second = convertLegacySearchRows(first.rows);
+    expect(second.converted).toBe(0);
+    expect(second.rows[0].values[0]).toBe('re:(?s)^(.*?)"');
+  });
+});
+
+describe("searchValueIndex / replaceValueIndex / isMixableRowTypes", () => {
+  it("搜索/替换列下标按行类型映射", () => {
+    expect(searchValueIndex("normal")).toBe(0);
+    expect(searchValueIndex("conditional")).toBe(2);
+    expect(searchValueIndex("situation")).toBe(1);
+    expect(searchValueIndex("gpt")).toBeNull();
+    expect(replaceValueIndex("normal")).toBe(1);
+    expect(replaceValueIndex("conditional")).toBe(3);
+    expect(replaceValueIndex("situation")).toBe(2);
+    expect(replaceValueIndex("forbidden")).toBeNull();
+  });
+  it("混排布局仅允许 普通/条件/场景 类型组合", () => {
+    expect(isMixableRowTypes(["normal", "conditional", "situation"])).toBe(true);
+    expect(isMixableRowTypes(["normal", "conditional"])).toBe(true);
+    expect(isMixableRowTypes(["normal", "gpt"])).toBe(false);
+    expect(isMixableRowTypes(["gpt"])).toBe(false);
   });
 });
 
@@ -142,6 +249,15 @@ describe("serializeCondItem", () => {
     expect(serializeCondItem({ ...base, negate: true })).toBe("!サタン");
     expect(serializeCondItem({ ...base, startswith: true })).toBe(">サタン");
     expect(serializeCondItem({ ...base, placeholder: true, word: "" })).toBe("(同上)");
+  });
+  it("正则判断词项：word 自带 re: 前缀，标志原样重建可往返", () => {
+    const regexItem: ConditionItem = {
+      word: "re:ねこ+", op: "", negate: false, startswith: false, endswith: false,
+      placeholder: false, isRegex: true,
+    };
+    expect(serializeCondItem(regexItem)).toBe("re:ねこ+");
+    expect(serializeCondItem({ ...regexItem, negate: true })).toBe("!re:ねこ+");
+    expect(serializeCondItem({ ...regexItem, startswith: true })).toBe(">re:ねこ+");
   });
 });
 
@@ -337,6 +453,38 @@ describe("rowsToText（禁用词类型行序列化）", () => {
   });
 });
 
+describe("rowToText 落盘编码（\\ | 换行转义还原）", () => {
+  it("普通行搜索/替换列编码，备注列原样", () => {
+    const row: DictRow = { type: "normal", values: ['re:^(.*)"', "\\1「", "备注"], raw: "" };
+    expect(rowToText(row)).toBe('re:^(.*)"|\\\\1「|备注');
+  });  it("条件行搜索/替换列编码（\\1 模板落盘为双反斜杠）", () => {
+    const row: DictRow = {
+      type: "conditional",
+      values: ["post_jp", "有", 're:^(.*)"', "\\1「", ""],
+      raw: "",
+      target: "post_jp",
+      condItems: [
+        { word: "有", op: "", negate: false, startswith: false, endswith: false, placeholder: false },
+      ],
+      splWord: "",
+      note: "",
+    };
+    expect(rowToText(row)).toBe('post_jp|有|re:^(.*)"|\\\\1「');
+  });
+  it("无特殊字符时与旧序列化逐字一致（零 diff）", () => {
+    const row: DictRow = { type: "normal", values: ["女佣", "女仆", "//普通字典例子"], raw: "" };
+    expect(rowToText(row)).toBe("女佣|女仆|//普通字典例子");
+  });
+  it("场景行备注列不再丢失（note 非空时补写，空时不补尾列）", () => {
+    const withNote: DictRow = {
+      type: "situation", values: ["mono", "台詞", "独白"], raw: "mono|台詞|独白|备", note: "备",
+    };
+    expect(rowToText(withNote)).toBe("mono|台詞|独白|备");
+    const noNote: DictRow = { type: "situation", values: ["diag", "台詞", "独白"], raw: "diag|台詞|独白" };
+    expect(rowToText(noNote)).toBe("diag|台詞|独白");
+  });
+});
+
 describe("DICT_TABLE_COLUMNS / getTableColumns（表格表头列定义）", () => {
   it("gpt 表头为「原文|译文|解释(可空)」，编辑列依次绑定 valueIndex 0/1/2", () => {
     const cols = DICT_TABLE_COLUMNS.gpt;
@@ -361,6 +509,12 @@ describe("DICT_TABLE_COLUMNS / getTableColumns（表格表头列定义）", () =
       "replace",
       "note",
     ]);
+  });
+
+  it("mixed 混排 4 列表头：目标|正则搜索|替换|备注，合并格编辑器分派", () => {
+    const cols = DICT_TABLE_COLUMNS.mixed;
+    expect(cols.map((c) => c.label)).toEqual(["目标", "正则搜索", "替换", "备注"]);
+    expect(cols.map((c) => c.editor)).toEqual(["target", "regexSearch", "replaceMixed", "note"]);
   });
 
   it("situation 表头为「场景|搜索|替换|备注」，备注列为只读展示", () => {

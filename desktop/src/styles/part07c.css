@@ -229,6 +229,16 @@
   width: 100%;
 }
 
+/* 混排布局「正则搜索」合并格：条件 chips 与搜索词上下排布 */
+.dict-cell-regexsearch {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
 .dict-cell-fixed {
   font-size: var(--font-base);
   color: var(--color-text-tertiary);

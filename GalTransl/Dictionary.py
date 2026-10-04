@@ -9,7 +9,10 @@ from GalTransl.Utils import process_escape
 
 
 class IfWord:
-    __slots__ = ["without_flag", "startswith_flag", "endswith_flag", "word"]
+    __slots__ = [
+        "without_flag", "startswith_flag", "endswith_flag", "word",
+        "is_regex", "regex_pattern",
+    ]
 
     def __init__(self, if_word: str) -> None:
         if if_word.startswith(">"):
@@ -30,6 +33,23 @@ class IfWord:
         self.without_flag = without_flag
         self.startswith_flag = startswith_flag
         self.endswith_flag = endswith_flag
+
+        # 条件词正则（re: 前缀，在标志剥离后判定）：仅 search 语义，>/<> 组合回退字面量；
+        # word 统一取模式主体（与 DictWordMatcher 口径一致），回退项按主体字面量匹配
+        is_regex, pattern, err = _cond_regex_of(if_word)
+        if is_regex:
+            if_word = if_word[len(_REGEX_PREFIX):]
+            if pattern is None:
+                reason = "正则可匹配空串" if err == "zero-width" else err
+                LOGGER.warning(f"条件词正则无效，已按字面量匹配：{if_word}（{reason}）")
+                is_regex = False
+            elif startswith_flag or endswith_flag:
+                LOGGER.warning(
+                    f"条件词正则不支持 >/<> 限定，已按字面量匹配：{if_word}"
+                )
+                is_regex = False
+        self.is_regex: bool = is_regex
+        self.regex_pattern: Optional[re.Pattern] = pattern if is_regex else None
         self.word = if_word
 
 
@@ -37,12 +57,14 @@ class IfWord:
 class ConditionItem:
     """条件字典的子条件项结构化表示。"""
 
-    word: str  # 纯文本（已剥离 ! > < 语法）
+    word: str  # 纯文本（已剥离 ! > < 语法；正则项含 re: 前缀与模式主体）
     op: str  # 子条件间的连接符："and" / "or"（单条件时为空串）
     negate: bool = False  # ! 前缀
     startswith: bool = False  # > 前缀
     endswith: bool = False  # < 后缀
     placeholder: bool = False  # (同上) / ~ / （同上）占位
+    is_regex: bool = False  # 判断词为 re: 正则（引擎侧 >/<> 组合会回退字面量）
+    regex_error: str = ""  # 正则预校验错误（空串表示合法或非正则项）
 
 
 @dataclass
@@ -115,6 +137,26 @@ def _compile_dict_regex(pattern: str) -> Tuple[Optional[re.Pattern], str]:
     return compiled, ""
 
 
+def _cond_regex_of(word: str) -> Tuple[bool, Optional[re.Pattern], str]:
+    """条件判断词的 ``re:`` 前缀判定（IfWord 与 _parse_cond_items 共用口径）。
+
+    Returns:
+        (is_regex, pattern, error)：is_regex 表示带 re: 前缀；pattern 为 None
+        表示编译失败或可匹配空串（调用方应回退字面量），error 为原因说明。
+    """
+    if not word.startswith(_REGEX_PREFIX):
+        return False, None, ""
+    compiled, err = _compile_dict_regex(word[len(_REGEX_PREFIX):])
+    if err == "":
+        return True, compiled, ""
+    return True, None, err
+
+
+def _is_legacy_prefix(search: str) -> bool:
+    """旧式位置前缀（1^/^^，上游遗留语法）判定：仅兼容读取，新写法应使用 re: 正则。"""
+    return search.startswith("1^") or search.startswith("^^")
+
+
 def _parse_cond_items(cond: str) -> tuple[List[ConditionItem], str]:
     """把条件列字符串解析为结构化子条件列表。
 
@@ -150,15 +192,22 @@ def _parse_cond_items(cond: str) -> tuple[List[ConditionItem], str]:
         endswith = word.endswith(_COND_ENDSWITH_SUFFIX)
         if endswith:
             word = word[: -len(_COND_ENDSWITH_SUFFIX)]
+        # 条件词 re: 正则判定（与 IfWord 同口径）；仅标记错误供展示，引擎侧负责回退字面量
+        is_regex, _pattern, err = _cond_regex_of(word)
+        if is_regex and err == "zero-width":
+            err = "正则可匹配空串"
+        if is_regex and (startswith or endswith):
+            err = "正则判断词不支持 >/<> 限定，引擎按字面量匹配"
         items.append(ConditionItem(
             word=word, op=op, negate=negate,
             startswith=startswith, endswith=endswith, placeholder=False,
+            is_regex=is_regex, regex_error=err,
         ))
     return items, spl_word
 
 
 def _serialize_cond_item(item: ConditionItem) -> str:
-    """把子条件项还原为引擎可识别的字符串。"""
+    """把子条件项还原为引擎可识别的字符串（正则项 word 自带 re: 前缀）。"""
     if item.placeholder:
         return "(同上)"
     word = item.word
@@ -516,6 +565,7 @@ class CNormalDic:
         conditionaDic_count = 0
         situationsDic_count = 0
         regexDic_count = 0
+        legacy_prefix_count = 0
         dic_name = path.basename(dic_path)
         dic_name = path.splitext(dic_name)[0]
 
@@ -557,6 +607,7 @@ class CNormalDic:
                 con_dic = CBasicDicElement(sp[2], sp[3], sp[0], dic_name)
                 if not _check_dic_element(con_dic, dic_path):
                     continue
+                legacy_prefix_count += 1 if _is_legacy_prefix(sp[2]) else 0
                 con_dic.is_conditionaDic = True
                 con_dic.if_word_list = if_word_list
                 con_dic.spl_word = spl_word
@@ -567,6 +618,7 @@ class CNormalDic:
                 sit_dic = CBasicDicElement(sp[1], sp[2], sp[0], dic_name)
                 if not _check_dic_element(sit_dic, dic_path):
                     continue
+                legacy_prefix_count += 1 if _is_legacy_prefix(sp[1]) else 0
                 sit_dic.is_situationsDic = True
                 self.dic_list.append(sit_dic)
                 situationsDic_count += 1
@@ -575,9 +627,15 @@ class CNormalDic:
                 nor_dic = CBasicDicElement(sp[0], sp[1], dic_name=dic_name)
                 if not _check_dic_element(nor_dic, dic_path):
                     continue
+                legacy_prefix_count += 1 if _is_legacy_prefix(sp[0]) else 0
                 self.dic_list.append(nor_dic)
                 normalDic_count += 1
                 regexDic_count += 1 if nor_dic.is_regex else 0
+        if legacy_prefix_count:
+            LOGGER.warning(
+                f"字典 {dic_path} 含 {legacy_prefix_count} 条旧式 1^/^^ 前缀词条（已兼容加载），"
+                f"建议改用等价 re: 正则写法：1^词|替换 → re:(?s)^(.*?)词|\\\\1替换；^^词|替换 → re:^词|替换"
+            )
         LOGGER.info(
             "载入 普通字典："
             + path.basename(dic_path)
@@ -655,6 +713,11 @@ class CNormalDic:
 
                     if if_word_now in ["~", "(同上)", "（同上）"]:  # 同上flag判断
                         can_replace = True if last_one_success == True else False
+                    elif if_word.is_regex:  # 正则判断词：search 语义（>/<> 组合已回退字面量）
+                        can_replace = (
+                            if_word.regex_pattern is not None
+                            and if_word.regex_pattern.search(find_ifword_text) is not None
+                        )
                     elif if_word.startswith_flag:  # startswith
                         can_replace = find_ifword_text.startswith(if_word_now)
                     else:  # 默认为find
@@ -746,6 +809,7 @@ class CGptDict:
         dic_name = path.splitext(dic_name)[0]
         normalDic_count = 0
         regexDic_count = 0
+        legacy_prefix_count = 0
 
         for line in dic_lines:
             if line.startswith("\n"):
@@ -790,10 +854,16 @@ class CGptDict:
             dic = CBasicDicElement(search_word, replace_word, dic_name=dic_name)
             if not _check_dic_element(dic, dic_path):
                 continue
+            legacy_prefix_count += 1 if _is_legacy_prefix(search_word) else 0
             dic.note = note
             self._dic_list.append(dic)
             normalDic_count += 1
             regexDic_count += 1 if dic.is_regex else 0
+        if legacy_prefix_count:
+            LOGGER.warning(
+                f"GPT字典 {dic_path} 含 {legacy_prefix_count} 条 1^/^^ 前缀词条："
+                f"该前缀在 GPT 字典中无位置效果，建议删除前缀或改用 re: 正则词条"
+            )
         LOGGER.info(
             f"载入 GPT字典: {path.basename(dic_path)} {normalDic_count}普通词条"
             + (f"（含{regexDic_count}正则词条）" if regexDic_count else "")

@@ -31,6 +31,7 @@ import {
   getFilesByTab,
   parseDictContent,
   getTableColumns,
+  DICT_TABLE_COLUMNS,
   getTypeLabel,
   isDictSectionDivider,
   regexBadgeColumnIndex,
@@ -38,11 +39,12 @@ import {
   stripTabPrefix,
   condSemanticOf,
   applyCondSemantic,
-  parseSearchPrefix,
-  serializeSearchPrefix,
+  convertLegacySearchRows,
+  searchValueIndex,
+  replaceValueIndex,
+  isMixableRowTypes,
   rowsToText,
   COND_SEMANTIC_OPTIONS,
-  SEARCH_MODE_OPTIONS,
   PROJECT_DIR_MARKER,
   dictFileScene,
 } from "../../components/dict/dictUtils";
@@ -408,7 +410,8 @@ export function DictionaryPage() {
   // 避免文本模式编辑或切文件后的请求窗口里用陈旧行误判「混排」而挡住卡片视图
   let parsedFromText = "";
 
-  // 解析当前字典文本为结构化行（走后端，本地不再解析）
+  // 解析当前字典文本为结构化行（走后端，本地不再解析）；
+  // 解析结果统一做旧式 1^/^^ 前缀 → 等价 re: 正则的转换（卡片编辑落盘时生效，纯查看不回写）
   async function refreshParsed(): Promise<void> {
     // 人名替换行格式与 pre/gpt/post 不同，后端 parse 接口不支持 names category，
     // 且 names 视图由 nameEntries 渲染、不走 parsedRows，直接跳过（并作废在途解析响应）
@@ -421,8 +424,12 @@ export function DictionaryPage() {
     try {
       const rows = await parseDictContent(content, activeTab() as DictTab);
       if (seq !== parseSeq) return;  // 丢弃过期响应，避免覆盖最新编辑/切换结果
+      const { rows: unified, converted } = convertLegacySearchRows(rows);
+      if (converted > 0) {
+        sendLog(`字典 ${selectedFile() ?? ""} 检测到 ${converted} 条旧式 1^/^^ 词条，卡片视图已按等价 re: 正则展示`, "info");
+      }
       parsedFromText = content;
-      setParsedRows(rows);
+      setParsedRows(unified);
     } catch {
       // 解析失败保留上一次结果，避免编辑态崩溃
     }
@@ -432,7 +439,7 @@ export function DictionaryPage() {
   // 否则每次按键都重序列化整篇文本并重置受控 value，会打断中文 / 日文等 IME。
   const composing = new Map<string, boolean>();
 
-  /** 更新某行的某个字段值。结构化字段（target/condItems/note/search）走专属路径，其余走 values[col]。 */
+  /** 更新某行的某个字段值。结构化字段（target/condItems/note）走专属路径，其余走 values[col]。 */
   function updateRowValue(
     ri: number,
     field:
@@ -440,8 +447,6 @@ export function DictionaryPage() {
       | { kind: "condItem"; index: number }
       | { kind: "condSemantic"; index: number }
       | { kind: "splWord" }
-      | { kind: "searchMode" }
-      | { kind: "searchWord" }
       | "target"
       | "note",
     value: string,
@@ -454,14 +459,11 @@ export function DictionaryPage() {
     // 安全防护：词/目标/搜索字段过滤 `|`（会破坏行分隔结构；过滤后更新保证 DOM 同步）
     const isWordField =
       field === "target" ||
-      (typeof field === "object" &&
-        (field.kind === "condItem" || field.kind === "searchWord")) ||
+      (typeof field === "object" && field.kind === "condItem") ||
       typeof field === "number";
     if (isWordField && value.includes("|")) {
       value = value.replace(/\|/g, "");
     }
-    // 搜索词非空校验：空搜索词会触发引擎 replace("") 的危险行为（搜索词 onInput 负责弹回 DOM）
-    if (typeof field === "object" && field.kind === "searchWord" && value.trim() === "") return;
     let next: DictRow = row;
     if (field === "target") {
       next = { ...row, target: value, values: row.values.map((v, i) => (i === 0 ? value : v)) };
@@ -488,20 +490,6 @@ export function DictionaryPage() {
           i === 0 ? { ...c, op: "" } : { ...c, op: splWord },
       );
       next = { ...row, splWord, condItems };
-    } else if (
-      typeof field === "object" &&
-      (field.kind === "searchMode" || field.kind === "searchWord")
-    ) {
-      // 搜索词：读当前前缀解析，改模式或词后重建 values[2]
-      const cur = parseSearchPrefix(row.values[2] ?? "");
-      const mode =
-        field.kind === "searchMode"
-          ? (value as Parameters<typeof serializeSearchPrefix>[0])
-          : cur.mode;
-      const word = field.kind === "searchWord" ? value : cur.word;
-      const vals = [...row.values];
-      vals[2] = serializeSearchPrefix(mode, word);
-      next = { ...row, values: vals };
     } else {
       const colIndex = field as number;
       const vals = [...row.values];
@@ -516,27 +504,124 @@ export function DictionaryPage() {
     setDraftText(text);
   }
 
-  /** 当前表格列定义（表头/colgroup 的单一事实源）：取首个数据行类型；无数据行时按 tab 回退 normal 格式 */
+  /** 行类型集合（非空非注释行）。解析结果滞后于当前草稿时返回 null（不作判定，交给解析落地后复评） */
+  function rowTypeSet(): Set<DictRowType> | null {
+    if (parsedFromText !== draftText()) return null;
+    return new Set(
+      parsedRows().filter((r) => r.type !== "blank" && r.type !== "comment").map((r) => r.type),
+    );
+  }
+
+  /** 混排 4 列布局是否生效：非注释行类型 >1 且全部为普通/条件/场景（可映射到统一列） */
+  function mixedLayout(): boolean {
+    const types = rowTypeSet();
+    return types !== null && types.size > 1 && isMixableRowTypes(types);
+  }
+
+  /** 当前表格列定义（表头/colgroup 的单一事实源）：混排走统一 4 列；
+      单类型取该类型列定义，无数据行时按 tab 回退 normal 格式 */
   function cardColumnDefs(): DictColumnDef[] {
+    if (mixedLayout()) return DICT_TABLE_COLUMNS.mixed;
     const tab = activeTab();
     const row = parsedRows().find((r) => r.type !== "blank" && r.type !== "comment");
     if (!row) return getTableColumns("normal", tab as DictTab);
     return getTableColumns(row.type, tab as DictTab);
   }
 
-  /** 表格行类型是否自洽：非空非注释行的**行类型**必须一致。预处理 tab 可混排普通/条件/场景行，
-      固定布局会把超出表头的列压成 0 宽（操作格同理），不自洽时退回文本模式 */
-  function cardColumnsConsistent(): boolean {
-    const rows = parsedRows();  // 无条件读取：解析落地后守卫才能复评（陈旧分支提前返回会漏订阅）
-    // 解析结果滞后于当前草稿（文本模式编辑或切文件后的请求窗口）时不作判定，交给解析落地后复评
-    if (parsedFromText !== draftText()) return true;
-    const types = new Set(
-      rows.filter((r) => r.type !== "blank" && r.type !== "comment").map((r) => r.type),
-    );
-    return types.size <= 1;
+  /** 每行渲染的列定义：混排布局下所有行同用统一 4 列（固定列宽不塌陷） */
+  function rowColumns(row: DictRow): DictColumnDef[] {
+    return mixedLayout()
+      ? DICT_TABLE_COLUMNS.mixed
+      : getTableColumns(row.type, activeTab() as DictTab);
   }
 
-  /** 表格单元格渲染：按列定义的编辑器类型分发（含条件行结构化控件，保留原卡片编辑能力） */
+  /** 正则徽标所在列下标：混排布局恒在「正则搜索」列（第 2 列），单类型按行类型映射 */
+  function badgeIndexFor(row: DictRow): number | null {
+    return mixedLayout() ? 1 : regexBadgeColumnIndex(row.type);
+  }
+
+  /** 表格行类型是否可渲染：单类型恒可；混排时普通/条件/场景映射到统一 4 列布局，
+      其余类型组合（现阶段不会出现）退回文本模式兜底 */
+  function cardColumnsConsistent(): boolean {
+    const types = rowTypeSet();  // 无条件读取：解析落地后守卫才能复评（陈旧分支提前返回会漏订阅）
+    if (types === null) return true;
+    if (types.size <= 1) return true;
+    return isMixableRowTypes(types);
+  }
+
+  /** 条件 chips：语义下拉 + 条件词 + 连接符（条件列与混排「正则搜索」合并格共用）。
+      正则判断词项显示徽标且语义下拉禁用（仅支持 有/无 语义，引擎侧 >/<> 组合回退字面量） */
+  function renderCondChips(ri: number, row: DictRow): JSX.Element {
+    return (
+      <div class="dict-cell-conds">
+        <For each={row.condItems ?? []}>
+          {(c, csi) => (
+            <>
+              <Show when={csi() > 0}>
+                <select
+                  class="dict-cell-select dict-cell-select--connector"
+                  value={row.splWord === "and" ? "and" : "or"}
+                  onChange={(e) =>
+                    updateRowValue(ri, { kind: "splWord" }, e.currentTarget.value)
+                  }
+                  title="条件连接符"
+                >
+                  <option value="and">且</option>
+                  <option value="or">或</option>
+                </select>
+              </Show>
+              <select
+                class="dict-cell-select"
+                value={condSemanticOf(c)}
+                disabled={c.isRegex}
+                title={c.isRegex ? "正则判断词仅支持 有/无 语义" : undefined}
+                onChange={(e) =>
+                  updateRowValue(ri, { kind: "condSemantic", index: csi() }, e.currentTarget.value)
+                }
+              >
+                <For each={COND_SEMANTIC_OPTIONS}>
+                  {(o) => <option value={o.value}>{o.label}</option>}
+                </For>
+              </select>
+              <Show
+                when={!c.placeholder}
+                fallback={<span class="dict-cell-fixed">同上</span>}
+              >
+                <Show when={c.isRegex}>
+                  <span
+                    class="dict-regex-badge"
+                    classList={{ "dict-regex-badge--error": !!c.regexError }}
+                    title={c.regexError || "re: 前缀正则判断词"}
+                  >
+                    正则
+                  </span>
+                </Show>
+                <input
+                  class="dict-cell-input dict-cell-input--cond"
+                  value={c.word}
+                  placeholder="条件词（re: 前缀 = 正则判断）"
+                  onCompositionStart={() => composing.set(`${ri}:cond:${csi()}`, true)}
+                  onCompositionEnd={(e) => {
+                    composing.set(`${ri}:cond:${csi()}`, false);
+                    updateRowValue(ri, { kind: "condItem", index: csi() }, e.currentTarget.value);
+                  }}
+                  onInput={(e) => {
+                    if (e.isComposing) return;
+                    updateRowValue(ri, { kind: "condItem", index: csi() }, e.currentTarget.value);
+                  }}
+                />
+              </Show>
+            </>
+          )}
+        </For>
+        <Show when={(row.condItems ?? []).length === 0}>
+          <span class="dict-cell-fixed">（无条件）</span>
+        </Show>
+      </div>
+    );
+  }
+
+  /** 表格单元格渲染：按列定义的编辑器类型分发（含条件行结构化控件与混排合并格） */
   function dictCell(ri: number, col: DictColumnDef, row: DictRow): JSX.Element {
     // 常规/词库/场景/备注等可编辑值列：始终渲染输入框，显示对应列原始值
     if (col.editor === "noteOrPlain" || col.editor === "plain") {
@@ -558,6 +643,13 @@ export function DictionaryPage() {
       );
     }
     if (col.editor === "target") {
+      // 混排布局下普通/场景行渲染固定占位（类型转换走文本模式），条件行保持可编辑
+      if (row.type === "normal") {
+        return <span class="dict-cell-fixed">普通</span>;
+      }
+      if (row.type === "situation") {
+        return <span class="dict-cell-fixed">{row.values[0] === "diag" ? "对话" : "独白"}</span>;
+      }
       return (
         <input
           class="dict-cell-input"
@@ -576,120 +668,88 @@ export function DictionaryPage() {
       );
     }
     if (col.editor === "condItems") {
-      return (
-        <div class="dict-cell-conds">
-          <For each={row.condItems ?? []}>
-            {(c, csi) => (
-              <>
-                <Show when={csi() > 0}>
-                  <select
-                    class="dict-cell-select dict-cell-select--connector"
-                    value={row.splWord === "and" ? "and" : "or"}
-                    onChange={(e) =>
-                      updateRowValue(ri, { kind: "splWord" }, e.currentTarget.value)
-                    }
-                    title="条件连接符"
-                  >
-                    <option value="and">且</option>
-                    <option value="or">或</option>
-                  </select>
-                </Show>
-                <select
-                  class="dict-cell-select"
-                  value={condSemanticOf(c)}
-                  onChange={(e) =>
-                    updateRowValue(ri, { kind: "condSemantic", index: csi() }, e.currentTarget.value)
-                  }
-                >
-                  <For each={COND_SEMANTIC_OPTIONS}>
-                    {(o) => <option value={o.value}>{o.label}</option>}
-                  </For>
-                </select>
-                <Show
-                  when={!c.placeholder}
-                  fallback={<span class="dict-cell-fixed">同上</span>}
-                >
-                  <input
-                    class="dict-cell-input dict-cell-input--cond"
-                    value={c.word}
-                    placeholder="条件词"
-                    onCompositionStart={() => composing.set(`${ri}:cond:${csi()}`, true)}
-                    onCompositionEnd={(e) => {
-                      composing.set(`${ri}:cond:${csi()}`, false);
-                      updateRowValue(ri, { kind: "condItem", index: csi() }, e.currentTarget.value);
-                    }}
-                    onInput={(e) => {
-                      if (e.isComposing) return;
-                      updateRowValue(ri, { kind: "condItem", index: csi() }, e.currentTarget.value);
-                    }}
-                  />
-                </Show>
-              </>
-            )}
-          </For>
-          <Show when={(row.condItems ?? []).length === 0}>
-            <span class="dict-cell-fixed">（无条件）</span>
-          </Show>
-        </div>
-      );
+      return renderCondChips(ri, row);
     }
-    if (col.editor === "search") {
-      return (
-        <div class="dict-cell-search">
-          <select
-            class="dict-cell-select"
-            value={parseSearchPrefix(row.values[2] ?? "").mode}
-            onChange={(e) =>
-              updateRowValue(ri, { kind: "searchMode" }, e.currentTarget.value)
-            }
-          >
-            <For each={SEARCH_MODE_OPTIONS}>
-              {(o) => <option value={o.value}>{o.label}</option>}
-            </For>
-          </select>
-          <input
-            class="dict-cell-input"
-            value={parseSearchPrefix(row.values[2] ?? "").word}
-            placeholder="搜索词"
-            onCompositionStart={() => composing.set(`${ri}:searchWord`, true)}
-            onCompositionEnd={(e) => {
-              composing.set(`${ri}:searchWord`, false);
-              updateRowValue(ri, { kind: "searchWord" }, e.currentTarget.value);
-            }}
-            onInput={(e) => {
-              if (e.isComposing) return;
-              const raw = e.currentTarget.value;
-              const cleaned = raw.replace(/\|/g, "");
-              if (cleaned !== raw) e.currentTarget.value = cleaned;
-              if (cleaned.trim() === "") {
-                e.currentTarget.value = parseSearchPrefix(row.values[2] ?? "").word;
-                return;
-              }
-              updateRowValue(ri, { kind: "searchWord" }, cleaned);
-            }}
-          />
-        </div>
-      );
-    }
-    if (col.editor === "replace") {
-      return (
+    if (col.editor === "search" || col.editor === "regexSearch") {
+      const si = searchValueIndex(row.type);
+      if (si === null) return <span />;
+      // 搜索词原样展示（含 re: 前缀）；空搜索词会触发引擎 replace("") 的危险行为，onInput 弹回 DOM
+      const searchInput = (key: string) => (
         <input
           class="dict-cell-input"
-          value={row.values[3] ?? ""}
-          placeholder="替换词"
-          onCompositionStart={() => composing.set(`${ri}:3`, true)}
+          value={row.values[si] ?? ""}
+          placeholder="搜索词（re: 前缀 = 正则）"
+          onCompositionStart={() => composing.set(key, true)}
           onCompositionEnd={(e) => {
-            composing.set(`${ri}:3`, false);
-            updateRowValue(ri, 3, e.currentTarget.value);
+            composing.set(key, false);
+            if (e.currentTarget.value.trim() === "") {
+              e.currentTarget.value = row.values[si] ?? "";
+              return;
+            }
+            updateRowValue(ri, si, e.currentTarget.value);
           }}
           onInput={(e) => {
             if (e.isComposing) return;
-            updateRowValue(ri, 3, e.currentTarget.value);
+            const raw = e.currentTarget.value;
+            const cleaned = raw.replace(/\|/g, "");
+            if (cleaned !== raw) e.currentTarget.value = cleaned;
+            if (cleaned.trim() === "") {
+              e.currentTarget.value = row.values[si] ?? "";
+              return;
+            }
+            updateRowValue(ri, si, cleaned);
+          }}
+        />
+      );
+      if (col.editor === "search") return searchInput(`${ri}:search`);
+      // 混排合并格：条件行 = 条件 chips + 搜索词上下排布；普通/场景行仅搜索词
+      return (
+        <div class="dict-cell-regexsearch">
+          <Show when={row.type === "conditional"}>{renderCondChips(ri, row)}</Show>
+          {searchInput(`${ri}:regexSearch`)}
+        </div>
+      );
+    }
+    if (col.editor === "replace" || col.editor === "replaceMixed") {
+      const idx = col.editor === "replace" ? 3 : replaceValueIndex(row.type);
+      if (idx === null) return <span />;
+      return (
+        <input
+          class="dict-cell-input"
+          value={row.values[idx] ?? ""}
+          placeholder="替换词"
+          onCompositionStart={() => composing.set(`${ri}:replace:${idx}`, true)}
+          onCompositionEnd={(e) => {
+            composing.set(`${ri}:replace:${idx}`, false);
+            updateRowValue(ri, idx, e.currentTarget.value);
+          }}
+          onInput={(e) => {
+            if (e.isComposing) return;
+            updateRowValue(ri, idx, e.currentTarget.value);
           }}
         />
       );
     }
     if (col.editor === "note") {
+      // 混排布局下普通行备注列可编辑（绑定自身 values[2]）；条件/场景行保持只读展示
+      if (row.type === "normal") {
+        return (
+          <input
+            class="dict-cell-input"
+            value={row.values[2] ?? ""}
+            placeholder="备注"
+            onCompositionStart={() => composing.set(`${ri}:noteMixed`, true)}
+            onCompositionEnd={(e) => {
+              composing.set(`${ri}:noteMixed`, false);
+              updateRowValue(ri, 2, e.currentTarget.value);
+            }}
+            onInput={(e) => {
+              if (e.isComposing) return;
+              updateRowValue(ri, 2, e.currentTarget.value);
+            }}
+          />
+        );
+      }
       return row.note ? (
         <span class="dict-cell-note" title="备注">{row.note}</span>
       ) : (
@@ -713,9 +773,9 @@ export function DictionaryPage() {
     setDraftText(text);
   }
 
-  /** 操作格 colspan：列数自洽（见卡片守卫）时恒为 1；Math.max 兜底，避免出现 0/负数 colspan */
-  function actionColspan(type: DictRowType): number {
-    const rowCols = getTableColumns(type, activeTab() as DictTab).length;
+  /** 操作格 colspan：行列定义与表头一致（含混排统一 4 列）时恒为 1；Math.max 兜底，避免出现 0/负数 colspan */
+  function actionColspan(row: DictRow): number {
+    const rowCols = rowColumns(row).length;
     return Math.max(1, cardColumnDefs().length + 1 - rowCols);
   }
 
@@ -961,16 +1021,13 @@ export function DictionaryPage() {
     }
   });
 
-  // 后处理(post)字典与行类型混排的文件不支持表格视图：强制文本模式，
-  // 规避固定布局下超出表头的列被压成 0 宽（含删除操作列），并提示用户
+  // 行类型组合不支持表格视图时强制文本模式（普通/条件/场景混排已支持，此处仅作未知类型兜底），并提示用户
   createEffect(() => {
     if (viewMode() !== "card") return;
-    if (activeTab() !== "post" && !cardColumnsConsistent()) {
-      toast.info("该字典行格式不统一（普通/条件/场景行混排），暂不支持卡片视图");
+    if (!cardColumnsConsistent()) {
+      toast.info("该字典行类型暂不支持卡片视图");
       setViewMode("text");
-      return;
     }
-    if (activeTab() === "post") setViewMode("text");
   });
 
   // 切到卡片模式时基于当前文本重新解析（text 模式编辑后切换需刷新）
@@ -1334,21 +1391,19 @@ export function DictionaryPage() {
                     >
                       文本
                     </button>
-                    <Show when={activeTab() !== "post"}>
-                      <button
-                        class={`dict-view-btn ${viewMode() === "card" ? "active" : ""}`}
-                        onClick={() => setViewMode("card")}
-                        title="卡片模式"
-                      >
-                        卡片
-                      </button>
-                    </Show>
+                    <button
+                      class={`dict-view-btn ${viewMode() === "card" ? "active" : ""}`}
+                      onClick={() => setViewMode("card")}
+                      title="卡片模式"
+                    >
+                      卡片
+                    </button>
                   </div>
                 </div>
               </div>
 
               <p class="dict-regex-hint">
-                搜索词/检测词列支持 <code>re:</code> 前缀正则（如 <code>re:あ+い</code>；替换类词典可与 <code>1^</code>/<code>^^</code> 组合）。非法正则回退为字面量匹配；可匹配空串的正则在替换/GPT 类词典中丢弃，检测类词库（H/禁用词）中同样回退为字面量匹配。
+                搜索词/检测词列支持 <code>re:</code> 前缀正则（如 <code>re:あ+い</code>）。非法正则回退为字面量匹配；可匹配空串的正则在替换/GPT 类词典中丢弃，检测类词库（H/禁用词）中同样回退为字面量匹配。仅首次替换：<code>re:(?s)^(.*?)词</code> + 替换词 <code>\1替换词</code>；仅开头：<code>re:^词</code>；条件词支持 <code>re:</code> 正则判断（如 <code>!re:接続詞</code> 取反）。旧式 <code>1^</code>/<code>^^</code> 前缀仍兼容加载，卡片视图会自动转为等价正则、保存时落盘。
               </p>
 
               <Show
@@ -1392,7 +1447,7 @@ export function DictionaryPage() {
                                       data-row-index={ri}
                                       data-row-type={rowSignal().type}
                                     >
-                                      <Index each={getTableColumns(rowSignal().type, activeTab() as DictTab)}>
+                                      <Index each={rowColumns(rowSignal())}>
                                         {(colSignal, csi) => (
                                           <td
                                             data-type-label={
@@ -1405,7 +1460,7 @@ export function DictionaryPage() {
                                           >
                                             <Show
                                               when={
-                                                csi === regexBadgeColumnIndex(rowSignal().type) &&
+                                                csi === badgeIndexFor(rowSignal()) &&
                                                 rowSignal().isRegex
                                               }
                                               fallback={dictCell(ri, colSignal(), rowSignal())}
@@ -1431,7 +1486,7 @@ export function DictionaryPage() {
                                       </Index>
                                       <td
                                         class="dict-cell-actions"
-                                        colspan={actionColspan(rowSignal().type)}
+                                        colspan={actionColspan(rowSignal())}
                                       >
                                         <button
                                           class="dict-row-del"
