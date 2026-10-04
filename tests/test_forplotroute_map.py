@@ -141,5 +141,56 @@ class CheckFileCoverageTests(unittest.TestCase):
         self.assertTrue(any("dms_init.json" in m for m in logs))
 
 
+class GroundToRealFilesTests(unittest.TestCase):
+    """落盘前文件名规整：LLM 半角写法按 gt_input 真实名改写（NFKC 唯一命中）。"""
+
+    def test_halfwidth_keys_and_labels_ground_to_real_names(self) -> None:
+        data = {
+            "mermaid": 'flowchart TD\n  A["アペンド_03.json"] --> B["01_共通.json"]',
+            "文件归属": {"アペンド_03.json": "梦幻迷宫", "01_共通.json": "共通线"},
+            "节点剧情": {"梦幻迷宫": "摘要"},
+        }
+        out = ForPlotRouteMap._ground_to_real_files(
+            data, ["アペンド＿０３.json", "01_共通.json"]
+        )
+        self.assertEqual(list(out["文件归属"]), ["アペンド＿０３.json", "01_共通.json"])
+        self.assertIn('A["アペンド＿０３.json"]', out["mermaid"])
+        # 精确名保持原样
+        self.assertIn('B["01_共通.json"]', out["mermaid"])
+        # 「节点剧情」键为路线名，不参与规整
+        self.assertEqual(out["节点剧情"], {"梦幻迷宫": "摘要"})
+
+    def test_unquoted_label_rewrites_to_quoted(self) -> None:
+        data = {
+            "mermaid": "flowchart TD\n  A[アペンド_03.json]",
+            "文件归属": {},
+            "节点剧情": {},
+        }
+        out = ForPlotRouteMap._ground_to_real_files(data, ["アペンド＿０３.json"])
+        self.assertIn('A["アペンド＿０３.json"]', out["mermaid"])
+
+    def test_unknown_and_ambiguous_names_kept(self) -> None:
+        data = {
+            "mermaid": 'flowchart TD\n  X["不存在.json"]',
+            "文件归属": {"不存在.json": "线"},
+            "节点剧情": {},
+        }
+        # ０１.json 与 0１.json NFKC 归一后同名，视为歧义（此处标签未命中即保留）
+        out = ForPlotRouteMap._ground_to_real_files(
+            data, ["アペンド＿０３.json", "０１.json", "0１.json"]
+        )
+        self.assertIn('X["不存在.json"]', out["mermaid"])
+        self.assertEqual(out["文件归属"], {"不存在.json": "线"})
+
+    def test_no_real_files_noop_on_keys(self) -> None:
+        data = {
+            "mermaid": 'flowchart TD\n  A["x.json"]',
+            "文件归属": {"x.json": "线"},
+            "节点剧情": {},
+        }
+        out = ForPlotRouteMap._ground_to_real_files(data, [])
+        self.assertEqual(out["文件归属"], {"x.json": "线"})
+
+
 if __name__ == "__main__":
     unittest.main()

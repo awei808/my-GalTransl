@@ -491,6 +491,15 @@ class ProjectReadToolTests(ProjectFixture):
         with self.assertRaises(ValueError):
             self._call("galtransl_get_project_metadata", kind="whatever")
 
+    def test_read_translation_file_fullwidth_cache_via_halfwidth_query(self) -> None:
+        # NFKC 兜底：真实缓存文件为全角名，agent 按半角写法查询同样可读
+        _write_json(
+            os.path.join(self.project, "transl_cache", "アペンド＿０３.json"),
+            [{"index": 1, "pre_src": "原文", "pre_dst": "译文"}],
+        )
+        result = self._call("galtransl_read_translation_file", filename="アペンド_03.json")
+        self.assertEqual(len(result["items"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

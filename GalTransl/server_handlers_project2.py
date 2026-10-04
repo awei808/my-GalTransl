@@ -44,6 +44,7 @@ from GalTransl.server_dict import (
 from GalTransl.server_meta import _load_project_name_dict, _lookup_name
 from GalTransl.server_backend import _read_backend_profiles
 from GalTransl.server_scaffold import _workspace_root
+from GalTransl.Utils import resolve_filename_rel
 from GalTransl.server_cache import (
     _REPLACE_FIELD_REJECTED_MSG,
     _append_engine_log,
@@ -777,7 +778,8 @@ def route_project_api_part2(
             # 仅收集指定文件（需做路径穿越防护）
             norm = os.path.normpath(file_filter.replace("\\", "/"))
             if norm != ".." and not norm.startswith(".." + os.sep) and not os.path.isabs(norm):
-                _collect(norm)
+                # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值
+                _collect(resolve_filename_rel(cache_dir, norm) or norm)
         elif os.path.isdir(cache_dir):
             # 递归遍历整个 transl_cache（翻译缓存位于 pass3_cache 子目录，顶层 listdir 会漏掉）
             for root, _dirs, files in os.walk(cache_dir):
@@ -831,7 +833,8 @@ def route_project_api_part2(
             # 路径穿越防护：与 /problems 端点一致
             norm = os.path.normpath(file_filter.replace("\\", "/"))
             if norm != ".." and not norm.startswith(".." + os.sep) and not os.path.isabs(norm):
-                _collect_alt(norm)
+                # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值
+                _collect_alt(resolve_filename_rel(cache_dir, norm) or norm)
         elif os.path.isdir(cache_dir):
             for root, _dirs, files in os.walk(cache_dir):
                 for name in sorted(files):

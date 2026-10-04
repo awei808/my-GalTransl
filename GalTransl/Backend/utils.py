@@ -9,10 +9,10 @@ import json
 import math
 import os
 import re
-import unicodedata
 from typing import Any, Iterable, List, Optional, Tuple
 
 from GalTransl import LOGGER
+from GalTransl.Utils import nfkc_fold
 
 
 def detect_line_break_symbol(src_text: str) -> str:
@@ -639,7 +639,7 @@ def select_paths_by_filter(
         warned: set = set()
         for path in all_paths:
             base = os.path.basename(path)
-            n_base = unicodedata.normalize("NFKC", base)
+            n_base = nfkc_fold(base)
             if n_base in by_nfkc_base and n_base not in warned:
                 warned.add(n_base)
                 LOGGER.warning(
@@ -647,7 +647,7 @@ def select_paths_by_filter(
                     f"存在 NFKC 归一后同名的文件，兜底匹配取先出现的：{n_base!r}"
                 )
             by_nfkc_base.setdefault(n_base, path)
-            n_stem = unicodedata.normalize("NFKC", os.path.splitext(base)[0])
+            n_stem = nfkc_fold(os.path.splitext(base)[0])
             by_nfkc_stem.setdefault(n_stem, path)
 
     seen: set = set()
@@ -664,7 +664,7 @@ def select_paths_by_filter(
         elif key in by_stem:
             hit = by_stem[key]
         if hit is None:
-            n_key = unicodedata.normalize("NFKC", key)
+            n_key = nfkc_fold(key)
             _ensure_nfkc_index()
             hit = by_nfkc_base.get(n_key)
             if hit is None:

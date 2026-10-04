@@ -51,6 +51,7 @@ from GalTransl.server_search import (
     search_dict_entries,
     search_source_scripts,
 )
+from GalTransl.Utils import resolve_filename, resolve_filename_rel, resolve_filename_strict
 
 DEFAULT_PAGE_SIZE = 100
 HARD_PAGE_SIZE = 1000
@@ -150,12 +151,23 @@ def _read_json_file(file_path: str) -> Any:
 
 
 def _resolve_project_file(project_dir: str, sub_dir: str, filename: str) -> str:
-    """把项目内相对文件名解析为绝对路径，拒绝越界与路径穿越。"""
+    """把项目内相对文件名解析为绝对路径，拒绝越界与路径穿越。
+
+    精确文件不存在时按 NFKC 归一解析（目录列表兜底，兼容 agent 传入的
+    半角写法）；解析不到返回原拼接路径，由调用方按不存在处理。
+    """
     if not filename:
         raise ValueError("filename is required")
     base_dir = os.path.join(project_dir, sub_dir)
     # safe_under_project 拒绝绝对路径并以 commonpath 校验归属，杜绝穿越
-    return safe_under_project(base_dir, filename)
+    path = safe_under_project(base_dir, filename)
+    if os.path.isfile(path):
+        return path
+    resolved = resolve_filename_rel(base_dir, filename.replace("\\", "/"))
+    if resolved:
+        # 解析值来自目录列表，天然不越界；仍走 safe_under_project 保持口径统一
+        return safe_under_project(base_dir, resolved)
+    return path
 
 
 # ---------- 搜索域（6） ----------
@@ -643,6 +655,11 @@ def write_route_map(project_dir: str, args: Dict[str, Any]) -> Dict[str, Any]:
         "节点剧情": args["节点剧情"] if isinstance(args.get("节点剧情"), dict) else old.get("节点剧情") or {},
     }
     normalized = ForPlotRouteMap._normalize_result(merged)
+    # agent 写入的文件名可能被归一成半角，落盘前按 gt_input 真实名规整（与生成端同口径）
+    normalized = ForPlotRouteMap._ground_to_real_files(
+        normalized,
+        ForPlotRouteMap.list_real_input_files(os.path.join(project_dir, INPUT_FOLDERNAME)),
+    )
     if not normalized["mermaid"] and not normalized["文件归属"]:
         raise ValueError("写入被拒绝：mermaid 与 文件归属 不能同时为空")
     if normalized["mermaid"] and not ForPlotRouteMap._validate_mermaid(normalized["mermaid"]):
@@ -717,18 +734,24 @@ def _entry_has_h(project_dir: str, filename: str) -> bool:
 
     `_resolve_cache_h_ranges` 要求「pass3_cache 下真实存在的缓存相对路径」
     （如 `pass3_cache/01.json`），裸文件名会一律判为不存在。故这里按
-    pass3_cache 下的缓存命名探测：先试 `{filename}.json`，再试分片形态。
-    识别不了（缓存/批次元数据缺失、命名对不上）时返回 False——不因判定不了而阻断正常写入。
+    pass3_cache 下的缓存命名探测：先试 `{filename}.json`，再试分片形态；
+    另按 NFKC 归一追加候选（全角文件名 + agent 半角输入时解析到真实缓存），
+    原候选名保持优先探测。识别不了时返回 False——不因判定不了而阻断正常写入。
     """
-    candidates = [f"{PASS3_CACHE_DIR}/{filename}.json"]
-    # 分片缓存可能形如 {输入名}_{N}.json；无 N 时也试一次裸名，命中由文件存在性决定
-    if not filename.endswith(".json"):
-        candidates.append(f"{PASS3_CACHE_DIR}/{filename}")
+    # 两种候选：{输入名}.json（输入名不带扩展名的历史简写）与输入名本身
+    # （meta 文件名 = 输入名 + .meta.json，输入名含 .json 时即缓存名），命中由文件存在性决定
+    candidates = [f"{filename}.json", filename]
+    probe_names = list(candidates)
+    pass3_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS3_CACHE_DIR)
+    for cand in candidates:
+        hit = resolve_filename(pass3_dir, cand)
+        if hit and hit != cand and hit not in probe_names:
+            probe_names.append(hit)
     try:
         from GalTransl.server_cache import _resolve_cache_h_ranges
 
-        for cache_name in candidates:
-            if _resolve_cache_h_ranges(project_dir, cache_name).get("has_h"):
+        for cand in probe_names:
+            if _resolve_cache_h_ranges(project_dir, f"{PASS3_CACHE_DIR}/{cand}").get("has_h"):
                 return True
     except Exception as exc:
         LOGGER.debug(f"[mcp] H 区间判定失败，按非 H 处理：{exc}")
@@ -817,8 +840,21 @@ def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, 
         raise ValueError(f"kind={kind} 时 filename 必填")
     sub_dir, suffix = _METADATA_SUBDIRS[kind]
     _ensure_safe_metadata_filename(name)
-    enforce_h_gate(project_dir, cache_filename=name)
-    path = os.path.join(project_dir, CACHE_FOLDERNAME, sub_dir, f"{name}{suffix}")
+    # 文件名 NFKC 兜底（写路径口径：归一歧义即拒绝），解析到真实 meta 文件，避免半角名重复落盘
+    meta_dir = os.path.join(project_dir, CACHE_FOLDERNAME, sub_dir)
+    resolved = resolve_filename_strict(meta_dir, f"{name}{suffix}")
+    if resolved:
+        real_name = resolved[: -len(suffix)] if resolved.endswith(suffix) else name
+    else:
+        # meta 尚不存在：输入名按 gt_input 真实名做 NFKC 规整，避免半角名新建孤儿 meta
+        from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
+
+        real_name = ForPlotRouteMap.ground_single_filename(
+            os.path.join(project_dir, INPUT_FOLDERNAME), name
+        )
+    # H 门禁用解析后的真实输入名，保证全角文件名在半角输入下同样能判定 H 区间
+    enforce_h_gate(project_dir, cache_filename=real_name)
+    path = os.path.join(meta_dir, f"{real_name}{suffix}")
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp_path = path + ".tmp"
@@ -827,7 +863,7 @@ def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, 
     os.replace(tmp_path, path)
     size = os.path.getsize(path)
     LOGGER.info(f"[mcp] 元数据已写入 kind={kind} ({size} 字节)")
-    return {"success": True, "kind": kind, "filename": filename or "", "bytes": size}
+    return {"success": True, "kind": kind, "filename": real_name, "bytes": size}
 
 
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -980,7 +1016,9 @@ def read_glossary(
     entries: List[Dict[str, Any]] = []
     missing_files: List[str] = []
     for name in files:
-        path = os.path.join(project_dir, name)
+        # 文件名 NFKC 兜底：config 登记名与磁盘名全/半角宽度不一致时同样可读
+        hit = resolve_filename(project_dir, name)
+        path = os.path.join(project_dir, hit or name)
         if not os.path.isfile(path):
             missing_files.append(name)
             continue
@@ -1061,8 +1099,9 @@ def _read_glossary_file(project_dir: str, filename: str) -> Tuple[List[str], str
     """读取术语表原始行与行尾风格；返回 (lines, eol, exists)。
 
     以 newline="" 读取以保留原始行尾，写入时按同一风格回写，避免整文件行尾漂移。
+    文件名 NFKC 兜底：agent 传入半角写法时解析到项目根下真实文件。
     """
-    path = os.path.join(project_dir, filename)
+    path = os.path.join(project_dir, resolve_filename(project_dir, filename) or filename)
     if not os.path.isfile(path):
         return [], "\n", False
     with open(path, "r", encoding="utf-8", errors="replace", newline="") as f:
@@ -1074,8 +1113,9 @@ def _save_glossary_file(project_dir: str, filename: str, lines: List[str], eol: 
     """原子写入术语表（.tmp + os.replace），返回新内容字节数。
 
     写入内容统一以单个行尾结尾：原文件末尾无换行时，会在首次改动时补上。
+    已存在的目标文件经 NFKC 兜底解析（写路径口径：归一歧义即拒绝）。
     """
-    path = os.path.join(project_dir, filename)
+    path = os.path.join(project_dir, resolve_filename_strict(project_dir, filename) or filename)
     content = eol.join(lines) + eol
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8", newline="") as f:

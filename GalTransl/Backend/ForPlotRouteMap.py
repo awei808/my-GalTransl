@@ -9,7 +9,6 @@
 import json
 import os
 import re
-import unicodedata
 from typing import Any, Dict, List, Optional
 
 from GalTransl import LOGGER, PASS0_CACHE_DIR
@@ -23,6 +22,7 @@ from GalTransl.Backend.Prompts import (
 from GalTransl.Backend.utils import extract_json_object
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
+from GalTransl.Utils import nfkc_fold
 
 # 路线图生成模式（internals.plotroute.routeMode）
 ROUTE_MODE_FULL = "full"  # 重新归纳路线、生成 mermaid 与文件归属（旧行为）
@@ -67,7 +67,7 @@ def _get_route_for_file(plot_route_map: Optional[dict], filename: str) -> Option
     route = file_map.get(filename)
     if isinstance(route, str) and route.strip():
         return route
-    folded = unicodedata.normalize("NFKC", str(filename or ""))
+    folded = nfkc_fold(str(filename or ""))
     if not folded:
         return None
     for key, value in file_map.items():
@@ -75,7 +75,7 @@ def _get_route_for_file(plot_route_map: Optional[dict], filename: str) -> Option
             isinstance(key, str)
             and isinstance(value, str)
             and value.strip()
-            and unicodedata.normalize("NFKC", key) == folded
+            and nfkc_fold(key) == folded
         ):
             LOGGER.debug(
                 f"[PlotRouteMap] {filename!r} 未精确命中，"
@@ -218,6 +218,112 @@ class ForPlotRouteMap(BaseEngine):
         return ForPlotRouteMap._normalize_result({"节点剧情": raw})["节点剧情"]
 
     @staticmethod
+    def list_real_input_files(input_dir: str) -> List[str]:
+        """gt_input 顶层真实文件名清单（文件名规整的权威来源）；目录不可读时为空。"""
+        try:
+            return [
+                n for n in os.listdir(input_dir)
+                if os.path.isfile(os.path.join(input_dir, n))
+            ]
+        except FileNotFoundError:
+            # 新项目尚未导入文件属正常态，不打 warning
+            LOGGER.debug(f"[PlotRouteMap] 输入目录不存在，跳过文件名规整：{input_dir}")
+            return []
+        except OSError as e:
+            LOGGER.warning(f"[PlotRouteMap] 列输入目录失败，跳过文件名规整：{input_dir}（{e}）")
+            return []
+
+    @staticmethod
+    def ground_single_filename(input_dir: str, name: str) -> str:
+        """单个输入文件名按 gt_input 真实名做 NFKC 规整；唯一命中才改写。
+
+        供元数据写入路径使用：meta 尚不存在时先把 agent 传入的（可能半角的）
+        输入名规整回真实名，避免半角名新建孤儿 meta 文件。
+        """
+        folded = nfkc_fold(name)
+        if not folded:
+            return name
+        hits = [r for r in ForPlotRouteMap.list_real_input_files(input_dir) if nfkc_fold(r) == folded]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            LOGGER.warning(f"[PlotRouteMap] 文件名 {name!r} NFKC 归一后命中多个真实文件（{hits}），保留原样")
+        return name
+
+    @staticmethod
+    def _ground_to_real_files(data: Dict[str, Any], real_files: List[str]) -> Dict[str, Any]:
+        """把 LLM 产物中的文件名（「文件归属」键与 mermaid 节点标签）按真实文件名规整。
+
+        全角文件名常被 LLM 规整成半角（アペンド＿０３.json → アペンド_03.json），
+        落盘前按 NFKC 归一唯一命中才改写；歧义/未命中保留原样（由覆盖检查告警）。
+        mermaid 标签统一改写为带引号形态（json 转义），改写后由调用方重做
+        _validate_mermaid 校验。「节点剧情」键为路线名，不参与规整。
+        """
+        real_set = set(real_files)
+        nfkc_index: Dict[str, List[str]] = {}
+        for name in real_files:
+            nfkc_index.setdefault(nfkc_fold(name), []).append(name)
+        renamed: Dict[str, str] = {}
+
+        def ground_key(key: str) -> str:
+            if not key or key in real_set:
+                return key
+            if key in renamed:
+                return renamed[key]
+            hits = nfkc_index.get(nfkc_fold(key))
+            if not hits:
+                return key
+            if len(hits) > 1:
+                LOGGER.warning(f"[PlotRouteMap] 文件名 {key!r} NFKC 归一后命中多个真实文件（{hits}），保留原样")
+                return key
+            renamed[key] = hits[0]
+            return hits[0]
+
+        file_map = data.get("文件归属", {})
+        data["文件归属"] = {ground_key(k): v for k, v in file_map.items()}
+
+        mermaid = data.get("mermaid", "")
+        if mermaid and real_files:
+            def _rewrite(m: "re.Match[str]") -> str:
+                alias, label = m.group(1), m.group(2)
+                real = ground_key(label)
+                if real == label:
+                    return m.group(0)
+                return f'{alias}["{json.dumps(real, ensure_ascii=False)[1:-1]}"]'
+
+            # 逐行替换：subgraph 行的标题不是文件节点，跳过以免误改；
+            # 带引号与不带引号的节点标签分别匹配，别名/边/样式行不受影响
+            out_lines = []
+            for line in mermaid.split("\n"):
+                if line.strip().lower().startswith("subgraph"):
+                    out_lines.append(line)
+                    continue
+                line = re.sub(r'([A-Za-z_][\w-]*)\s*\[\s*"([^"]*)"\s*\]', _rewrite, line)
+                line = re.sub(r'([A-Za-z_][\w-]*)\s*\[\s*([^\]"\s][^\]]*?)\s*\]', _rewrite, line)
+                out_lines.append(line)
+            data["mermaid"] = "\n".join(out_lines)
+
+        if renamed:
+            examples = list(renamed.items())[:3]
+            LOGGER.info(
+                f"[PlotRouteMap] 已把 {len(renamed)} 个 LLM 写法文件名按真实名规整（NFKC），"
+                f"如：{examples}"
+            )
+        return data
+
+    def _ground_with_real_inputs(self, data: Dict[str, Any]) -> None:
+        """按 gt_input 真实文件名规整数据；输入目录不可用（如测试桩配置）时跳过。"""
+        input_dir_getter = getattr(self.pj_config, "getInputPath", None)
+        if not callable(input_dir_getter):
+            return
+        try:
+            input_dir = input_dir_getter()
+        except Exception as e:
+            LOGGER.debug(f"[PlotRouteMap] 获取输入目录失败，跳过文件名规整：{e}")
+            return
+        self._ground_to_real_files(data, self.list_real_input_files(input_dir))
+
+    @staticmethod
     def _validate_mermaid(source: str) -> bool:
         """校验 mermaid 源码：以 flowchart/graph 开头，且 subgraph id 不含非法字符。
 
@@ -248,14 +354,14 @@ class ForPlotRouteMap(BaseEngine):
             return
         # 键名按 NFKC 归一对比，避免全角/半角写法差异被误报为缺失
         covered = {
-            unicodedata.normalize("NFKC", k)
+            nfkc_fold(k)
             for k, v in data.get("文件归属", {}).items()
             if isinstance(k, str) and isinstance(v, str) and v.strip()
         }
         missing = [
             fid
             for fid in sorted(fm_map)
-            if unicodedata.normalize("NFKC", fid) not in covered
+            if nfkc_fold(fid) not in covered
         ]
         if missing:
             LOGGER.warning(
@@ -395,6 +501,11 @@ class ForPlotRouteMap(BaseEngine):
                     "文件归属": dict(file_map),
                     "节点剧情": nodes,
                 }
+                # 旧图若存有 LLM 半角写法，这里顺带规整（不改拓扑，只改文件名写法）
+                self._ground_with_real_inputs(merged)
+                if not self._validate_mermaid(merged["mermaid"]):
+                    LOGGER.warning("[PlotRouteMap] routesOnly 规整后 mermaid 校验失败，不保存")
+                    return False
                 return self._save_plot_route_map(merged, structure_type, user_outline)
 
             if attempt == 1:
@@ -495,6 +606,8 @@ class ForPlotRouteMap(BaseEngine):
                 LOGGER.warning("[PlotRouteMap] 未解析到有效 JSON")
             else:
                 data = self._normalize_result(obj)
+                # LLM 常把全角文件名规整成半角，落盘前按 gt_input 真实名改写
+                self._ground_with_real_inputs(data)
                 self._check_file_coverage(data)
                 if self._validate_mermaid(data["mermaid"]):
                     return self._save_plot_route_map(data, structure_type, user_outline)

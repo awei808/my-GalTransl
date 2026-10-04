@@ -594,3 +594,125 @@ class WriteToolRegistrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NfkcMetadataWriteTests(unittest.TestCase):
+    """全角文件名 + 半角输入：元数据必须写到真实文件，H 门禁按真实缓存判定。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="gt_nfkc_meta_")
+        _make_project(self.project_dir)
+        os.makedirs(os.path.join(self.project_dir, "transl_cache", "pass1_cache"), exist_ok=True)
+        self.real_name = "アペンド＿０３.json"
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "pass1_cache", f"{self.real_name}.meta.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump({"剧情": "旧摘要"}, f, ensure_ascii=False)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project_dir, ignore_errors=True)
+
+    def test_halfwidth_name_updates_real_meta_file(self) -> None:
+        result = write_metadata(self.project_dir, "filemeta", "アペンド_03.json", {"剧情": "新摘要"})
+        real_path = os.path.join(
+            self.project_dir, "transl_cache", "pass1_cache", f"{self.real_name}.meta.json"
+        )
+        half_path = os.path.join(
+            self.project_dir, "transl_cache", "pass1_cache", "アペンド_03.json.meta.json"
+        )
+        self.assertTrue(os.path.isfile(real_path))
+        self.assertFalse(os.path.isfile(half_path))
+        with open(real_path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["剧情"], "新摘要")
+        self.assertEqual(result["filename"], self.real_name)
+
+    def test_exact_name_still_writes_real_file(self) -> None:
+        result = write_metadata(self.project_dir, "filemeta", self.real_name, {"剧情": "新"})
+        self.assertEqual(result["filename"], self.real_name)
+        self.assertFalse(
+            os.path.isfile(
+                os.path.join(self.project_dir, "transl_cache", "pass1_cache", "アペンド_03.json.meta.json")
+            )
+        )
+
+    def test_h_gate_blocks_halfwidth_name_for_fullwidth_h_file(self) -> None:
+        # 全角缓存 + 半角输入：H 区间判定必须经 NFKC 命中并拦截，且不新增半角 meta
+        os.makedirs(os.path.join(self.project_dir, "transl_cache", "pass3_cache"), exist_ok=True)
+        os.makedirs(os.path.join(self.project_dir, "transl_cache", "pass2_cache"), exist_ok=True)
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "pass3_cache", f"{self.real_name}"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump([], f)
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "pass2_cache", f"{self.real_name}.batch.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump({"批次": [{"区间": [1, 5], "h": 0.95}]}, f)
+        with self.assertRaises(ValueError):
+            write_metadata(self.project_dir, "filemeta", "アペンド_03.json", {"角色": "x"})
+        self.assertFalse(
+            os.path.isfile(
+                os.path.join(self.project_dir, "transl_cache", "pass1_cache", "アペンド_03.json.meta.json")
+            )
+        )
+
+
+class NfkcRouteMapWriteTests(unittest.TestCase):
+    """agent 手写路线图落盘前按 gt_input 真实名规整（与生成端同口径）。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="gt_nfkc_route_")
+        _make_project(self.project_dir)
+        os.makedirs(os.path.join(self.project_dir, "gt_input"), exist_ok=True)
+        with open(os.path.join(self.project_dir, "gt_input", "０１＿共通.json"), "w", encoding="utf-8") as f:
+            f.write("[]")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project_dir, ignore_errors=True)
+
+    def test_halfwidth_labels_ground_to_real_names(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_write_route_map",
+            {
+                "project_dir": self.project_dir,
+                "mermaid": 'flowchart TD\n  A["01_共通.json"]',
+                "文件归属": {"01_共通.json": "共通线"},
+                "节点剧情": {"共通线": "序幕"},
+            },
+        )
+        self.assertTrue(result["success"])
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "pass0_cache", "PlotRouteMap.json"),
+            encoding="utf-8",
+        ) as f:
+            saved = json.load(f)
+        self.assertEqual(list(saved["文件归属"]), ["０１＿共通.json"])
+        self.assertIn('A["０１＿共通.json"]', saved["mermaid"])
+
+    def test_write_metadata_rejects_nfkc_ambiguity(self) -> None:
+        # 写路径口径：存在 NFKC 归一后同名的真实 meta 文件时，第三种写法直接拒绝
+        pass1 = os.path.join(self.project_dir, "transl_cache", "pass1_cache")
+        os.makedirs(pass1, exist_ok=True)
+        for name in ("０１_a.json.meta.json", "0１_a.json.meta.json"):
+            with open(os.path.join(pass1, name), "w", encoding="utf-8") as f:
+                json.dump({}, f)
+        with self.assertRaises(ValueError):
+            write_metadata(self.project_dir, "filemeta", "０1_a.json", {"剧情": "x"})
+
+    def test_new_meta_with_halfwidth_name_lands_on_real_input_name(self) -> None:
+        # meta 尚不存在：输入名按 gt_input 真实名做 NFKC 规整，避免半角名新建孤儿 meta
+        gt_input = os.path.join(self.project_dir, "gt_input")
+        os.makedirs(gt_input, exist_ok=True)
+        os.makedirs(os.path.join(self.project_dir, "transl_cache", "pass1_cache"), exist_ok=True)
+        with open(os.path.join(gt_input, "０２＿イベント.json"), "w", encoding="utf-8") as f:
+            f.write("[]")
+        result = write_metadata(self.project_dir, "filemeta", "02_イベント.json", {"剧情": "x"})
+        self.assertEqual(result["filename"], "０２＿イベント.json")
+        pass1 = os.path.join(self.project_dir, "transl_cache", "pass1_cache")
+        self.assertTrue(os.path.isfile(os.path.join(pass1, "０２＿イベント.json.meta.json")))
+        self.assertFalse(os.path.isfile(os.path.join(pass1, "02_イベント.json.meta.json")))

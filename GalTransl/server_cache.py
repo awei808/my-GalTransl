@@ -39,7 +39,7 @@ from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
 from GalTransl.CSerialize import save_json
 from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
-from GalTransl.Utils import get_n_symbol
+from GalTransl.Utils import get_n_symbol, resolve_filename, resolve_filename_rel
 from GalTransl.Backend.utils import coerce_h_value, is_h_value, resolve_h_thresholds
 from GalTransl.server_config_schema import _read_yaml_file
 from GalTransl.server_dict import (
@@ -617,8 +617,12 @@ def _build_project_output(
     for cache_name in cache_names:
         cache_path = os.path.join(cache_dir, cache_name)
         if not os.path.isfile(cache_path):
-            errors.append(f"cache file not found: {cache_name}")
-            continue
+            # 文件名 NFKC 兜底：精确未命中时解析真实缓存文件
+            hit = resolve_filename_rel(cache_dir, cache_name)
+            if not hit:
+                errors.append(f"cache file not found: {cache_name}")
+                continue
+            cache_name, cache_path = hit, os.path.join(cache_dir, hit)
 
         # 读取缓存文件（CacheEntry[]）
         try:
@@ -882,9 +886,13 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
     if norm == ".." or norm.startswith(".." + os.sep) or os.path.isabs(norm):
         return {"batch_exists": False, "has_h": False, "h_ranges": []}
     if not os.path.isfile(os.path.join(cache_dir, norm)):
-        return {"batch_exists": False, "has_h": False, "h_ranges": []}
+        # 文件名 NFKC 兜底：LLM/agent 传入半角写法时解析到真实缓存文件
+        resolved = resolve_filename_rel(cache_dir, norm)
+        if not resolved:
+            return {"batch_exists": False, "has_h": False, "h_ranges": []}
+        norm = resolved
 
-    base = os.path.basename(cache_name)
+    base = os.path.basename(norm)
     # 候选输入名：缓存名即输入名（输入文件本身带扩展名，如 story.txt.json），
     # 分片缓存为 {输入名}_{N}.json，再剥离 _N 后缀作为第二候选。
     # 注意 group(1) 已含输入文件扩展名，不能再补 ".json"。
@@ -895,10 +903,11 @@ def _resolve_cache_h_ranges(project_dir: str, cache_name: str) -> dict[str, Any]
 
     batch_path = None
     input_base = None
+    pass2_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR)
     for cand in input_candidates:
-        p = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR, f"{cand}.batch.json")
-        if os.path.isfile(p):
-            batch_path = p
+        hit = resolve_filename(pass2_dir, f"{cand}.batch.json")
+        if hit:
+            batch_path = os.path.join(pass2_dir, hit)
             input_base = cand
             break
     if batch_path is None:
@@ -992,8 +1001,12 @@ def _validate_build(project_dir: str, filenames: list[str] | None = None) -> dic
     for cache_name in cache_names:
         cache_path = os.path.join(cache_dir, cache_name)
         if not os.path.isfile(cache_path):
-            content_issues.append({"file": cache_name, "issue": "缓存文件不存在"})
-            continue
+            # 文件名 NFKC 兜底：精确未命中时解析真实缓存文件
+            hit = resolve_filename_rel(cache_dir, cache_name)
+            if not hit:
+                content_issues.append({"file": cache_name, "issue": "缓存文件不存在"})
+                continue
+            cache_name, cache_path = hit, os.path.join(cache_dir, hit)
         try:
             with open(cache_path, "rb") as f:
                 entries = orjson.loads(f.read())

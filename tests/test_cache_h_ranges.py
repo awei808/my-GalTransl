@@ -122,6 +122,15 @@ class CacheHrangesTests(unittest.TestCase):
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json")
         self.assertEqual(result["h_ranges"], [{"lo": 11, "hi": 40, "h": 1.0}])
 
+    def test_fullwidth_cache_resolved_from_halfwidth_query(self) -> None:
+        # NFKC 兜底：真实缓存/批次为全角名，按半角写法查询同样命中 H 区间
+        self._cache("アペンド＿０３.json")
+        self._batch("アペンド＿０３.json", [{"区间": [1, 5], "h": True}])
+        result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/アペンド_03.json")
+        self.assertTrue(result["batch_exists"])
+        self.assertTrue(result["has_h"])
+        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 5, "h": 1.0}])
+
     def test_separated_h_ranges_stay_multiple(self) -> None:
         self._cache("story.txt.json")
         self._batch(

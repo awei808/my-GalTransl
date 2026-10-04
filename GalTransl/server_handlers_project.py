@@ -93,6 +93,13 @@ from GalTransl.server_scaffold import _workspace_root
 from GalTransl.server_jobs import JobRegistry
 from GalTransl.server_handlers_project2 import route_project_api_part2
 from GalTransl.server_handlers_root import handle_import_files
+from GalTransl.Utils import resolve_filename, resolve_filename_rel
+
+
+def _resolve_cache_rel(cache_dir: str, rel: str) -> str:
+    """缓存相对路径的文件名 NFKC 兜底：精确未命中时解析真实文件；未命中返回原值。"""
+    resolved = resolve_filename_rel(cache_dir, rel)
+    return resolved if resolved is not None else rel
 
 
 def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_path: str) -> None:
@@ -393,6 +400,9 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
                 handler._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值，由下方 404 兜底
+            norm = _resolve_cache_rel(cache_dir, norm)
+            file_path = os.path.join(cache_dir, norm)
             if not os.path.isfile(file_path):
                 handler._send_json({"error": f"cache file not found: {file_name}"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -500,6 +510,8 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
                 handler._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            # 文件名 NFKC 兜底：h_ranges 查询与 persist 写回按解析后的真实文件
+            norm = _resolve_cache_rel(cache_dir, norm)
             proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words = _load_rebuild_deps(
                 project_dir, config_name
             )
@@ -617,6 +629,9 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                 handler._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
                 return
 
+            # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值，由下方 404 兜底
+            norm = _resolve_cache_rel(cache_dir, norm)
+            file_path = os.path.join(cache_dir, norm)
             if not os.path.isfile(file_path):
                 handler._send_json({"error": f"cache file not found: {raw_filename} (norm:{norm})"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -767,7 +782,26 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
         if not _is_safe_dict_filename(_filename):
             handler._send_json({"error": "invalid metadata filename"}, status=HTTPStatus.BAD_REQUEST)
             return
-        _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS1_CACHE_DIR, f"{_filename}.meta.json")
+        # 文件名 NFKC 兜底：LLM 产物（路线图标签等）可能把全角文件名规整成半角，
+        # 解析到真实 meta 文件；解析不到时按 gt_input 真实名规整输入名（唯一命中才
+        # 改写，与 MCP 写入口径一致，避免半角名新建孤儿 meta），仍无命中才保持原名
+        _pass1_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS1_CACHE_DIR)
+        _resolved_meta = resolve_filename(_pass1_dir, f"{_filename}.meta.json")
+        if not _resolved_meta:
+            from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
+
+            _grounded = ForPlotRouteMap.ground_single_filename(
+                os.path.join(project_dir, INPUT_FOLDERNAME), _filename
+            )
+            if _grounded != _filename:
+                _resolved_meta = f"{_grounded}.meta.json"
+        _meta_path = os.path.join(_pass1_dir, _resolved_meta or f"{_filename}.meta.json")
+        # 命中兜底时响应回真实文件名（去 .meta.json 后缀），便于调用方后续按真名操作
+        _resp_name = (
+            _resolved_meta[: -len(".meta.json")]
+            if _resolved_meta and _resolved_meta.endswith(".meta.json")
+            else _filename
+        )
 
         if handler.command == "GET":
             if not os.path.isfile(_meta_path):
@@ -779,7 +813,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             except Exception as e:
                 handler._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
-            handler._send_json({"exists": True, "type": "filemeta", "filename": _filename, "entry": entry, "path": _meta_path})
+            handler._send_json({"exists": True, "type": "filemeta", "filename": _resp_name, "entry": entry, "path": _meta_path})
             return
 
         if handler.command == "POST":
@@ -804,7 +838,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(entry, f, ensure_ascii=False, indent=2)
                 os.replace(tmp_path, _meta_path)
-                handler._send_json({"success": True, "type": "filemeta", "filename": _filename, "path": _meta_path})
+                handler._send_json({"success": True, "type": "filemeta", "filename": _resp_name, "path": _meta_path})
             except ValueError:
                 # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
                 handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
@@ -825,7 +859,24 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
         if not _is_safe_dict_filename(_filename):
             handler._send_json({"error": "invalid metadata filename"}, status=HTTPStatus.BAD_REQUEST)
             return
-        _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR, f"{_filename}.batch.json")
+        # 文件名 NFKC 兜底：与 filemeta 同口径，解析到真实 batch 文件；
+        # 未命中时按 gt_input 真实名规整输入名（唯一命中才改写），避免半角名新建孤儿
+        _pass2_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS2_CACHE_DIR)
+        _resolved_meta = resolve_filename(_pass2_dir, f"{_filename}.batch.json")
+        if not _resolved_meta:
+            from GalTransl.Backend.ForPlotRouteMap import ForPlotRouteMap
+
+            _grounded = ForPlotRouteMap.ground_single_filename(
+                os.path.join(project_dir, INPUT_FOLDERNAME), _filename
+            )
+            if _grounded != _filename:
+                _resolved_meta = f"{_grounded}.batch.json"
+        _meta_path = os.path.join(_pass2_dir, _resolved_meta or f"{_filename}.batch.json")
+        _resp_name = (
+            _resolved_meta[: -len(".batch.json")]
+            if _resolved_meta and _resolved_meta.endswith(".batch.json")
+            else _filename
+        )
 
         if handler.command == "GET":
             if not os.path.isfile(_meta_path):
@@ -837,7 +888,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             except Exception as e:
                 handler._send_json({"error": f"读取元数据失败: {e}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
-            handler._send_json({"exists": True, "type": "batchmeta", "filename": _filename, "entry": entry, "path": _meta_path})
+            handler._send_json({"exists": True, "type": "batchmeta", "filename": _resp_name, "entry": entry, "path": _meta_path})
             return
 
         if handler.command == "POST":
@@ -862,7 +913,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(entry, f, ensure_ascii=False, indent=2)
                 os.replace(tmp_path, _meta_path)
-                handler._send_json({"success": True, "type": "batchmeta", "filename": _filename, "path": _meta_path})
+                handler._send_json({"success": True, "type": "batchmeta", "filename": _resp_name, "path": _meta_path})
             except ValueError:
                 # 非法 JSON / 合法 JSON 但非对象（_read_json_body 对两者抛 ValueError/JSONDecodeError）
                 handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
@@ -984,7 +1035,10 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
         if not _is_safe_dict_filename(_filename):
             handler._send_json({"error": "invalid metadata filename"}, status=HTTPStatus.BAD_REQUEST)
             return
-        _meta_path = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "route_analysis", f"{_filename}.json")
+        # 路线分析分片名 NFKC 兜底（agent 可能传半角写法）
+        _shard_dir = os.path.join(project_dir, CACHE_FOLDERNAME, PASS0_CACHE_DIR, "route_analysis")
+        _resolved_shard = resolve_filename(_shard_dir, f"{_filename}.json")
+        _meta_path = os.path.join(_shard_dir, _resolved_shard or f"{_filename}.json")
 
         if handler.command == "GET":
             if not os.path.isfile(_meta_path):
@@ -1057,6 +1111,8 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                 return
 
             cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+            # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值，由下方 404 兜底
+            filename = _resolve_cache_rel(cache_dir, filename)
             file_path = os.path.join(cache_dir, filename)
             if not os.path.isfile(file_path):
                 handler._send_json({"error": f"cache file not found: {filename}"}, status=HTTPStatus.NOT_FOUND)
@@ -1105,6 +1161,8 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     continue
                 # 允许相对缓存根的子目录路径（如 pass1_cache/文件名.meta.json），
                 # 但禁止任何路径穿越（../、绝对路径等），确保只删除缓存目录内的文件。
+                # 文件名 NFKC 兜底：未命中保持原值，由下方 not_found 兜底
+                rel = _resolve_cache_rel(cache_dir, rel)
                 file_path = os.path.join(cache_dir, rel)
                 abs_target = os.path.abspath(file_path)
                 if abs_target != abs_cache and not abs_target.startswith(abs_cache + os.sep):
@@ -1318,6 +1376,10 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
             fp = os.path.join(cache_dir, norm)
             if not os.path.isfile(fp):
+                # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值，由下方 404 兜底
+                norm = _resolve_cache_rel(cache_dir, norm)
+                fp = os.path.join(cache_dir, norm)
+            if not os.path.isfile(fp):
                 handler._send_json({"error": "cache file not found"}, status=HTTPStatus.NOT_FOUND)
                 return
 
@@ -1412,6 +1474,9 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
         if not (abs_file == abs_cache or abs_file.startswith(abs_cache + os.sep)):
             handler._send_json({"error": "invalid cache path"}, status=HTTPStatus.BAD_REQUEST)
             return
+        # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值，由下方 404 兜底
+        norm = _resolve_cache_rel(cache_dir, norm)
+        file_path = os.path.join(cache_dir, norm)
         if not os.path.isfile(file_path):
             handler._send_json({"error": f"cache file not found: {filename}"}, status=HTTPStatus.NOT_FOUND)
             return

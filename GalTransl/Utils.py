@@ -12,6 +12,7 @@ import requests
 import re
 import json
 import logging
+import unicodedata
 
 LOGGER = logging.getLogger("GalTransl.Utils")
 
@@ -471,6 +472,94 @@ def decompress_file_lzma(input_filepath: str, output_filepath: Optional[str] = N
         LOGGER.error(f"错误: 文件 '{input_filepath}' 未找到。")
     except Exception as e:
         LOGGER.error(f"解压缩文件时发生错误: {e}")
+
+
+# 文件名 NFKC 归一匹配：全角文件名常被 LLM 产物或人工输入规整成半角，提供统一兜底口径
+
+
+def nfkc_fold(text: str) -> str:
+    """NFKC 归一：全角数字/字母/下划线等折叠为半角，仅用于文件名匹配，不用于文本内容。"""
+    return unicodedata.normalize("NFKC", text or "")
+
+
+def _nfkc_dir_lookup(directory: str, folded: str, *, strict: bool) -> Optional[str]:
+    """在目录内按 NFKC 归一名查找真实文件名。
+
+    strict=True（写路径）命中多个时抛 ValueError；读路径 first-wins 并告警。
+    """
+    try:
+        names = os.listdir(directory)
+    except OSError as e:
+        LOGGER.debug(f"NFKC 归一匹配列目录失败 {directory}: {e}")
+        return None
+    hits = [
+        n
+        for n in names
+        if nfkc_fold(n) == folded and os.path.isfile(os.path.join(directory, n))
+    ]
+    if not hits:
+        return None
+    if len(hits) > 1:
+        if strict:
+            raise ValueError(f"存在 NFKC 归一后同名的文件（{hits}），请使用真实文件名避免写错目标")
+        LOGGER.warning(f"NFKC 归一后同名的文件有 {len(hits)} 个：{hits}，兜底匹配取先出现的")
+    return hits[0]
+
+
+def resolve_filename(directory: str, filename: str) -> Optional[str]:
+    """把文件名解析为 directory 内真实存在的文件名；解析不到返回 None。
+
+    精确命中优先（保持既有 isfile 口径）；未命中时按 NFKC 归一兜底。
+    只做名字域匹配，路径穿越防护由调用方先行完成。
+    """
+    if not filename:
+        return None
+    if os.path.isfile(os.path.join(directory, filename)):
+        return filename
+    folded = nfkc_fold(filename)
+    if not folded:
+        return None
+    hit = _nfkc_dir_lookup(directory, folded, strict=False)
+    if hit is not None:
+        LOGGER.info(f"文件名 {filename!r} 精确未命中，经 NFKC 归一匹配到 {hit!r}")
+    return hit
+
+
+def resolve_filename_strict(directory: str, filename: str) -> Optional[str]:
+    """写路径口径的文件名解析：NFKC 归一命中多个真实文件时抛 ValueError。"""
+    if not filename:
+        return None
+    if os.path.isfile(os.path.join(directory, filename)):
+        return filename
+    folded = nfkc_fold(filename)
+    if not folded:
+        return None
+    hit = _nfkc_dir_lookup(directory, folded, strict=True)
+    if hit is not None:
+        LOGGER.info(f"文件名 {filename!r} 精确未命中，经 NFKC 归一匹配到 {hit!r}")
+    return hit
+
+
+def resolve_filename_rel(root_dir: str, rel_path: str) -> Optional[str]:
+    """解析「相对子路径/纯文件名」：目录段须真实存在，末段文件名做 NFKC 兜底。
+
+    返回重建的相对路径（正斜杠）；解析不到返回 None。穿越防护由调用方先行完成。
+    """
+    norm = str(rel_path or "").replace("\\", "/").strip("/")
+    if not norm or norm in (".", "..") or norm.startswith("../"):
+        return None
+    # 拒绝中段 ..（如 sub/../outside.json）：调用方的穿越防护针对原始输入，
+    # 解析值会回拼路径，这里自身也必须保证不越界
+    if any(seg == ".." for seg in norm.split("/")):
+        return None
+    dir_part, _, base = norm.rpartition("/")
+    target_dir = os.path.join(root_dir, *dir_part.split("/")) if dir_part else root_dir
+    if dir_part and not os.path.isdir(target_dir):
+        return None
+    resolved = resolve_filename(target_dir, base)
+    if resolved is None:
+        return None
+    return f"{dir_part}/{resolved}" if dir_part else resolved
 
 
 if __name__ == "__main__":
