@@ -274,12 +274,30 @@ def build_glossary_prompt_text(
         from GalTransl.Dictionary import CGptDict
         from GalTransl.CSentense import CSentense
 
-        paths = initDictList(
-            gpt_dic_list, dict_cfg.get("defaultDictFolder", ""), projectConfig.getProjectDir()
-        )
-        gpt_dic = CGptDict(paths)
+        # 按 cfg 实例缓存 GPT 字典：避免元数据阶段逐文件重复读盘与重复日志
+        # （失败缓存 False 后本任务内不再重试；GenDic 产出后元数据阶段才首载，随 cfg 生命周期）
+        cache = getattr(projectConfig, "_glossary_gpt_dic_cache", None)
+        if cache is False:
+            return ""
+        if not isinstance(cache, CGptDict):
+            cache = None  # 非法缓存值（未加载/mock 桩）一律视为未加载
+        if cache is None:
+            paths = initDictList(
+                gpt_dic_list, dict_cfg.get("defaultDictFolder", ""), projectConfig.getProjectDir()
+            )
+            gpt_dic = CGptDict(paths)
+            try:
+                projectConfig._glossary_gpt_dic_cache = gpt_dic
+            except Exception:
+                pass
+        else:
+            gpt_dic = cache
     except Exception as e:
         LOGGER.warning(f"[{tag}] 载入 GPT 字典失败，元数据将不含专名译表：{e}")
+        try:
+            projectConfig._glossary_gpt_dic_cache = False
+        except Exception:
+            pass
         return ""
 
     trans_list = []

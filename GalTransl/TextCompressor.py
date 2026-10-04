@@ -63,10 +63,6 @@ class TextCompressor:
             压缩后的纯文本
         """
         total_lines = sum(len(v) for v in file_json_lists.values())
-        LOGGER.info(
-            f"[TextCompressor] 开始压缩 {len(file_json_lists)} 个文件，"
-            f"共 {total_lines} 行"
-        )
 
         # Step 1: 收集角色名（用于头部统计）
         all_names = self._collect_all_names(file_json_lists)
@@ -94,10 +90,18 @@ class TextCompressor:
 
         output = "\n".join(parts)
 
-        LOGGER.info(
-            f"[TextCompressor] 压缩完成：{total_lines} 行 → "
-            f"{len(output)} 字符，折叠重复行 {total_dup_lines} 处"
-        )
+        # 单文件场景带文件名便于定位，多文件输出汇总
+        if len(file_json_lists) == 1:
+            only_name = os.path.basename(next(iter(file_json_lists)))
+            LOGGER.info(
+                f"[TextCompressor] {only_name}：{total_lines} 行 → "
+                f"{len(output)} 字符，折叠重复行 {total_dup_lines} 处"
+            )
+        else:
+            LOGGER.info(
+                f"[TextCompressor] 压缩 {len(file_json_lists)} 个文件："
+                f"{total_lines} 行 → {len(output)} 字符，折叠重复行 {total_dup_lines} 处"
+            )
 
         # 如果超限，记录警告但不强制截断（截断=丢失信息=违反无损原则）
         if self.max_chars > 0 and len(output) > self.max_chars:

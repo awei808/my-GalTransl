@@ -256,6 +256,8 @@ class CProjectConfig:
         # 本次任务的文件子集（Service 注入，LLMTranslate 在文件枚举后消费；None/空=全项目）
         self.runtime_file_filter: list | None = None
         self.config_name: str = config_name  # 配置文件名（用于写回）
+        # 元数据阶段 GPT 字典实例缓存：None=未加载，False=加载失败，否则为 CGptDict
+        self._glossary_gpt_dic_cache: "CGptDict | bool | None" = None
         
 
     def getProjectConfig(self) -> dict:

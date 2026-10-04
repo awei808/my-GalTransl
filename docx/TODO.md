@@ -16,6 +16,16 @@
   - 产生原因：只有**整行行首 `//`** 才算注释。`====` 这类装饰分隔线既没有 `//` 也不含 `|`，于是被解析成真实词条：`src="======================="`、`dst=""`（语义是"替换为空"）、`row_type: normal`（已用 `galtransl_search_dict` 实测确认）。而 `load_h_check_words` 的文档明确写了「另跳过纯符号分隔线」——**两个加载器口径不一致**。
   - 影响：本项目该字符串不出现在正文，实际无害；但同文件里任何以 `===` 起头的分隔行都会变成生效规则，作者会以为它只是分区注释。公共字典改动影响所有项目。
   - 修复方向（未实施）：在译前/译后/GPT 字典解析中统一按注释跳过「无 `|` 且不含实义字符」的纯符号行，与 `load_h_check_words` 对齐；顺带清理该数据行。
+- **400 上下文超限（Input exceeds the context limit）被当作普通 API Error 退避重试**
+  - 位置：`GalTransl/Backend/BaseEngine.py` ask_chatbot 的 API Error 重试循环
+  - 产生原因：BadRequestError 400「Input exceeds the context limit」是确定性失败（重试必然再失败），但重试逻辑未区分错误类型，仍按退避重试到 maxApiRetries；实测（魔王的地下要塞2 GlobalPrompt 全文分析）连续 400 仍 sleeping 2s/4s 交替重试，并伴随 timeout INFO 逐次刷屏。
+  - 影响：输入超限时白白消耗退避等待与重试预算，浪费时间且日志刷屏。
+  - 修复方向（未实施）：识别 400 + context limit 类错误为不可重试错误，直接失败并给出可读原因（建议调大 maxInputChars 或分文件发送）。
+- **输入枚举未跳过 gt_input 下的 _excluded 等下划线开头目录，无法解析的文件每任务刷 ERROR**
+  - 位置：输入文件枚举（doLLMTranslate 的 file_list 构建处，待定位）与文件插件加载 `GalTransl/Frontend/LLMTranslate.py:813`（fplugins_load_file）
+  - 产生原因：用户把无法解析的 `index-会話イベント.tsv` 挪进 `gt_input/_excluded/`，但枚举仍扫入该子目录，每次任务都尝试用文件插件加载并失败 →「处理文件 …_excluded\index-会話イベント.tsv 时发生错误: …无法加载」ERROR 每任务一条。
+  - 影响：每次任务固定刷一条与翻译无关的 ERROR；`_excluded` 作为人工排除区的语义实际未实现。
+  - 修复方向（未实施）：文件枚举跳过 `_` 开头的子目录（_excluded 等）；或对无匹配文件插件的扩展名给出一次性提示而非每任务 ERROR。
 
 
 # 存在且上线前必须修复的bug/值得优化项

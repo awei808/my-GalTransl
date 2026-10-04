@@ -778,8 +778,29 @@ class CNormalDic:
 class CGptDict:
     def __init__(self, dic_list: list) -> None:
         self._dic_list: List[CBasicDicElement] = []
+        # 逐文件加载后汇总为一条日志，避免多文件初始化刷屏
+        loaded: List[Tuple[str, int, int]] = []
+        missing: List[str] = []
         for dic_path in dic_list:
-            self.load_dic(dic_path)  # 加载字典
+            result = self.load_dic(dic_path)  # 加载字典
+            if result is None:
+                missing.append(dic_path)
+            else:
+                loaded.append(result)
+        if loaded:
+            total_normal = sum(n for _, n, _ in loaded)
+            total_regex = sum(r for _, _, r in loaded)
+            detail = "、".join(
+                f"{name} {count}" for name, count, _ in loaded
+            )
+            LOGGER.info(
+                f"[GPT字典] 载入 {len(loaded)} 个文件共 {total_normal}词条"
+                + (f"（含{total_regex}正则词条）" if total_regex else "")
+                + f"（{detail}）"
+                + (f"；缺失：{'、'.join(missing)}" if missing else "")
+            )
+        elif missing:
+            LOGGER.warning(f"[GPT字典] 所有字典文件均不存在：{'、'.join(missing)}")
 
     def get_dst(self, word: str):
         for dic in self._dic_list:
@@ -796,14 +817,18 @@ class CGptDict:
     def sort_dic(self):
         self._dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
-    def load_dic(self, dic_path: str) -> None:
+    def load_dic(self, dic_path: str) -> Optional[Tuple[str, int, int]]:
+        """加载单个字典文件（存在性与词条数由 __init__ 汇总输出）。
+
+        Returns:
+            (文件名, 普通词条数, 正则词条数)；文件不存在时返回 None。
+        """
         if not path.exists(dic_path):
-            LOGGER.warning(f"{dic_path}不存在，请检查路径。")
-            return
+            return None
         with open(dic_path, encoding="utf8") as f:
             dic_lines = f.readlines()
         if len(dic_lines) == 0:
-            return
+            return (path.basename(dic_path), 0, 0)
 
         dic_name = path.basename(dic_path)
         dic_name = path.splitext(dic_name)[0]
@@ -864,10 +889,7 @@ class CGptDict:
                 f"GPT字典 {dic_path} 含 {legacy_prefix_count} 条 1^/^^ 前缀词条："
                 f"该前缀在 GPT 字典中无位置效果，建议删除前缀或改用 re: 正则词条"
             )
-        LOGGER.info(
-            f"载入 GPT字典: {path.basename(dic_path)} {normalDic_count}普通词条"
-            + (f"（含{regexDic_count}正则词条）" if regexDic_count else "")
-        )
+        return (path.basename(dic_path), normalDic_count, regexDic_count)
 
     def gen_prompt(
         self, trans_list: CTransList, type: str = "gpt", scene: str = "all"
