@@ -21,11 +21,6 @@
   - 产生原因：BadRequestError 400「Input exceeds the context limit」是确定性失败（重试必然再失败），但重试逻辑未区分错误类型，仍按退避重试到 maxApiRetries；实测（魔王的地下要塞2 GlobalPrompt 全文分析）连续 400 仍 sleeping 2s/4s 交替重试，并伴随 timeout INFO 逐次刷屏。
   - 影响：输入超限时白白消耗退避等待与重试预算，浪费时间且日志刷屏。
   - 修复方向（未实施）：识别 400 + context limit 类错误为不可重试错误，直接失败并给出可读原因（建议调大 maxInputChars 或分文件发送）。
-- **输入枚举未跳过 gt_input 下的 _excluded 等下划线开头目录，无法解析的文件每任务刷 ERROR**
-  - 位置：输入文件枚举（doLLMTranslate 的 file_list 构建处，待定位）与文件插件加载 `GalTransl/Frontend/LLMTranslate.py:813`（fplugins_load_file）
-  - 产生原因：用户把无法解析的 `index-会話イベント.tsv` 挪进 `gt_input/_excluded/`，但枚举仍扫入该子目录，每次任务都尝试用文件插件加载并失败 →「处理文件 …_excluded\index-会話イベント.tsv 时发生错误: …无法加载」ERROR 每任务一条。
-  - 影响：每次任务固定刷一条与翻译无关的 ERROR；`_excluded` 作为人工排除区的语义实际未实现。
-  - 修复方向（未实施）：文件枚举跳过 `_` 开头的子目录（_excluded 等）；或对无匹配文件插件的扩展名给出一次性提示而非每任务 ERROR。
 
 
 # 存在且上线前必须修复的bug/值得优化项
@@ -36,8 +31,6 @@
 - **新建项目向导需持续更进新流程**
 - **命令行参数持续支持和完善**
 - **toast提示覆盖不完全**
-
-- 文件元数据提取后端中，新增称呼翻译策略，要求给出原文到译文的翻译 **已完成未实测**
 - 翻译控制台显示哪些后端任务已完成
 - 复核轮模板不使用文件元数据，使用批次元数据
 - **允许字典输入正则来匹配对应词语** **已完成**（0.4.6：`re:` 前缀，全部字典类型支持；`\|` 转义竖线；非法正则回退字面量、零宽正则丢弃）
@@ -130,32 +123,7 @@
 - **设置界面新增mcp门禁设置** **已完成**（独立页面：设置页「AI API 调用接口相关」分区提示词模板下方留「MCP 服务与门禁 →」入口，标题栏「翻译」菜单同步加「MCP 设置」；页面含① MCP H 门禁开关（`app_settings.json` 的 `mcpHGateEnabled`，关闭后 `enforce_h_gate` 直接放行，SERVER_INSTRUCTIONS 第 4 条随开关改写为放行说明）；② MCP 工具逐个开关（`mcpDisabledTools` 黑名单，工具清单经新端点 `/api/mcp-tools` 下发供渲染；`tools/list`/调用分发/心跳均按启用集合过滤，调用被禁工具返回「已由用户禁用」，实时读设置无需重启；instructions/工具计数为 MCP 进程启动快照，重开 agent 会话刷新）。设置文件经 `resolve_app_dir()` 与打包版同目录，MCP 独立进程与后端读同一份；dsh 预设 persona 的 H 段同步改为条件式（以 MCP 服务说明为准，随门禁开关联动，未见到说明时保守按禁止处理），工具面段注明实际可用工具以会话挂载清单为准）
 
 # 未来的大更新项
-- 0.4.1：跟进原项目进度，对原先缺失的功能修补，追加类似上有项目的视觉效果
-- 0.4.2：翻译控制台视觉效果总更新、字典界面视觉效果更新、首页新增“新建项目向导”
-- 0.4.3：恢复命令行版本的适配 **已完成**（CLI 恢复进度条/交互提示与配置文件自动探测，新增 -c/--config、--version 参数；补齐 CLI 工具引擎 recheck 全部重检 / check-batch-size 批次划分预检 / build-output 构建输出，新增 rebuildr / rebuilda 缓存重建引擎），补充翻译指南和项目地址的内容 **已完成**（0.6.x：新增 guides/ 使用指南视图——后端 /api/guides 只读端点 + 前端 guide 视图，帮助菜单「翻译指南 / 项目地址 / 关于」三项接通，四页页内「指南」入口 + 首页上手卡）
-- 0.4.4：已有后端完善：对元数据的消费采用按需注入而非全量（如不将全局分析中的所有角色形象注入，仅注入文件元数据中包含的角色的角色形象）
-- 0.4.5：在翻译结果后处理阶段划分ai初步处理阶段：处理换行等基本问题、标注疑似错误、修正翻译风格；新增后端“词语色彩一致性检查”；允许每个阶段接入不同api接口
-- 0.4.6：字典支持正则且不会重复检查有重叠的词语 **已完成**（全部字典类型支持 `re:` 正则；`check_dic_use` 消费式去重，新增 `dictionary.skipOverlapCheck` 配置可回退旧口径；清理废弃代码：file_metadata 死注入链、/files 旧元数据兼容块、Sakura 端点队列死代码、相关过时措辞）；
-- 0.4.7：校对审核界面的元数据模式改为json字段对应式修改（键、值均可修改），译文条目模式添加新功能：双击空白处，将本段json发送给ai，让ai提供修改后的译文。（暂定右侧侧边栏出现类似vscode的右侧边栏的agent显示）；撤回重做机制触发时，出现toast提示 **已完成**（元数据键值编辑器 MetaKeyValueEditor：键值均可增删改、宽松解析+类型徽标+回程类型安全；双击 AI 建议：POST /review/ai-suggest（ReviewAssist.py 纯函数模块，一次性不落盘）+ 校对页建议面板，采纳写入 alt_dst 走既有交换/撤销链路，vscode 式 agent 侧栏归 0.5.0；同文件内撤销/重做触发时 toast.info 提示操作描述）
-- 0.4.8：更进上游除了agent模式外的改动 **已完成**（
-  批次 B：从上游直接抄的后端小修（低风险）项
-    	上游 commit	内容	量级
-  B1	ca7cf71	缺控制符检测改按子串包含，消除 [汉字/罗马字] 注音误报（Problem.py + test_problem_control_symbols）	~10 行 **已完成**
-  B2	66d1584	check-model 容忍 provider 对 max_tokens 的下限要求（COpenAI.py 可用性检测摘参重试 + test_openai_token_availability；本地 /check-model 走 COpenAI.checkTokenAvailablity，上游同改在 COpenAI）	~10 行 **已完成**
-  B3	b8bfbae	Cache.py 两处 shutil.move → os.replace + cleanup_stale_cache_temp_files 启动清扫（Service.run_job_async 调用）+ server /cache 与 _build_cache_tree 列表过滤 .json.tmp（test_cache_temp_files）	~15 行 **已完成**
-  B4	424469a	后端配置令牌卡片加“上下文大小”字段（默认 128000，BackendProfilesPage 适配本地页面结构 + 默认模板/sampleProject + backendProfileContextWindow 测试）——也是 0.5.0 agent 上下文指示器的前置	后端 schema + Solid 设置页小改 **已完成**
-  B5	b5daa87 部分	缺 proofread_dst 的旧缓存误命中修复——已验证本地存在同款问题（Cache.py `_cache_get(...) == ""`，字段缺失被当成有校对稿跳过检查），一行修复 + test_cache_proofread_hit_rules 锁行为	**已完成**
-  B6	864f376	重建引擎 shutdown 假警告修复——对照本地重建引擎：RebuildTranslate 已有空操作 shutdown 覆写，无同款问题，跳过	**已验证，跳过**
-  B7	ab62299/3511234	翻译规范“日译中_增强v2”补“控制符保留”“禁止日文残留”两条 + 向导默认规范改 v2（wizardExplicitSaveButton 测试同步）	纯文本，直接抄 **已完成**），
-  B8  将项目里的前端深色/浅色鲜艳显示模式统一为与上游相同的实现（鲜艳圆角取上游 control/card/panel=14/18/24、浅色 shadow-lg 取上游 shadow-panel、主按钮改上游渐变+三档投影；emoji 图标替换移除对齐上游 SVG；侧栏毛玻璃为本地特色保留），本身深色/浅色鲜艳显示模式就是为了保持上游页面设计风格才有的，上游已更新，这两个也要更新 **已完成**（iconEmoji 测试改写为“无 emoji 残留”回归锁）
-- 0.4.9：解耦「多轮翻译后端」 **已完成**（
-  ① 多轮翻译后端改名「翻译后端」：类/模块 ForGalJsonMulitChat → ForGalJsonTranslate，引擎 ID ForGal-json-translate，下拉只展示新 ID；旧名 ForGal-json-multi-chat 经 TRANSLATOR_ALIASES 兼容旧配置/旧任务（Runner 统一解析 select_translator、init_gptapi 兜底、/check-model 解析、Service 提示词覆盖键双向兼容）；
-  ② 多轮对话后端类与翻译解耦：新建 Backend/Conversation.py，MultiRoundChatMixin 承载按文件隔离 conversations/历史裁剪/失败强制首轮标记/multiRoundMaxHistory；
-  ③ 取消翻译后端强制绑多轮：gpt.chatMode=multi(默认)/single；单轮每批请求独立（全量提示词+元数据+术语+规范每请求注入），补实现 _format_restore_context_line 并接通 restore_context（contextNum 句滚动上下文，sig 固定 "old" 的 jsonline + 代码块包装，恢复历史单轮后端口径）注入 [history_result]；jailbreak 预填充按请求生效；解析失败直接重试；单轮专用提示词 FORGAL_JSON_TRANS_PROMPT_SINGLE（仅改写「历史上下文」任务段语义，其余骨架与多轮一致），模板 override 对两套同等生效；自定义模板缺 [history_result] 占位符且历史非空时 warning 一次；
-  ④ 前端配置界面：项目配置页「翻译后端-对话翻译」分区落地对话模式选择（schema 注释驱动枚举下拉 + token 成本提示 + multi/single 友好名），默认模板加 gpt.chatMode（旧项目经默认值合并可见）；
-  ⑤ 原计划的「所有后端均允许自由选择多轮/单轮对话」顺延至后续版本（0.4.9 仅翻译后端支持）；「超过3000行代码文件重构」移至 0.4.10）
-- 0.4.10：大文件重构：GalTransl/server.py（5781 行）按功能域拆分为多模块（内嵌 Web UI/配置schema/缓存与输出构建/字典/后端档案/JobRegistry/项目脚手架，server.py 保留路由分发与兼容 re-export）；LLMTranslate.py（2800 行）与 desktop ReviewPage.tsx（2659 行）同步重构（原 0.4.9 的「超过3000行重构」移入本版）
-- 0.5.0：新增左侧按钮“图-工作台界面”，用于承载全新界面：整个页面基于mermaid渲染，主界面显示为多个文件矩形，可通过mermaid可视化连接构建剧情路线图。可以多选文件（暂定右键多选），添加到工作台（暂定显示在右侧边栏），选择对应指令调用翻译后端执行所有满足条件的翻译流程后端；全局分析后端条件放宽，不再限制项目全部文件，可执行对多个文件（可能只是一条路线）的分析；剧情路线图可由用户自己划分（即mermaid连接构建路线图），后端可只负责对每条线的剧情梳理；流水线不再固定，可修改，每个后端注入哪些内容也可修改（有gui）。
+
 
 # 需修复的技术债务
 - 后端文件存在冗余未复用代码和层次不清晰的代码。未来需要提取公用函数并重新划分层级
