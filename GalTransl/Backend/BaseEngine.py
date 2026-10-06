@@ -1419,6 +1419,8 @@ class BaseEngine:
                     # https://aws.amazon.com/cn/blogs/architecture/exponential-backoff-and-jitter/
                     sleep_time = 2 ** min(api_try_count, 6)
                     sleep_time = random.randint(0, sleep_time)
+                # 所有重试基础等待 1s：抖动摇出 0 时也至少隔 1 秒再请求，避免立即齐射
+                sleep_time += 1.0
 
                 if len(self.client_list) > 1:
                     token_info = f"[{token.maskToken()}]"
