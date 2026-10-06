@@ -142,14 +142,9 @@ class StandaloneBackendTableTests(unittest.TestCase):
             with self.subTest(engine=name):
                 self.assertFalse(is_standalone_backend(name))
 
-    def test_fix_round_requires_params_and_mark_engines_finalize(self) -> None:
-        # 统一修复后端需要注入问题类型；标记类后端需在写盘前认领 problem
+    def test_fix_round_requires_params(self) -> None:
+        # 统一修复后端需要注入问题类型
         self.assertTrue(STANDALONE_BACKENDS["ForFixRound"].needs_fix_params)
-        for name in ("ForSemCheck", "ForSemCheckAgain", "ForToneCheck"):
-            with self.subTest(engine=name):
-                self.assertTrue(STANDALONE_BACKENDS[name].finalize_problems)
-        # 纯译文生成类后端不需要 finalize
-        self.assertFalse(STANDALONE_BACKENDS["ForImproveTranslation"].finalize_problems)
 
 
 class FixRoundTypeResolutionTests(unittest.TestCase):
@@ -377,6 +372,92 @@ class PostprocessGuardTests(unittest.TestCase):
         src = inspect.getsource(llm_postprocess.postprocess_results)
         self.assertIn("is_standalone_backend", src)
         self.assertIn("_after_order = []", src)
+
+
+class StandaloneAutoRecheckTests(unittest.IsolatedAsyncioTestCase):
+    """独立执行任一后处理后端后，写盘前自动重跑问题检测（find_problems）。
+
+    回归背景：改进/修复类后端（ForImproveTranslation 等）原先不重检，跑完后
+    问题列表不刷新；现统一在写盘前 postprocess_trans_list + find_problems。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.mkdtemp(prefix="standalone_recheck_")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls._tmp, ignore_errors=True)
+
+    async def _assert_recheck_runs(self, eng_type: str) -> None:
+        from GalTransl.Frontend import llm_standalone
+
+        proj = _build_mini_project(self._tmp)
+        cfg = CProjectConfig(proj, "config.inc.yaml")
+        cfg.non_interactive = True
+        # 预置 pass3 缓存占位文件（内容不参与：缓存读取已打桩，仅过存在性检查）
+        pass3_dir = os.path.join(proj, "transl_cache", "pass3_cache")
+        os.makedirs(pass3_dir, exist_ok=True)
+        with open(os.path.join(pass3_dir, "scene_01.txt.json"), "w", encoding="utf-8") as f:
+            f.write("[]")
+
+        find_problems_calls = []
+
+        def spy_find_problems(*args, **kwargs):
+            find_problems_calls.append(1)
+
+        api = MagicMock()
+        api.batch_translate = AsyncMock()
+        api.shutdown = AsyncMock()
+
+        async def fake_init(*args, **kwargs):
+            return api
+
+        input_path = os.path.join(proj, "gt_input", "scene_01.txt.json")
+        json_list = [
+            {"name": "爱丽丝", "message": "今日はいい天気だね。"},
+            {"name": "ボブ", "message": "そうだね、散歩に行こう。"},
+        ]
+        with patch(
+            "GalTransl.Frontend.llm_standalone.get_transCache_from_json",
+            new=AsyncMock(return_value=([], [])),
+        ), patch(
+            "GalTransl.Frontend.llm_standalone.save_transCache_to_json",
+            new=AsyncMock(),
+        ), patch(
+            "GalTransl.Frontend.llm_standalone._resolve_file_h_ranges",
+            return_value=[],
+        ), patch(
+            "GalTransl.Frontend.llm_standalone.find_problems",
+            side_effect=spy_find_problems,
+        ):
+            result = await run_standalone_backend(
+                cfg,
+                eng_type,
+                {input_path: json_list},
+                noop_ensure_model_available,
+                fake_init,
+            )
+
+        self.assertTrue(result)
+        api.batch_translate.assert_awaited_once()
+        self.assertEqual(
+            len(find_problems_calls), 1, "独立执行后端后应自动重跑一次问题检测"
+        )
+
+    async def test_improve_triggers_recheck(self) -> None:
+        # 回归：改进轮原先不重检问题列表
+        await self._assert_recheck_runs("ForImproveTranslation")
+
+    async def test_brstation_triggers_recheck(self) -> None:
+        await self._assert_recheck_runs("ForBRStation")
+
+    async def test_fix_round_triggers_recheck(self) -> None:
+        await self._assert_recheck_runs("ForFixRound")
+
+    async def test_semcheck_still_triggers_recheck(self) -> None:
+        # 原有 finalize 行为保持不变
+        await self._assert_recheck_runs("ForSemCheck")
 
 
 if __name__ == "__main__":

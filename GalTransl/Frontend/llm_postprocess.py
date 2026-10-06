@@ -194,6 +194,8 @@ async def postprocess_results(
     若 gpt.afterTranslation 配置为有序数组（或旧字符串组合），会在保存
     快照前先按数组顺序执行对应后处理后端（独立实例、逐文件），把模型给出的
     备选译文写入各句 alt_dst，随快照一并落盘。空列表则跳过。
+    后处理链属于完整流水线阶段 8：仅任务级引擎为 ForGal-full-pipeline 时执行，
+    独立翻译 / rebuild / 独立后处理引擎任务一律跳过（见下方门控）。
     """
 
     proj_dir = projectConfig.getProjectDir()
@@ -203,12 +205,9 @@ async def postprocess_results(
     eng_type = projectConfig.select_translator
     gpt_dic = projectConfig.gpt_dic
     name_replaceDict = projectConfig.name_replaceDict
-    from GalTransl.Backend.RebuildTranslate import REBUILD_ENGINES
 
-    # 后处理阶段（替代原"向多轮对话追加改进轮"）：整文件翻译+校对完成后，
-    # 按 gpt.afterTranslation 配置逐文件调度修复/改进后端（空列表跳过）。
-    # 放在保存循环之前，使备选译文随 post_save 快照一并落盘。
-    # 重建引擎不执行阶段7（后处理会调用模型，重建只基于现有缓存）。
+    # 后处理阶段：整文件翻译+校对完成后，按 gpt.afterTranslation 配置逐文件
+    # 调度修复/改进后端（空列表跳过）；放在保存循环前，备选译文随快照一并落盘。
     _after_order = _resolve_after_translation_order(projectConfig)
     if is_standalone_backend(eng_type):
         # 兜底防线：当前任务本身是后处理后端（手动单独执行），不得再按
@@ -219,7 +218,15 @@ async def postprocess_results(
                 f"跳过 afterTranslation 连带执行：{'+'.join(_after_order)}"
             )
         _after_order = []
-    if _after_order and eng_type not in REBUILD_ENGINES:
+    elif _after_order and eng_type != "ForGal-full-pipeline":
+        # afterTranslation 链属于完整流水线阶段 8，独立翻译任务只翻译不连带后处理
+        # （依赖：流水线阶段 7 在 worker 池启动前已把 select_translator 恢复为任务级引擎名）
+        LOGGER.debug(
+            f"[后处理] 当前任务 {eng_type} 非完整流水线，"
+            f"跳过 afterTranslation 后处理链：{'+'.join(_after_order)}"
+        )
+        _after_order = []
+    if _after_order:
         _improve_enabled = projectConfig.getKey("internals.pipeline.enableImprove", True)
         if not _improve_enabled:
             LOGGER.debug(

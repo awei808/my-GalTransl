@@ -6,7 +6,7 @@ postprocess_results 的 gpt.afterTranslation 循环，连带执行全部后处�
 
 本模块把同构分支收敛为一张引擎表（STANDALONE_BACKENDS）+ 一个执行器，新增后端
 只需在表里加一行。执行语义与既有独立分支保持一致：
-  载入字典 → 逐文件（worker 池）重建句子 → 命中缓存 → 调用后端 → 写回缓存快照。
+  载入字典 → 逐文件（worker 池）重建句子 → 命中缓存 → 调用后端 → 重检问题 → 写回缓存快照。
 不写 gt_output（由「构建输出」单独触发），不触发 afterTranslation 后处理链。
 
 注意：ensure_model_available / init_gptapi 由调用方注入。测试用
@@ -48,36 +48,26 @@ class StandaloneBackendSpec:
         log_tag: 日志前缀，如 "[改进轮]"。
         stage_tag: 运行态阶段名（前端进度显示）。
         sort_dict: 是否在载入后对 pre/post/gpt 字典排序。
-        finalize_problems: 是否在写盘前补 postprocess_trans_list + find_problems
-            （标记类后端需要，使 tone_issue/suspected_error 被认领为 problem）。
         needs_fix_params: 是否为统一修复后端，需先注入问题类型参数。
     """
 
     log_tag: str
     stage_tag: str
     sort_dict: bool = True
-    finalize_problems: bool = False
     needs_fix_params: bool = False
 
 
 # 可独立执行的后处理后端（eng_type -> 规格）；新增后端在此加一行即可
+# 所有后端执行完毕都会重跑问题检测（写盘前），保证问题列表反映本次处理结果
 STANDALONE_BACKENDS: Dict[str, StandaloneBackendSpec] = {
     "ForBRStation": StandaloneBackendSpec("[换行修复]", "换行位置异常修复"),
     "ForJPResidue": StandaloneBackendSpec("[残留日文修复]", "残留日文修复"),
     "ForBanWordFix": StandaloneBackendSpec("[禁用词修复]", "禁用词修复"),
     "ForImproveTranslation": StandaloneBackendSpec("[改进轮]", "译文质量改进"),
-    "ForSemCheck": StandaloneBackendSpec(
-        "[语义检测]", "语义检测", finalize_problems=True
-    ),
-    "ForSemCheckAgain": StandaloneBackendSpec(
-        "[语义复核]", "语义复核", finalize_problems=True
-    ),
-    "ForToneCheck": StandaloneBackendSpec(
-        "[色彩检查]", "词语色彩一致性检查", finalize_problems=True
-    ),
-    "ForToneCheckAgain": StandaloneBackendSpec(
-        "[色彩复核]", "词语色彩复核", finalize_problems=True
-    ),
+    "ForSemCheck": StandaloneBackendSpec("[语义检测]", "语义检测"),
+    "ForSemCheckAgain": StandaloneBackendSpec("[语义复核]", "语义复核"),
+    "ForToneCheck": StandaloneBackendSpec("[色彩检查]", "词语色彩一致性检查"),
+    "ForToneCheckAgain": StandaloneBackendSpec("[色彩复核]", "词语色彩复核"),
     "ForFixRound": StandaloneBackendSpec(
         "[问题修复]", "统一问题修复", needs_fix_params=True
     ),
@@ -192,16 +182,15 @@ async def _process_single_file(
         num_better,
         gpt_dic=projectConfig.gpt_dic,
     )
-    if spec.finalize_problems:
-        # 与主翻译路径一致：先恢复对话符号/译后字典，再跑问题检测，
-        # 避免 post_dst 缺「」导致标点错漏误报「本有引号」
-        postprocess_trans_list(
-            trans_list, projectConfig, projectConfig.post_dic, projectConfig.tPlugins
-        )
-        h_ranges = _resolve_file_h_ranges(project_dir, cache_file_path, projectConfig)
-        find_problems(
-            trans_list, projectConfig, projectConfig.gpt_dic, h_ranges=h_ranges
-        )
+    # 写盘前统一收尾：先恢复对话符号/译后字典再重跑问题检测（避免 post_dst
+    # 缺「」导致标点错漏误报），使修复结果被重新判定、标记被认领，问题列表即时刷新
+    postprocess_trans_list(
+        trans_list, projectConfig, projectConfig.post_dic, projectConfig.tPlugins
+    )
+    h_ranges = _resolve_file_h_ranges(project_dir, cache_file_path, projectConfig)
+    find_problems(
+        trans_list, projectConfig, projectConfig.gpt_dic, h_ranges=h_ranges
+    )
     # 仅当存在有效译文/备选译文时才保存，避免缓存未命中时把已有缓存覆盖成空数组
     has_content = any(
         t.pre_dst != "" or t.alt_dst != "" or t.proofread_zh != "" for t in trans_list

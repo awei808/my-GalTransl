@@ -19,7 +19,7 @@ from GalTransl.Dictionary import CGptDict
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 
-# 重建引擎标识：LLMTranslate 的阶段7后处理与缓存刷新门控使用
+# 重建引擎标识：rebuildr/rebuilda 共用 RebuildTranslate 实现，仅 CLI 提交可用
 REBUILD_ENGINES = ("rebuildr", "rebuilda")
 
 # 未命中示例最多列举条数与例句截断长度：全部列出会淹没日志，给前几条帮助定位即可

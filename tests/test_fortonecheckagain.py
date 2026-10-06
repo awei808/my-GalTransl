@@ -505,13 +505,11 @@ class ToneAgainRegistrationTests(unittest.TestCase):
         )
         self.assertEqual(order, ["tonecheck", "tonecheckagain"])
 
-    def test_standalone_backend_registered_with_finalize(self) -> None:
+    def test_standalone_backend_registered(self) -> None:
         from GalTransl.Frontend.llm_standalone import STANDALONE_BACKENDS
 
         spec = STANDALONE_BACKENDS["ForToneCheckAgain"]
         self.assertEqual(spec.log_tag, "[色彩复核]")
-        # 标记类后端需在写盘前认领 problem
-        self.assertTrue(spec.finalize_problems)
         self.assertFalse(spec.needs_fix_params)
 
 
