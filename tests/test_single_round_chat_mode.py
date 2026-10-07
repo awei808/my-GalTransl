@@ -19,6 +19,7 @@ from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
     FORGAL_JSON_TRANS_PROMPT_SINGLE,
+    NO_HISTORY_PLACEHOLDER,
 )
 from GalTransl.CSentense import CSentense
 
@@ -239,7 +240,8 @@ class SingleRoundTranslateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cnt, 1)
         user_content = captured["messages"][1]["content"]
         self.assertNotIn("前文译文", user_content)
-        # 无历史时 <history_result> 段被剥除，不残留占位符
+        # 无历史时注入固定占位文本（模板骨架恒定），不残留占位符
+        self.assertIn(NO_HISTORY_PLACEHOLDER, user_content)
         self.assertNotIn("[history_result]", user_content)
 
 

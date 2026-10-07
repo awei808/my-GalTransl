@@ -103,7 +103,8 @@ _TRANS_TASK = """<process_requirements>
 FORGAL_JSON_TRANS_PROMPT = _build_json_round_prompt(_TRANS_TASK, with_info=True, with_batch_metadata=True)
 
 # 单轮模式任务段：与多轮任务段仅「历史上下文」语义不同——单轮每次请求独立完整，
-# 已译上下文经 <history_result> 注入；多轮历史由对话携带（程序会剥除该段），其余规则完全一致。
+# 已译上下文经 <history_result> 注入（无历史时注入 NO_HISTORY_PLACEHOLDER 占位文本）；
+# 多轮历史由对话携带（该槽位恒为占位文本），其余规则完全一致。
 _TRANS_TASK_SINGLE = _TRANS_TASK.replace(
     """### 历史上下文
 历史翻译见 <history_result>。若行 ID 连续，先预览历史翻译与新剧情，确保语义衔接。""",
@@ -494,6 +495,10 @@ H_WORDS_LIST=base64.b64decode(H_WORDS.encode()).decode().split("\n") + _H_WORDS_
 # 前缀用于回填失败句译文（如 "(Failed)原句"）；元组用于各处的失败判定。
 FAILED_PREFIX = "(Failed)"
 FAILED_MARKERS = ("(Failed)", "(翻译失败)")
+
+# [history_result] 无历史时的占位文本：恒定替换保持模板骨架逐批一致（含 <history_result>
+# 标签与任务段历史小节），避免无历史批次与有历史批次的静态前缀分叉，保证前缀缓存可命中。
+NO_HISTORY_PLACEHOLDER = "（本批无历史上下文）"
 
 # 批次级元数据：按 h 强度（0-1 浮点）分档的差异化翻译指导文案
 #   [0, 0.25)     标准非 h：含蓄克制

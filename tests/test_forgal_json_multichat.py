@@ -28,7 +28,7 @@ from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.metadata import FileMetaData
 from GalTransl.Backend.utils import detect_line_break_symbol
-from GalTransl.Backend.Prompts import FORGAL_JSON_TRANS_PROMPT
+from GalTransl.Backend.Prompts import FORGAL_JSON_TRANS_PROMPT, NO_HISTORY_PLACEHOLDER
 from GalTransl.CSentense import CSentense
 
 
@@ -301,8 +301,8 @@ class BuildRoundUserContentTests(unittest.TestCase):
         self.assertLess(content.index("剧情"), content.index(input_src))
 
     def test_first_round_has_no_history_block_when_empty(self):
-        # 回归：无历史翻译时，首轮提示词不应残留 <history_result>None</history_result> 这类
-        # 历史记录相关内容，整块应被移除。使用真实模板才能复现该块。
+        # 回归：无历史翻译时，[history_result] 占位符应被替换为固定占位文本，
+        # 模板骨架（<history_result> 标签与任务段）保持不变，不残留占位符。
         t = make_translator()
         t.trans_prompt = FORGAL_JSON_TRANS_PROMPT
         t.last_translations = {}  # 无历史
@@ -312,9 +312,42 @@ class BuildRoundUserContentTests(unittest.TestCase):
         content = t._build_round_user_content(
             t.conversations["f.json"], input_src, "", "f.json", is_first_round=True
         )
-        self.assertNotIn("<history_result>", content)
+        self.assertIn("<history_result>", content)
+        self.assertIn(NO_HISTORY_PLACEHOLDER, content)
         self.assertNotIn("[history_result]", content)
         self.assertNotIn("None", content)  # 不应残留占位 None
+
+    def test_static_prefix_identical_with_and_without_history(self):
+        # 前缀缓存守护：无历史与有历史装配结果中，<history_result> 之前的静态前缀
+        # 及 </history_result> 之后的骨架必须逐字节一致——任何模板变形（剥块/删小节）
+        # 都会使批间前缀分叉，破坏 LLM 前缀缓存命中。
+        t = make_translator()
+        t.trans_prompt = FORGAL_JSON_TRANS_PROMPT
+        trans = CSentense("原文", index=0)
+        _, _, _, input_src = t._build_input_jsonlines([trans], False, "f.json")
+        contents = []
+        for history in ({}, {"f.json": 'ahr|{"id":1,"dst":"历史译文"}'}):
+            t.last_translations = dict(history)
+            t.conversations["f.json"] = [
+                {"role": "system", "content": t.system_prompt}
+            ]
+            contents.append(
+                t._build_round_user_content(
+                    t.conversations["f.json"],
+                    input_src,
+                    "",
+                    "f.json",
+                    is_first_round=True,
+                )
+            )
+        head_no, head_with = (c.split("<history_result>", 1)[0] for c in contents)
+        self.assertEqual(head_no, head_with)  # 历史块之前逐字节一致
+        self.assertIn(NO_HISTORY_PLACEHOLDER, contents[0])
+        self.assertIn("历史译文", contents[1])
+        # 历史块之后（闭合标签起）的骨架也应一致——仅历史内容本身不同
+        tail_no = contents[0].split("</history_result>", 1)[1]
+        tail_with = contents[1].split("</history_result>", 1)[1]
+        self.assertEqual(tail_no, tail_with)
 
     def test_history_block_kept_when_present(self):
         # 反向守护：存在历史翻译时，<history_result> 块应保留且填充真实内容。
@@ -330,20 +363,10 @@ class BuildRoundUserContentTests(unittest.TestCase):
         self.assertIn("<history_result>", content)
         self.assertIn("历史译文", content)
 
-    def test_history_section_removal_keeps_other_blocks_intact(self):
-        # 回归：无历史时移除「### 历史上下文」小节，但【不得】贪婪跨块误删
-        # <process_requirements> 的其余小节、<translation_guidelines> 区块（含其内多个 ### 标题）
-        # 与闭合/开放标签。
-        #
-        # 此前的贪婪正则 (?:\n(?:.*$))*` 会一路吃到整段提示词末尾【最后一个】 ### 标题
-        # （即被 [translation_guideline] 替换进来的翻译规范里的 "### 5. 氛围保留规则"），
-        # 从而把 </process_requirements>、<history_result>、<translation_guidelines> 开放标签
-        # 以及翻译规范 1~4 节全部删除，导致首轮提示词被截断、标签错位
-        # （开标签 process_requirements / 闭标签 translation_guidelines）。
-        #
-        # 要在测试中触发该 bug，必须注入含多个 ### 标题的翻译规范——
-        # make_translator 默认的空 translation_guideline 不会产生第二个 ### 标题，
-        # 因此旧用例未覆盖此路径。
+    def test_no_history_keeps_all_sections_intact(self):
+        # 守护：无历史时不做模板变形（旧版会剥 <history_result> 块并删「### 历史上下文」
+        # 小节，导致批间静态前缀分叉）。任务段各小节（含历史小节）与 [translation_guideline]
+        # 注入的翻译规范小节必须完整保留，标签不错位。
         t = make_translator()
         t.trans_prompt = FORGAL_JSON_TRANS_PROMPT
         # 模拟被 [translation_guideline] 替换进来的翻译规范，含多个 ### 标题
@@ -362,8 +385,9 @@ class BuildRoundUserContentTests(unittest.TestCase):
         content = t._build_round_user_content(
             t.conversations["f.json"], input_src, "", "f.json", is_first_round=True
         )
-        # process_requirements 的其余小节应保留（不得被误删）
+        # 任务段小节全部保留（历史小节不再被删除）
         for sec in [
+            "### 历史上下文",
             "### 输入格式",
             "### src 字段判定",
             "### 符号与格式保留",
@@ -371,8 +395,7 @@ class BuildRoundUserContentTests(unittest.TestCase):
             "### 完整示例",
         ]:
             self.assertIn(sec, content, f"process_requirements 小节被误删: {sec}")
-        # 历史上下文小节应被移除
-        self.assertNotIn("### 历史上下文", content)
+        self.assertIn(NO_HISTORY_PLACEHOLDER, content)
         # translation_guidelines 区块应完整保留（开放/闭合标签 + 全部 1~5 节 + 检查清单）
         self.assertIn("<translation_guidelines>", content)
         self.assertIn("</translation_guidelines>", content)

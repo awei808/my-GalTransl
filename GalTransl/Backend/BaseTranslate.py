@@ -11,7 +11,12 @@ from GalTransl.server_runtime import set_live_snippets
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
-from GalTransl.Backend.Prompts import FAILED_MARKERS, FAILED_PREFIX, H_WORDS_LIST
+from GalTransl.Backend.Prompts import (
+    FAILED_MARKERS,
+    FAILED_PREFIX,
+    H_WORDS_LIST,
+    NO_HISTORY_PLACEHOLDER,
+)
 import re
 import sys
 
@@ -135,34 +140,20 @@ class BaseTranslate(BaseEngine):
         return str(start_idx)
 
     def _apply_history_result(self, prompt_req: str, filename: str) -> str:
-        if (
-            hasattr(self, "last_translations")
-            and filename in self.last_translations
-            and self.last_translations[filename] != ""
-        ):
-            history_result = self.last_translations[filename].replace("<br>", "")
-            return prompt_req.replace("[history_result]", history_result)
-        # 无历史记录时移除历史相关内容，避免提示词残留
-        prompt_req = re.sub(
-            r"\s*<history_result>\s*\[history_result\]\s*</history_result>\s*",
-            "\n",
-            prompt_req,
-        )
-        # 移除 <process_requirements> 内的历史小节（非贪婪匹配避免跨块误删翻译规范中的 ### 标题）
-        prompt_req = re.sub(
-            r"(<process_requirements>)(.*?)(</process_requirements>)",
-            lambda m: m.group(1)
-            + re.sub(
-                r"###\s*.*?(?:history|历史).*$(?:\n(?:.*$))*?(?=\n### |\Z)",
-                "",
-                m.group(2),
-                flags=re.M | re.I,
-            )
-            + m.group(3),
-            prompt_req,
-            flags=re.S,
-        )
-        return prompt_req
+        """向 [history_result] 占位符注入历史上下文；无历史时注入占位文本，不做模板变形。
+
+        恒定替换保证各批次/文件的模板骨架（<history_result> 标签与任务段历史小节）
+        逐字节一致，静态前缀可被 LLM 前缀缓存命中；旧版「剥块 + 删历史小节」会使
+        无历史批次与有历史批次在任务段处分叉，已废弃。
+        """
+        history = ""
+        if hasattr(self, "last_translations"):
+            history = self.last_translations.get(filename, "") or ""
+        if history:
+            history = history.replace("<br>", "")
+        else:
+            history = NO_HISTORY_PLACEHOLDER
+        return prompt_req.replace("[history_result]", history)
 
     def _record_runtime_success(self, filename: str, trans: CSentense) -> None:
         super()._record_runtime_success(
