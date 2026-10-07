@@ -228,7 +228,15 @@ const FIELD_UI: Record<string, FieldUI> = {
   "common.gpt.enhance_jailbreak": { label: "抗拒答增强" },
   "common.gpt.chatMode": {
     label: "对话模式",
-    hint: "multi=多轮对话（默认，历史由对话携带）；single=单轮独立请求（每批携带全量提示词与 contextNum 句上下文，token 消耗更高）。",
+    hint: "multi=多轮对话（默认，历史由对话携带）；single=单轮独立请求（每批携带全量提示词与历史上下文，token 消耗更高）。",
+  },
+  "common.gpt.restoreContextMode": {
+    label: "单轮历史注入模式",
+    hint: "仅单轮模式(chatMode=single)生效：none=不注入历史；lines=注入固定句数历史（gpt.contextNum）；batches=注入固定批数整批历史（gpt.contextBatches，1批=一次请求的实际句数）。多轮模式忽略此键。",
+  },
+  "common.gpt.contextBatches": {
+    label: "历史批数",
+    hint: "restoreContextMode=batches 时每次请求附带的历史批数；1 批等于一次请求的实际句数，重启续跑时按前置已译句数近似。",
   },
   "common.gpt.change_prompt": {
     label: "提示词修改模式",
@@ -477,6 +485,9 @@ const KEYWORD_LABELS: Record<string, string> = {
   // 翻译后端对话模式（gpt.chatMode）
   multi: "多轮对话（multi）",
   single: "单轮独立请求（single）",
+  // 单轮历史注入模式（gpt.restoreContextMode；none 复用上方「无」）
+  lines: "固定句数（lines）",
+  batches: "固定批数（batches）",
 };
 
 // 待实现/待验证的配置项：设置页渲染 TODO 徽标并禁用编辑（防止误改），
