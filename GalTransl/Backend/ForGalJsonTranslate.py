@@ -417,10 +417,10 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         第一轮对话：构建完整翻译提示词（替换 [Input]/[Glossary]/[translation_guideline]），
           剧情元数据(FileMetaData) 段通过模板中的 [plot_metadata] 占位符注入，
           批次级元数据(BatchMetadata) 段通过 [batch_metadata] 占位符注入，
-          均位于 [translation_guideline]/[Glossary] 之后、[Input] 之前；
+          均位于 [translation_guideline] 之后、history/glossary 占位符之前；
         后续轮次：返回待译 jsonline，并附上本批次按需生成的术语表(gptdict) 短块，
           复用多轮上下文的同时保证每批都能看到本批出现的专有名词/人设解释。
-        多轮模式下历史由对话本身携带，[history_result] 置空。
+        多轮模式下历史由对话本身携带，[history_result] 注入 NO_HISTORY_PLACEHOLDER。
 
         Args:
             conv: 该文件的对话历史（已由调用方获取，用于一致性校验）
@@ -452,7 +452,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
                 batch_metadata=batch_metadata_block,
                 global_prompt=global_prompt_block,
             )
-            # 多轮模式下历史由对话本身携带，[history_result] 置为 None
+            # 多轮模式下历史由对话本身携带，[history_result] 注入占位文本
             prompt_req = self._apply_history_result(prompt_req, filename)
             user_content = prompt_req
         else:
