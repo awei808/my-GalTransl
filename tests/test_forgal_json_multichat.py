@@ -1149,16 +1149,21 @@ class TranslationPromptTemplateTests(unittest.TestCase):
         self.assertIn("[history_result]", self.T)
 
     def test_placeholder_ordering(self):
-        # 翻译规范 -> 术语表 -> 剧情元数据 -> 输入
+        # 翻译规范 -> 全局分析 -> 剧情元数据 -> 历史 -> 术语表 -> 批次元数据 -> 输入
+        # （项目/文件级静态块在前、逐批动态块在后，保证最长静态前缀可被 LLM 前缀缓存命中）
         gi = self.T.index("[translation_guideline]")
-        gl = self.T.index("[Glossary]")
+        gp = self.T.index("[global_prompt]")
         pm = self.T.index("[plot_metadata]")
+        hi = self.T.index("[history_result]")
+        gl = self.T.index("[Glossary]")
+        bm = self.T.index("[batch_metadata]")
         ip = self.T.index("[Input]")
-        self.assertLess(gi, gl)
-        self.assertLess(gl, pm)
-        self.assertLess(pm, ip)
-        # 历史上下文位于输入之前
-        self.assertLess(self.T.index("[history_result]"), ip)
+        self.assertLess(gi, gp)
+        self.assertLess(gp, pm)
+        self.assertLess(pm, hi)
+        self.assertLess(hi, gl)
+        self.assertLess(gl, bm)
+        self.assertLess(bm, ip)
 
     def test_recipe_line_present(self):
         self.assertIn("输出配方", self.T)

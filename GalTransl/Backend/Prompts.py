@@ -11,9 +11,8 @@ FORGAL_JSON_SYSTEM_PROMPT = "You are Ciallo, an AI translator."
 # 目标语言由 user_prompt 中的 [TargetLang] 经 _build_prompt_request 替换后提供）。
 FORTRANS_SYSTEM = "你是 Ciallo，一名专注于将任意语言翻译为目标语言的 AI 翻译器。"
 
-# JSON 轮通用骨架：拼接 <your_info> 段 + 各轮专属任务段 + 公共占位符块。
-# with_info：是否带 Ciallo 免责声明段（翻译/改进/换行修复轮带，残留日文/禁用词修复轮不带）。
-# with_batch_metadata：是否注入 [batch_metadata] 占位符（部分轮次无需批次元信息）。
+# JSON 轮通用骨架：拼接 <your_info> 段 + 各轮专属任务段 + 公共占位符块，块按稳定度递减排列（项目/文件级静态块在前，逐批动态块靠后）以命中 LLM 前缀缓存。
+# with_info：是否带 Ciallo 免责声明段（翻译/改进/换行修复轮带，残留日文/禁用词修复轮不带）；with_batch_metadata：是否注入 [batch_metadata] 占位符（部分轮次无需批次元信息）。
 def _build_json_round_prompt(task_block: str, *, with_info: bool = True,
                               with_batch_metadata: bool = True) -> str:
     info_block = (
@@ -27,17 +26,17 @@ def _build_json_round_prompt(task_block: str, *, with_info: bool = True,
     return (
         f"{info_block}"
         f"{task_block}"
-        "<history_result>\n"
-        "[history_result]\n"
-        "</history_result>\n\n"
         "<translation_guidelines>\n"
         "[translation_guideline]\n"
         "</translation_guidelines>\n\n"
+        "[global_prompt]\n\n"
+        "[plot_metadata]\n\n"
+        "<history_result>\n"
+        "[history_result]\n"
+        "</history_result>\n\n"
         "<glossary>\n"
         "[Glossary]\n"
         "</glossary>\n\n"
-        "[global_prompt]\n\n"
-        "[plot_metadata]\n\n"
         f"{batch_block}"
         "<input>\n"
         "```jsonline\n"
