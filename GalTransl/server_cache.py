@@ -505,8 +505,8 @@ def _collect_cache_files(cache_dir: str) -> list[str]:
     """递归收集可构建的翻译缓存文件（相对 cache_dir 的 '/' 路径），跳过元数据。
 
     翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json）；pass0 GlobalPrompt/
-    PlotRouteMap/route_analysis 分片、gendic_cache 断点分片、pass1 *.meta.json、
-    pass2 *.batch.json 为元数据，不参与构建。
+    PlotRouteMap/route_analysis 分片、gendic_cache 断点分片、aftertrans_cache
+    阶段8断点标记、pass1 *.meta.json、pass2 *.batch.json 为元数据，不参与构建。
     """
     files: list[str] = []
     for root, dirs, names in os.walk(cache_dir):
@@ -526,6 +526,9 @@ def _collect_cache_files(cache_dir: str) -> list[str]:
                 continue
             # GenDic 断点续跑分片同理（dict 形状，按翻译缓存解析必报错）
             if rel.startswith("gendic_cache/"):
+                continue
+            # 阶段 8 断点标记同理（dict 形状，且 basename 与输入文件同名必误命中）
+            if rel.startswith("aftertrans_cache/"):
                 continue
             files.append(rel)
     return sorted(files)
@@ -1152,7 +1155,7 @@ def _build_cache_tree(dir_path: str, prefix: str = "", count_entries: bool = Tru
                 "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
                 "is_metadata": any(
                     rel == d or rel.startswith(d + "/")
-                    for d in ("pass0_cache", "pass1_cache", "pass2_cache", "gendic_cache")
+                    for d in ("pass0_cache", "pass1_cache", "pass2_cache", "gendic_cache", "aftertrans_cache")
                 ),
             }
             if count_entries and name.endswith(".json"):

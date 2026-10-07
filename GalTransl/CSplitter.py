@@ -55,6 +55,7 @@ class SplitChunkMetadata:
         self.chunk_non_cross_size = chunk_non_cross_size  # 块非交叉大小
         self.chunk_size = chunk_size  # 块实际大小
         self.cross_num = cross_num  # 交叉句子数量
+        self.had_retranslated = False  # 本轮是否有句子实际重译（缓存未命中），流水线阶段 8 断点跳过判定用
         self.json_list = json_list  # 块内容
         self.trans_list, _ = load_transList(json_list)  # 翻译列表
         chunk_start = max(0, self.start_index - self.cross_num)

@@ -771,12 +771,15 @@ async def _run_translation_phase(
     projectConfig: CProjectConfig,
     file_json_lists: dict,
     file_list: list,
-) -> None:
+) -> Dict[str, List[SplitChunkMetadata]]:
     """
     执行翻译阶段（流水线阶段 7）。
 
     复用现有的翻译流程核心逻辑：
     - 切块 → worker 协程池 → 翻译每个 chunk → 后处理 → 输出
+
+    Returns:
+        文件路径 → 该文件 chunk 列表（按 chunk_index 升序），供阶段 8 使用。
     """
     import os
     from os.path import join as joinpath, exists as isPathExists, dirname, basename as os_basename, abspath
@@ -1036,3 +1039,12 @@ async def _run_translation_phase(
                     await shutdown_callable()
                 except Exception as ex:
                     LOGGER.warning(f"关闭模型客户端时出错: {str(ex)}")
+
+    # 供流水线阶段 8 按文件重跑收尾（备选译文/问题标记落缓存、swap 模式刷新输出）：
+    # 返回 文件路径 → chunk 列表（含 trans_list 与重译标记）
+    file_chunks: Dict[str, List[SplitChunkMetadata]] = {}
+    for chunk in ordered_chunks:
+        file_chunks.setdefault(chunk.file_path, []).append(chunk)
+    for chunks in file_chunks.values():
+        chunks.sort(key=lambda c: c.chunk_index)
+    return file_chunks

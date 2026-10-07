@@ -109,8 +109,12 @@ class SnapshotHelperTests(unittest.TestCase):
             return f.read()
 
     def _no_window(self):
-        """关闭 60s 合并窗口（快照排序按文件名时间戳，与 mtime 无关）。"""
-        return mock.patch("GalTransl.server_cache.SNAPSHOT_MIN_INTERVAL_SECONDS", 0)
+        """关闭 60s 合并窗口（快照排序按文件名时间戳，与 mtime 无关）。
+
+        必须取负值：撞名递增会给最新快照打出超 now 1µs 的未来时间戳，
+        时钟未走动时 diff 为负，补丁成 0 仍会命中 `< interval` 触发合并。
+        """
+        return mock.patch("GalTransl.server_cache.SNAPSHOT_MIN_INTERVAL_SECONDS", -1.0)
 
     def test_snapshot_creates_bak_with_same_content(self) -> None:
         fp = self._write("a.json", '[{"pre_dst": "旧"}]')

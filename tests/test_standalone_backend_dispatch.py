@@ -363,15 +363,16 @@ class PostprocessGuardTests(unittest.TestCase):
                     f"{name} 应被兜底守卫识别为独立后端",
                 )
 
-    def test_source_contains_guard(self) -> None:
-        # 静态防线：守卫代码必须真实存在于 postprocess_results 中
+    def test_source_chain_removed(self) -> None:
+        # 静态防线：afterTranslation 链已上移为流水线阶段 8（run_improve_stage），
+        # postprocess_results 源码中不得再残留链逻辑
         import inspect
 
         from GalTransl.Frontend import llm_postprocess
 
         src = inspect.getsource(llm_postprocess.postprocess_results)
-        self.assertIn("is_standalone_backend", src)
-        self.assertIn("_after_order = []", src)
+        self.assertNotIn("_after_order", src)
+        self.assertNotIn("_run_after_trans_single_file", src)
 
 
 class StandaloneAutoRecheckTests(unittest.IsolatedAsyncioTestCase):

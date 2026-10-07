@@ -3,19 +3,24 @@
 构成完整的单文件译后流程：
   doLLMTranslSingleChunk（单 chunk 翻译收尾）
     → postprocess_results（问题检测 / 缓存快照 / 输出合并）
-      → _resolve_after_translation_order（afterTranslation 顺序解析）
-      → _run_after_trans_single_file（逐引擎后处理：改进/换行/日文/禁用词/语义/色彩/复核/修复轮）
+  run_improve_stage（流水线阶段 8：全部文件翻译完成后统一执行 afterTranslation 链）
+    → _run_after_trans_single_file（逐引擎后处理：改进/换行/日文/禁用词/语义/色彩/复核/修复轮）
+    → postprocess_results（处理结果落缓存 + 刷新输出，复用单文件收尾）
 
-注意：_resolve_after_translation_order 被测试 mock.patch，其调用方
-postprocess_results 与本函数同模块，故 patch 目标为 GalTransl.Frontend.llm_postprocess
-（打 LLMTranslate 会静默打空 —— patch 只作用于调用方查找名字的命名空间）。
+注意：_resolve_after_translation_order / run_improve_stage 的调用方为
+llm_pipeline._run_stage_improve（经模块属性查找本模块符号），patch 目标为
+GalTransl.Frontend.llm_postprocess（打 LLMTranslate 会静默打空 —— patch 只作用于
+调用方查找名字的命名空间）。
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 from os import makedirs, sep as os_sep
 from os.path import dirname, exists as isPathExists, join as joinpath
+from datetime import datetime
 from time import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -42,7 +47,6 @@ from GalTransl.Frontend.llm_prepost import (
     postprocess_trans_list,
     preprocess_trans_list,
 )
-from GalTransl.Frontend.llm_standalone import is_standalone_backend
 
 
 async def doLLMTranslSingleChunk(
@@ -122,6 +126,8 @@ async def doLLMTranslSingleChunk(
             retran_key=projectConfig.getKey("retranslKey"),
             eng_type=eng_type,
         )
+        # 记录本 chunk 是否发生实际重译，供流水线阶段 8 断点跳过判定
+        split_chunk.had_retranslated = len(translist_unhit) > 0
 
         if len(translist_hit) > 0:
             projectConfig.bar(len(translist_hit), skipped=True) # 更新进度条
@@ -191,11 +197,9 @@ async def postprocess_results(
     写完整 jsonl 快照（这也是唯一一次把 append 日志合并入主快照的时机）。
     随后合并所有 chunk 的结果，套用 name 替换表并经文件插件写出最终译文。
 
-    若 gpt.afterTranslation 配置为有序数组（或旧字符串组合），会在保存
-    快照前先按数组顺序执行对应后处理后端（独立实例、逐文件），把模型给出的
-    备选译文写入各句 alt_dst，随快照一并落盘。空列表则跳过。
-    后处理链属于完整流水线阶段 8：仅任务级引擎为 ForGal-full-pipeline 时执行，
-    独立翻译 / rebuild / 独立后处理引擎任务一律跳过（见下方门控）。
+    afterTranslation 后处理链已上移为流水线阶段 8（run_improve_stage，全部文件
+    翻译完成后统一执行）；阶段 8 处理完文件后会再次调用本函数，把处理结果落缓存
+    并刷新输出（swapFixToCurrent 模式下修复结果会改写主译文）。
     """
 
     proj_dir = projectConfig.getProjectDir()
@@ -205,85 +209,6 @@ async def postprocess_results(
     eng_type = projectConfig.select_translator
     gpt_dic = projectConfig.gpt_dic
     name_replaceDict = projectConfig.name_replaceDict
-
-    # 后处理阶段：整文件翻译+校对完成后，按 gpt.afterTranslation 配置逐文件
-    # 调度修复/改进后端（空列表跳过）；放在保存循环前，备选译文随快照一并落盘。
-    _after_order = _resolve_after_translation_order(projectConfig)
-    if is_standalone_backend(eng_type):
-        # 兜底防线：当前任务本身是后处理后端（手动单独执行），不得再按
-        # afterTranslation 连带执行其他后端（防未来新增引擎漏配独立分支）
-        if _after_order:
-            LOGGER.debug(
-                f"[后处理] 当前引擎 {eng_type} 为独立后处理后端，"
-                f"跳过 afterTranslation 连带执行：{'+'.join(_after_order)}"
-            )
-        _after_order = []
-    elif _after_order and eng_type != "ForGal-full-pipeline":
-        # afterTranslation 链属于完整流水线阶段 8，独立翻译任务只翻译不连带后处理
-        # （依赖：流水线阶段 7 在 worker 池启动前已把 select_translator 恢复为任务级引擎名）
-        LOGGER.debug(
-            f"[后处理] 当前任务 {eng_type} 非完整流水线，"
-            f"跳过 afterTranslation 后处理链：{'+'.join(_after_order)}"
-        )
-        _after_order = []
-    if _after_order:
-        _improve_enabled = projectConfig.getKey("internals.pipeline.enableImprove", True)
-        if not _improve_enabled:
-            LOGGER.debug(
-                f"[后处理] 阶段 8 已禁用（enableImprove=false），"
-                f"跳过 {len(_after_order)} 个后处理后端：{'+'.join(_after_order)}"
-            )
-        else:
-            await ensure_model_available_if_needed(projectConfig, stage="afterTrans")
-            merged_trans = []
-            for _chunk in resultChunks:
-                merged_trans.extend(_chunk.trans_list)
-            _orig_name = (
-                resultChunks[0].file_path.replace(input_dir, "")
-                .lstrip(os_sep)
-                .replace(os_sep, "-}")
-            )
-            _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
-            try:
-                _num_better = int(_num_better) if _num_better else 100
-            except (TypeError, ValueError):
-                _num_better = 100
-            # 按配置数组顺序依次执行（数组顺序即执行顺序）
-            for _m in _after_order:
-                _display = _m if isinstance(_m, str) else "fix"
-                _update_runtime(projectConfig, stage=f"AI初步处理-{_display}")
-                LOGGER.info(
-                    f"[后处理] 开始：{_display}，文件={_orig_name}"
-                )
-                try:
-                    await _run_after_trans_single_file(
-                        _m,
-                        _orig_name,
-                        resultChunks[0].file_path,
-                        merged_trans,
-                        projectConfig,
-                        _num_better,
-                    )
-                    LOGGER.info(f"[后处理] 完成：{_display}，文件={_orig_name}")
-                except Exception as e:
-                    from GalTransl.Service import JobCancelledError
-
-                    if isinstance(e, JobCancelledError):
-                        raise
-                    LOGGER.warning(
-                        f"[后处理/{_display}] {resultChunks[0].file_path} 执行失败，已跳过：{e}"
-                    )
-                    # 上报到控制台"最近错误"
-                    try:
-                        from GalTransl.server import record_runtime_error
-
-                        record_runtime_error(
-                            _runtime_project_dir(projectConfig),
-                            kind="api",
-                            message=f"[后处理/{_m}] {resultChunks[0].file_path}: {e}",
-                        )
-                    except Exception as _re:
-                        LOGGER.warning(f"[后处理] 错误上报失败：{_re}")
 
     # 对每个分块执行错误检查和缓存保存
     for i, chunk in enumerate(resultChunks):
@@ -329,6 +254,182 @@ async def postprocess_results(
         makedirs(dirname(output_file_path), exist_ok=True)
         save_func(output_file_path, final_result)
         LOGGER.info(f"+++ 结果保存 (project_dir){output_file_path.replace(proj_dir,'')}")
+
+
+def _aftertrans_fingerprint(order: list) -> str:
+    """afterTranslation 有序条目的指纹：配置变化（增删项/fix 类型调整）即失效断点标记。
+
+    仅覆盖链条目本身：模型/API 配置或提示词覆盖变化不失效（alt_dst 已持久化，
+    重跑以手动单独执行各后端为主）。
+    """
+    return hashlib.sha1(
+        json.dumps(order, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _read_aftertrans_marker(marker_path: str) -> dict:
+    """读断点标记；文件缺失或损坏视为未处理。"""
+    try:
+        with open(marker_path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        LOGGER.warning(f"[后处理] 断点标记读取失败，将重新处理：{marker_path}（{e}）")
+        return {}
+
+
+def _write_aftertrans_marker(marker_path: str, fingerprint: str) -> None:
+    """原子写断点标记（tmp + os.replace），中断时不会留下半写状态。"""
+    makedirs(dirname(marker_path), exist_ok=True)
+    payload = json.dumps(
+        {
+            "fingerprint": fingerprint,
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+        },
+        ensure_ascii=False,
+    )
+    tmp_path = marker_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(payload)
+    os.replace(tmp_path, marker_path)
+
+
+async def _improve_single_file(
+    projectConfig: CProjectConfig,
+    file_path: str,
+    chunks: List[SplitChunkMetadata],
+    order: list,
+    fingerprint: str,
+    marker_dir: str,
+    num_better: int,
+    input_dir: str,
+) -> None:
+    """对单个文件执行 afterTranslation 链：断点跳过 → 逐项后处理 → 收尾落盘 → 写标记。"""
+    _check_stop_requested(projectConfig)
+    file_name = file_path.replace(input_dir, "").lstrip(os_sep).replace(os_sep, "-}")
+    marker_path = joinpath(marker_dir, file_name + ".json")
+
+    marker = _read_aftertrans_marker(marker_path)
+    had_retrans = any(c.had_retranslated for c in chunks)
+    if marker.get("fingerprint") == fingerprint and not had_retrans:
+        LOGGER.debug(f"[后处理] {file_name} 断点标记命中且本轮无重译，跳过")
+        return
+
+    _update_runtime(projectConfig, current_file=file_name)
+    merged_trans: List[Any] = []
+    for _chunk in chunks:
+        merged_trans.extend(_chunk.trans_list)
+    all_ok = True
+    # 按配置数组顺序依次执行（数组顺序即执行顺序）；单项失败隔离，取消上抛
+    for _m in order:
+        _display = _m if isinstance(_m, str) else "fix"
+        _update_runtime(projectConfig, stage=f"AI初步处理-{_display}")
+        LOGGER.info(f"[后处理] 开始：{_display}，文件={file_name}")
+        try:
+            await _run_after_trans_single_file(
+                _m, file_name, file_path, merged_trans, projectConfig, num_better
+            )
+            LOGGER.info(f"[后处理] 完成：{_display}，文件={file_name}")
+        except Exception as e:
+            from GalTransl.Service import JobCancelledError
+
+            if isinstance(e, JobCancelledError):
+                raise
+            all_ok = False
+            LOGGER.warning(f"[后处理/{_display}] {file_path} 执行失败，已跳过：{e}")
+            try:
+                from GalTransl.server import record_runtime_error
+
+                record_runtime_error(
+                    _runtime_project_dir(projectConfig),
+                    kind="api",
+                    message=f"[后处理/{_m}] {file_path}: {e}",
+                )
+            except Exception as _re:
+                LOGGER.warning(f"[后处理] 错误上报失败：{_re}")
+
+    # 收尾复用 postprocess_results：问题标记/备选译文落缓存，swapFixToCurrent 模式刷新输出
+    await postprocess_results(chunks, projectConfig)
+    if all_ok:
+        _write_aftertrans_marker(marker_path, fingerprint)
+    else:
+        LOGGER.warning(f"[后处理] {file_name} 存在失败项，不写断点标记（下次重启将重跑）")
+
+
+async def run_improve_stage(
+    projectConfig: CProjectConfig,
+    file_chunks: Dict[str, List[SplitChunkMetadata]],
+    order: list,
+) -> None:
+    """流水线阶段 8：全部文件翻译完成后，统一执行 afterTranslation 后处理链。
+
+    断点语义：文件级标记（transl_cache/aftertrans_cache/<文件名>.json）记录配置
+    指纹，标记命中且本轮无重译的文件直接跳过——中断重启不再重复执行后处理。
+    任一文件的链未完整跑完则不写标记，下次重启重跑该文件。
+
+    Args:
+        projectConfig: 项目配置（并发取 workersPerProject，令牌池走 afterTrans 大阶段池）。
+        file_chunks: 文件路径 → 该文件 chunk 列表（阶段 7 产出，含 trans_list 与重译标记）。
+        order: afterTranslation 有序条目（_resolve_after_translation_order 产出，非空）。
+    """
+    _check_stop_requested(projectConfig)
+    await ensure_model_available_if_needed(projectConfig, stage="afterTrans")
+
+    input_dir = projectConfig.getInputPath()
+    marker_dir = joinpath(projectConfig.getCachePath(), "aftertrans_cache")
+    fingerprint = _aftertrans_fingerprint(order)
+    _num_better = projectConfig.getKey("gpt.numPerRequestBetter")
+    try:
+        num_better = int(_num_better) if _num_better else 100
+    except (TypeError, ValueError):
+        num_better = 100
+
+    worker_count = max(1, projectConfig.get_workers_per_project())
+    projectConfig.active_workers = worker_count
+    LOGGER.info(
+        f"[后处理] 阶段 8 开始：{len(order)} 个后处理后端 × {len(file_chunks)} 个文件，"
+        f"并发 {worker_count} worker"
+    )
+    _update_runtime(projectConfig, stage="AI初步处理")
+
+    file_queue: asyncio.Queue = asyncio.Queue()
+    for fp in file_chunks:
+        file_queue.put_nowait(fp)
+    for _ in range(worker_count):
+        file_queue.put_nowait(None)
+
+    async def _worker_loop(worker_index: int) -> None:
+        # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+        worker_token = WORKER_ID_CTX.set(str(worker_index))
+        LOGGER.debug(f"[后处理] worker_loop[{worker_index}] 启动")
+        try:
+            while True:
+                _check_stop_requested(projectConfig)
+                fp = await file_queue.get()
+                if fp is None:
+                    return
+                await _improve_single_file(
+                    projectConfig, fp, file_chunks[fp], order,
+                    fingerprint, marker_dir, num_better, input_dir,
+                )
+        finally:
+            WORKER_ID_CTX.reset(worker_token)
+
+    tasks = [asyncio.create_task(_worker_loop(i)) for i in range(worker_count)]
+    try:
+        await asyncio.gather(*tasks)
+    except Exception:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+    LOGGER.info("[后处理] 阶段 8 完成")
+    _update_runtime(projectConfig, stage="AI初步处理完成")
+
+
 def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 

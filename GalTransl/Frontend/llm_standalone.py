@@ -88,7 +88,7 @@ def _resolve_fix_round_types(projectConfig: CProjectConfig) -> list:
     （与 ForProblemFixRound._ensure_problem_types_configured 的惰性回退口径一致）。
     """
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
-    # 延迟导入：llm_postprocess 会反向 import 本模块，模块级导入会成环
+    # 延迟导入：保持 llm_standalone → llm_postprocess 单向模块依赖（不在模块级引入）
     from GalTransl.Frontend.llm_postprocess import _resolve_after_translation_order
 
     for entry in _resolve_after_translation_order(projectConfig):

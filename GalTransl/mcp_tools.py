@@ -342,7 +342,12 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
     # 文件名清单一并返回：read_translation_file / read_source_script 都需要 filename，
     # 概览是 agent 拿到清单的主要入口（count 由清单派生，避免双重遍历）
     script_names = _list_files(input_dir, ".json") if os.path.isdir(input_dir) else []
-    cache_names = _list_files(cache_dir, ".json") if os.path.isdir(cache_dir) else []
+    # aftertrans_cache 为阶段 8 断点标记（dict 形状），不是翻译缓存，不进 agent 文件清单
+    cache_names = (
+        [n for n in _list_files(cache_dir, ".json") if not n.startswith("aftertrans_cache/")]
+        if os.path.isdir(cache_dir)
+        else []
+    )
     # 配置口径以真实项目为准：common 段承载 language / workersPerProject / gpt.* 扁平键
     common = config.get("common") if isinstance(config.get("common"), dict) else {}
     internals = config.get("internals") if isinstance(config.get("internals"), dict) else {}

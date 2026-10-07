@@ -658,9 +658,42 @@ async def _run_stage_translate(
     # 既避免循环导入，也保持该函数可被 mock.patch("...LLMTranslate._run_translation_phase") 替换。
     from GalTransl.Frontend import LLMTranslate as _llm_translate_mod
 
-    await _llm_translate_mod._run_translation_phase(
+    file_chunks = await _llm_translate_mod._run_translation_phase(
         projectConfig, file_json_lists, file_list
     )
+    # 文件 → chunk 列表映射交给阶段 8（统一后处理 + 断点跳过判定）
+    stage_ctx["file_chunks"] = file_chunks or {}
+
+
+async def _run_stage_improve(
+    projectConfig: CProjectConfig,
+    file_json_lists: dict,
+    file_list: list,
+    stage_ctx: dict,
+) -> None:
+    """阶段：修复和改进译文。阶段 7 全部文件翻译完成后，统一执行 afterTranslation 链。"""
+    from GalTransl.Frontend import llm_postprocess as _llm_postprocess_mod
+
+    # 运行态名用 9 阶段映射中的「AI初步处理」，保证前端「流程完成情况」能点亮第 8 格
+    _stage_begin(projectConfig, "improve", "AI初步处理")
+
+    if not _stage_enabled(projectConfig, "improve"):
+        _stage_skip(projectConfig, "improve", "已禁用（enableImprove=false）")
+        return
+
+    file_chunks = stage_ctx.get("file_chunks") or {}
+    if not file_chunks:
+        _stage_skip(projectConfig, "improve", "阶段 7 未执行或未产出翻译结果")
+        return
+
+    order = _llm_postprocess_mod._resolve_after_translation_order(projectConfig)
+    if not order:
+        _stage_skip(projectConfig, "improve", "gpt.afterTranslation 未配置任何后处理项")
+        return
+
+    # 逻辑本体在 llm_postprocess.run_improve_stage；此处按模块属性查找（而非 import 语句），
+    # 既避免循环导入，也保持该函数可被 mock.patch 替换。
+    await _llm_postprocess_mod.run_improve_stage(projectConfig, file_chunks, order)
 
 
 # 阶段 key -> 处理函数（与 PIPELINE_STAGES 的 key 一一对应）
@@ -673,9 +706,10 @@ _STAGE_HANDLERS = {
     "plot_route": _run_stage_plot_route,
     "batch_meta": _run_stage_batch_meta,
     "translate": _run_stage_translate,
+    "improve": _run_stage_improve,
 }
 
-# 未实现独立处理函数的阶段（复用译后处理链路，不参与本编排器遍历）
+# 无独立处理函数的阶段（当前应为空；机制保留给未来新增阶段）
 _UNHANDLED_STAGE_KEYS = frozenset(
     s.key for s in PIPELINE_STAGES if s.key not in _STAGE_HANDLERS
 )
