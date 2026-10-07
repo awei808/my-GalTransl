@@ -54,8 +54,9 @@ from GalTransl.Service import JobCancelledError
 对话模式（gpt.chatMode）：
 - multi（默认）：多轮对话（multi-round chat）模式对接 API，每次 API 调用都会把完整的
   messages 历史（system + 之前各轮 user/assistant）一并发出，由模型自行维持上下文。
-- single：单轮模式，每批请求独立完整（全量提示词 + 元数据 + 术语表），已译上下文经
-  restore_context 取 contextNum 句注入 [history_result]；无会话状态，token 消耗更高。
+- single：单轮模式，每批请求独立完整（全量提示词 + 元数据 + 术语表），已译上下文按
+  gpt.restoreContextMode 注入 [history_result]（none=不注入 / lines=contextNum 句 /
+  batches=contextBatches 批）；无会话状态，token 消耗更高。
 
 数据流程（类内方法亦按此顺序排列）：
 1. 输入内容处理、拼接
@@ -488,8 +489,9 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
     ) -> str:
         """单轮模式：构建独立完整的 user 提示词（每个请求都携带全部上下文）。
 
-        与多轮首轮的差异仅在历史来源：多轮由对话历史携带，单轮经 restore_context
-        取 contextNum 句已翻译上下文注入 [history_result]。文件级/批次级元数据、
+        与多轮首轮的差异仅在历史来源：多轮由对话历史携带，单轮按 restoreContextMode
+        经 restore_context 注入 [history_result]（lines=contextNum 句 /
+        batches=contextBatches 批，none=占位文本）。文件级/批次级元数据、
         全局提示词、术语表每个请求都注入。
 
         Args:
@@ -502,10 +504,16 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         Returns:
             本次要发送的 user 消息内容
         """
-        if self.restore_context_mode:
-            self.restore_context(trans_list, self.contextNum, filename)
-        else:
+        if self.restore_context_mode == "none":
             self.last_translations[filename] = ""
+        else:
+            # lines=固定 contextNum 句；batches=批数×本批句数（末批自动缩小、成比例）
+            history_limit = (
+                self.contextNum
+                if self.restore_context_mode == "lines"
+                else self.contextBatches * len(trans_list)
+            )
+            self.restore_context(trans_list, history_limit, filename)
 
         metadata = self._resolve_file_metadata(filename)
         metadata_block = (
@@ -536,6 +544,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         history_text = self.last_translations.get(filename, "")
         LOGGER.debug(
             f"[{filename}] 单轮翻译 | backend={self.eng_type} | "
+            f"mode={self.restore_context_mode} | "
             f"history={len(history_text.splitlines()) if history_text else 0}行 | "
             f"guideline={self.pj_config.getKey('gpt.translation_guideline') or '-'} | "
             f"global={'✓' if self._global_prompt else '✗'} | "

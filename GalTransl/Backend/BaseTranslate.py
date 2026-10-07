@@ -30,6 +30,23 @@ def _print_translation_block(text: str) -> None:
     print(text)
 
 
+# gpt.restoreContextMode 取值别名归一表：旧布尔写法与常见别名映射到三值模式
+_RESTORE_CONTEXT_MODE_ALIASES = {
+    "none": "none",
+    "false": "none",
+    "no": "none",
+    "0": "none",
+    "": "none",
+    "lines": "lines",
+    "line": "lines",
+    "true": "lines",
+    "yes": "lines",
+    "1": "lines",
+    "batches": "batches",
+    "batch": "batches",
+}
+
+
 class BaseTranslate(BaseEngine):
     """翻译引擎基类：在多轮对话/全量流水线等「翻译轮」后端之上提供共享的切批、
     动态句数、上下文恢复、译文归一化与缓存落盘等翻译流水线逻辑。
@@ -52,10 +69,16 @@ class BaseTranslate(BaseEngine):
             token_pool: API Token 池，管理多个 API 密钥的轮换。
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
-        # 上下文恢复模式（翻译轮多轮对话用）
-        self.restore_context_mode = config.getKey("gpt.restoreContextMode", True)
-        # 多轮对话上下文句数
+        # 单轮模式历史注入模式：none=不注入 / lines=固定行数(contextNum) / batches=固定批数(contextBatches)
+        self.restore_context_mode: str = self._normalize_restore_context_mode(
+            config.getKey("gpt.restoreContextMode", True)
+        )
+        # lines 模式的历史句数
         self.contextNum: int = config.getKey("gpt.contextNum", 8)
+        # batches 模式的历史批数（1 批 = 一次请求的实际句数）
+        self.contextBatches: int = self._coerce_positive_int(
+            config.getKey("gpt.contextBatches", 1), 1
+        )
         # 动态句数（按 429/解析异常自动调节每批句数）
         self.dynamic_num_per_request = self._coerce_bool(
             config.getKey("gpt.dynamicNumPerRequestTranslate", False)
@@ -73,6 +96,24 @@ class BaseTranslate(BaseEngine):
             )
         self._dynamic_num_per_request_current: Optional[int] = None
         self._dynamic_num_per_request_success_streak = 0
+
+    @staticmethod
+    def _normalize_restore_context_mode(raw: Any) -> str:
+        """归一化 gpt.restoreContextMode 为 none/lines/batches 三值模式。
+
+        旧布尔配置向后兼容（True→lines、False→none）；无法识别的值告警后
+        回退 lines（保留上下文比静默丢弃安全）。
+        """
+        if isinstance(raw, bool):
+            return "lines" if raw else "none"
+        mode = _RESTORE_CONTEXT_MODE_ALIASES.get(str(raw).strip().lower())
+        if mode is None:
+            LOGGER.warning(
+                f"gpt.restoreContextMode 值 {raw!r} 无法识别，回退为 lines"
+                f"（可选 none/lines/batches）"
+            )
+            return "lines"
+        return mode
 
     def _get_effective_num_per_request(
         self, configured_value: int, proofread: bool = False, force_static: bool = False
@@ -487,9 +528,9 @@ class BaseTranslate(BaseEngine):
         return "\n".join(lines)
 
     def _collect_restore_context_items(
-        self, translist_unhit: CTransList, num_pre_request: int
+        self, translist_unhit: CTransList, max_history_lines: int
     ) -> List[CSentense]:
-        if translist_unhit[0].prev_tran == None:
+        if max_history_lines <= 0 or translist_unhit[0].prev_tran == None:
             return []
 
         context_items: List[CSentense] = []
@@ -506,7 +547,7 @@ class BaseTranslate(BaseEngine):
 
             context_items.append(current_tran)
             num_count += 1
-            if num_count >= num_pre_request:
+            if num_count >= max_history_lines:
                 break
             current_tran = current_tran.prev_tran
 
@@ -514,13 +555,18 @@ class BaseTranslate(BaseEngine):
         return context_items
 
     def restore_context(
-        self, translist_unhit: CTransList, num_pre_request: int, filename: str = ""
+        self, translist_unhit: CTransList, max_history_lines: int, filename: str = ""
     ) -> None:
+        """沿 prev_tran 链回溯收集最近 max_history_lines 句已译上下文（跳过空译/失败句）。
+
+        单轮模式的历史来源：调用方按注入模式换算句数上限（lines=contextNum、
+        batches=批数×本批句数），重启续跑时按前置已译句数近似。
+        """
         if not hasattr(self, "last_translations"):
             return
 
         context_items = self._collect_restore_context_items(
-            translist_unhit, num_pre_request
+            translist_unhit, max_history_lines
         )
         if not context_items:
             self.last_translations[filename] = ""

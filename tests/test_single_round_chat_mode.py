@@ -90,8 +90,9 @@ def make_single_translator() -> ForGalJsonTranslate:
     )
     t.source_lang = "Japanese"
     t.target_lang = "English"  # 非中文，跳过 opencc
-    t.restore_context_mode = True
+    t.restore_context_mode = "lines"
     t.contextNum = 8
+    t.contextBatches = 1
     t.last_translations = {}
     t._history_placeholder_warned = False
     t.plot_metadata_map = {}
@@ -150,6 +151,41 @@ class ChatModeConfigTests(unittest.TestCase):
         t = make_instance({"gpt.chatMode": "both"})
         self.assertEqual(t.chat_mode, "multi")
         self.assertIs(t.trans_prompt, FORGAL_JSON_TRANS_PROMPT)
+
+
+class RestoreContextModeConfigTests(unittest.TestCase):
+    """gpt.restoreContextMode 三值归一化（含旧布尔兼容）。"""
+
+    def test_bool_compat_maps_to_lines_and_none(self) -> None:
+        # 旧配置布尔写法：True→lines、False→none
+        self.assertEqual(BaseTranslate._normalize_restore_context_mode(True), "lines")
+        self.assertEqual(BaseTranslate._normalize_restore_context_mode(False), "none")
+
+    def test_three_values_and_aliases(self) -> None:
+        cases = [
+            ("none", "none"),
+            ("lines", "lines"),
+            ("batches", "batches"),
+            ("Batches", "batches"),
+            (" batch ", "batches"),
+            ("", "none"),
+            ("0", "none"),
+            ("1", "lines"),
+        ]
+        for raw, expected in cases:
+            self.assertEqual(
+                BaseTranslate._normalize_restore_context_mode(raw),
+                expected,
+                f"raw={raw!r}",
+            )
+
+    def test_unknown_value_falls_back_to_lines(self) -> None:
+        # 无法识别的值告警后回退 lines（保留上下文比静默丢弃安全）
+        with patch("GalTransl.Backend.BaseTranslate.LOGGER") as mock_logger:
+            self.assertEqual(
+                BaseTranslate._normalize_restore_context_mode("xxx"), "lines"
+            )
+            mock_logger.warning.assert_called_once()
 
 
 class SingleRoundTranslateTests(unittest.IsolatedAsyncioTestCase):
@@ -223,7 +259,7 @@ class SingleRoundTranslateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_restore_context_disabled_yields_no_history(self) -> None:
         t = make_single_translator()
-        t.restore_context_mode = False
+        t.restore_context_mode = "none"
         prev = CSentense("前文原文", index=0)
         prev.pre_dst = "前文译文"
         cur = CSentense("当前原文", index=1)
@@ -243,6 +279,63 @@ class SingleRoundTranslateTests(unittest.IsolatedAsyncioTestCase):
         # 无历史时注入固定占位文本（模板骨架恒定），不残留占位符
         self.assertIn(NO_HISTORY_PLACEHOLDER, user_content)
         self.assertNotIn("[history_result]", user_content)
+
+    async def test_batches_mode_injects_batch_count_times_batch_lines(self) -> None:
+        # batches 模式：历史句数上限 = 批数 × 本批句数（本批 3 句 × 2 批 = 6 句）
+        t = make_single_translator()
+        t.restore_context_mode = "batches"
+        t.contextBatches = 2
+        chain = []
+        for i in range(10):
+            s = CSentense(f"前文原文{i}", index=i)
+            s.pre_dst = f"历史{i}"
+            chain.append(s)
+        for i in range(1, 10):
+            chain[i].prev_tran = chain[i - 1]
+        cur1 = CSentense("当前原文a", index=10)
+        cur1.prev_tran = chain[-1]
+        cur2 = CSentense("当前原文b", index=11)
+        cur2.prev_tran = cur1
+        cur3 = CSentense("当前原文c", index=12)
+        cur3.prev_tran = cur2
+        captured = {}
+
+        async def fake_ask(self, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            self._last_chatbot_was_stream = False
+            return echo_translation(kwargs.get("messages")), make_token()
+
+        t.ask_chatbot = MethodType(fake_ask, t)
+        cnt, _ = await t.translate([cur1, cur2, cur3], filename="f.json")
+        self.assertEqual(cnt, 3)
+        user_content = captured["messages"][1]["content"]
+        # 注入最近 6 句（历史4~历史9），更早的历史0~历史3 不注入
+        for i in range(4, 10):
+            self.assertIn(f"历史{i}", user_content)
+        for i in range(0, 4):
+            self.assertNotIn(f"历史{i}", user_content)
+
+    async def test_lines_mode_zero_context_num_injects_nothing(self) -> None:
+        # 回归：contextNum=0 时不再因「先收集后判界」注入 1 句，应为无历史（占位文本）
+        t = make_single_translator()
+        t.contextNum = 0
+        prev = CSentense("前文原文", index=0)
+        prev.pre_dst = "前文译文"
+        cur = CSentense("当前原文", index=1)
+        cur.prev_tran = prev
+        captured = {}
+
+        async def fake_ask(self, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            self._last_chatbot_was_stream = False
+            return echo_translation(kwargs.get("messages")), make_token()
+
+        t.ask_chatbot = MethodType(fake_ask, t)
+        cnt, _ = await t.translate([cur], filename="f.json")
+        self.assertEqual(cnt, 1)
+        user_content = captured["messages"][1]["content"]
+        self.assertNotIn("前文译文", user_content)
+        self.assertIn(NO_HISTORY_PLACEHOLDER, user_content)
 
 
 if __name__ == "__main__":
