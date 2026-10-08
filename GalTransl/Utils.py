@@ -389,6 +389,12 @@ def fix_quotes2(text: str) -> str:
 
 
 def get_n_symbol(src_text: str) -> list[str]:
+    """输出侧换行符号表（句级，**真实优先**：真实 \\r\\n > 真实 \\n > 字面 \\r\\n > 字面 \\n）。
+
+    注意与编码侧 Backend/utils.detect_line_break_symbol 的口径差异：那边是**批级、
+    字面优先**，且粒度不同。两者只有在「一个项目内最多一种换行符」（本项目约定）
+    时才互为逆运算；源句子自身混用多种换行形态时往返不闭合（P2 级已知限制）。
+    """
     n_symbols = []
     if "\r\n" in src_text:
         n_symbols.append("\r\n")
@@ -400,6 +406,26 @@ def get_n_symbol(src_text: str) -> list[str]:
         n_symbols.append("\\n")
 
     return n_symbols
+
+
+def restore_output_line_breaks(dst: str, original_message: str) -> str:
+    """输出还原：把译文里的换行统一为原文 message 所用的换行符类型。
+
+    缓存中的译文一律使用真实 ``\\n``（见 Backend.utils.restore_line_breaks 的约定），
+    因此输出时按原文类型还原即可：``\\r\\n`` → ``\\n`` → 原文类型。
+    原文不含任何可识别换行时不改动（避免给原文无换行的句子凭空补换行）。
+
+    统一入口：桌面端构建输出（server_cache）与 CLI/流水线输出（CSerialize）共用，
+    避免两条导出路径换行口径不一致。
+
+    约定边界：源以字面 ``<br>`` 当换行符时本函数认不出（get_n_symbol 只认四类转义
+    换行），译文里的真实 ``\\n`` 会原样落盘——该约定不在支持范围（见
+    Backend/utils.restore_line_breaks 的说明）。
+    """
+    n_symbols = get_n_symbol(original_message)
+    if not n_symbols:
+        return dst
+    return dst.replace("\r\n", "\n").replace("\n", n_symbols[0])
 
 
 def check_for_tool_updates(new_version: list[str]) -> None:

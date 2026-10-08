@@ -385,6 +385,13 @@ textarea {
   display: block;
 }
 
+/* 问题检测侧栏：重检进度（x/total 文件数） */
+.problem-recheck-progress {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
 .problem-recheck-icon--spin {
   animation: problem-recheck-spin 0.8s linear infinite;
 }

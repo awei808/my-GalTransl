@@ -252,14 +252,16 @@ def find_problems(
             if pre_dst_jp_chars != "" and post_dst_jp_chars != "":
                 problem_list.append(f"残留日文：{post_dst_jp_chars}")
         if CProblemType.丢失换行 in find_type:
-            if _newline_count(pre_src) > _newline_count(post_dst):
+            # 计数基准用 post_src（与翻译编码侧 detect_batch_line_break_symbol 同源），
+            # 译前字典若增删换行，避免以 pre_src 判定造成误报/漏报
+            if _newline_count(post_src) > _newline_count(post_dst):
                 problem_list.append("丢失换行")
         if CProblemType.多加换行 in find_type:
-            if _newline_count(pre_src) < _newline_count(post_dst):
+            if _newline_count(post_src) < _newline_count(post_dst):
                 problem_list.append("多加换行")
         if CProblemType.单句过长 in find_type:
             # 原文有换行才检测；真实/字面换行均归一化处理；h 场景用专用阈值
-            if _newline_count(pre_src) > 0:
+            if _newline_count(post_src) > 0:
                 n_number = _newline_count(post_dst)
                 clean_len = _clean_text_len(post_dst)
                 threshold = (

@@ -39,6 +39,7 @@ from GalTransl.Backend.utils import (
     coerce_bool,
     coerce_h_value,
     detect_batch_line_break_symbol,
+    encode_line_breaks_for_prompt,
     is_h_value,
     parse_interval,
     preprocess_jsonline_response,
@@ -274,10 +275,8 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
             )
             src_text = trans.post_src
 
-            # 将制表符和换行符替换为 LLM 友好格式
-            src_text = src_text.replace("\t", "[t]")
-            if n_symbol:
-                src_text = src_text.replace(n_symbol, "<br>")
+            # 提示词交换格式：制表符→[t]、换行→<br>（统一入口，与回显判定同口径）
+            src_text = encode_line_breaks_for_prompt(src_text, n_symbol)
 
             # 生成唯一的 3 位随机签名，用于后续防串行校验
             while True:
@@ -295,13 +294,12 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
                     "src": src_text,
                 }
             else:
-                # 校对模式：额外携带 dst（已有译文），让 LLM 在已有基础上校对
-                dst_text = (
-                    trans.pre_dst if trans.proofread_zh == "" else trans.proofread_zh
-                )
-                # dst 与 src 采用同一换行表示（n_symbol -> <br>），否则模型两侧换行基准错位
-                if n_symbol:
-                    dst_text = dst_text.replace(n_symbol, "<br>")
+                # 校对模式：额外携带 dst（已有译文），让 LLM 在已有基础上校对。
+                # 取值与历史渲染/问题检测同口径（proofread_zh 优先，空则回退 pre_dst）
+                dst_text = trans.proofread_zh or trans.pre_dst
+                # dst 取自缓存，换行恒为真实 \n；用与 src 同一个编码入口（制表符→[t]、
+                # 真实换行/占位符变体→<br>、旧缓存字面符号→<br>），保证同一行两侧口径一致
+                dst_text = encode_line_breaks_for_prompt(dst_text, n_symbol)
                 if include_src:
                     tmp_obj = {
                         "id": trans.index,
@@ -555,13 +553,26 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         return prompt_req
 
     def _format_restore_context_line(self, current_tran: CSentense) -> str:
-        """单轮上下文恢复的单行格式：sig 固定为 "old" 的 jsonline（id/name/dst）。"""
+        """单轮上下文恢复的单行格式：sig 固定为 "old" 的 jsonline（id/name/dst）。
+
+        dst 用 encode_line_breaks_for_prompt 编码为 <br>，与本轮输入的 dst 同一入口
+        （缓存译文恒为真实 \\n，故只需把真实换行/占位符变体收为 <br>）：历史里若保留
+        真实换行，会与「译文换行一律用 <br> 表示」的规则自相矛盾，模型可能据此在
+        正文里省掉 <br> 或改吐别的写法。取值与本轮输入一致，优先已校对译文
+        （proofread_zh），否则回退初译（pre_dst）。
+
+        边界：历史行拿不到本批 n_symbol（可跨批次/跨符号），故「契约统一前的旧缓存
+        字面符号」不会在这里被折算。仅影响旧缓存下的提示词：历史里残留的字面 \\n 写法
+        可能被模型模仿，而解析与输出侧都不折算字面文本，故新译文有可能带上字面写法。
+        """
         speaker_name = current_tran.get_speaker_name()
         speaker = speaker_name if speaker_name else "null"
         tmp_obj = {
             "id": current_tran.index,
             "name": speaker,
-            "dst": current_tran.pre_dst,
+            "dst": encode_line_breaks_for_prompt(
+                current_tran.proofread_zh or current_tran.pre_dst, ""
+            ),
         }
         if speaker == "null":
             del tmp_obj["name"]

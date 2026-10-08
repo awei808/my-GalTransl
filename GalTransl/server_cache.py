@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from GalTransl import (
     LOGGER,
@@ -39,7 +39,7 @@ from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
 from GalTransl.CSerialize import save_json
 from GalTransl.CSplitter import DictionaryCountSplitter, EqualPartsSplitter
-from GalTransl.Utils import get_n_symbol, resolve_filename, resolve_filename_rel
+from GalTransl.Utils import restore_output_line_breaks, resolve_filename, resolve_filename_rel
 from GalTransl.Backend.utils import coerce_h_value, is_h_value, resolve_h_thresholds
 from GalTransl.server_config_schema import _read_yaml_file
 from GalTransl.server_dict import (
@@ -269,6 +269,7 @@ def recheck_pass3_cache_files(
     h_check_words: list = None,
     forbidden_words: list = None,
     target_files: list[str] | None = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> int:
     """对 pass3_cache 下的缓存 json 重新运行问题检测并写回 problem。
 
@@ -279,6 +280,8 @@ def recheck_pass3_cache_files(
         cache_dir: 缓存根目录（projectDir/transl_cache）。
         target_files: 待重检的主缓存 json 绝对路径列表（通常为 compact 合并的
             结果）；为 None 时全量扫描 pass3_cache 下的 *.json。
+        progress_cb: 每完成一个文件的进度回调 (done, total)；回调异常只记 debug
+            不中断重检。
         其余参数同 _run_problem_detection。
 
     Returns:
@@ -299,7 +302,14 @@ def recheck_pass3_cache_files(
     else:
         targets = [p for p in target_files if p.endswith(".json") and os.path.isfile(p)]
 
+    if progress_cb is not None:
+        try:
+            progress_cb(0, len(targets))
+        except Exception:
+            LOGGER.debug("重检进度回调异常", exc_info=True)
+
     rechecked = 0
+    rechecked_done = 0
     for file_path in targets:
         try:
             with open(file_path, "rb") as f:
@@ -341,8 +351,123 @@ def recheck_pass3_cache_files(
             rechecked += 1
         except Exception as exc:
             LOGGER.warning(f"自动重检缓存失败：{file_path}: {exc}")
+        finally:
+            # 进度按「已处理文件数」推进：失败与检测跳过的文件同样计数
+            rechecked_done += 1
+            if progress_cb is not None:
+                try:
+                    progress_cb(rechecked_done, len(targets))
+                except Exception:
+                    LOGGER.debug("重检进度回调异常", exc_info=True)
 
     return rechecked
+
+
+# 全缓存重检后台状态：project_dir -> {running, checked, total, finished, success, error, rechecked}
+_RECHECK_STATES: dict[str, dict] = {}
+_RECHECK_LOCK = threading.Lock()
+
+
+def _empty_recheck_state() -> dict:
+    """无记录时的空态（视为已完成、无操作）。"""
+    return {
+        "running": False,
+        "checked": 0,
+        "total": 0,
+        "finished": True,
+        "success": True,
+        "error": "",
+        "rechecked": 0,
+    }
+
+
+def get_recheck_state(project_dir: str) -> dict:
+    """读取项目全缓存重检状态（返回副本；无记录时返回空态并带 has_state=False）。
+
+    has_state 用于前端区分「从未重检/后端重启后状态丢失」与「合法完成 0 个文件」。
+    """
+    with _RECHECK_LOCK:
+        state = _RECHECK_STATES.get(project_dir)
+        if state:
+            out = dict(state)
+            out["has_state"] = True
+            return out
+    out = _empty_recheck_state()
+    out["has_state"] = False
+    return out
+
+
+def is_recheck_running(project_dir: str) -> bool:
+    """该项目是否正在进行全缓存重检（供任务提交入口做反向互斥守卫）。"""
+    with _RECHECK_LOCK:
+        state = _RECHECK_STATES.get(project_dir)
+        return bool(state and state.get("running"))
+
+
+def start_recheck_all_async(project_dir: str, config_name: str) -> Optional[dict]:
+    """在后台线程启动全缓存重检（同一项目同时只允许一个）。
+
+    Args:
+        project_dir: 项目绝对路径。
+        config_name: 配置文件名（同 /cache/recheck-all 请求体）。
+
+    Returns:
+        启动成功时返回初始状态副本；该项目已有重检在进行中时返回 None。
+    """
+    with _RECHECK_LOCK:
+        state = _RECHECK_STATES.get(project_dir)
+        if state and state.get("running"):
+            return None
+        init = {
+            "running": True,
+            "checked": 0,
+            "total": 0,
+            "finished": False,
+            "success": False,
+            "error": "",
+            "rechecked": 0,
+        }
+        _RECHECK_STATES[project_dir] = init
+    try:
+        threading.Thread(
+            target=_recheck_all_worker, args=(project_dir, config_name), daemon=True, name="recheck-all"
+        ).start()
+    except Exception:
+        # 线程启动失败（如资源耗尽）：回滚 running 状态，避免项目永久卡在"重检中"
+        with _RECHECK_LOCK:
+            _RECHECK_STATES.pop(project_dir, None)
+        raise
+    return dict(init)
+
+
+def _recheck_all_worker(project_dir: str, config_name: str) -> None:
+    """全缓存重检后台线程体：加载依赖 → 重检写回 → 更新状态（异常不外泄）。"""
+    try:
+        deps = _load_rebuild_deps(project_dir, config_name)
+        if deps[0] is None:
+            raise RuntimeError("config load failed")
+        cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+
+        def _on_progress(done: int, total: int) -> None:
+            with _RECHECK_LOCK:
+                state = _RECHECK_STATES.get(project_dir)
+                if state:
+                    state["checked"] = done
+                    state["total"] = total
+
+        LOGGER.info(f"[cache] 全缓存重检开始（后台）：{project_dir}")
+        rechecked = recheck_pass3_cache_files(cache_dir, *deps, progress_cb=_on_progress)
+        with _RECHECK_LOCK:
+            state = _RECHECK_STATES.get(project_dir)
+            if state:
+                state.update(running=False, finished=True, success=True, rechecked=rechecked)
+        LOGGER.info(f"[cache] 全缓存重检完成：{rechecked} 个文件已写回")
+    except Exception as exc:
+        LOGGER.error(f"[cache] 全缓存重检失败：{exc}")
+        with _RECHECK_LOCK:
+            state = _RECHECK_STATES.get(project_dir)
+            if state:
+                state.update(running=False, finished=True, success=False, error=str(exc))
 
 
 def _append_engine_log(project_dir: str, message: str) -> None:
@@ -558,6 +683,12 @@ def _pick_output_dst(ce: dict) -> tuple[str, bool]:
       仅当剥引号后与当前 pre_dst 一致（即用户未在校对页改过译文）时采用，
       否则视为过期快照丢弃（用户改 pre_dst 后 preview 不会同步更新）；
     - pre_dst 为初译或用户校对修改后的译文（无引号），需要补对话引号。
+
+    新鲜度比较前只归一真实换行（CRLF → LF）：契约统一后 pre_dst 恒为真实 \\n，而 preview
+    经插件（如 text_common_normalfix 会把 CRLF 源整段改回 CRLF）后可能是 CRLF，旧缓存
+    pre_dst 也可能是 CRLF，归一后两侧才可比。刻意**不**折叠 ``<br>``/字面转义：用户把
+    真实换行改成字面 ``<br>`` 文本时属于真实编辑，必须仍判过期（否则过期 preview 会
+    覆盖用户改动）。
     """
     if ce.get("proofread_dst"):
         return ce["proofread_dst"], True
@@ -567,7 +698,9 @@ def _pick_output_dst(ce: dict) -> tuple[str, bool]:
         inner = preview[len(left_sym):]
         if right_sym:
             inner = inner[:-len(right_sym)]
-        if inner == (ce.get("pre_dst") or ""):
+        if inner.replace("\r\n", "\n") == (ce.get("pre_dst") or "").replace(
+            "\r\n", "\n"
+        ):
             # preview 与当前 pre_dst 一致：含引号+后处理，直接采用
             return preview, False
     return ce.get("pre_dst") or "", True
@@ -698,9 +831,8 @@ def _build_project_output(
                             dst = left_sym + dst + right_sym
                 if dst:
                     # 将译文换行统一为原 message 的换行符类型（原文无换行则保持原样）
-                    n_symbols = get_n_symbol(msg)
-                    if n_symbols:
-                        dst = dst.replace("\r\n", "\n").replace("\n", n_symbols[0])
+                    # 与 CLI/流水线输出走同一入口，避免两条导出路径口径不一致
+                    dst = restore_output_line_breaks(dst, msg)
                     item["message"] = dst
                     updated_count += 1
             # name/names 字段按替换表替换（无替换表时原样保留）

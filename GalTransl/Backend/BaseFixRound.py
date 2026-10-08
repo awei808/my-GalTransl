@@ -18,8 +18,10 @@ from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.Prompts import FAILED_PREFIX
 from GalTransl.Backend.utils import (
+    canonicalize_newlines,
     decode_json_line_part,
     preprocess_jsonline_response,
+    prompt_newline_key,
 )
 
 
@@ -316,20 +318,35 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             normalized = self._normalize_parsed_translation_text(
                 better, tran, n_symbol
             )
-            current_dst = (
-                tran.proofread_zh if tran.proofread_zh != "" else tran.pre_dst
-            )
-            if current_dst != "" and normalized.strip() == current_dst.strip():
+            current_dst = tran.proofread_zh or tran.pre_dst
+            # 归一后比较：缓存约定真实 \n，旧缓存可能是 CRLF；刻意不折字面 \n 正文
+            normalized_cmp = canonicalize_newlines(normalized).strip()
+            if current_dst != "" and normalized_cmp == canonicalize_newlines(
+                current_dst
+            ).strip():
                 LOGGER.debug(
                     f"{self._log_tag} 句子 {line_id} 的 better 与当前译文相同，跳过"
                 )
                 continue
-            # 原文回显（归一化后兜底）：处理 <br>/\n 渲染差异等归一化后才相等的情况
-            if tran.post_src != "" and normalized.strip() == tran.post_src.strip():
-                LOGGER.debug(
-                    f"{self._log_tag} 句子 {line_id} 的 better 与原文相同（疑似原文回显），跳过"
-                )
-                continue
+            # 原文回显：键A 提示词编码口径（两侧原始文本）拦「字面换行约定」；
+            # 键B 两侧同一归一管线（opencc/引号/「」/省略号）拦「回显时改写标点字形」
+            if tran.post_src != "":
+                echo_hit = prompt_newline_key(
+                    better, n_symbol
+                ).strip() == prompt_newline_key(tran.post_src, n_symbol).strip()
+                if not echo_hit:
+                    # 对源文跑一次归一的代价远小于一次 LLM 调用
+                    echo_hit = normalized_cmp == canonicalize_newlines(
+                        self._normalize_parsed_translation_text(
+                            tran.post_src, tran, n_symbol
+                        )
+                    ).strip()
+                if echo_hit:
+                    LOGGER.debug(
+                        f"{self._log_tag} 句子 {line_id} 的 better 与原文等价"
+                        f"（疑似原文回显或字形改写回显），跳过"
+                    )
+                    continue
             if self._apply_better_result(tran, current_dst, normalized, line_id):
                 success_count += 1
         return success_count, found_count
@@ -378,7 +395,7 @@ class BaseProblemFixRound(BaseSparseFixRound):
     ) -> bool:
         if self.pj_config.getKey("gpt.swapFixToCurrent", False):
             tran.alt_dst = current_dst
-            if tran.proofread_zh != "":
+            if tran.proofread_zh:
                 tran.proofread_zh = normalized
             else:
                 tran.pre_dst = normalized

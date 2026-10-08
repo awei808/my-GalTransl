@@ -11,7 +11,7 @@ import unittest
 
 from GalTransl.CSentense import CSentense
 from GalTransl.Backend.ForBRStation import ForBRStation
-from GalTransl.Backend.utils import decode_json_line_part
+from GalTransl.Backend.utils import decode_json_line_part, encode_line_breaks_for_prompt
 
 
 class _FakeOpencc:
@@ -134,6 +134,131 @@ class ParseBrJsonlineTests(unittest.TestCase):
         self.assertEqual(found, 1)
         self.assertEqual(success, 0)
         self.assertEqual(trans.alt_dst, "")  # 相同则跳过，不写 alt_dst
+
+    def test_better_real_newline_vs_placeholder_is_same(self):
+        # 比较键折叠真实换行与占位符：缓存真实 \n，模型回 <br> → 视为相同，跳过
+        trans = _trans(4, "甲\n乙")
+        parser = _make_parser()
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 4, "better": "甲<br>乙"}', [trans], "\n"
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
+
+    def test_better_real_newline_vs_literal_text_is_change(self):
+        # 刻意不折叠字面 \n 文本（可能是正文，如路径 C:\new）：此处应判为真实改动，
+        # 与「宽口径折叠」实现相比这是本用例的区分点（宽折叠会误判相同而不写 alt_dst）
+        trans = _trans(5, "路径 C:\\new 结束")
+        parser = _make_parser()
+        # JSON 文本里的 \\n 解码后是真实换行，与被测的「字面 \n 正文」形成对比
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 5, "better": "路径 C:\\new 结束"}', [trans], "\n"
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 1)
+        self.assertEqual(trans.alt_dst, "路径 C:\new 结束")
+
+    def test_echo_of_literal_newline_source_is_rejected(self):
+        # 回归：字面 \n 约定项目里，src 在提示词中是 <br>，模型整句回显也就是 <br>。
+        # 回显守卫必须先把 post_src 按源符号编码成 <br> 再归一后比较——若直接用
+        # canonicalize_newlines（不折字面文本），守卫会永久失效，回显的日文原文
+        # 会被当成有效修复写入 alt_dst（swapFixToCurrent 时还会直接覆盖译文）
+        trans = _trans(6, "旧译文")
+        trans.post_src = "甲\\n乙"
+        parser = _make_parser()
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 6, "better": "甲<br>乙"}', [trans], "\\n"
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
+
+    def test_echo_of_literal_crlf_source_is_rejected(self):
+        # 同上，字面 \r\n 约定（四类中的另一类）
+        trans = _trans(7, "旧译文")
+        trans.post_src = "甲\\r\\n乙"
+        parser = _make_parser()
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 7, "better": "甲<br>乙"}', [trans], "\\r\\n"
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
+
+    def test_echo_rejected_when_opencc_rewrites_source_chars(self):
+        # 回归：normalized 会过 opencc（説→说、時間→时间…），src 侧若拿原始日文比较
+        # 则两侧永不相等 → 多行回显漏判并写进 alt_dst。守卫必须两侧都取原始文本
+        # 过同一个提示词编码入口
+        class _RewritingOpencc:
+            @staticmethod
+            def convert(text):
+                return text.replace("説", "说").replace("時間", "时间")
+
+        trans = _trans(8, "旧译文")
+        trans.post_src = "彼女は説明した。\nそう言った。"
+        parser = _make_parser()
+        parser.opencc = _RewritingOpencc()
+        # 模型回显：src 在提示词里是 <br>，回显也是 <br>
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 8, "better": "彼女は説明した。<br>そう言った。"}', [trans], "\n"
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
+
+    def test_echo_with_crlf_against_lf_source_is_rejected(self):
+        # 回归：源为真实 LF（n_symbol="\n"），模型回显改用 CRLF 写法。编码入口必须先折
+        # 真实换行再按源符号替换，否则 CRLF 会被拆成「裸 \r + <br>」，裸 \r 无法回认
+        trans = _trans(10, "旧译文")
+        trans.post_src = "甲\n乙"
+        parser = _make_parser()
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 10, "better": "甲\\r\\n乙"}', [trans], "\n"
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
+
+    def test_echo_of_br_convention_source_is_rejected(self):
+        # n_symbol 为空分支：源无四类换行、以字面 <br> 断行；模型回显用变体写法 <BR>，
+        # 精确比较拦不住，必须由提示词编码键拦下（若入口对空符号做了 replace("", x)，
+        # 会在每个字符间插 <br>，本用例会失败）
+        trans = _trans(11, "旧译文")
+        trans.post_src = "甲<br>乙"
+        parser = _make_parser()
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 11, "better": "甲<BR>乙"}', [trans], ""
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
+
+    def test_empty_symbol_entry_does_not_insert_placeholders(self):
+        # 直接守护 encode 的空符号分支（键比较路径的另一半）
+        self.assertEqual(encode_line_breaks_for_prompt("原文单行", ""), "原文单行")
+        self.assertNotIn("<br>", encode_line_breaks_for_prompt("ab", ""))
+        self.assertEqual(encode_line_breaks_for_prompt("a\tb\nc", ""), "a[t]b<br>c")
+
+    def test_kanji_only_source_rewritten_by_opencc_is_treated_as_echo(self):
+        # 已知窄边界（既定语义）：源为「源文过同一归一管线的结果」时判回显而跳过。
+        # 此处 準備完了（无假名）经 opencc t2s 即 准备完了，故合法的简中 better 被跳过；
+        # 代价仅是少一条备选建议（写入的 alt_dst 本身也等于归一后源文，非可用译文）
+        class _T2sOpencc:
+            @staticmethod
+            def convert(text):
+                return text.replace("準備", "准备")
+
+        trans = _trans(12, "旧译文")
+        trans.post_src = "準備完了"
+        parser = _make_parser()
+        parser.opencc = _T2sOpencc()
+        success, found = parser._parse_fix_response(
+            'abc|{"id": 12, "better": "准备完了"}', [trans], ""
+        )
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(trans.alt_dst, "")
 
 
 if __name__ == "__main__":

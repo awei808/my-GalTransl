@@ -28,7 +28,8 @@ from GalTransl.server_runtime import encode_project_dir
 # 502/504：/api/openai-models 等会转发上游请求的路由，上游不可达时返回网关错误，
 # 属正确的错误处理而非 handler 崩溃。
 ACCEPTABLE_STATUS = {
-    200, 201, 204, 400, 401, 403, 404, 405, 409, 415, 422, 501, 502, 504,
+    # 202：异步启动类端点（/api/jobs、/cache/recheck-all）的合法成功码
+    200, 201, 202, 204, 400, 401, 403, 404, 405, 409, 415, 422, 501, 502, 504,
 }
 
 # GET 路由（不含 /api/projects/:id/*，后者单列）
@@ -62,6 +63,7 @@ PROJECT_ROUTES = [
     ("GET", "/dictionary/project"), ("GET", "/name-table"), ("GET", "/name-dict"),
     ("GET", "/problems"), ("GET", "/alt-translations"), ("GET", "/logs"),
     ("GET", "/cache/_probe_.json"), ("GET", "/cache/_probe_.json/h-ranges"),
+    ("GET", "/cache/recheck-all/status"),
     ("GET", "/metadata/globalprompt"), ("GET", "/metadata/plotroute"),
     ("GET", "/metadata/filemeta/_probe_.json"),
     ("GET", "/metadata/batchmeta/_probe_.json"),

@@ -85,7 +85,8 @@ from GalTransl.server_cache import (
     _resolve_cache_h_ranges,
     _run_problem_detection,
     _validate_build,
-    recheck_pass3_cache_files,
+    get_recheck_state,
+    start_recheck_all_async,
     snapshot_cache_file,
 )
 from GalTransl.server_search import search_cache_entries, search_metadata
@@ -553,7 +554,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             handler._send_json({"error": f"failed to check cache file: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
         return
 
-    # POST /api/projects/:id/cache/recheck-all — 全缓存重检（pass3_cache 下所有 *.json）
+    # POST /api/projects/:id/cache/recheck-all — 全缓存重检（后台异步执行，立即返回 202）
     if sub_path == "/cache/recheck-all":
         if handler.command != "POST":
             handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
@@ -570,25 +571,27 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
                     status=HTTPStatus.CONFLICT,
                 )
                 return
-            proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words = _load_rebuild_deps(
-                project_dir, config_name
-            )
-            if proj_config is None:
-                LOGGER.warning(f"[cache] 全缓存重检跳过（配置加载失败）：{project_dir}")
-                handler._send_json({"success": False, "error": "config load failed"})
+            started = start_recheck_all_async(project_dir, config_name)
+            if started is None:
+                handler._send_json(
+                    {"success": False, "error": "全缓存重检已在进行中"},
+                    status=HTTPStatus.CONFLICT,
+                )
                 return
-            cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
-            LOGGER.info(f"[cache] 全缓存重检开始：{project_dir}")
-            rechecked = recheck_pass3_cache_files(
-                cache_dir, proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words
-            )
-            LOGGER.info(f"[cache] 全缓存重检完成：{rechecked} 个文件已写回")
-            handler._send_json({"success": True, "rechecked": rechecked})
+            handler._send_json({"success": True, "started": True}, status=HTTPStatus.ACCEPTED)
         except json.JSONDecodeError:
             handler._send_json({"error": "invalid json body"}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:
-            LOGGER.error(f"[cache] 全缓存重检失败：{exc}")
-            handler._send_json({"error": f"failed to recheck all cache files: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            LOGGER.error(f"[cache] 全缓存重检启动失败：{exc}")
+            handler._send_json({"error": f"failed to start recheck all: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        return
+
+    # GET /api/projects/:id/cache/recheck-all/status — 全缓存重检进度状态（前端轮询）
+    if sub_path == "/cache/recheck-all/status":
+        if handler.command != "GET":
+            handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
+            return
+        handler._send_json(get_recheck_state(project_dir))
         return
 
     # POST /api/projects/:id/cache/save

@@ -5,7 +5,8 @@ import { appState, setAppState, getActiveConfigFileName } from "../stores/appSto
 import type { AppState } from "../stores/appStore";
 import { toast } from "../stores/toastStore";
 import { pushUndo } from "../stores/undoStore";
-import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems } from "../lib/api/project";
+import { searchCache, replaceCache, fetchProjectProblems, fetchProjectAltTranslations, deleteCacheFiles, fetchProjectFiles, revealInFileManager, recheckAllCacheProblems, fetchRecheckAllStatus } from "../lib/api/project";
+import { ApiError } from "../lib/api/client";
 import { buildReplaceUndoEntries } from "../lib/replaceUndo";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
@@ -21,6 +22,7 @@ import type {
   CacheSearchField,
   CacheReplaceField,
   ProblemTypeInfo,
+  CacheRecheckStatusResponse,
 } from "../lib/api/types";
 
 /** 是否运行在 Windows 平台（Tauri WebView 的 UA 含 Windows 标识）。非 Windows 不调用后端打开，仅 Toast 提示。 */
@@ -628,6 +630,8 @@ function ProblemList() {
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   // 全缓存重检进行中标志：重检期间禁用按钮防重入
   const [rechecking, setRechecking] = createSignal(false);
+  // 重检进度（done/total 文件数）；null 表示尚未拿到进度（后端仍在准备）
+  const [recheckProgress, setRecheckProgress] = createSignal<{ done: number; total: number } | null>(null);
   // 已展开的文件集合（默认折叠，点击文件行右侧图标展开；内联读取以启用细粒度追踪）
   const [expandedFiles, setExpandedFiles] = createSignal<Set<string>>(new Set());
   function toggleFile(filename: string) {
@@ -712,7 +716,55 @@ function ProblemList() {
     setAppState(patch);
   }
 
-  /** 全缓存重检：确认弹窗提示勿编辑/保存，完成后刷新问题列表 */
+  /** 确认后端确有重检在跑（409 接管轮询前的防误判：翻译进行中同样回 409） */
+  async function adoptRunningRecheck(pid: string): Promise<boolean> {
+    try {
+      const st = await fetchRecheckAllStatus(pid);
+      return st.running;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 轮询重检状态直到 finished；完成时按结果提示并刷新问题列表 */
+  async function trackRecheckUntilDone(pid: string) {
+    // 连续查询失败有上限：后端长时间不可达时放弃跟踪，避免无限轮询
+    let failures = 0;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1000));
+      let st: CacheRecheckStatusResponse;
+      try {
+        st = await fetchRecheckAllStatus(pid);
+        failures = 0;
+      } catch {
+        failures += 1;
+        if (failures >= 10) {
+          toast.error("重检状态查询连续失败，已停止跟踪（请检查后端是否在运行）");
+          return;
+        }
+        continue;
+      }
+      setRecheckProgress({ done: st.checked, total: st.total });
+      if (!st.finished) continue;
+      // 后端无该项目记录（从未重检/重启后状态丢失）：如实提示而非谎报完成
+      if (!st.has_state) {
+        toast.warning("重检状态已重置（后端可能重启过），请重新触发重检");
+        return;
+      }
+      if (st.success) {
+        toast.success(`已重检 ${st.rechecked ?? 0} 个文件`);
+        // 复用 problemVersion 版本号，驱动问题列表/备选列表自动重新拉取（仅当前项目仍是被重检项目时）
+        if (appState.activeProjectId === pid) {
+          setAppState("problemVersion", (v: number) => v + 1);
+        }
+      } else {
+        toast.error(`全缓存重检失败：${st.error || "未知错误"}`);
+      }
+      return;
+    }
+  }
+
+  /** 全缓存重检：确认弹窗提示勿编辑/保存，后端后台执行，前端轮询进度直至完成 */
   async function handleRecheckAll() {
     const pid = appState.activeProjectId;
     if (!pid || rechecking()) return;
@@ -724,30 +776,46 @@ function ProblemList() {
     });
     if (!result.confirmed) return;
     setRechecking(true);
+    setRecheckProgress(null);
     try {
       const res = await recheckAllCacheProblems(pid, getActiveConfigFileName());
       if (!res.success) {
         toast.warning(res.error ?? "全缓存重检失败，未修改任何文件");
         return;
       }
-      toast.success(`已重检 ${res.rechecked ?? 0} 个文件`);
-      // 复用 problemVersion 版本号，驱动问题列表/备选列表自动重新拉取
-      setAppState("problemVersion", (v: number) => v + 1);
+      await trackRecheckUntilDone(pid);
     } catch (e) {
+      // 409：翻译进行中→提示；另一处已在重检（如切页后按钮被重置）→接管轮询
+      if (e instanceof ApiError && e.status === 409) {
+        if (await adoptRunningRecheck(pid)) {
+          await trackRecheckUntilDone(pid);
+          return;
+        }
+        toast.warning(getErrorMessage(e));
+        return;
+      }
       toast.error(`全缓存重检失败：${getErrorMessage(e)}`);
     } finally {
       setRechecking(false);
+      setRecheckProgress(null);
     }
   }
 
   return (
     <div class="sidebar-panel">
       <div class="sidebar-header sidebar-header--with-actions">
-        问题检测
+        <span>问题检测</span>
+        <Show when={rechecking()}>
+          <span class="problem-recheck-progress">
+            {recheckProgress() && recheckProgress()!.total > 0
+              ? `${recheckProgress()!.done}/${recheckProgress()!.total}`
+              : "准备中…"}
+          </span>
+        </Show>
         <button
           class="problem-recheck-btn"
-          title="全文件重检问题"
-          aria-label="全文件重检问题"
+          title={rechecking() ? "全文件重检进行中…" : "全文件重检问题"}
+          aria-label={rechecking() ? "全文件重检进行中" : "全文件重检问题"}
           disabled={rechecking()}
           onClick={() => void handleRecheckAll()}
         >

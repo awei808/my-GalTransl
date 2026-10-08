@@ -463,6 +463,12 @@ def _sorted_by_len_desc(items: List[CBasicDicElement]) -> List[CBasicDicElement]
     return sorted(items, key=lambda d: len(d.search_word), reverse=True)
 
 
+# 场景预切分缓存元组：全量 / h组 / 非h组 / h+非h组合，均为长词降序列表
+GptPresortedLists = Tuple[
+    List[CBasicDicElement], List[CBasicDicElement], List[CBasicDicElement], List[CBasicDicElement]
+]
+
+
 def _check_dic_element(elem: CBasicDicElement, dic_path: str) -> bool:
     """词条入库校验：零宽正则、空搜索词、替换词非法转义的词条丢弃（warning），返回是否可用。"""
     if elem.is_regex and elem.regex_pattern is None:
@@ -778,6 +784,8 @@ class CNormalDic:
 class CGptDict:
     def __init__(self, dic_list: list) -> None:
         self._dic_list: List[CBasicDicElement] = []
+        # 场景预切分缓存（惰性）：与句子无关，仅随 _dic_list 内容变化失效
+        self._scene_presorted: Optional[GptPresortedLists] = None
         # 逐文件加载后汇总为一条日志，避免多文件初始化刷屏
         loaded: List[Tuple[str, int, int]] = []
         missing: List[str] = []
@@ -814,7 +822,25 @@ class CGptDict:
         lower = name.lower()
         return "_h" in lower and "_非h" not in lower
 
+    def _get_scene_presorted(self) -> GptPresortedLists:
+        """按场景预切分并排序的词条列表（惰性缓存）：(全量, h组, 非h组, h+非h组合)。
+
+        check_dic_use / gen_prompt 按句高频调用，切分与排序结果与句子内容无关，
+        仅依赖 _dic_list；load_dic / sort_dic 变更时置空失效。
+        """
+        if self._scene_presorted is None:
+            h_sorted = _sorted_by_len_desc([d for d in self._dic_list if self._is_h_dict(d)])
+            nh_sorted = _sorted_by_len_desc([d for d in self._dic_list if not self._is_h_dict(d)])
+            self._scene_presorted = (
+                _sorted_by_len_desc(self._dic_list),
+                h_sorted,
+                nh_sorted,
+                h_sorted + nh_sorted,
+            )
+        return self._scene_presorted
+
     def sort_dic(self):
+        self._scene_presorted = None
         self._dic_list.sort(key=lambda x: len(x.search_word), reverse=True)
 
     def load_dic(self, dic_path: str) -> Optional[Tuple[str, int, int]]:
@@ -881,6 +907,7 @@ class CGptDict:
                 continue
             legacy_prefix_count += 1 if _is_legacy_prefix(search_word) else 0
             dic.note = note
+            self._scene_presorted = None  # 词条内容变更，预切分缓存失效
             self._dic_list.append(dic)
             normalDic_count += 1
             regexDic_count += 1 if dic.is_regex else 0
@@ -941,14 +968,13 @@ class CGptDict:
 
         # scene 过滤与组内排序：nh 只取非 h；h 让 h 字典先遍历（h 优先）再补非 h；
         # 组内按搜索词长度降序（正则按模式串长度），消除对调用方 sort_dic 的依赖
+        all_sorted, _h_sorted, nh_sorted, h_combined = self._get_scene_presorted()
         if scene == "nh":
-            dic_iter = _sorted_by_len_desc([d for d in self._dic_list if not self._is_h_dict(d)])
+            dic_iter = nh_sorted
         elif scene == "h":
-            dic_iter = _sorted_by_len_desc([d for d in self._dic_list if self._is_h_dict(d)]) + _sorted_by_len_desc(
-                [d for d in self._dic_list if not self._is_h_dict(d)]
-            )
+            dic_iter = h_combined
         else:
-            dic_iter = _sorted_by_len_desc(self._dic_list)
+            dic_iter = all_sorted
 
         h_hit: set[str] = set()  # scene=h 时已加入的 h 词条（用于重合词 h 优先）
         for dic in dic_iter:
@@ -993,14 +1019,13 @@ class CGptDict:
         problem_list = []
         remaining = tran.post_src  # 消费副本：长词命中后删除其覆盖范围
         # h 组优先、组内长词降序（正则按模式串长度）：与注入侧 h 优先语义一致
-        h_part = [d for d in self._dic_list if self._is_h_dict(d)]
-        nh_part = [d for d in self._dic_list if not self._is_h_dict(d)]
+        all_sorted, _h_sorted, nh_sorted, h_combined = self._get_scene_presorted()
         if scene == "nh":
-            dic_iter = _sorted_by_len_desc(nh_part)
+            dic_iter = nh_sorted
         elif scene == "h":
-            dic_iter = _sorted_by_len_desc(h_part) + _sorted_by_len_desc(nh_part)
+            dic_iter = h_combined
         else:
-            dic_iter = _sorted_by_len_desc(self._dic_list)
+            dic_iter = all_sorted
 
         for dic in dic_iter:
             if not _dict_word_match(dic, remaining):

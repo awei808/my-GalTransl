@@ -27,7 +27,6 @@ from yaml import safe_load, safe_dump
 from GalTransl import LOGGER, TRANSLATOR_SUPPORTED, INPUT_FOLDERNAME, OUTPUT_FOLDERNAME, CACHE_FOLDERNAME, GALTRANSL_VERSION, AUTHOR, new_version, NEED_OpenAITokenPool, PASS0_CACHE_DIR, PASS1_CACHE_DIR, PASS2_CACHE_DIR, PASS3_CACHE_DIR, resolve_translator_alias
 from GalTransl import ReviewAssist
 from GalTransl.Dictionary import parse_dict_line, DictRow, _COMMENT_PREFIXES
-from GalTransl.Utils import get_n_symbol
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
 from GalTransl.Cache import CACHE_TEMP_SUFFIX
 from GalTransl.AppSettings import load_app_settings, save_app_settings

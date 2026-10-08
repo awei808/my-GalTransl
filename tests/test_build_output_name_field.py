@@ -153,6 +153,42 @@ class BuildOutputNameFieldDirectTests(unittest.TestCase):
             out = json.load(f)
         self.assertEqual(out[0], {"name": "華恋", "message": "「用户修改后的译文」"})
 
+    def test_preview_crlf_still_matches_lf_pre_dst(self) -> None:
+        # 回归：pre_dst 恒为真实 \n，而 preview 经插件（text_common_normalfix 对 CRLF
+        # 源整段改回 CRLF）后是 CRLF——新鲜度比较必须先归一换行，否则新快照被误判过期。
+        # 这里直测纯函数 _pick_output_dst（端到端产物在两条分支下相同，无法区分）。
+        picked, needs_quotes = server._pick_output_dst(
+            {
+                "pre_dst": "你好\n再见",
+                "post_dst_preview": "「你好\r\n再见」",
+            }
+        )
+        self.assertFalse(needs_quotes, "preview 应被采纳（needs_quotes=False）")
+        self.assertEqual(picked, "「你好\r\n再见」")
+
+    def test_stale_preview_still_rejected_after_newline_folding(self) -> None:
+        # 归一化只是把换行形态抹平，内文真有差异时仍须判过期
+        picked, needs_quotes = server._pick_output_dst(
+            {
+                "pre_dst": "用户改后的译文",
+                "post_dst_preview": "「翻译时旧译文」",
+            }
+        )
+        self.assertTrue(needs_quotes)
+        self.assertEqual(picked, "用户改后的译文")
+
+    def test_user_edit_to_literal_br_text_still_stale(self) -> None:
+        # 若用户把真实换行改成字面 <br> 文本，这属于真实编辑：不得因换行归一而被判
+        # 「未改动」（否则过期 preview 会覆盖用户改动）。故比较只归真实 CRLF，不折 <br>
+        picked, needs_quotes = server._pick_output_dst(
+            {
+                "pre_dst": "甲<br>乙",
+                "post_dst_preview": "「甲\n乙」",
+            }
+        )
+        self.assertTrue(needs_quotes)
+        self.assertEqual(picked, "甲<br>乙")
+
     def test_name_replacement_table_applied(self) -> None:
         # name 替换表：華恋→华恋、創→创
         _write_name_table(self.pdir, [("華恋", "华恋"), ("創", "创")])

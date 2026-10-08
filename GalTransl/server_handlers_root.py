@@ -79,6 +79,7 @@ from GalTransl.server_scaffold import (
     _workspace_root,
     _write_stage_samples,
 )
+from GalTransl.server_cache import is_recheck_running
 from GalTransl.server_jobs import JobRegistry
 
 
@@ -380,6 +381,14 @@ def do_post(handler: Any, registry: JobRegistry) -> None:
     if path == "/api/jobs":
         try:
             payload = handler._read_json_body()
+            # 全缓存重检进行中拒绝提交：重检与翻译 worker 都会写 pass3_cache，互斥防覆盖
+            job_project_dir = str(payload.get("project_dir", "")).strip()
+            if job_project_dir and is_recheck_running(job_project_dir):
+                handler._send_json(
+                    {"error": "全缓存重检进行中，请等待重检完成后再启动翻译"},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
             job = registry.submit(payload)
         except _ConcurrentLimitError as exc:
             handler._send_json({"error": str(exc)}, status=HTTPStatus.TOO_MANY_REQUESTS)

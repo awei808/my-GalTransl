@@ -557,11 +557,24 @@ export type CacheCheckResponse = {
   results: CacheCheckResult[];
 };
 
-/** POST /api/projects/:id/cache/recheck-all 响应（全缓存重检并写回） */
+/** POST /api/projects/:id/cache/recheck-all 响应（启动后台全缓存重检，立即返回） */
 export type CacheRecheckAllResponse = {
   success: boolean;
-  rechecked?: number;
+  started?: boolean;
   error?: string;
+};
+
+/** GET /api/projects/:id/cache/recheck-all/status 响应（重检进度状态） */
+export type CacheRecheckStatusResponse = {
+  running: boolean;
+  checked: number;
+  total: number;
+  finished: boolean;
+  success: boolean;
+  error: string;
+  rechecked: number;
+  /** false 表示后端无该项目记录（从未重检或后端重启后状态丢失） */
+  has_state: boolean;
 };
 
 // ---- Name Table API types ----

@@ -12,6 +12,36 @@ from unittest import mock
 import yaml
 
 from GalTransl import server as _server_mod
+from GalTransl.CSentense import CSentense
+
+
+class _NewlineProblemConfig:
+    """最小化 projectConfig：仅启用换行数相关检测（丢失换行/多加换行/单句过长）。
+
+    供 find_problems 直测使用，绕开 cache/check 会用译前字典重算 post_src 的问题。
+    """
+
+    target_lang = "zh-cn"
+
+    def getProblemAnalyzeArinashiDict(self):
+        return {}
+
+    def getProblemAnalyzeConfig(self, key):
+        from GalTransl.ConfigHelper import CProblemType
+
+        if key == "problemList":
+            return [
+                CProblemType.丢失换行,
+                CProblemType.多加换行,
+                CProblemType.单句过长,
+            ]
+        return []
+
+    def getAvgSentenceLengthThreshold(self):
+        return 20
+
+    def getHSentenceLengthThreshold(self):
+        return 25
 
 
 def _start_server(workspace_root: str, token: str = ""):
@@ -273,6 +303,42 @@ class NewlineDetectionTests(_Base):
         results = {r["index"]: r for r in body["results"]}
         self.assertNotIn("多加换行", results[1]["problem"])
         self.assertNotIn("丢失换行", results[1]["problem"])
+
+    def test_newline_count_follows_post_src(self) -> None:
+        # 计数基准是 post_src（与翻译编码侧同源）：译前字典改了换行时按 post_src 判定。
+        # 走 find_problems 直测：cache/check 会在重建时用译前字典重算 post_src，
+        # 无法注入 pre_src 与 post_src 不一致的场景。
+        from GalTransl.Problem import find_problems
+
+        tran = CSentense("AB", index=1)
+        tran.post_src = "A\nB"      # 译前字典补入换行
+        tran.pre_dst = "甲乙"
+        tran.post_dst = "甲乙"      # 译文丢掉该换行
+        find_problems([tran], _NewlineProblemConfig(), None, h_ranges=[], h_check_words=[])
+        self.assertIn("丢失换行", tran.problem)
+
+    def test_newline_count_ignores_pre_src_extra_newline(self) -> None:
+        # pre_src 比 post_src 多换行时不得据此误报（译前字典删掉了换行）
+        from GalTransl.Problem import find_problems
+
+        tran = CSentense("A\n\nB", index=1)
+        tran.post_src = "AB"
+        tran.pre_dst = "甲乙"
+        tran.post_dst = "甲乙"
+        find_problems([tran], _NewlineProblemConfig(), None, h_ranges=[], h_check_words=[])
+        self.assertNotIn("多加换行", tran.problem)
+        self.assertNotIn("丢失换行", tran.problem)
+
+    def test_single_sentence_too_long_gate_uses_post_src(self) -> None:
+        # 单句过长的前置门槛「原文有换行」同样看 post_src
+        from GalTransl.Problem import find_problems
+
+        tran = CSentense("AB", index=1)
+        tran.post_src = "A\nB"      # post_src 有换行 → 门槛成立
+        tran.pre_dst = "甲" * 40
+        tran.post_dst = "甲" * 40 + "\n" + "乙" * 2
+        find_problems([tran], _NewlineProblemConfig(), None, h_ranges=[], h_check_words=[])
+        self.assertIn("单句过长", tran.problem)
 
 
 class LongSentenceNewlineTests(_Base):

@@ -190,6 +190,53 @@ class RestoreContextModeConfigTests(unittest.TestCase):
             mock_logger.warning.assert_called_once()
 
 
+class RestoreContextFieldSelectionTests(unittest.TestCase):
+    """历史收集与渲染同口径：取值用 proofread_zh 优先，过滤也按同一取值。"""
+
+    def _chain(self):
+        t = make_single_translator()
+        a = CSentense("a", index=0)
+        a.pre_dst = ""            # 初译空、但有校对 → 应入选
+        a.proofread_zh = "校对a"
+        b = CSentense("b", index=1)
+        b.pre_dst = "(Failed)原文"  # 初译失败但有校对 → 应入选
+        b.proofread_zh = "校对b"
+        c = CSentense("c", index=2)
+        c.pre_dst = "(Failed)原文"  # 校对也失败 → 应剔除
+        c.proofread_zh = "(Failed)校对"
+        d = CSentense("d", index=3)
+        d.pre_dst = "初译d"         # 普通初译 → 应入选
+        d.proofread_zh = ""
+        b.prev_tran = a
+        c.prev_tran = b
+        d.prev_tran = c
+        return t, d
+
+    def test_selection_follows_rendered_field(self):
+        # 收集的是「当前句之前」的历史（c、b、a 逆序回溯），当前句 d 不在内
+        t, cur = self._chain()
+        items = t._collect_restore_context_items([cur], 10)
+        self.assertEqual([x.index for x in items], [0, 1])
+
+    def test_rendered_value_prefers_proofread(self):
+        t, cur = self._chain()
+        items = t._collect_restore_context_items([cur], 10)
+        payload = "".join(t._format_restore_context_line(x) for x in items)
+        self.assertIn("校对a", payload)
+        self.assertIn("校对b", payload)
+        self.assertNotIn("(Failed)", payload)
+
+    def test_none_fields_do_not_crash(self):
+        # 缓存缺字段时可能为 None：not dst_val 分支必须能兜住（此前 any(... in None) 会抛）
+        t = make_single_translator()
+        old = CSentense("old", index=0)
+        old.pre_dst = None
+        old.proofread_zh = None
+        cur = CSentense("cur", index=1)
+        cur.prev_tran = old
+        self.assertEqual(t._collect_restore_context_items([cur], 10), [])
+
+
 class SingleRoundTranslateTests(unittest.IsolatedAsyncioTestCase):
     async def test_single_mode_builds_independent_messages_with_history(self) -> None:
         t = make_single_translator()

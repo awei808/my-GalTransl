@@ -11,6 +11,7 @@ from GalTransl.server_runtime import set_live_snippets
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.utils import restore_line_breaks
 from GalTransl.Backend.Prompts import (
     FAILED_MARKERS,
     FAILED_PREFIX,
@@ -186,13 +187,15 @@ class BaseTranslate(BaseEngine):
         恒定替换保证各批次/文件的模板骨架（<history_result> 标签与任务段历史小节）
         逐字节一致，静态前缀可被 LLM 前缀缓存命中；旧版「剥块 + 删历史小节」会使
         无历史批次与有历史批次在任务段处分叉，已废弃。
+
+        历史内容由 _format_restore_context_line 以 <br> 占位符编码（与本轮输入同口径），
+        此处不再做任何换行改写——旧版 replace("<br>", "") 会直接把历史译文里的断行删掉，
+        使模型从历史中学到「断行可以消失」，是漏断行的诱因之一。
         """
         history = ""
         if hasattr(self, "last_translations"):
             history = self.last_translations.get(filename, "") or ""
-        if history:
-            history = history.replace("<br>", "")
-        else:
+        if not history:
             history = NO_HISTORY_PLACEHOLDER
         return prompt_req.replace("[history_result]", history)
 
@@ -209,6 +212,16 @@ class BaseTranslate(BaseEngine):
     def _normalize_parsed_translation_text(
         self, line_dst: str, current_tran: CSentense, n_symbol: str
     ) -> str:
+        """译文归一：引号/括号/省略号处理 + 换行统一为真实 ``\\n`` 落缓存。
+
+        换行约定（项目级）：**缓存里一律使用真实 ``\\n``**，还原只发生在写缓存这一步；
+        输出（gt_output / CLI 导出）时再由 Utils.restore_output_line_breaks 按原文
+        message 的换行符类型（真实/字面 ``\\r\\n``、``\\n``）还原。因此这里不再按源
+        类型还原，``n_symbol`` 仅保留为调用方兼容参数（编码侧用它把源换行换成 ``<br>``）。
+
+        已知边界：源以字面 ``<br>`` 当换行符的项目不在支持范围（项目约定为四类转义
+        换行之一），其输出会得到真实换行而非 ``<br>``，详见 utils.restore_line_breaks。
+        """
         if "Chinese" in self.target_lang:
             line_dst = self.opencc.convert(line_dst)
 
@@ -226,14 +239,9 @@ class BaseTranslate(BaseEngine):
             line_dst = line_dst + "」"
 
         line_dst = line_dst.replace("[t]", "\t")
-        # 统一各类换行标记为 <br>（兼容大小写/真实换行），再整体还原为源约定
-        line_dst = line_dst.replace("<BR>", "<br>")
-        line_dst = line_dst.replace("\r\n", "<br>").replace("\n", "<br>")
-        if n_symbol:
-            # 源使用真实/字面换行约定：把 <br> 还原为对应的 n_symbol
-            line_dst = line_dst.replace("<br>", n_symbol)
-        # 否则（n_symbol 为空，源以 <br> 为换行约定或不含换行）：
-        # 保持 <br> 不变，与源约定一致。
+        # 换行统一收口到 restore_line_breaks：先归一占位符变体（<br/>、<BR>、<Br> 等）
+        # 与模型直吐的真实换行，再统一还原为真实 \n 落缓存（缓存换行口径统一）
+        line_dst = restore_line_breaks(line_dst, "\n")
 
         if "……" in current_tran.post_src and "..." in line_dst:
             line_dst = line_dst.replace("......", "……")
@@ -539,9 +547,11 @@ class BaseTranslate(BaseEngine):
         failed_markers = self._get_restore_context_failed_markers()
 
         while current_tran != None:
-            if current_tran.pre_dst == "" or any(
-                marker in current_tran.pre_dst for marker in failed_markers
-            ):
+            # 取值与渲染同口径（proofread_zh 优先）：只按 pre_dst 过滤会把「pre_dst 为空
+            # 或带 (Failed)、但已有有效校对」的句子整行丢掉，白白少上下文。
+            # 用 not dst_val 而非 == ""：两者都可能为 None（缓存缺字段）
+            dst_val = current_tran.proofread_zh or current_tran.pre_dst
+            if not dst_val or any(marker in dst_val for marker in failed_markers):
                 current_tran = current_tran.prev_tran
                 continue
 

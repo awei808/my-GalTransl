@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import json
 import os
 import re
 import tempfile
@@ -137,6 +138,27 @@ class ParseImproveJsonlineTests(unittest.TestCase):
         self.trans_list = [CSentense(f"原文{i}", index=i) for i in range(3)]
         for tr in self.trans_list:
             tr.pre_dst = f"译{tr.index}"
+
+    def test_prompt_src_fed_back_as_better_is_rejected(self) -> None:
+        # 端到端锁定：从 _build_input_jsonlines 产出的 jsonline 里取出 src 原样回填为
+        # better（模拟模型整句回显），必须被拦截。两侧共用同一编码入口，故编码口径
+        # 若变更（占位符改名、Tab 表示变化等）本用例仍能锁住守卫。
+        # 定位说明：本用例锁「src 编码 ↔ 回显键」的配对关系，不用于区分第 4→5 轮
+        # （源为真实 \n 时旧实现同样命中）；区分 opencc 漏判的是
+        # tests/test_forbrstation_parse.py 的 test_echo_rejected_when_opencc_rewrites_source_chars
+        t = make_translator()
+        tr = CSentense("前\n后", index=0)
+        tr.pre_dst = "旧译文"
+        input_list, _sig_list, n_symbol, _input_src = t._build_input_jsonlines(
+            [tr], True, "f.json"
+        )
+        echoed_src = json.loads(input_list[0].split("|", 1)[1])["src"]
+        self.assertIn("<br>", echoed_src)  # 确认提示词里换行确为占位符
+        result_text = f'abc|{json.dumps({"id": 0, "better": echoed_src})}'
+        success, found = t._parse_fix_response(result_text, [tr], n_symbol)
+        self.assertEqual(found, 1)
+        self.assertEqual(success, 0)
+        self.assertEqual(tr.alt_dst, "")
 
     def test_sparse_output_matches_by_id(self) -> None:
         result_text = (
@@ -410,7 +432,7 @@ class ProblemInjectTests(unittest.TestCase):
         self.assertNotIn("独白男他", input_src)
 
     def test_build_input_jsonlines_replaces_line_break_in_dst(self) -> None:
-        # 输入侧：dst 应与 src 采用同一换行表示（n_symbol -> <br>）
+        # 输入侧：dst 取自缓存，换行恒为真实 \n，编码时统一收为 <br>
         t = make_translator()
         tr = CSentense("前\r\n后", index=0)
         tr.pre_dst = "译前\r\n译后"
@@ -419,18 +441,46 @@ class ProblemInjectTests(unittest.TestCase):
         self.assertIn("译前<br>译后", input_src)
         self.assertNotIn("译前\\r\\n译后", input_src)
 
+    def test_build_input_jsonlines_dst_crlf_source_real_lf_cache(self) -> None:
+        # 回归：源为 CRLF（n_symbol="\r\n"）而缓存 dst 已归一为真实 \n 时，
+        # dst 仍必须编码成 <br>（旧写法按 n_symbol 替换会漏掉，提示词两侧口径错位）
+        t = make_translator()
+        tr = CSentense("前\r\n后", index=0)
+        tr.pre_dst = "译前\n译后"
+        _, _, n_symbol, input_src = t._build_input_jsonlines([tr], True, "f.json")
+        self.assertEqual(n_symbol, "\r\n")
+        self.assertIn("译前<br>译后", input_src)
+        self.assertNotIn("译前\\n译后", input_src)
+
+    def test_build_input_jsonlines_dst_variant_collapsed(self) -> None:
+        # 回归：dst 里的占位符变体（<br/>、<BR>）也应归一为 <br>
+        t = make_translator()
+        tr = CSentense("前\n后", index=0)
+        tr.pre_dst = "译前<br/>译中<BR>译后"
+        _, _, _, input_src = t._build_input_jsonlines([tr], True, "f.json")
+        self.assertIn("译前<br>译中<br>译后", input_src)
+
+    def test_build_input_jsonlines_dst_literal_text_kept(self) -> None:
+        # 字面 \n 可能是译文正文（如路径），不参与编码
+        t = make_translator()
+        tr = CSentense("前\n后", index=0)
+        tr.pre_dst = "路径 C:\\new 与换行\n第二行"
+        _, _, _, input_src = t._build_input_jsonlines([tr], True, "f.json")
+        self.assertIn("C:\\\\new", input_src)
+        self.assertIn("与换行<br>第二行", input_src)
+
     def test_build_input_jsonlines_dst_uses_proofread_zh_with_replace(self) -> None:
-        # 已校对句：基准取 proofread_zh，同样做换行替换
+        # 已校对句：基准取 proofread_zh，同样做换行编码
         t = make_translator()
         tr = CSentense("前\r\n后", index=0)
         tr.pre_dst = "初译前\r\n初译后"
-        tr.proofread_zh = "校对前\r\n校对后"
+        tr.proofread_zh = "校对前\n校对后"
         _, _, _, input_src = t._build_input_jsonlines([tr], True, "f.json")
         self.assertIn("校对前<br>校对后", input_src)
         self.assertNotIn("初译前", input_src)
 
     def test_build_input_jsonlines_no_replace_when_no_line_break(self) -> None:
-        # n_symbol 为空（原文单行）时不得改动 dst
+        # 原文单行、译文单行：不得凭空引入 <br>
         t = make_translator()
         tr = CSentense("单行原文", index=0)
         tr.pre_dst = "单行译文"

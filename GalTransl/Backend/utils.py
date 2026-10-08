@@ -69,6 +69,106 @@ def detect_batch_line_break_symbol(post_src_list: List[str]) -> str:
     return ""
 
 
+# 换行占位符：<br> 及其各种写法（大小写、自闭合、尾随空格、误写的闭合标签）
+# 空白只允许空格/Tab：用 \s 会连真换行一起吃掉（"a<br\n/>b" 会被折成一个 <br>）
+_BR_PLACEHOLDER_RE = re.compile(r"<[ \t]*/?[ \t]*[bB][rR][ \t]*/?[ \t]*>")
+_BR_PLACEHOLDER = "<br>"
+
+
+def normalize_br_placeholders(text: str) -> str:
+    """把 ``<br>`` 的各种写法统一为 ``<br>``（输入可能是译文，也可能是回显比较用的源文）。
+
+    覆盖 ``<BR>``/``<br/>``/``<br />``/``<Br>``/``<br >``/``</br>`` 等模型常见
+    变体：这些写法与 ``<br>`` 语义相同，若不归一会被当作普通文本留在译文里。
+    仅当命中非规范写法时才输出 DEBUG 日志（批量翻译下按句记录，不打 INFO）。
+    """
+    hits = _BR_PLACEHOLDER_RE.findall(text)
+    if not hits:
+        return text
+    odd = sorted({hit for hit in hits if hit != _BR_PLACEHOLDER})
+    if odd:
+        LOGGER.debug(f"[换行符] 占位符变体归一：{'、'.join(odd)} → {_BR_PLACEHOLDER}")
+    return _BR_PLACEHOLDER_RE.sub(_BR_PLACEHOLDER, text)
+
+
+def canonicalize_newlines(text: str) -> str:
+    """把 ``<br>`` 变体与真实 ``\\r\\n``/``\\n`` 统一为真实 ``\\n``（**仅供比较**）。
+
+    用于判断「模型输出是否与**当前译文**等价」（见 BaseFixRound）；原文回显判定不走
+    本函数，改用 prompt_newline_key（提示词编码口径，见其说明）。不用于落盘
+    （落盘走 restore_line_breaks）。
+
+    **不折叠字面** ``\\n``/``\\r\\n`` **文本**：它可能是译文正文（如路径 ``C:\\new``），
+    把「字面文本」与「真实换行」判等会漏掉真实改动。代价是字面约定项目的旧缓存
+    可能多写一次 alt_dst——构建输出阶段仍按原文类型还原，不会污染落盘结果。
+
+    与 Problem._newline_count 口径不同：那里是「换行计数」（裸 ``\\r`` 也算 1 次、
+    不认 ``<br>``），这里是「等价比较」（认 ``<br>``、不折裸 ``\\r``）。用途不同，
+    不要互相替换。
+    """
+    text = normalize_br_placeholders(text)
+    text = text.replace(_BR_PLACEHOLDER, "\n")
+    return text.replace("\r\n", "\n")
+
+
+def encode_line_breaks_for_prompt(text: str, n_symbol: str) -> str:
+    """提示词交换格式编码（src/dst 字段与回显比较键的**唯一入口**）。
+
+    Tab → ``[t]``（解析侧会还原）；源换行符号 → ``<br>``；其余真实换行与占位符变体
+    也一并收为 ``<br>``（模型直吐真实换行时口径仍一致）。``n_symbol`` 为空时**不做**
+    该次替换——``str.replace("", x)`` 会在每个字符之间插入 ``x``。
+
+    编码侧与回显判定必须共用本函数：口径一改，回显守卫就会静默失效（曾因两份实现
+    分别演进导致字面约定项目的回显守卫失效）。
+    """
+    text = text.replace("\t", "[t]")
+    # 先折真实换行、再按源符号替换：若先 replace(n_symbol="\n", "<br>")，真实 CRLF 会被
+    # 拆成「裸 \r + <br>」，裸 \r 之后再也认不回来（回显比较键会漏判 CRLF 形态的回显）
+    text = restore_line_breaks(text, "")
+    if n_symbol:
+        text = text.replace(n_symbol, _BR_PLACEHOLDER)
+    return text
+
+
+def prompt_newline_key(text: str, n_symbol: str) -> str:
+    """提示词口径的换行比较键：编码后统一折叠为真实 ``\\n``。
+
+    用于「模型回显原文」判定（BaseFixRound）：两侧都取**原始文本**（不经 opencc 简繁
+    转换/引号重写等译文归一），保证与提示词编码完全对称——否则日文源里被 opencc
+    改写的汉字（説/時間/学問…）会让两侧永不相等，多行回显漏判并写进 alt_dst。
+    """
+    return restore_line_breaks(encode_line_breaks_for_prompt(text, n_symbol), "\n")
+
+
+def restore_line_breaks(text: str, symbol: str) -> str:
+    """把译文里的换行占位符还原为指定换行符（翻译轮/修复轮/后处理共用入口）。
+
+    1. ``<br>`` 各种变体归一为 ``<br>``；
+    2. 真实 ``\\r\\n``/``\\n``（模型直吐真实换行时的兜底）收为 ``<br>``；
+    3. ``symbol`` 非空时 ``<br>`` → symbol；为空时保留 ``<br>``。
+
+    两种调用口径：
+      - ``symbol="\\n"``：解析落缓存（缓存译文恒为真实 ``\\n``，与源类型无关）；
+      - ``symbol=""``：把缓存里已归一化的真实换行编码回 ``<br>`` 占位符，
+        供提示词使用（如 ForGalJsonTranslate 的 dst 与单轮历史上下文）。
+
+    字面 ``\\n`` 文本不在本函数处理范围内（它可能是译文正文，误改代价高）。需要把
+    「源符号/字面形态」也折算进提示词口径时，用 encode_line_breaks_for_prompt
+    （提示词编码）或 prompt_newline_key（回显比较键），不要在调用点手写 replace。
+
+    约定边界：**源本身以字面 ``<br>`` 当换行符的项目不在支持范围内**——此类源
+    ``detect_line_break_symbol`` 返回 ""，本函数会把模型输出的 ``<br>`` 还原成
+    真实 ``\\n``，且输出侧 get_n_symbol 认不出 ``<br>``，最终落到 gt_output 的是
+    真实换行（不再是 ``<br>``）。项目约定为「单个项目最多一种换行符（四类转义）」，
+    故按此处理。
+    """
+    text = normalize_br_placeholders(text)
+    text = text.replace("\r\n", _BR_PLACEHOLDER).replace("\n", _BR_PLACEHOLDER)
+    if symbol:
+        text = text.replace(_BR_PLACEHOLDER, symbol)
+    return text
+
+
 def build_script_text(
     json_list: list,
     filename: str = "",
