@@ -796,5 +796,99 @@ class BatchTranslateRouteMapTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dict(e._calls), {"线A": ["/p/a.json"]})
 
 
+class BatchTranslateWorkerReportingTests(unittest.IsolatedAsyncioTestCase):
+    """batch_translate 并发上报：启动 0/并行度，处理中随路线增减，结束归零。
+
+    桩配置的 runtime_project_dir 必须为真值：BaseEngine.runtime_project_dir
+    property 在桩缺 getProjectDir 时抛 AttributeError，会被 _update_runtime
+    吞掉导致上报不可捕获。
+    """
+
+    def _engine(self, cache_root: str, slow_route: str = "") -> ForRouteAnalysis:
+        from GalTransl.Service import JobCancelledError
+
+        e = ForRouteAnalysis.__new__(ForRouteAnalysis)
+        e.pj_config = SimpleNamespace(
+            getKey=lambda key, default=None: default,
+            getCachePath=lambda: cache_root,
+            runtime_project_dir=cache_root,
+        )
+        started: List[str] = []
+
+        async def fake_analyze(data, route, files, external_info="", max_input_chars=None):
+            started.append(route)
+            if route == slow_route:
+                await asyncio.sleep(0.01)
+                raise JobCancelledError()
+            await asyncio.sleep(5)
+            return True
+
+        e.analyze_route = fake_analyze
+        e._started = started
+        return e
+
+    @staticmethod
+    def _actives(reports: list) -> list:
+        return [r["workers_active"] for r in reports if "workers_active" in r]
+
+    async def test_reports_workers_over_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            e = ForRouteAnalysis.__new__(ForRouteAnalysis)
+            e.pj_config = SimpleNamespace(
+                getKey=lambda key, default=None: default,
+                getCachePath=lambda: tmp,
+                runtime_project_dir=tmp,
+            )
+            started: List[str] = []
+
+            async def fake_analyze(data, route, files, external_info="", max_input_chars=None):
+                started.append(route)
+                await asyncio.sleep(0.01)
+                return True
+
+            e.analyze_route = fake_analyze
+            reports: list = []
+            with patch(
+                "GalTransl.Backend.ForRouteAnalysis.load_plot_route_map",
+                return_value=FAKE_ROUTE_MAP,
+            ), patch(
+                "GalTransl.server.update_runtime_status",
+                side_effect=lambda d, **kw: reports.append(kw),
+            ):
+                ok = await e.batch_translate(FAKE_TEXTS, parallelism=2)
+
+            self.assertTrue(ok)
+            self.assertEqual(len(started), 2)
+            actives = self._actives(reports)
+            self.assertEqual(actives[0], 0)
+            self.assertEqual(reports[0]["workers_configured"], 2)
+            # 两条路线并行（并行度 2），峰值并发必然到 2
+            self.assertEqual(max(actives), 2)
+            self.assertEqual(actives[-1], 0)
+
+    async def test_reports_zero_on_cancel(self) -> None:
+        from GalTransl.Service import JobCancelledError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            e = self._engine(tmp, slow_route="线A")
+            reports: list = []
+            with patch(
+                "GalTransl.Backend.ForRouteAnalysis.load_plot_route_map",
+                return_value=FAKE_ROUTE_MAP,
+            ), patch(
+                "GalTransl.Backend.ForRouteAnalysis.shard_up_to_date",
+                return_value=False,
+            ), patch(
+                "GalTransl.server.update_runtime_status",
+                side_effect=lambda d, **kw: reports.append(kw),
+            ):
+                with self.assertRaises(JobCancelledError):
+                    await e.batch_translate(FAKE_TEXTS, parallelism=2)
+
+            actives = self._actives(reports)
+            self.assertTrue(actives)
+            self.assertEqual(actives[-1], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

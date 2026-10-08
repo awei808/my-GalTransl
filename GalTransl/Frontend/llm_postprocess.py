@@ -391,7 +391,11 @@ async def run_improve_stage(
         f"[后处理] 阶段 8 开始：{len(order)} 个后处理后端 × {len(file_chunks)} 个文件，"
         f"并发 {worker_count} worker"
     )
-    _update_runtime(projectConfig, stage="AI初步处理")
+    _update_runtime(
+        projectConfig, stage="AI初步处理",
+        workers_active=0, workers_configured=worker_count,
+    )
+    inflight = 0
 
     file_queue: asyncio.Queue = asyncio.Queue()
     for fp in file_chunks:
@@ -401,6 +405,7 @@ async def run_improve_stage(
 
     async def _worker_loop(worker_index: int) -> None:
         # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+        nonlocal inflight
         worker_token = WORKER_ID_CTX.set(str(worker_index))
         LOGGER.debug(f"[后处理] worker_loop[{worker_index}] 启动")
         try:
@@ -409,10 +414,16 @@ async def run_improve_stage(
                 fp = await file_queue.get()
                 if fp is None:
                     return
-                await _improve_single_file(
-                    projectConfig, fp, file_chunks[fp], order,
-                    fingerprint, marker_dir, num_better, input_dir,
-                )
+                inflight += 1
+                _update_runtime(projectConfig, workers_active=inflight)
+                try:
+                    await _improve_single_file(
+                        projectConfig, fp, file_chunks[fp], order,
+                        fingerprint, marker_dir, num_better, input_dir,
+                    )
+                finally:
+                    inflight -= 1
+                    _update_runtime(projectConfig, workers_active=inflight)
         finally:
             WORKER_ID_CTX.reset(worker_token)
 
@@ -425,6 +436,8 @@ async def run_improve_stage(
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+    finally:
+        _update_runtime(projectConfig, workers_active=0)
 
     LOGGER.info("[后处理] 阶段 8 完成")
     _update_runtime(projectConfig, stage="AI初步处理完成")

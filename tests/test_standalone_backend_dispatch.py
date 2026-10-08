@@ -295,6 +295,97 @@ class RunStandaloneBackendTests(unittest.IsolatedAsyncioTestCase):
         api.shutdown.assert_awaited()
 
 
+class StandaloneWorkerReportingTests(unittest.IsolatedAsyncioTestCase):
+    """独立执行后端的并发上报：启动 0/配置值，处理中 1，结束归零。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.mkdtemp(prefix="standalone_workers_")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls._tmp, ignore_errors=True)
+
+    def _prepare(self) -> tuple:
+        proj = _build_mini_project(self._tmp)
+        cfg = CProjectConfig(proj, "config.inc.yaml")
+        cfg.non_interactive = True
+        pass3_dir = os.path.join(proj, "transl_cache", "pass3_cache")
+        os.makedirs(pass3_dir, exist_ok=True)
+        with open(os.path.join(pass3_dir, "scene_01.txt.json"), "w", encoding="utf-8") as f:
+            f.write("[]")
+        input_path = os.path.join(proj, "gt_input", "scene_01.txt.json")
+        json_list = [{"name": "爱丽丝", "message": "今日はいい天気だね。"}]
+        return cfg, input_path, json_list
+
+    @staticmethod
+    def _actives(reports: list) -> list:
+        return [r["workers_active"] for r in reports if "workers_active" in r]
+
+    async def test_reports_workers_over_lifecycle(self) -> None:
+        cfg, input_path, json_list = self._prepare()
+        reports: list = []
+        api = MagicMock()
+        api.batch_translate = AsyncMock()
+        api.shutdown = AsyncMock()
+
+        async def fake_init(*args, **kwargs):
+            return api
+
+        with patch(
+            "GalTransl.Frontend.llm_standalone._update_runtime",
+            side_effect=lambda c, **kw: reports.append(kw),
+        ), patch(
+            "GalTransl.Frontend.llm_standalone.get_transCache_from_json",
+            new=AsyncMock(return_value=([], [])),
+        ), patch(
+            "GalTransl.Frontend.llm_standalone.save_transCache_to_json",
+            new=AsyncMock(),
+        ), patch(
+            "GalTransl.Frontend.llm_standalone._resolve_file_h_ranges",
+            return_value=[],
+        ), patch(
+            "GalTransl.Frontend.llm_standalone.find_problems",
+            new=MagicMock(),
+        ):
+            result = await run_standalone_backend(
+                cfg, "ForImproveTranslation", {input_path: json_list},
+                noop_ensure_model_available, fake_init,
+            )
+
+        self.assertTrue(result)
+        actives = self._actives(reports)
+        # workersPerProject=1、单文件：启动 0 → 取件 1 → 完件 0 → 池收尾 0
+        self.assertEqual(actives, [0, 1, 0, 0])
+        start = next(r for r in reports if "workers_configured" in r)
+        self.assertEqual(start["workers_configured"], 1)
+
+    async def test_empty_pool_reports_zero_configured(self) -> None:
+        # 无文件时 worker 池空转：仍上报启动 0/配置值与收尾归零
+        cfg, _, _ = self._prepare()
+        reports: list = []
+        api = MagicMock()
+        api.shutdown = AsyncMock()
+
+        async def fake_init(*args, **kwargs):
+            return api
+
+        with patch(
+            "GalTransl.Frontend.llm_standalone._update_runtime",
+            side_effect=lambda c, **kw: reports.append(kw),
+        ):
+            result = await run_standalone_backend(
+                cfg, "ForImproveTranslation", {},
+                noop_ensure_model_available, fake_init,
+            )
+
+        self.assertTrue(result)
+        actives = self._actives(reports)
+        self.assertEqual(actives, [0, 0])
+        start = next(r for r in reports if "workers_configured" in r)
+        self.assertEqual(start["workers_configured"], 1)
+
+
 class DoLLMTranslateDispatchTests(unittest.IsolatedAsyncioTestCase):
     """doLLMTranslate 对后处理后端必须走独立分支，不落入主翻译流程。"""
 

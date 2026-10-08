@@ -300,6 +300,15 @@ class ForRouteAnalysis(ForGlobalPrompt):
     def _default_prompts(self) -> Tuple[str, str]:
         return FORROUTEANALYSIS_SYSTEM, FORROUTEANALYSIS_PROMPT
 
+    def _update_runtime(self, **kwargs: Any) -> None:
+        """上报运行时状态（并发指示等），失败静默不影响主流程。"""
+        try:
+            from GalTransl.server import update_runtime_status
+
+            update_runtime_status(self.runtime_project_dir, **kwargs)
+        except Exception:
+            return
+
     # 1. 单路线分析（生成一个分片；输入超限时按文件分块多次分析后合并）
     async def analyze_route(
         self,
@@ -598,17 +607,27 @@ class ForRouteAnalysis(ForGlobalPrompt):
             f"并行度 {sem_size}，force={force_regen}"
         )
         sem = asyncio.Semaphore(sem_size)
+        inflight = 0
+        # 上报并发状态：启动 0/并行度，运行中随路线进出增减，结束归零
+        self._update_runtime(workers_active=0, workers_configured=sem_size)
 
         async def _run(route: str, files: List[str]) -> bool:
+            nonlocal inflight
             async with sem:
-                if not force_regen and shard_up_to_date(self.pj_config, route, files):
-                    LOGGER.info(f"[路线分析] 路线「{route}」分片已就绪，跳过")
-                    return True
-                return await self.analyze_route(
-                    compressed_data, route, files,
-                    external_info=external_info,
-                    max_input_chars=max_input_chars,
-                )
+                inflight += 1
+                self._update_runtime(workers_active=inflight)
+                try:
+                    if not force_regen and shard_up_to_date(self.pj_config, route, files):
+                        LOGGER.info(f"[路线分析] 路线「{route}」分片已就绪，跳过")
+                        return True
+                    return await self.analyze_route(
+                        compressed_data, route, files,
+                        external_info=external_info,
+                        max_input_chars=max_input_chars,
+                    )
+                finally:
+                    inflight -= 1
+                    self._update_runtime(workers_active=inflight)
 
         tasks = [asyncio.create_task(_run(r, fs)) for r, fs in routes.items()]
         try:
@@ -621,6 +640,8 @@ class ForRouteAnalysis(ForGlobalPrompt):
                     t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        finally:
+            self._update_runtime(workers_active=0)
 
         failed = [r for r, ok in zip(routes.keys(), results) if not ok]
         if failed:

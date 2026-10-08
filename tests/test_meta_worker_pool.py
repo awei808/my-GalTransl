@@ -9,11 +9,14 @@ _run_meta_worker_pool 多 worker 并发正确性测试。
   - worker 并发数正确（多个 worker 同时在途）
   - WORKER_ID_CTX 在每个 worker 内正确绑定/重置
   - 无文件时优雅返回 0
+  - 并发状态上报：启动 0/配置值，处理中随文件增减，结束归零
 """
 
 import asyncio
 import unittest
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from GalTransl.Frontend.LLMTranslate import _run_meta_worker_pool
 
@@ -185,6 +188,67 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
         # 没有遗留挂起的 worker task（异常后 await gather(return_exceptions=True) 已回收全部）
         pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         self.assertEqual(pending, [])
+
+
+class WorkerReportingTests(IsolatedAsyncioTestCase):
+    """并发状态上报：启动 0/配置值，处理中随文件取放增减，结束归零。"""
+
+    def _record(self, reports: list) -> Any:
+        return patch(
+            "GalTransl.Frontend.llm_runtime._update_runtime",
+            side_effect=lambda cfg, **kw: reports.append(kw),
+        )
+
+    @staticmethod
+    def _actives(reports: list) -> list:
+        return [r["workers_active"] for r in reports if "workers_active" in r]
+
+    async def test_reports_workers_over_lifecycle(self) -> None:
+        reports: list = []
+        with self._record(reports):
+            gptapi = FakeGptApi()
+            processed = await _run_meta_worker_pool(
+                FakeProjectConfig(), gptapi, _mk_files(4),
+                existing_map={}, worker_count=2,
+                tag="Test", stage_prefix="测试",
+            )
+        self.assertEqual(processed, 4)
+        actives = self._actives(reports)
+        # 启动上报 0/配置值
+        self.assertEqual(actives[0], 0)
+        self.assertEqual(reports[0]["workers_configured"], 2)
+        # 2 worker 处理 4 文件：峰值并发必然出现
+        self.assertEqual(max(actives), 2)
+        # 结束归零
+        self.assertEqual(actives[-1], 0)
+        # 取放成对：相邻变化量仅 ±1，终段为池收尾的重复归零
+        deltas = [b - a for a, b in zip(actives, actives[1:])]
+        self.assertTrue(all(d in (1, -1) for d in deltas[:-1]))
+        self.assertEqual(deltas[-1], 0)
+
+    async def test_reports_zero_on_worker_exception(self) -> None:
+        reports: list = []
+        with self._record(reports):
+            with self.assertRaises(IOError):
+                await _run_meta_worker_pool(
+                    FakeProjectConfig(), ThrowingGptApi(), _mk_files(2),
+                    existing_map={}, worker_count=2,
+                    tag="Test", stage_prefix="测试",
+                )
+        actives = self._actives(reports)
+        self.assertEqual(actives[-1], 0)
+
+    async def test_no_reports_when_all_cached(self) -> None:
+        # 全部命中缓存提前返回：不触碰并发状态
+        reports: list = []
+        with self._record(reports):
+            processed = await _run_meta_worker_pool(
+                FakeProjectConfig(), FakeGptApi(), _mk_files(2),
+                existing_map={"f0.txt.json", "f1.txt.json"}, worker_count=3,
+                tag="Test", stage_prefix="测试",
+            )
+        self.assertEqual(processed, 0)
+        self.assertEqual(reports, [])
 
 
 if __name__ == "__main__":

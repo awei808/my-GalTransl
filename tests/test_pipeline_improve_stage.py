@@ -204,6 +204,54 @@ class RunImproveStageTests(unittest.IsolatedAsyncioTestCase):
             await self._run(cfg, ["improve"], run_after_trans)
         self.assertFalse(os.path.exists(self._marker_path(cfg)))
 
+    async def test_reports_workers_over_lifecycle(self) -> None:
+        # 并发上报：启动 0/配置值，处理中 1，结束归零（workersPerProject=1 单文件）
+        cfg = self._cfg()
+        reports: list = []
+        run_after_trans = AsyncMock()
+        with patch(
+            "GalTransl.Frontend.llm_postprocess._update_runtime",
+            side_effect=lambda c, **kw: reports.append(kw),
+        ), patch(
+            "GalTransl.Frontend.llm_postprocess._run_after_trans_single_file",
+            new=run_after_trans,
+        ), patch(
+            "GalTransl.Frontend.llm_postprocess.postprocess_results",
+            new=AsyncMock(),
+        ), patch(
+            "GalTransl.Frontend.llm_postprocess.ensure_model_available_if_needed",
+            new=AsyncMock(return_value=None),
+        ):
+            await run_improve_stage(cfg, self._chunks_map(cfg), ["improve"])
+
+        actives = [r["workers_active"] for r in reports if "workers_active" in r]
+        self.assertEqual(actives[0], 0)
+        self.assertEqual(reports[0]["workers_configured"], 1)
+        self.assertEqual(actives, [0, 1, 0, 0])
+
+    async def test_reports_zero_on_cancel(self) -> None:
+        cfg = self._cfg()
+        reports: list = []
+        run_after_trans = AsyncMock(side_effect=JobCancelledError())
+        with patch(
+            "GalTransl.Frontend.llm_postprocess._update_runtime",
+            side_effect=lambda c, **kw: reports.append(kw),
+        ), patch(
+            "GalTransl.Frontend.llm_postprocess._run_after_trans_single_file",
+            new=run_after_trans,
+        ), patch(
+            "GalTransl.Frontend.llm_postprocess.postprocess_results",
+            new=AsyncMock(),
+        ), patch(
+            "GalTransl.Frontend.llm_postprocess.ensure_model_available_if_needed",
+            new=AsyncMock(return_value=None),
+        ):
+            with self.assertRaises(JobCancelledError):
+                await run_improve_stage(cfg, self._chunks_map(cfg), ["improve"])
+
+        actives = [r["workers_active"] for r in reports if "workers_active" in r]
+        self.assertEqual(actives[-1], 0)
+
 
 class AfterTransCacheExclusionTests(unittest.TestCase):
     """断点标记目录不得泄入构建输出收集器（dict 形状按翻译缓存解析必崩）。"""

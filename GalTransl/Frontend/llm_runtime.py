@@ -93,9 +93,10 @@ async def _run_meta_worker_pool(
 
     processed = 0
     total_todo = len(todo)
+    inflight = 0
 
     async def worker_loop(worker_index: int) -> None:
-        nonlocal processed
+        nonlocal processed, inflight
         # 与翻译阶段一致：绑定 worker 身份，提示词预览按此分板块
         worker_token = WORKER_ID_CTX.set(str(worker_index))
         LOGGER.debug(
@@ -108,16 +109,22 @@ async def _run_meta_worker_pool(
                 if item is None:
                     return
                 fname, jsons = item
+                inflight += 1
                 _update_runtime(
                     projectConfig, current_file=fname,
                     stage=f"{stage_prefix} {fname}",
+                    workers_active=inflight,
                 )
-                # 仅成功（返回 True）才计数，LLM 业务失败返回 False 不计入已处理
-                ok = await gptapi.batch_translate(
-                    jsons, filename=fname, force_regen=force_regen
-                )
-                if ok:
-                    processed += 1
+                try:
+                    # 仅成功（返回 True）才计数，LLM 业务失败返回 False 不计入已处理
+                    ok = await gptapi.batch_translate(
+                        jsons, filename=fname, force_regen=force_regen
+                    )
+                    if ok:
+                        processed += 1
+                finally:
+                    inflight -= 1
+                    _update_runtime(projectConfig, workers_active=inflight)
                 LOGGER.debug(
                     f"[{tag}] worker_loop[{worker_index}] {fname} 处理完成 "
                     f"ok={ok} ({processed}/{total_todo})"
@@ -125,6 +132,10 @@ async def _run_meta_worker_pool(
         finally:
             WORKER_ID_CTX.reset(worker_token)
 
+    # 上报并发状态：池启动 0/配置值，运行中随文件取放增减，结束归零
+    _update_runtime(
+        projectConfig, workers_active=0, workers_configured=worker_count,
+    )
     tasks = [asyncio.create_task(worker_loop(i)) for i in range(worker_count)]
     try:
         await asyncio.gather(*tasks)
@@ -135,6 +146,8 @@ async def _run_meta_worker_pool(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+    finally:
+        _update_runtime(projectConfig, workers_active=0)
     return processed
 
 

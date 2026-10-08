@@ -227,8 +227,11 @@ async def _run_file_worker_pool(
     for _ in range(worker_count):
         file_queue.put_nowait(None)
 
+    inflight = 0
+
     async def _worker_loop(worker_index: int) -> None:
         # 绑定 worker 身份，提示词预览按此分板块（与翻译轮 worker 池一致）
+        nonlocal inflight
         worker_token = WORKER_ID_CTX.set(str(worker_index))
         LOGGER.debug(
             f"{spec.log_tag} worker_loop[{worker_index}] 启动, "
@@ -241,21 +244,31 @@ async def _run_file_worker_pool(
                 if item is None:
                     return
                 file_path, json_list = item
-                await _process_single_file(
-                    file_path,
-                    json_list,
-                    projectConfig,
-                    spec,
-                    eng_type,
-                    gptapi,
-                    num_better,
-                    input_dir,
-                    cache_dir,
-                    project_dir,
-                )
+                inflight += 1
+                _update_runtime(projectConfig, workers_active=inflight)
+                try:
+                    await _process_single_file(
+                        file_path,
+                        json_list,
+                        projectConfig,
+                        spec,
+                        eng_type,
+                        gptapi,
+                        num_better,
+                        input_dir,
+                        cache_dir,
+                        project_dir,
+                    )
+                finally:
+                    inflight -= 1
+                    _update_runtime(projectConfig, workers_active=inflight)
         finally:
             WORKER_ID_CTX.reset(worker_token)
 
+    # 上报并发状态：池启动 0/配置值，运行中随文件取放增减，结束归零
+    _update_runtime(
+        projectConfig, workers_active=0, workers_configured=worker_count,
+    )
     tasks = [asyncio.create_task(_worker_loop(i)) for i in range(worker_count)]
     try:
         await asyncio.gather(*tasks)
@@ -267,6 +280,8 @@ async def _run_file_worker_pool(
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+    finally:
+        _update_runtime(projectConfig, workers_active=0)
 
 
 async def run_standalone_backend(
