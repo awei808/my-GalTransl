@@ -370,6 +370,9 @@ class ProjectReadToolTests(ProjectFixture):
         self.assertEqual(result["target_language"], "zh-cn")
         self.assertEqual(result["workers_per_project"], "2")
         self.assertEqual(result["num_per_request_translate"], 16)
+        # 配置未写新键时回退引擎默认口径
+        self.assertEqual(result["restore_context_mode"], "lines")
+        self.assertEqual(result["context_batches"], 1)
         self.assertEqual(result["translation_guideline"], "自制提示词.md")
         self.assertEqual(result["pipeline_internals"], {"enableGenDic": True})
         self.assertTrue(result["has_name_dict"])

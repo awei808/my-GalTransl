@@ -69,7 +69,7 @@ class BaseTranslate(BaseEngine):
             token_pool: API Token 池，管理多个 API 密钥的轮换。
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
-        # 单轮模式历史注入模式：none=不注入 / lines=固定行数(contextNum) / batches=固定批数(contextBatches)
+        # 单轮模式历史注入模式：none=不注入 / lines=固定句数(contextNum) / batches=固定批数(contextBatches)
         self.restore_context_mode: str = self._normalize_restore_context_mode(
             config.getKey("gpt.restoreContextMode", True)
         )

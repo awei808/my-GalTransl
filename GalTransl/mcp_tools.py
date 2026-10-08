@@ -363,6 +363,8 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "auto_adjust_workers": common.get("autoAdjustWorkers", False),
         "num_per_request_translate": common.get("gpt.numPerRequestTranslate", 0),
         "context_num": common.get("gpt.contextNum", 0),
+        "restore_context_mode": common.get("gpt.restoreContextMode", "lines"),
+        "context_batches": common.get("gpt.contextBatches", 1),
         "skip_h": common.get("skipH", False),
         "translation_guideline": common.get("gpt.translation_guideline", ""),
         "stage_backends": stage_backends,

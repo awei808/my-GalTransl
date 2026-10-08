@@ -171,6 +171,8 @@ class RestoreContextModeConfigTests(unittest.TestCase):
             ("", "none"),
             ("0", "none"),
             ("1", "lines"),
+            # YAML 空值（gpt.restoreContextMode: 后无值）解析为 None
+            (None, "none"),
         ]
         for raw, expected in cases:
             self.assertEqual(
@@ -314,6 +316,44 @@ class SingleRoundTranslateTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f"历史{i}", user_content)
         for i in range(0, 4):
             self.assertNotIn(f"历史{i}", user_content)
+
+    async def test_batches_mode_skips_failed_sentences_in_history(self) -> None:
+        # batches 模式下失败句（(Failed) 前缀）不占历史窗口，向前顺延收集有效句
+        t = make_single_translator()
+        t.restore_context_mode = "batches"
+        t.contextBatches = 2
+        chain = []
+        for i in range(10):
+            s = CSentense(f"前文原文{i}", index=i)
+            s.pre_dst = f"历史{i}"
+            chain.append(s)
+        for i in range(1, 10):
+            chain[i].prev_tran = chain[i - 1]
+        # 最近一句翻译失败：不占窗口，收集应向前顺延
+        chain[9].pre_dst = "(Failed)前文原文9"
+        cur1 = CSentense("当前原文a", index=10)
+        cur1.prev_tran = chain[-1]
+        cur2 = CSentense("当前原文b", index=11)
+        cur2.prev_tran = cur1
+        cur3 = CSentense("当前原文c", index=12)
+        cur3.prev_tran = cur2
+        captured = {}
+
+        async def fake_ask(self, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            self._last_chatbot_was_stream = False
+            return echo_translation(kwargs.get("messages")), make_token()
+
+        t.ask_chatbot = MethodType(fake_ask, t)
+        cnt, _ = await t.translate([cur1, cur2, cur3], filename="f.json")
+        self.assertEqual(cnt, 3)
+        user_content = captured["messages"][1]["content"]
+        # 窗口 6 句顺延为 历史3~历史8；失败句与更早的历史0~2 不注入
+        for i in range(3, 9):
+            self.assertIn(f"历史{i}", user_content)
+        for i in range(0, 3):
+            self.assertNotIn(f"历史{i}", user_content)
+        self.assertNotIn("(Failed)", user_content)
 
     async def test_lines_mode_zero_context_num_injects_nothing(self) -> None:
         # 回归：contextNum=0 时不再因「先收集后判界」注入 1 句，应为无历史（占位文本）

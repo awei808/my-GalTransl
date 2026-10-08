@@ -974,7 +974,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         """
         super().__init__(config, eng_type, proxy_pool, token_pool)
         # 对话模式：multi=多轮对话（默认，历史由对话携带）；single=单轮（每批请求独立，
-        # 全量提示词 + [history_result] 注入 contextNum 句滚动上下文，token 消耗更高）
+        # 全量提示词 + [history_result] 按 restoreContextMode 注入历史，token 消耗更高）
         mode = config.getKey("gpt.chatMode")
         self.chat_mode = mode if mode in ("multi", "single") else "multi"
         if mode not in (None, "multi", "single"):
