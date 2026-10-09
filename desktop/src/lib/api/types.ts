@@ -667,6 +667,8 @@ export type ProblemTypeInfo = {
 
 export type ProblemTypesResponse = {
   problem_types: ProblemTypeInfo[];
+  /** problemAnalyze 各阈值默认值（后端单一真源），供表单在该项未配置时回退显示 */
+  problem_analyze_defaults?: Record<string, number>;
 };
 
 export type PromptTemplateInfo = {

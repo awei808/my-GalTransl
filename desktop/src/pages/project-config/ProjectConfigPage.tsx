@@ -6,7 +6,12 @@ import { runPageAutosave } from "../../lib/usePageAutosave";
 import { registerGlobalSave, unregisterGlobalSave } from "../../lib/globalSave";
 import type { GlobalSaveEntry } from "../../lib/globalSave";
 import { fetchProjectConfig, updateProjectConfig, fetchConfigSchema } from "../../lib/api/project";
-import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes, fetchPipelineStages } from "../../lib/api/general";
+import {
+  fetchTranslationGuidelines,
+  fetchPlugins,
+  fetchProblemTypeCatalog,
+  fetchPipelineStages,
+} from "../../lib/api/general";
 import { fetchBackendProfiles, BACKEND_PROFILES_CHANGE_EVENT } from "../../lib/api/preferences";
 import type { ProblemTypeInfo, PipelineStageInfo } from "../../lib/api/types";
 import { classifyKeys } from "../../lib/settings-taxonomy";
@@ -28,6 +33,12 @@ type ConfigValue =
 interface FieldUI {
   label: string;
   hint?: string;
+}
+
+/** problemAnalyze 阈值取值：配置里是有效数字就用它，否则回退后端下发的默认值（缺省 null 表示未知）。 */
+function pickThreshold(raw: unknown, fallback: number | undefined): number | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  return typeof fallback === "number" && Number.isFinite(fallback) ? fallback : undefined;
 }
 
 /**
@@ -851,10 +862,10 @@ export function ProjectConfigPage() {
   const stageBackendFields = () => buildStageBackendFields(pipelineStages());
   const [problemTypes, setProblemTypes] = createSignal<ProblemTypeInfo[]>([]);
   const [enabledProblemTypes, setEnabledProblemTypes] = createSignal<string[]>([]);
-  const [avgThreshold, setAvgThreshold] = createSignal<number>(17);
-  const [hAvgThreshold, setHAvgThreshold] = createSignal<number>(24);
-  const [attrMaxLen, setAttrMaxLen] = createSignal<number>(10);
-  const [advMaxLen, setAdvMaxLen] = createSignal<number>(12);
+  const [avgThreshold, setAvgThreshold] = createSignal<number | undefined>(undefined);
+  const [hAvgThreshold, setHAvgThreshold] = createSignal<number | undefined>(undefined);
+  const [attrMaxLen, setAttrMaxLen] = createSignal<number | undefined>(undefined);
+  const [advMaxLen, setAdvMaxLen] = createSignal<number | undefined>(undefined);
   const [problemTypesLoading, setProblemTypesLoading] = createSignal(false);
 
   function toggleProblemType(name: string) {
@@ -898,11 +909,13 @@ export function ProjectConfigPage() {
   async function loadProblemTypes(projectId: string, configFileName: string) {
     setProblemTypesLoading(true);
     try {
-      const [types, cfg] = await Promise.all([
-        fetchProblemTypes(),
+      const [catalog, cfg] = await Promise.all([
+        fetchProblemTypeCatalog(),
         fetchProjectConfig(projectId, configFileName),
       ]);
-      setProblemTypes(types);
+      setProblemTypes(catalog.types);
+      // 阈值默认值一律取后端下发（problemAnalyze 默认值与检测侧 getter 同源），前端不硬编码
+      const defaults = catalog.defaults;
       const problemAnalyze =
         ((cfg.config ?? {}) as Record<string, unknown>)["problemAnalyze"] as
           | Record<string, unknown>
@@ -923,21 +936,20 @@ export function ProjectConfigPage() {
       // 同理：「长句丢失换行」→「单句过长」
       list = list.map((x) => (x === "长句丢失换行" ? "单句过长" : x));
       setEnabledProblemTypes(list);
-      const rawThreshold = section["avgSentenceLengthThreshold"];
       setAvgThreshold(
-        typeof rawThreshold === "number" && Number.isFinite(rawThreshold) ? rawThreshold : 17
+        pickThreshold(section["avgSentenceLengthThreshold"], defaults["avgSentenceLengthThreshold"])
       );
-      const rawHThreshold = section["avgSentenceLengthThresholdH"];
       setHAvgThreshold(
-        typeof rawHThreshold === "number" && Number.isFinite(rawHThreshold) ? rawHThreshold : 24
+        pickThreshold(
+          section["avgSentenceLengthThresholdH"],
+          defaults["avgSentenceLengthThresholdH"]
+        )
       );
-      const rawAttr = section["attributiveMaxLength"];
       setAttrMaxLen(
-        typeof rawAttr === "number" && Number.isFinite(rawAttr) ? rawAttr : 10
+        pickThreshold(section["attributiveMaxLength"], defaults["attributiveMaxLength"])
       );
-      const rawAdv = section["adverbialMaxLength"];
       setAdvMaxLen(
-        typeof rawAdv === "number" && Number.isFinite(rawAdv) ? rawAdv : 12
+        pickThreshold(section["adverbialMaxLength"], defaults["adverbialMaxLength"])
       );
     } catch {
       setProblemTypes([]);
@@ -1594,10 +1606,10 @@ export function ProjectConfigPage() {
               min={10}
               max={50}
               step={1}
-              value={avgThreshold()}
+              value={avgThreshold() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
-                setAvgThresholdValue(Number.isFinite(raw) ? raw : 17);
+                if (Number.isFinite(raw)) setAvgThresholdValue(raw);
               }}
             />
           </div>
@@ -1617,10 +1629,10 @@ export function ProjectConfigPage() {
               min={10}
               max={50}
               step={1}
-              value={hAvgThreshold()}
+              value={hAvgThreshold() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
-                setHAvgThresholdValue(Number.isFinite(raw) ? raw : 24);
+                if (Number.isFinite(raw)) setHAvgThresholdValue(raw);
               }}
             />
           </div>
@@ -1640,10 +1652,10 @@ export function ProjectConfigPage() {
               min={1}
               max={30}
               step={1}
-              value={attrMaxLen()}
+              value={attrMaxLen() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
-                setAttrMaxLenValue(Number.isFinite(raw) ? raw : 10);
+                if (Number.isFinite(raw)) setAttrMaxLenValue(raw);
               }}
             />
           </div>
@@ -1663,10 +1675,10 @@ export function ProjectConfigPage() {
               min={1}
               max={50}
               step={1}
-              value={advMaxLen()}
+              value={advMaxLen() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
-                setAdvMaxLenValue(Number.isFinite(raw) ? raw : 12);
+                if (Number.isFinite(raw)) setAdvMaxLenValue(raw);
               }}
             />
           </div>

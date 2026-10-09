@@ -91,6 +91,15 @@ export async function fetchProblemTypes() {
   return response.problem_types;
 }
 
+/** 问题类型目录 + problemAnalyze 阈值默认值（同一请求取回；默认值用于表单回退，避免前端硬编码）。 */
+export async function fetchProblemTypeCatalog() {
+  const response = await apiRequest<ProblemTypesResponse>("/api/problem-types");
+  return {
+    types: response.problem_types,
+    defaults: response.problem_analyze_defaults ?? {},
+  };
+}
+
 // ---- Translation guidelines ----
 
 export async function fetchTranslationGuidelines() {

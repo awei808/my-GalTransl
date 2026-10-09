@@ -767,6 +767,18 @@ class FrequentNewlineTests(_Base):
         names = [t["name"] for t in body["problem_types"]]
         self.assertIn("频繁换行", names)
 
+    def test_problem_types_response_carries_analyze_defaults(self) -> None:
+        # 桌面端表单回退用的 problemAnalyze 阈值默认值随目录一起下发（后端单一真源）
+        _, init = self._init_project("pa_defaults")
+        pid = init["project_id"]
+        status, body = self._req("GET", "/api/problem-types")
+        self.assertEqual(status, 200)
+        defaults = body["problem_analyze_defaults"]
+        self.assertEqual(defaults["avgSentenceLengthThreshold"], 17)
+        self.assertEqual(defaults["avgSentenceLengthThresholdH"], 24)
+        self.assertEqual(defaults["attributiveMaxLength"], 10)
+        self.assertEqual(defaults["adverbialMaxLength"], 12)
+
 
 class ModifierLengthTests(_Base):
     """定语过长（是……的）/ 状语过长（在……中/里、……地）检测。"""

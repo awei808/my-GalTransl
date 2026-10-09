@@ -190,6 +190,19 @@ STAGE_BACKEND_FALLBACKS: dict = {
 }
 
 
+# problemAnalyze 各阈值默认值：检测侧 getter、提示词注入与桌面端表单回退共用同一份真源
+DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD = 17
+DEFAULT_H_SENTENCE_LENGTH_THRESHOLD = 24
+DEFAULT_ATTRIBUTIVE_MAX_LENGTH = 10
+DEFAULT_ADVERBIAL_MAX_LENGTH = 12
+PROBLEM_ANALYZE_DEFAULTS: dict = {
+    "avgSentenceLengthThreshold": DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD,
+    "avgSentenceLengthThresholdH": DEFAULT_H_SENTENCE_LENGTH_THRESHOLD,
+    "attributiveMaxLength": DEFAULT_ATTRIBUTIVE_MAX_LENGTH,
+    "adverbialMaxLength": DEFAULT_ADVERBIAL_MAX_LENGTH,
+}
+
+
 class CProjectConfig:
     def __init__(self, projectPath: str, config_name: str = CONFIG_FILENAME) -> None:
         self.projectConfig = loadConfigFile(path.join(projectPath, config_name))
@@ -387,36 +400,36 @@ class CProjectConfig:
         """单句过长的平均分句长度阈值，默认17，建议15~25。"""
         return _coerce_positive_int(
             self.projectConfig.get("problemAnalyze", {}).get(
-                "avgSentenceLengthThreshold", 17
+                "avgSentenceLengthThreshold", DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD
             ),
-            17,
+            DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD,
         )
 
     def getHSentenceLengthThreshold(self) -> int:
         """单句过长的 H 场景专用平均分句长度阈值，默认24，建议20~30。"""
         return _coerce_positive_int(
             self.projectConfig.get("problemAnalyze", {}).get(
-                "avgSentenceLengthThresholdH", 24
+                "avgSentenceLengthThresholdH", DEFAULT_H_SENTENCE_LENGTH_THRESHOLD
             ),
-            24,
+            DEFAULT_H_SENTENCE_LENGTH_THRESHOLD,
         )
 
     def getAttributiveMaxLength(self) -> int:
         """定语过长检测的定语最大长度，默认10，超过即报「定语过长」。"""
         return _coerce_positive_int(
             self.projectConfig.get("problemAnalyze", {}).get(
-                "attributiveMaxLength", 10
+                "attributiveMaxLength", DEFAULT_ATTRIBUTIVE_MAX_LENGTH
             ),
-            10,
+            DEFAULT_ATTRIBUTIVE_MAX_LENGTH,
         )
 
     def getAdverbialMaxLength(self) -> int:
         """状语过长检测的状语最大长度，默认12，超过即报「状语过长」。"""
         return _coerce_positive_int(
             self.projectConfig.get("problemAnalyze", {}).get(
-                "adverbialMaxLength", 12
+                "adverbialMaxLength", DEFAULT_ADVERBIAL_MAX_LENGTH
             ),
-            12,
+            DEFAULT_ADVERBIAL_MAX_LENGTH,
         )
 
     def refreshProxyEnabledFlag(self) -> None:

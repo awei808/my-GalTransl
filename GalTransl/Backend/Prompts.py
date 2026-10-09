@@ -50,7 +50,7 @@ FORFILEMETA_SYSTEM = "你是 Galgame 剧本分析助手，负责从剧本文件�
 FORBATCHMETA_SYSTEM = "你是 Galgame 剧本结构分析助手，负责按剧情自然边界把剧本划分为翻译批次，并标注各批次的翻译元信息。"
 FORGLOBAL_SYSTEM = "你是 Galgame 全局剧本分析专家，负责输出整体剧情、角色、世界观与行文风格的全局分析报告。"
 FORIMPROVE_SYSTEM = "你是 Galgame 译文质检专家，只对确有明显改进空间的句子给出更好的译文，不为改而改，不因风格偏好随意改动已正确的译文。"
-FORBR_SYSTEM = "你是 Galgame 译文换行位置修复专家，只调整不合规的换行位置，非必要不改动译文字面含义与措辞。"
+FORBR_SYSTEM = "你是 Galgame 译文换行位置修复专家，在不改变句子原意与翻译规范的前提下修复不合规的换行位置，并补正必要的标点与表述。"
 FORPLOTROUTE_SYSTEM = "你是 Galgame 剧情结构分析专家，负责依据文件剧情摘要规划剧情路线图，并输出语法合法的 mermaid 源码。"
 FORPLOTROUTE_SYSTEM_ROUTES_ONLY = "你是 Galgame 剧情结构分析专家，负责按已确定的剧情路线划分，为每条路线汇总剧情摘要。"
 # 首轮翻译：将原文译为 [TargetLang]，保留系统符号/控制码，按 glossary 与 guidelines 输出 dst。
@@ -159,18 +159,15 @@ _IMPROVE_TASK = """<process_requirements>
 FORGAL_JSON_IMPROVE_PROMPT = _build_json_round_prompt(_IMPROVE_TASK, with_info=True, with_batch_metadata=False)
 
 
-# 换行位置异常专用修复后端（ForBRStation）提示词。
-# 仅向 AI 发送带有「换行位置异常」问题标注的译文，要求 AI 按 3 级优先级
-# 修复换行位置（调整换行位置 > 在 <br> 前补中文逗号 > 删除 <br>）。
-# [br_issue_guide] 与 [allowed_break_ends] 由后端运行时基于 Problem.describe_allowed_break_ends()
-# 动态生成，避免与检测侧「允许断行位置」定义不同步。
+# 换行位置异常专用修复后端（ForBRStation）提示词：仅发带该问题标注的译文，允许在守规范、
+# 不改原意、控行长前提下移动/删除 <br>（禁止新增）并补正标点与表述；占位符由后端动态填充。
 _BRSTATION_TASK = """<process_requirements>
 ### 任务
 这是整个文件翻译完成后的【换行位置异常修复】。输入行中部分带 `problem` 字段，内容为「换行位置异常：...」，表示该句译文（dst）的换行落在了不恰当的位置——中文译文的换行只应出现在[allowed_break_ends]之后，而当前译文把换行放在了中文词语或短语中间，导致阅读时词被错误拆断。不带 `problem` 的行仅为上下文参考。
 
 请逐句检查 `dst`（当前译文）的换行位置，把换行调整到合理位置。**只对带 `problem` 且换行位置确有异常的句子输出修复译文；带 `problem` 但经检查实际无需修复（误报）的句子，以及不带 `problem` 的句子，一律不输出。**
 
-### 换行位置异常的修复方法（优先级从高到低，按推荐度递减）
+### 换行位置异常的修复方法
 [br_issue_guide]
 
 ### 输入格式
@@ -188,7 +185,7 @@ _BRSTATION_TASK = """<process_requirements>
 输出配方：<hash_anchor>|{"id": int, (可选)"name": string, "better": string}
 
 ### 质量标准（逐条对照检查）
-1. 准确性：仅调整换行位置，非必要不改动译文字面含义与措辞和增删文字。
+1. 准确性：不改变句子原意、遵守翻译规范，并保证单句长度不超过平均分句长度阈值；可调整或删除 `<br>`、添加标点符号并改动句子表述。
 2. 换行合规：修复后的译文，其 `<br>` 仅落在[allowed_break_ends]之后，不在中文词/短语中间断行。
 3. 符号与结构：原样保留 dst 中的系统符号、控制码、句子结构和除换行外的其它符号。
 

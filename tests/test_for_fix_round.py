@@ -6,7 +6,7 @@
   - 组合筛选：一句话命中白名单任一类型即入轮（多类型组合）
   - 模式差异：_include_src=False（模式 B）时输入 JSONL 不携带 src 字段
   - set_fix_params：参数注入重建提示词、切换模式
-  - _apply_extra_first_round_replacements：仅白名单含换行位置异常时注入 br_issue_guide；动态填充 allowed_break_ends
+  - _apply_extra_first_round_replacements：仅白名单含换行位置异常时注入 br_issue_guide；动态填充 allowed_break_ends 与平均分句长度阈值（取 problemAnalyze 配置值）
   - __init__ 白名单回退：未指定类型时回退 problemAnalyze.problemList 全部类型
   - 模式 B 不注入术语表：_build_batch_gptdict 返回空串
 """
@@ -31,6 +31,7 @@ from GalTransl.Backend.ForFixRound import (
     build_allowed_break_ends_desc,
     build_br_issue_guide,
     build_fix_instructions,
+    build_sentence_len_threshold_desc,
 )
 
 
@@ -116,6 +117,18 @@ def _make_config(tmp_dir: str) -> CProjectConfig:
             "    change_prompt: no\n"
         )
     return CProjectConfig(tmp_dir, "config.yaml")
+
+
+def _make_config_with_thresholds(
+    tmp_dir: str, avg_len: int, avg_len_h: int
+) -> CProjectConfig:
+    """在基础配置上注入 problemAnalyze 两档阈值，验证提示词取的是配置实际值。"""
+    config = _make_config(tmp_dir)
+    config.projectConfig["problemAnalyze"] = {
+        "avgSentenceLengthThreshold": avg_len,
+        "avgSentenceLengthThresholdH": avg_len_h,
+    }
+    return config
 
 
 class BuildInstructionsTests(unittest.TestCase):
@@ -265,11 +278,54 @@ class BrGuideHookTests(unittest.TestCase):
     def test_br_type_injects_guide(self) -> None:
         t = make_translator(problem_types=[CProblemType.换行位置异常])
         out = t._apply_extra_first_round_replacements("x[br_issue_guide]y")
-        self.assertEqual(out, "x" + build_br_issue_guide() + "y")
+        self.assertTrue(out.startswith("x在不改变句子原意"))
+        self.assertIn("自由调整<br>位置或删除<br>", out)
+        self.assertIn("禁止添加<br>", out)
+        # 注入的 guide 内嵌阈值占位符，同一趟装配就应被填成配置值（桩配置回退默认最大值 24）
+        self.assertNotIn("[avg_sentence_len_threshold]", out)
+        self.assertIn("本项目 24 字", out)
 
-    def test_br_guide_mentions_em_dash(self) -> None:
-        # 检测侧白名单含破折号（——）时，修复指引描述必须同步，避免口径漂移
-        self.assertIn("破折号（——）", build_br_issue_guide())
+    def test_br_guide_forbids_adding_br(self) -> None:
+        # 禁令防止模型为压行长而新增换行（新增会新报「多加换行」）
+        self.assertIn("禁止添加<br>", build_br_issue_guide())
+
+    def test_br_guide_uses_free_adjust_wording(self) -> None:
+        # 换行修复口径已由「3 级优先级」改为「守规范前提下自由调整」
+        guide = build_br_issue_guide()
+        self.assertIn("不改变句子原意", guide)
+        self.assertIn("自由调整<br>位置或删除<br>", guide)
+        self.assertNotIn("推荐度", guide)
+        self.assertNotIn("推荐度", build_fix_instructions([CProblemType.换行位置异常]))
+
+    def test_brstation_prompt_uses_free_adjust_wording(self) -> None:
+        # ForBRStation 模板（提示词页展示 + override 默认值）与运行时口径同步
+        self.assertIn("不改变句子原意", FORGAL_JSON_BRSTATION_PROMPT)
+        self.assertNotIn("推荐度", FORGAL_JSON_BRSTATION_PROMPT)
+
+    def test_brstation_prompt_gets_threshold_numbers(self) -> None:
+        # 静态模板经 [br_issue_guide] 注入后同样拿到配置实际阈值，无占位符残留
+        t = make_translator(problem_types=[CProblemType.换行位置异常])
+        out = t._apply_extra_first_round_replacements(FORGAL_JSON_BRSTATION_PROMPT)
+        self.assertIn("本项目 24 字", out)
+        self.assertNotIn("[avg_sentence_len_threshold]", out)
+
+    def test_br_instruction_fills_dynamic_break_desc(self) -> None:
+        # 检测侧白名单含破折号（——）时，换行合规口径必须同步，避免口径漂移
+        t = make_translator(problem_types=[CProblemType.换行位置异常])
+        out = t._apply_extra_first_round_replacements(
+            build_fix_instructions([CProblemType.换行位置异常])
+        )
+        self.assertIn("破折号（——）", out)
+        self.assertNotIn("[allowed_break_ends]", out)
+        self.assertNotIn("[br_issue_guide]", out)
+        self.assertNotIn("[avg_sentence_len_threshold]", out)
+
+    def test_threshold_placeholder_filled_without_br_type(self) -> None:
+        # 白名单不含换行位置异常、但用户模板显式写了阈值占位符时同样被填充
+        t = make_translator(problem_types=[CProblemType.残留日文])
+        out = t._apply_extra_first_round_replacements("x[avg_sentence_len_threshold]y")
+        self.assertTrue(out.startswith("x本项目 24 字"))
+        self.assertTrue(out.endswith("y"))
 
     def test_hook_fills_allowed_break_ends(self) -> None:
         # [allowed_break_ends] 由检测侧描述动态填充（含破折号），不残留占位符
@@ -292,6 +348,49 @@ class BrGuideHookTests(unittest.TestCase):
         t = make_translator(problem_types=[CProblemType.残留日文])
         out = t._apply_extra_first_round_replacements("x[br_issue_guide]y")
         self.assertEqual(out, "xy")
+
+
+class SentenceLenThresholdTests(unittest.TestCase):
+    """平均分句长度阈值取 problemAnalyze 配置实际值（非 H / H 两档较大者），不再照抄字面表述。"""
+
+    def test_guide_carries_threshold_placeholder(self) -> None:
+        # 阈值数值由运行时注入配置值，避免与检测侧配置项硬编码分叉
+        self.assertIn("[avg_sentence_len_threshold]", build_br_issue_guide())
+
+    def test_reads_problem_analyze_values(self) -> None:
+        config = _make_config_with_thresholds(
+            tempfile.mkdtemp(prefix="fixr_"), 15, 20
+        )
+        desc = build_sentence_len_threshold_desc(config)
+        self.assertIn("本项目 20 字", desc)
+
+    def test_takes_max_of_both_tiers(self) -> None:
+        # 非 H 大于 H 时取非 H 值（取的是两档最大值，而非固定用 H 档）
+        config = _make_config_with_thresholds(
+            tempfile.mkdtemp(prefix="fixr_"), 25, 20
+        )
+        self.assertIn("本项目 25 字", build_sentence_len_threshold_desc(config))
+
+    def test_falls_back_to_detection_defaults(self) -> None:
+        config = _make_config(tempfile.mkdtemp(prefix="fixr_"))
+        desc = build_sentence_len_threshold_desc(config)
+        self.assertIn("本项目 24 字", desc)
+
+    def test_config_without_getters_does_not_raise(self) -> None:
+        # 测试桩 / 非常规调用缺这两个 getter 时回退默认值，不中断修复轮
+        desc = build_sentence_len_threshold_desc(SimpleNamespace())
+        self.assertIn("本项目 24 字", desc)
+
+    def test_config_value_reaches_assembled_prompt(self) -> None:
+        config = _make_config_with_thresholds(
+            tempfile.mkdtemp(prefix="fixr_"), 15, 20
+        )
+        t = make_translator(problem_types=[CProblemType.换行位置异常])
+        t.pj_config = config
+        out = t._apply_extra_first_round_replacements(
+            build_fix_instructions([CProblemType.换行位置异常])
+        )
+        self.assertIn("本项目 20 字", out)
 
 
 class LazyFallbackTests(unittest.TestCase):

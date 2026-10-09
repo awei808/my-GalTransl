@@ -15,7 +15,13 @@ from typing import List, Optional
 
 from GalTransl import LOGGER
 from GalTransl.COpenAI import COpenAITokenPool
-from GalTransl.ConfigHelper import CProblemType, CProxyPool, CProjectConfig
+from GalTransl.ConfigHelper import (
+    DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD,
+    DEFAULT_H_SENTENCE_LENGTH_THRESHOLD,
+    CProblemType,
+    CProxyPool,
+    CProjectConfig,
+)
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseImproveRound, BaseProblemFixRound
 from GalTransl.Backend.Prompts import FORFIXROUND_SYSTEM, build_fix_round_prompt
@@ -46,8 +52,9 @@ _FIX_SPECS: dict = {
     ),
     CProblemType.换行位置异常: FixSpec(
         mode=MODE_DST_ONLY,
-        instruction="仅调整 dst 的换行位置，把 <br> 移到合规断句点（[allowed_break_ends]之后），"
-        "优先移动而非删除，删除是最后手段且最多删一个。\n[br_issue_guide]",
+        instruction="修复 dst 的换行位置异常：\n[br_issue_guide]\n"
+        "修复后保留的 <br> 仍须落在合规断句点（[allowed_break_ends]之后），"
+        "否则重检仍会报「换行位置异常」。",
     ),
     CProblemType.丢失换行: FixSpec(
         mode=MODE_SRC_DST,
@@ -151,24 +158,40 @@ def build_allowed_break_ends_desc() -> str:
         return "中文标点、逗号、顿号、破折号（——）、空格/Tab、emoji、颜文字"
 
 
+def build_sentence_len_threshold_desc(config: CProjectConfig) -> str:
+    """平均分句长度阈值描述：取 problemAnalyze 非 H / H 两档中的较大值，供提示词注入。
+
+    修复轮不携带 H 区间信息、无法按句区分场景，取较大值以免对 H 句按非 H 阈值过度拆分。
+    口径与 Problem.find_problems 的「单句过长」判定一致（去换行后总字符数 ÷（换行数+1））。
+    配置对象缺这两个 getter（测试桩 / 非常规调用）或取值抛错时，回退检测侧默认值。
+    """
+    try:
+        avg_len = config.getAvgSentenceLengthThreshold()
+        h_len = config.getHSentenceLengthThreshold()
+    except Exception as e:
+        avg_len = DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD
+        h_len = DEFAULT_H_SENTENCE_LENGTH_THRESHOLD
+        LOGGER.debug(
+            f"平均分句长度阈值读取失败（回退 {avg_len}/{h_len}）：{type(e).__name__}: {e}"
+        )
+    limit = max(avg_len, h_len)
+    return (
+        f"本项目 {limit} 字，"
+        "口径为去换行后译文总字符数（含标点）÷（换行数 + 1）"
+    )
+
+
 @lru_cache(maxsize=1)
 def build_br_issue_guide() -> str:
-    """动态生成「换行位置异常」说明与解决方法（复用检测侧描述，避免口径漂移）。"""
-    allowed_desc = build_allowed_break_ends_desc()
-    return "\n".join(
-        [
-            "1. 【优先，推荐度最高】调整换行符位置：",
-            "   把被拆断在行首/行尾的中文词语或短语合并回上一行，或把换行移动到",
-            f"   合理的中文断句点（仅允许落在以下内容之后：{allowed_desc}）。",
-            "   例：把「她突然站了起<br>来，跑了出去。」改为「她突然站起来，跑了出去。」"
-            "（删除不当换行）。",
-            "2. 【次选，推荐度中等】在 `<br>` 前面增加一个中文逗号「，」：",
-            "   仅当该处确实需要一个停顿、且补逗号后语义与节奏更自然时使用。",
-            "   例：把「好痛<br>啊」改为「好痛，<br>啊」。",
-            "3. 【最后手段，推荐度最低】直接删除 `<br>`：",
-            "   当该处无需任何换行、删除后整句单行阅读更顺畅时使用，且最多删除一个<br>。",
-            "   注意：优先用方法1，方法3会丢失原有的视觉分段意图，仅在确无分段必要时采用。",
-        ]
+    """「换行位置异常」修复指引（ForBRStation 与 ForFixRound 共用同一份文本）。
+
+    阈值处留 [avg_sentence_len_threshold] 占位符，由首轮装配注入 problemAnalyze 配置实际值。
+    """
+    return (
+        "在不改变句子原意、遵守翻译风格规范和保证单句长度不超过平均分句长度阈值"
+        "（[avg_sentence_len_threshold]）的前提下，"
+        "自由调整<br>位置或删除<br>、添加标点符号、更改句子表述并添加标点符号；"
+        "禁止添加<br>。"
     )
 
 
@@ -288,19 +311,26 @@ class ForProblemFixRound(BaseProblemFixRound):
         return self._problem_types or None
 
     def _apply_extra_first_round_replacements(self, prompt_req: str) -> str:
-        """白名单含换行位置异常时注入换行修复专用说明。"""
+        """白名单含换行位置异常时注入换行修复专用说明，并填充检测侧动态口径。"""
         has_br = CProblemType.换行位置异常 in (self._problem_types or [])
         prompt_req = prompt_req.replace(
             "[br_issue_guide]", build_br_issue_guide() if has_br else ""
         )
         # 检测侧「允许断行位置」描述动态注入，避免与 Problem 白名单口径漂移
-        return prompt_req.replace(
+        prompt_req = prompt_req.replace(
             "[allowed_break_ends]", build_allowed_break_ends_desc()
         )
+        # 平均分句长度阈值取 problemAnalyze 配置实际值；占位符仅在白名单含换行位置异常
+        # 或用户模板显式引用时出现，顺带作为该条调试日志的开关
+        if "[avg_sentence_len_threshold]" in prompt_req:
+            len_desc = build_sentence_len_threshold_desc(self.pj_config)
+            LOGGER.debug(f"{self._log_tag} 注入平均分句长度阈值：{len_desc}")
+            prompt_req = prompt_req.replace("[avg_sentence_len_threshold]", len_desc)
+        return prompt_req
 
     @staticmethod
     def _build_br_issue_guide() -> str:
-        """兼容旧 ForBRStation 的换行修复说明生成入口。"""
+        """兼容旧 ForBRStation 的换行修复说明生成入口（返回未填阈值占位符的模板文本）。"""
         return build_br_issue_guide()
 
     @staticmethod

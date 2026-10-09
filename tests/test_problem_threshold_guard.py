@@ -77,5 +77,53 @@ class AdverbialMaxLengthTests(_ThresholdGuardMixin, unittest.TestCase):
         return self.cfg.getAdverbialMaxLength()
 
 
+class ProblemAnalyzeDefaultsSingleSourceTests(unittest.TestCase):
+    """桌面端表单回退用的默认值必须与检测侧 getter 同源（不再前后端各写一份 17/24）。"""
+
+    def test_payload_defaults_match_getters(self) -> None:
+        from GalTransl.server_meta import _problem_analyze_defaults
+
+        defaults = _problem_analyze_defaults()
+        cfg = CProjectConfig.__new__(CProjectConfig)
+        cfg.projectConfig = {}
+        self.assertEqual(
+            defaults["avgSentenceLengthThreshold"], cfg.getAvgSentenceLengthThreshold()
+        )
+        self.assertEqual(
+            defaults["avgSentenceLengthThresholdH"], cfg.getHSentenceLengthThreshold()
+        )
+        self.assertEqual(
+            defaults["attributiveMaxLength"], cfg.getAttributiveMaxLength()
+        )
+        self.assertEqual(defaults["adverbialMaxLength"], cfg.getAdverbialMaxLength())
+
+    def test_payload_returns_copy(self) -> None:
+        from GalTransl.server_meta import _problem_analyze_defaults
+
+        defaults = _problem_analyze_defaults()
+        defaults["avgSentenceLengthThreshold"] = 999
+        self.assertNotEqual(
+            _problem_analyze_defaults()["avgSentenceLengthThreshold"], 999
+        )
+
+    def test_default_config_template_matches_constants(self) -> None:
+        # 默认配置模板会被深合并回填进项目配置（设置界面据此显示），两档阈值必须同源
+        from yaml import safe_load
+
+        from GalTransl.ConfigHelper import PROBLEM_ANALYZE_DEFAULTS
+        from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
+
+        section = safe_load(DEFAULT_PROJECT_CONFIG_YAML)["problemAnalyze"]
+        # 模板里两档阈值必须在场且与常量一致（缺键即失败，不做静默跳过）
+        for key in ("avgSentenceLengthThreshold", "avgSentenceLengthThresholdH"):
+            self.assertIn(key, section)
+            self.assertEqual(section[key], PROBLEM_ANALYZE_DEFAULTS[key], f"{key} 与常量不一致")
+        # 占位符必须已被替换，否则会以 __AVG_LEN__ 之类的字面量写进用户配置
+        self.assertNotIn("__AVG_LEN__", DEFAULT_PROJECT_CONFIG_YAML)
+        self.assertNotIn("__H_LEN__", DEFAULT_PROJECT_CONFIG_YAML)
+        self.assertIsInstance(section["avgSentenceLengthThreshold"], int)
+        self.assertIsInstance(section["avgSentenceLengthThresholdH"], int)
+
+
 if __name__ == "__main__":
     unittest.main()

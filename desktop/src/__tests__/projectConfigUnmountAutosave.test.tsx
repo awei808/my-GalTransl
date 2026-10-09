@@ -25,6 +25,7 @@ vi.mock("../lib/api/general", () => ({
   fetchTranslationGuidelines: vi.fn(),
   fetchPlugins: vi.fn(),
   fetchProblemTypes: vi.fn(),
+  fetchProblemTypeCatalog: vi.fn(),
 }));
 
 import {
@@ -32,7 +33,12 @@ import {
   fetchConfigSchema,
   updateProjectConfig,
 } from "../lib/api/project";
-import { fetchTranslationGuidelines, fetchPlugins, fetchProblemTypes } from "../lib/api/general";
+import {
+  fetchTranslationGuidelines,
+  fetchPlugins,
+  fetchProblemTypes,
+  fetchProblemTypeCatalog,
+} from "../lib/api/general";
 
 const PID = "projA";
 
@@ -55,6 +61,7 @@ beforeEach(() => {
   vi.mocked(fetchTranslationGuidelines).mockResolvedValue([] as never);
   vi.mocked(fetchPlugins).mockResolvedValue([] as never);
   vi.mocked(fetchProblemTypes).mockResolvedValue([] as never);
+  vi.mocked(fetchProblemTypeCatalog).mockResolvedValue({ types: [], defaults: {} } as never);
   vi.mocked(updateProjectConfig).mockResolvedValue({ success: true } as never);
 });
 

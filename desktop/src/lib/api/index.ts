@@ -99,6 +99,7 @@ export {
   submitJob,
   fetchPlugins,
   fetchProblemTypes,
+  fetchProblemTypeCatalog,
   fetchTranslationGuidelines,
   fetchAppSettings,
   updateAppSettings,

@@ -1,3 +1,10 @@
+from GalTransl.ConfigHelper import (
+    DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD,
+    DEFAULT_H_SENTENCE_LENGTH_THRESHOLD,
+)
+
+# 两档阈值以 __AVG_LEN__/__H_LEN__ 占位，末尾统一替换为 ConfigHelper 常量，
+# 避免模板成为默认值的又一份副本（模板会经深合并回填进项目配置）。
 DEFAULT_PROJECT_CONFIG_YAML = """# 翻译后端相关设置
 backendSpecific:
   OpenAI-Compatible: # (ForGal/ForNovel/GenDic)OpenAI API兼容接口通用
@@ -189,8 +196,8 @@ problemAnalyze:
     #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号/破折号等）、空格、Tab、emoji 或颜文字之后
     - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
     #- 词语色彩不一致 # AI词语色彩检查：译文用词与批次区间标注的用词色彩明显不符，由 ForToneCheck 后端标注 tone_issue 后认领，可由 ForToneCheckAgain 二次复核确认/撤销（需先跑过流水线批次划分）
-  avgSentenceLengthThreshold: 17 # 单句过长的分句长度阈值，默认17，建议范围15~25
-  avgSentenceLengthThresholdH: 24 # 单句过长的H场景专用分句长度阈值，默认24，建议范围20~30
+  avgSentenceLengthThreshold: __AVG_LEN__ # 单句过长的分句长度阈值，默认__AVG_LEN__，建议范围15~25
+  avgSentenceLengthThresholdH: __H_LEN__ # 单句过长的H场景专用分句长度阈值，默认__H_LEN__，建议范围20~30
 
 # 字典设置
 dictionary:
@@ -217,3 +224,9 @@ dictionary:
     - 00通用字典_译后.txt
     - (project_dir)项目字典_译后.txt
 """
+
+DEFAULT_PROJECT_CONFIG_YAML = (
+    DEFAULT_PROJECT_CONFIG_YAML.replace(
+        "__AVG_LEN__", str(DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD)
+    ).replace("__H_LEN__", str(DEFAULT_H_SENTENCE_LENGTH_THRESHOLD))
+)

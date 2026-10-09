@@ -70,6 +70,7 @@ from GalTransl.server_meta import (
     _list_guides,
     _list_problem_types,
     _list_translation_guidelines,
+    _problem_analyze_defaults,
     _read_guide,
     _scan_plugins,
 )
@@ -201,7 +202,12 @@ def do_get(handler: Any, registry: JobRegistry) -> None:
         return
 
     if path == "/api/problem-types":
-        handler._send_json({"problem_types": _list_problem_types()})
+        handler._send_json(
+            {
+                "problem_types": _list_problem_types(),
+                "problem_analyze_defaults": _problem_analyze_defaults(),
+            }
+        )
         return
 
     if path == "/api/translation-guidelines":

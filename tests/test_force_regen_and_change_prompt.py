@@ -207,10 +207,12 @@ class ChangePromptFixRoundTests(unittest.TestCase):
     def test_brstation_hook_replaces_br_issue_guide(self) -> None:
         """合并后的 _build_first_round_content 必须经由钩子注入 [br_issue_guide]。"""
         t = self._make("no", "", cls=ForBRStation)
-        self.assertEqual(
-            t._apply_extra_first_round_replacements("x[br_issue_guide]y"),
-            "x" + t._build_br_issue_guide() + "y",
-        )
+        out = t._apply_extra_first_round_replacements("x[br_issue_guide]y")
+        self.assertTrue(out.startswith("x在不改变句子原意"))
+        self.assertTrue(out.endswith("y"))
+        # guide 内嵌的阈值占位符由同一趟钩子填成配置值（桩配置回退检测侧默认最大值）
+        self.assertIn("本项目 24 字", out)
+        self.assertNotIn("[avg_sentence_len_threshold]", out)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import os
 from typing import Any, Tuple
 
 from GalTransl.Utils import resolve_app_dir
+from GalTransl.ConfigHelper import PROBLEM_ANALYZE_DEFAULTS
 from GalTransl.server_config_schema import _read_yaml_file
 
 
@@ -123,6 +124,11 @@ def _list_problem_types() -> list[dict[str, str]]:
     :func:`GalTransl.Problem.find_problems`.
     """
     return list(_PROBLEM_TYPE_CATALOG)
+
+
+def _problem_analyze_defaults() -> dict[str, int]:
+    """problemAnalyze 各阈值默认值（与检测侧 getter 同源），供桌面端表单缺失值时回退。"""
+    return dict(PROBLEM_ANALYZE_DEFAULTS)
 
 
 def _list_translation_guidelines() -> list[str]:
