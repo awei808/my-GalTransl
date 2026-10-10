@@ -175,6 +175,21 @@ class CacheHrangesTests(unittest.TestCase):
         result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_1.json")
         self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 5, "h": 1.0}])
 
+    def test_split_offset_applied_with_config_inc_yaml_only(self) -> None:
+        """真实配置只有 config.inc.yaml 时同样读得到分片参数（此前按 config.yaml 读失败会静默 offset=0）。"""
+        self._input("story.txt.json", [{"message": f"m{i}"} for i in range(20)])
+        self._batch(
+            "story.txt.json",
+            [{"区间": [1, 10], "h": False}, {"区间": [11, 15], "h": True}, {"区间": [16, 20], "h": False}],
+        )
+        self._cache("story.txt.json_1.json")
+        _write_json(
+            os.path.join(self.tmpdir, "config.inc.yaml"),
+            {"common": {"splitFile": "Num", "splitFileNum": 10, "splitFileCrossNum": 0}},
+        )
+        result = _resolve_cache_h_ranges(self.tmpdir, "pass3_cache/story.txt.json_1.json")
+        self.assertEqual(result["h_ranges"], [{"lo": 1, "hi": 5, "h": 1.0}])
+
     def test_original_with_index_no_offset(self) -> None:
         """原文件带 index 时，分片缓存条目 index 即全局行号，偏移为 0。"""
         self._input(

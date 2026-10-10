@@ -102,22 +102,25 @@ def get_most_common_char(input_text: str) -> Tuple[str, int]:
     return most_char, most_char_count
 
 
-def contains_japanese(text: str) -> bool:
+def contains_japanese(text: str) -> str:
     """
-    此函数接受一个字符串作为输入，检查其中是否包含日文字符。
+    此函数接受一个字符串作为输入，提取其中的日文字符。
 
     参数:
     - text: 要检查的字符串。
 
     返回值:
-    - 如果字符串中包含日文字符，则返回 True，否则返回 False。
+    - 命中的日文字符按首次出现顺序去重拼接（空串表示不含日文）。
+      保序而非 set 迭代：问题文本「残留日文：<字符集>」据此落盘，
+      集合顺序受进程哈希随机化影响会让同一条目每次重检都变样。
     """
     # 日文字符范围
     hiragana_range = (0x3040, 0x309F)
     katakana_range = (0x30A0, 0x30FF)
     katakana_range2 = (0xFF66, 0xFF9F)
 
-    jp_chars = set()
+    jp_chars: list = []
+    seen: set = set()
     # 检查字符串中的每个字符
     for char in text:
         # 黑名单
@@ -131,7 +134,9 @@ def contains_japanese(text: str) -> bool:
             or katakana_range[0] <= code_point <= katakana_range[1]
             or katakana_range2[0] <= code_point <= katakana_range2[1]
         ):
-            jp_chars.add(char)
+            if char not in seen:
+                seen.add(char)
+                jp_chars.append(char)
     return "".join(jp_chars)
 
 

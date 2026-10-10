@@ -51,6 +51,7 @@ from GalTransl.server_cache import (
     _build_cache_tree,
     _build_project_output,
     _cache_entry_key,
+    _collect_cache_files,
     _entry_modified,
     _fmt_indices,
     _list_dir_entries,
@@ -70,32 +71,31 @@ def route_project_api_part2(
         problems = 0
         failed = 0
         file_progress = []
-        if os.path.isdir(cache_dir):
-            for name in sorted(os.listdir(cache_dir)):
-                fp = os.path.join(cache_dir, name)
-                if not os.path.isfile(fp) or not fp.endswith(".json"):
-                    continue
-                try:
-                    import orjson
-                    with open(fp, "rb") as f:
-                        entries = orjson.loads(f.read())
-                    f_total = len(entries)
-                    f_translated = sum(1 for e in entries if isinstance(e, dict) and (e.get("pre_dst", "") or e.get("pre_zh", "")))
-                    f_problems = sum(1 for e in entries if isinstance(e, dict) and e.get("problem", ""))
-                    f_failed = sum(1 for e in entries if isinstance(e, dict) and "(Failed)" in str(e.get("problem", "")))
-                    total += f_total
-                    translated += f_translated
-                    problems += f_problems
-                    failed += f_failed
-                    file_progress.append({
-                        "filename": name,
-                        "total": f_total,
-                        "translated": f_translated,
-                        "problems": f_problems,
-                        "failed": f_failed,
-                    })
-                except Exception:
-                    continue
+        # 文件枚举统一走 _collect_cache_files：与问题列表、全量重检、构建输出同口径
+        # （旧实现只看 transl_cache 顶层，pass3 布局下恒为 0）
+        for rel in _collect_cache_files(cache_dir):
+            fp = os.path.join(cache_dir, *rel.split("/"))
+            try:
+                import orjson
+                with open(fp, "rb") as f:
+                    entries = orjson.loads(f.read())
+                f_total = len(entries)
+                f_translated = sum(1 for e in entries if isinstance(e, dict) and (e.get("pre_dst", "") or e.get("pre_zh", "")))
+                f_problems = sum(1 for e in entries if isinstance(e, dict) and e.get("problem", ""))
+                f_failed = sum(1 for e in entries if isinstance(e, dict) and "(Failed)" in str(e.get("problem", "")))
+                total += f_total
+                translated += f_translated
+                problems += f_problems
+                failed += f_failed
+                file_progress.append({
+                    "filename": rel,
+                    "total": f_total,
+                    "translated": f_translated,
+                    "problems": f_problems,
+                    "failed": f_failed,
+                })
+            except Exception:
+                continue
         handler._send_json({
             "project_dir": project_dir,
             "total": total,
@@ -781,13 +781,10 @@ def route_project_api_part2(
                 # 文件名 NFKC 兜底（agent 可能传半角写法）；未命中保持原值
                 _collect(resolve_filename_rel(cache_dir, norm) or norm)
         elif os.path.isdir(cache_dir):
-            # 递归遍历整个 transl_cache（翻译缓存位于 pass3_cache 子目录，顶层 listdir 会漏掉）
-            for root, _dirs, files in os.walk(cache_dir):
-                for name in sorted(files):
-                    if name.endswith(".json"):
-                        fp = os.path.join(root, name)
-                        rel = os.path.relpath(fp, cache_dir).replace("\\", "/")
-                        _collect(rel)
+            # 缓存文件枚举统一走 _collect_cache_files：与全量重检、/progress 同口径
+            # （含 pass3_cache 子目录与顶层旧布局缓存；跳过元数据与示例文件）
+            for rel in _collect_cache_files(cache_dir):
+                _collect(rel)
         handler._send_json({"project_dir": project_dir, "problems": all_problems, "total": len(all_problems)})
         return
 

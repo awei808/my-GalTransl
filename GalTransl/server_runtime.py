@@ -842,6 +842,10 @@ class RuntimeProgressCache:
             seen_files: set[str] = set()
 
             if os.path.isdir(cache_dir):
+                # 缓存文件范围判定与构建输出/校验、问题列表、全量重检同源（延迟导入避免
+                # server_cache 与本模块的顶层循环依赖）
+                from GalTransl.server_cache import _is_translation_cache_rel
+
                 # 递归扫描：缓存文件可能位于 pass3_cache/ 等子目录中（如翻译阶段写
                 # 入 transl_cache/pass3_cache/*.json）。os.scandir 只列直接子项，
                 # 改用 os.walk 以覆盖所有子目录。
@@ -852,14 +856,16 @@ class RuntimeProgressCache:
                             or name.endswith(_CACHE_APPEND_SUFFIX)
                         ):
                             continue
-                        if name.endswith(".meta.json") or name.endswith(".batch.json"):
-                            # pass1/pass2 元数据缓存不是句子条目，不参与翻译进度统计，
-                            # 其存在性由 _get_meta_stage_listing 单独检测（阶段绿标）
-                            continue
 
                         # 用相对于 cache_dir 的路径作为 key，避免不同子目录下同名文件冲突
                         rel_dir = os.path.relpath(dirpath, cache_dir)
                         rel_key = os.path.join(rel_dir, name) if rel_dir != "." else name
+                        # 句子条目缓存剔除元数据/示例/快照（pass1/pass2 元数据的存在性由
+                        # _get_meta_stage_listing 单独检测，不参与句子进度统计）；
+                        # .append.jsonl 增量日志只计入 total/translated 供翻译中的实时显示：
+                        # 其条目按 post_save=False 落盘不带 problem 字段，不参与问题计数。
+                        if name.endswith(".json") and not _is_translation_cache_rel(rel_key):
+                            continue
                         seen_files.add(rel_key)
 
                         full_path = os.path.join(dirpath, name)

@@ -190,6 +190,7 @@ from GalTransl.server_cache import (
     _entry_modified,
     _fmt_indices,
     _collect_cache_files,
+    _is_translation_cache_rel,
     _extract_dialogue_symbols,
     _pick_output_dst,
     _build_project_output,

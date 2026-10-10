@@ -11,6 +11,7 @@ from GalTransl.ConfigHelper import CProjectConfig, CProxyPool
 from GalTransl.Frontend.LLMTranslate import doLLMTranslate
 from GalTransl.i18n import get_text,GT_LANG
 from GalTransl.Utils import resolve_app_dir
+from GalTransl.plugin_loader import get_plugin_info_path
 from GalTransl.UtilityEngines import is_utility_engine, run_utility_engine
 from GalTransl.CSplitter import (
     DictionaryCountSplitter,
@@ -142,11 +143,8 @@ async def run_galtransl(cfg: CProjectConfig, translator: str, stop_event: thread
     cfg.stop_event = stop_event
 
     def get_pluginInfo_path(name: str) -> str:
-        if "(project_dir)" in name:
-            name = name.replace("(project_dir)", "")
-            return os.path.join(PROJECT_DIR, "plugins", name, f"{name}.yaml")
-        else:
-            return os.path.join(resolve_app_dir(), "plugins", name, f"{name}.yaml")
+        # 与 plugin_loader 共用同一路径解析（服务端重建路径也按此定位插件清单）
+        return get_plugin_info_path(PROJECT_DIR, name)
 
     def print_plugin_list(plugin_manager: PluginManager) -> None:
         LOGGER.info("插件列表:")

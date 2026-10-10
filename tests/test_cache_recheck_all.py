@@ -319,5 +319,85 @@ class RecheckJobSubmitGuardTests(_Base):
         self.assertEqual(status, 400)
 
 
+class CacheScopeEndpointTests(_Base):
+    """范围口径一致性：/problems、/progress 与全量重检都覆盖全部翻译缓存文件。
+
+    顶层旧布局缓存（transl_cache/*.json）纳入，pass1/pass2/pass0 元数据与
+    `_` 前缀示例文件排除。
+    """
+
+    def _setup_project(self, name: str):
+        _, init = self._init_project(name)
+        pid = init["project_id"]
+        pdir = init["project_dir"]
+        legacy_rel = "legacy.txt.json"
+        sample_rel = "pass3_cache/_示例缓存文件.json"
+        self._write_cache(
+            pdir,
+            legacy_rel,
+            [
+                {
+                    "index": 1,
+                    "name": "",
+                    "pre_src": "テスト",
+                    "post_src": "テスト",
+                    "pre_dst": "测试",
+                    "problem": "残留日文：テスト",
+                }
+            ],
+        )
+        self._write_cache(
+            pdir,
+            sample_rel,
+            [
+                {
+                    "index": 1,
+                    "name": "",
+                    "pre_src": "サンプル",
+                    "post_src": "サンプル",
+                    "pre_dst": "示例",
+                    "problem": "残留日文：サンプル",
+                }
+            ],
+        )
+        return pid, pdir, legacy_rel, sample_rel
+
+    def test_problems_endpoint_covers_all_cache_files(self) -> None:
+        pid, _pdir, legacy_rel, sample_rel = self._setup_project("scope_problems")
+        status, body = self._req("GET", f"/api/projects/{pid}/problems")
+        self.assertEqual(status, 200)
+        filenames = {p["filename"] for p in body["problems"]}
+        self.assertIn(legacy_rel, filenames)
+        self.assertNotIn(sample_rel, filenames)
+
+    def test_progress_endpoint_covers_all_cache_files(self) -> None:
+        pid, _pdir, legacy_rel, sample_rel = self._setup_project("scope_progress")
+        status, body = self._req("GET", f"/api/projects/{pid}/progress")
+        self.assertEqual(status, 200)
+        filenames = {f["filename"] for f in body["files"]}
+        self.assertIn(legacy_rel, filenames)
+        self.assertNotIn(sample_rel, filenames)
+        self.assertEqual(body["problems"], 1)
+
+    def test_recheck_all_covers_top_level_and_skips_sample(self) -> None:
+        pid, pdir, legacy_rel, sample_rel = self._setup_project("scope_recheck")
+        sample_path = os.path.join(pdir, "transl_cache", sample_rel)
+        with open(sample_path, "rb") as f:
+            sample_before = f.read()
+
+        self._start_recheck(pid)
+        final = self._wait_recheck_done(pid)
+        self.assertTrue(final["success"])
+        self.assertEqual(final["rechecked"], 1)
+
+        with open(os.path.join(pdir, "transl_cache", legacy_rel), encoding="utf-8") as f:
+            legacy_saved = json.load(f)
+        # 译文无残留日文：旧的伪造 problem 被清掉，说明该文件确实被重检
+        self.assertNotIn("problem", legacy_saved[0])
+
+        with open(sample_path, "rb") as f:
+            self.assertEqual(f.read(), sample_before)
+
+
 if __name__ == "__main__":
     unittest.main()

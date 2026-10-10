@@ -114,6 +114,19 @@ class _Base(unittest.TestCase):
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, allow_unicode=True)
 
+    def _disable_text_plugins(self, project_dir: str) -> None:
+        """关闭项目文本插件：这些用例验证检测逻辑自身，避免插件先改写待检文本。
+
+        默认项目模板启用 text_common_normalfix（会删行尾句号、压掉多余换行、去行首换行符），
+        重建路径装载插件后会先规整译文，检测对象随之变化；插件-检测的联动另有用例覆盖。
+        """
+        cfg_path = os.path.join(project_dir, "config.yaml")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg.setdefault("plugin", {})["textPlugins"] = []
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True)
+
 
 class CacheCheckTests(_Base):
     def test_cache_check_detects_residual_japanese(self) -> None:
@@ -269,6 +282,8 @@ class NewlineDetectionTests(_Base):
         # 原文 CRLF、译文 LF 且换行更多：应报"多加换行"（修复前因换行符类型不同而漏报）
         _, init = self._init_project("nl_extra")
         pid = init["project_id"]
+        # 关闭文本插件：常规修复插件会按原文换行数压掉多余的换行（插件联动见 test_recheck_plugin_consistency）
+        self._disable_text_plugins(init["project_dir"])
         entries = [
             {
                 "index": 1,
@@ -556,6 +571,8 @@ class NewlinePositionTests(_Base):
         _, init = self._init_project("np_skip")
         pid = init["project_id"]
         self._set_problem_config(init["project_dir"])
+        # 关闭文本插件：常规修复插件会把行首换行符摘除并记入 left_symbol，行号随之整体前移
+        self._disable_text_plugins(init["project_dir"])
         problem = self._check(pid, "\\n句号。\\n\\n汉字后换行\\n末尾")
         self.assertIn("换行位置异常：第4行", problem)
 
@@ -944,6 +961,34 @@ class LongSentenceLegacyAliasTests(LongSentenceNewlineTests):
         )
         self.assertEqual(status, 200)
         self.assertIn("单句过长", body["results"][0]["problem"])
+
+
+class ResidualJapaneseCharsTests(unittest.TestCase):
+    """contains_japanese 输出的字符顺序必须稳定（问题文本按首次出现顺序落盘）。"""
+
+    def test_chars_returned_in_first_appearance_order(self) -> None:
+        from GalTransl.Utils import contains_japanese
+
+        self.assertEqual(contains_japanese("%p-1;%fＭＳ ゴシック;――"), "ゴシック")
+        self.assertEqual(contains_japanese("いくら与鲑鱼子同音"), "いくら")
+        # 仅假名计入（汉字不在日文假名区间内）
+        self.assertEqual(contains_japanese("吾輩は猫である"), "はである")
+
+    def test_repeated_calls_are_stable(self) -> None:
+        from GalTransl.Utils import contains_japanese
+
+        text = "ゴックシのッシゴク"
+        self.assertEqual({contains_japanese(text) for _ in range(50)}, {"ゴックシの"})
+
+    def test_no_japanese_returns_empty(self) -> None:
+        from GalTransl.Utils import contains_japanese
+
+        self.assertEqual(contains_japanese("测试文本 abc 123"), "")
+
+    def test_dash_blacklist_still_excluded(self) -> None:
+        from GalTransl.Utils import contains_japanese
+
+        self.assertEqual(contains_japanese("ゴー・シ"), "ゴシ")
 
 
 if __name__ == "__main__":

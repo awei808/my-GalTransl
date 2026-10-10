@@ -32,7 +32,6 @@ from GalTransl import (
     INPUT_FOLDERNAME,
     OUTPUT_FOLDERNAME,
     PASS2_CACHE_DIR,
-    PASS3_CACHE_DIR,
 )
 from GalTransl.Cache import CACHE_TEMP_SUFFIX
 from GalTransl.ConfigHelper import CProjectConfig
@@ -68,16 +67,25 @@ def _open_in_file_manager(path: str, is_file: bool) -> None:
         subprocess.run(["xdg-open", parent], check=False, timeout=15)
 
 
-def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, Any, Any, list, list, list]:
-    """加载问题重建所需的项目配置与字典；任一失败时返回 (None, None, None, None, [], [], [])。
+def _load_rebuild_deps(
+    project_dir: str,
+    config_name: str,
+    *,
+    text_plugins: Optional[list] = None,
+) -> Tuple[Any, Any, Any, Any, list, list, list]:
+    """加载问题重建所需的项目配置、字典与文本插件；任一失败时返回 (None, None, None, None, [], [], [])。
 
     Returns 7 元组：proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words。
+    - tPlugins：项目声明的文本插件（before/after_src、before/after_dst 钩子），
+      经 plugin_loader 装载并 gtp_init；装载失败退化为空列表（检测仍照跑）。
     - h_check_words：h 场景禁用词（forbiddenDictH，回退 hCheckDict）。
     - forbidden_words：非 h 场景禁用词（forbiddenDictNonH）。
 
     Args:
         project_dir: 项目绝对路径。
         config_name: 请求中的配置文件名，不存在时回退 config.inc.yaml / config.yaml。
+        text_plugins: 调用方已持有的插件列表（如任务停止后重检复用 cfg.tPlugins）；
+            传 None 时由 plugin_loader 自行按配置装载。
 
     Returns:
         (proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words)
@@ -90,6 +98,7 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
         from GalTransl.ConfigHelper import CProjectConfig, initDictList
         from GalTransl.Dictionary import CNormalDic, CGptDict
         from GalTransl.Problem import load_h_check_words
+        from GalTransl.plugin_loader import load_text_plugins
         # Resolve the real config file: real projects use config.inc.yaml,
         # but the request may default to config.yaml.
         if not os.path.isfile(os.path.join(project_dir, config_name)):
@@ -119,11 +128,14 @@ def _load_rebuild_deps(project_dir: str, config_name: str) -> Tuple[Any, Any, An
             pre_dic.sort_dic()
             post_dic.sort_dic()
             gpt_dic.sort_dic()
-        try:
-            tPlugins = proj_config.tPlugins
-        except Exception:
-            tPlugins = []
+        # 文本插件决定 post_dst 的最终形态（流水线在插件钩子之后才跑 find_problems），
+        # 缺插件会让重检/构建输出跑在未规整文本上，必须与流水线同口径
+        if text_plugins is not None:
+            tPlugins = list(text_plugins)
+        else:
+            tPlugins = load_text_plugins(project_dir, proj_config)
     except Exception:
+        LOGGER.warning("[cache] 重建依赖加载失败，本次按无字典/无插件执行检测", exc_info=True)
         proj_config = pre_dic = post_dic = gpt_dic = None
         tPlugins = []
         h_check_words = []
@@ -271,15 +283,17 @@ def recheck_pass3_cache_files(
     target_files: list[str] | None = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> int:
-    """对 pass3_cache 下的缓存 json 重新运行问题检测并写回 problem。
+    """对项目全部翻译缓存 json 重新运行问题检测并写回 problem / post_dst_preview。
 
     停止翻译合并增量缓存后调用，等效于对每个文件执行一次前端"保存并重检问题"，
     使新合并入的译文立即带上最新的 problem / post_dst_preview 标注。
+    函数名中的 pass3 为历史命名：范围为 _collect_cache_files 认定的全部翻译缓存文件
+    （pass3_cache 顶层 + 顶层旧布局缓存），与构建输出/校验、问题列表口径一致。
 
     Args:
         cache_dir: 缓存根目录（projectDir/transl_cache）。
         target_files: 待重检的主缓存 json 绝对路径列表（通常为 compact 合并的
-            结果）；为 None 时全量扫描 pass3_cache 下的 *.json。
+            结果）；为 None 时全量扫描 _collect_cache_files 认定的翻译缓存文件。
         progress_cb: 每完成一个文件的进度回调 (done, total)；回调异常只记 debug
             不中断重检。
         其余参数同 _run_problem_detection。
@@ -289,15 +303,10 @@ def recheck_pass3_cache_files(
     """
     import orjson
 
-    pass3_dir = os.path.join(cache_dir, PASS3_CACHE_DIR)
-    if not os.path.isdir(pass3_dir):
-        return 0
-
     if target_files is None:
         targets = [
-            os.path.join(pass3_dir, n)
-            for n in sorted(os.listdir(pass3_dir))
-            if n.endswith(".json")
+            os.path.join(cache_dir, *rel.split("/"))
+            for rel in _collect_cache_files(cache_dir)
         ]
     else:
         targets = [p for p in target_files if p.endswith(".json") and os.path.isfile(p)]
@@ -455,7 +464,10 @@ def _recheck_all_worker(project_dir: str, config_name: str) -> None:
                     state["checked"] = done
                     state["total"] = total
 
-        LOGGER.info(f"[cache] 全缓存重检开始（后台）：{project_dir}")
+        LOGGER.info(
+            f"[cache] 全缓存重检开始（后台）：{project_dir}"
+            f"（范围：全部翻译缓存文件，含顶层旧布局；跳过元数据与示例文件）"
+        )
         rechecked = recheck_pass3_cache_files(cache_dir, *deps, progress_cb=_on_progress)
         with _RECHECK_LOCK:
             state = _RECHECK_STATES.get(project_dir)
@@ -626,36 +638,53 @@ def _snapshot_locked(cache_dir: str, rel_norm: str, source: str) -> str:
     return dest
 
 
-def _collect_cache_files(cache_dir: str) -> list[str]:
-    """递归收集可构建的翻译缓存文件（相对 cache_dir 的 '/' 路径），跳过元数据。
+# 非翻译缓存的元数据目录前缀：路线分析分片 / GenDic 断点分片 / 阶段 8 断点标记
+_METADATA_REL_PREFIXES = (
+    "pass0_cache/route_analysis/",
+    "gendic_cache/",
+    "aftertrans_cache/",
+)
+# 固定命名的 pass0 元数据文件（全局分析 / 剧情路线图），不作为翻译缓存处理
+_METADATA_FILENAMES = ("GlobalPrompt.json", "PlotRouteMap.json")
 
-    翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json）；pass0 GlobalPrompt/
-    PlotRouteMap/route_analysis 分片、gendic_cache 断点分片、aftertrans_cache
-    阶段8断点标记、pass1 *.meta.json、pass2 *.batch.json 为元数据，不参与构建。
+
+def _is_translation_cache_rel(rel: str) -> bool:
+    """判断 cache_dir 下的相对路径（'/' 分隔）是否为翻译缓存文件。
+
+    构建输出/校验、问题列表、全量重检、进度统计共用此判定，避免各写一份造成范围漂移。
+    翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json，兼容旧布局）；以下一律排除：
+    pass0 路线分析分片、gendic 断点分片、aftertrans 阶段 8 断点标记、pass1 *.meta.json、
+    pass2 *.batch.json、固定命名的 pass0 元数据文件、`_` 前缀示例/临时文件，
+    以及任意点开头路径段（如 .snapshots 快照备份）。
+    """
+    norm = str(rel or "").replace("\\", "/").strip("/")
+    if not norm or not norm.endswith(".json"):
+        return False
+    segments = norm.split("/")
+    if any(seg.startswith(".") for seg in segments):
+        return False
+    name = segments[-1]
+    if name.endswith(".meta.json") or name.endswith(".batch.json"):
+        return False
+    if name in _METADATA_FILENAMES or name.startswith("_"):
+        return False
+    return not norm.startswith(_METADATA_REL_PREFIXES)
+
+
+def _collect_cache_files(cache_dir: str) -> list[str]:
+    """递归收集翻译缓存文件（相对 cache_dir 的 '/' 路径，已排序）。
+
+    判定见 _is_translation_cache_rel；非缓存文件（元数据/示例/快照）不参与
+    构建输出、校验、问题列表与全量重检。
     """
     files: list[str] = []
     for root, dirs, names in os.walk(cache_dir):
-        # 点开头目录（如 .snapshots 快照备份）永不参与构建/搜索
+        # 点开头目录（如 .snapshots 快照备份）整枝跳过，不必逐文件判定
         dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for name in sorted(names):
-            if not name.endswith(".json"):
-                continue
-            # 跳过元数据与示例/临时文件（init 会生成 _示例缓存文件.json）
-            if name.endswith(".meta.json") or name.endswith(".batch.json"):
-                continue
-            if name in ("GlobalPrompt.json", "PlotRouteMap.json") or name.startswith("_"):
-                continue
+        for name in names:
             rel = os.path.relpath(os.path.join(root, name), cache_dir).replace("\\", "/")
-            # 路线分析分片为元数据，不参与构建输出/校验（否则按翻译缓存解析必报错）
-            if rel.startswith("pass0_cache/route_analysis/"):
-                continue
-            # GenDic 断点续跑分片同理（dict 形状，按翻译缓存解析必报错）
-            if rel.startswith("gendic_cache/"):
-                continue
-            # 阶段 8 断点标记同理（dict 形状，且 basename 与输入文件同名必误命中）
-            if rel.startswith("aftertrans_cache/"):
-                continue
-            files.append(rel)
+            if _is_translation_cache_rel(rel):
+                files.append(rel)
     return sorted(files)
 
 
@@ -689,6 +718,10 @@ def _pick_output_dst(ce: dict) -> tuple[str, bool]:
     pre_dst 也可能是 CRLF，归一后两侧才可比。刻意**不**折叠 ``<br>``/字面转义：用户把
     真实换行改成字面 ``<br>`` 文本时属于真实编辑，必须仍判过期（否则过期 preview 会
     覆盖用户改动）。
+
+    注意：本函数只在依赖加载失败的降级路径使用（此时插件与字典不可用、preview 是唯一
+    带后处理信息的来源）；正常路径走 _rebuild_trans_list_with_postprocess，preview 经插件
+    改写后与 pre_dst 本就不同，不能用这里的"一致才新鲜"判据去校验。
     """
     if ce.get("proofread_dst"):
         return ce["proofread_dst"], True
@@ -923,11 +956,15 @@ def _resolve_cache_row_offset(
         LOGGER.debug(f"[h-ranges] {base}: 原文件带显式 index，offset=0")
         return 0
     # 按当前配置重建切分，取 chunk_index 对应分片的起始偏移（含交叉句）
+    # 配置文件名用项目真实名（config.inc.yaml 优先），否则读不到分片参数会静默退化为 0
+    config_name = _detect_config_file(project_dir)
     try:
-        cfg = CProjectConfig(project_dir)
+        cfg = CProjectConfig(project_dir, config_name)
         common = cfg.getCommonConfigSection()
-    except Exception:
-        LOGGER.debug(f"[h-ranges] {base}: 配置读取失败，offset=0")
+    except Exception as exc:
+        LOGGER.warning(
+            f"[h-ranges] {base}: 配置读取失败（{config_name}），offset=0：{exc}"
+        )
         return 0
     val = common.get("splitFile", "no")
     if val not in ("Num", "Equal"):

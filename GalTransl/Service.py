@@ -458,7 +458,10 @@ async def run_job_async(
                 from GalTransl.server import _load_rebuild_deps, recheck_pass3_cache_files
 
                 proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_check_words, forbidden_words = _load_rebuild_deps(
-                    spec.project_dir, spec.config_file_name
+                    spec.project_dir,
+                    spec.config_file_name,
+                    # 复用本任务已装载的文本插件，避免重复装载且与本次翻译口径完全一致
+                    text_plugins=cfg.tPlugins or None,
                 )
                 if proj_config is not None and merged_files:
                     rechecked = recheck_pass3_cache_files(

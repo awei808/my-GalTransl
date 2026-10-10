@@ -771,7 +771,7 @@ function ProblemList() {
     const result = await confirm.show({
       title: "全文件重检问题",
       message:
-        "将对全部缓存译文文件重新运行问题检测并写回结果。\n重检期间请勿编辑或保存任何文件，以免产生冲突。",
+        "将对全部翻译缓存文件（transl_cache 下，含 pass3_cache 与顶层旧布局）重新运行问题检测并写回结果；pass1/pass2 元数据与示例文件不在范围内。\n重检期间请勿编辑或保存任何文件，以免产生冲突。",
       confirmText: "开始重检",
     });
     if (!result.confirmed) return;

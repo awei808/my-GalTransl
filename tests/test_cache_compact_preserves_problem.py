@@ -240,6 +240,8 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 non_interactive=False,
                 runtime_project_dir="",
                 print_translation_log_in_terminal=True,
+                # 与 CProjectConfig 同形：停止后重检会复用任务已装载的文本插件
+                tPlugins=[],
                 getCommonConfigSection=lambda: {"loggingLevel": "info"},
                 getKey=lambda key, default=None: 1 if key == "workersPerProject" else default,
                 get_workers_per_project=lambda: 1,
@@ -328,6 +330,8 @@ class CompactPreservesProblemTests(unittest.IsolatedAsyncioTestCase):
                 non_interactive=False,
                 runtime_project_dir="",
                 print_translation_log_in_terminal=True,
+                # 与 CProjectConfig 同形：停止后重检会复用任务已装载的文本插件
+                tPlugins=[],
                 getCommonConfigSection=lambda: {"loggingLevel": "info"},
                 getKey=lambda key, default=None: 1 if key == "workersPerProject" else default,
                 get_workers_per_project=lambda: 1,

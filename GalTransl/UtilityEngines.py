@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from GalTransl import LOGGER, INPUT_FOLDERNAME, PASS3_CACHE_DIR
+from GalTransl import LOGGER, INPUT_FOLDERNAME
 
 # 工具引擎名集合：Runner 据此短路分派，server /api/translators 据此隐藏
 UTILITY_ENGINES = ("recheck", "check-batch-size", "build-output")
@@ -33,7 +33,7 @@ def run_utility_engine(cfg: Any, translator: str) -> None:
 
 
 def _run_recheck(cfg: Any) -> None:
-    """全部重检：对 pass3_cache 全部缓存重跑问题检测并写回 problem / post_dst_preview。"""
+    """全部重检：对全部翻译缓存文件重跑问题检测并写回 problem / post_dst_preview。"""
     from GalTransl.server import _load_rebuild_deps, recheck_pass3_cache_files
 
     proj_config, pre_dic, post_dic, gpt_dic, tPlugins, h_words, forbidden_words = _load_rebuild_deps(
@@ -56,25 +56,22 @@ def _run_recheck(cfg: Any) -> None:
 
 
 def _log_problem_summary(cache_dir: str) -> None:
-    """重检后按文件输出剩余问题计数，便于后续校对定位。"""
+    """重检后按文件输出剩余问题计数，便于后续校对定位（范围同全量重检）。"""
     import orjson
 
-    pass3_dir = os.path.join(cache_dir, PASS3_CACHE_DIR)
-    if not os.path.isdir(pass3_dir):
-        return
+    from GalTransl.server_cache import _collect_cache_files
+
     total = 0
-    for name in sorted(os.listdir(pass3_dir)):
-        if not name.endswith(".json"):
-            continue
+    for rel in _collect_cache_files(cache_dir):
         try:
-            with open(os.path.join(pass3_dir, name), "rb") as f:
+            with open(os.path.join(cache_dir, *rel.split("/")), "rb") as f:
                 entries = orjson.loads(f.read())
         except Exception as exc:
-            LOGGER.warning(f"[recheck]统计问题读取缓存失败：{name}: {exc}")
+            LOGGER.warning(f"[recheck]统计问题读取缓存失败：{rel}: {exc}")
             continue
         count = sum(1 for e in entries if isinstance(e, dict) and e.get("problem"))
         if count:
-            LOGGER.info(f"[recheck]{name}: 剩余 {count} 条问题")
+            LOGGER.info(f"[recheck]{rel}: 剩余 {count} 条问题")
         total += count
     LOGGER.info(f"[recheck]剩余问题条目合计：{total}")
 
