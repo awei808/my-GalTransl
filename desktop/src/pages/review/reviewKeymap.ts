@@ -100,6 +100,22 @@ export function decideCrossFileRestore(args: {
   return { kind: "apply" };
 }
 
+/**
+ * 划分 dirtyFiles 中的当前文件脏标志与陈旧残留键（切页/切视图守卫收尾用）。
+ *
+ * 校对页的真实在内存编辑只存在于当前加载文件（entries）或当前元数据（metaEntry），
+ * 其余脏键均为历史切换流程残留的陈旧标志，收尾时一并清理不会丢数据；
+ * 若不清，残留键会让 navigateTo 切视图守卫反复拦截，形成弹窗死循环。
+ * currentKey 为空串（无已加载文件）时视为不脏。
+ */
+export function partitionDirtyKeys(
+  dirtyFiles: string[],
+  currentKey: string,
+): { currentDirty: boolean; staleKeys: string[] } {
+  const currentDirty = currentKey !== "" && dirtyFiles.includes(currentKey);
+  return { currentDirty, staleKeys: dirtyFiles.filter((f) => f !== currentKey) };
+}
+
 /* 把换行控制符渲染为可见明文（\r\n / \n / \r），避免被 pre-wrap 直接解释成真实换行。
    翻译模式三处统一使用：原文、展开只读字段、译文编辑框（textarea）。 */
 // Ctrl+S 保存不在页内分派：统一走全局保存注册表（lib/globalSave.ts）

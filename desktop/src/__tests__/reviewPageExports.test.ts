@@ -21,6 +21,7 @@ const RUNTIME_EXPORTS = [
   "decideCrossFileRestore",
   "resolveKeyAction",
   "computeHRangeBoundaries",
+  "partitionDirtyKeys",
 ];
 
 /** 类型导出（编译期存在，运行时不可枚举，用 tsc 校验；此处仅记录清单）。 */

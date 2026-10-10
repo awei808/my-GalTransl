@@ -43,6 +43,7 @@ import {
   decideCrossFileRestore,
   resolveKeyAction,
   computeHRangeBoundaries,
+  partitionDirtyKeys,
 } from "./reviewKeymap";
 import type { PendingRestore } from "./reviewKeymap";
 
@@ -57,6 +58,7 @@ export {
   decideCrossFileRestore,
   resolveKeyAction,
   computeHRangeBoundaries,
+  partitionDirtyKeys,
 } from "./reviewKeymap";
 export type {
   PendingRestore,
@@ -328,26 +330,36 @@ export function ReviewPage() {
           setAppState("pendingView", null); // 取消：停留在当前页，dirty 保留
           return;
         }
+        // 当前文件键：translate 用 loadedFile（entries 实际所属），metadata 用完整路径（与 markDirty 同键）。
+        // dirtyFiles 中除当前文件外的键均为历史切换流程残留的陈旧标志（其编辑已随切换丢弃），
+        // 不清理会让 navigateTo 再次拦截，形成「保存/不保存后重复弹窗」死循环
+        const currentKey = reviewMode() === "translate" ? loadedFile : metaLoadedFullPath;
+        const { currentDirty, staleKeys } = partitionDirtyKeys(appState.dirtyFiles, currentKey);
         if (res.confirmed) {
-          // 保存：translate 走 saveCurrentFile（含 problem 合并），metadata 走 saveMeta
-          const ok =
-            reviewMode() === "translate" ? await saveCurrentFile() : await saveMeta();
-          if (!ok) {
-            // 保存失败：停留（dirty 保留，用户可重试），避免切换后未保存修改丢失
-            setAppState("pendingView", null);
-            return;
+          if (currentDirty) {
+            // 保存：translate 走 saveCurrentFile（含 problem 合并），metadata 走 saveMeta。
+            // 当前文件本就不脏时跳过保存请求，避免发出注定失败的请求（如翻译运行中的 409）
+            const ok =
+              reviewMode() === "translate" ? await saveCurrentFile() : await saveMeta();
+            if (!ok) {
+              // 保存失败：停留（dirty 保留，用户可重试），避免切换后未保存修改丢失
+              setAppState("pendingView", null);
+              return;
+            }
+            const name = loadedFile || metaLoadedFullPath.split(/[/\\]/).pop() || "";
+            if (name) toast.success(`已保存 ${name}`);
           }
-          const name = loadedFile || metaLoadedFullPath.split(/[/\\]/).pop() || "";
-          if (name) toast.success(`已保存 ${name}`);
+          // 清理陈旧残留键，确保下方 navigateTo 不会再次拦截
+          for (const f of staleKeys) markClean(f);
         } else {
           // 不保存：丢弃 → 清 dirty（全局 + 组件内状态），
           // 防止卸载时 onCleanup 自动保存把用户明确选择丢弃的编辑重新写盘。
-          // 按模式区分：metadata 清完整路径（与 markDirty 同键），译文重置基线使卸载快照判 clean
+          // dirtyFiles 全量清理（含陈旧残留键）；按模式重置：metadata 清完整路径对应的
+          // 编辑标志，译文重置基线使卸载快照判 clean
+          for (const f of appState.dirtyFiles.slice()) markClean(f);
           if (metaLoadedFullPath) {
-            markClean(metaLoadedFullPath);
             metaDirty = false;
           } else if (loadedFile) {
-            markClean(loadedFile);
             baselineKey = snapshotKey(entries());
           }
         }
@@ -737,7 +749,13 @@ export function ReviewPage() {
             if (metaLoadedFullPath) markClean(metaLoadedFullPath);
           } catch (e) {
             toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
-            return; // 失败中止切换，留在 metadata
+            // 保存失败一律中止切换并还原目标（与 leaveConfirm 一致）：不还原会内容/高亮错位，
+            // 且 cacheVersion 轮询反复重试保存；改点的点击被覆盖，由用户重新选择
+            setAppState("activeFilePath", metaLoadedFullPath);
+            if (import.meta.env?.DEV) {
+              console.debug(`[ReviewPage] 元数据保存失败，已中止切换并还原目标：${metaLoadedFullPath}`);
+            }
+            return;
           }
         } else {
           metaDirty = false; // 不保存 → 丢弃
@@ -747,6 +765,9 @@ export function ReviewPage() {
       while (true) {
         const target = appState.activeFilePath;
         if (!target || loadedFile === target) break;
+        // 确认/加载期间改点可能使重读的 target 变为元数据路径：其加载由 metadata effect
+        // 独立接手，误入 loadFile 会以字典形状 entries 触发快照异常并形成无人值守死循环
+        if (modeInfoOf(target).mode !== "translate") break;
         const prevFile = loadedFile;
         if (prevFile && appState.dirtyFiles.includes(prevFile)) {
           const res = await confirm.show({
@@ -777,8 +798,14 @@ export function ReviewPage() {
               await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
               markClean(prevFile);
             } catch (e) {
-              // 保存失败不阻塞切换（dirty 保留，用户可重试）
+              // 保存失败一律中止切换并还原目标（与 pendingView/leaveConfirm 守卫语义一致）：
+              // 失败仍切换会留下脏残留，使切视图守卫反复拦截形成弹窗死循环；改点的点击被覆盖
               toast.error(`保存 ${prevFile} 失败：${getErrorMessage(e)}`);
+              setAppState("activeFilePath", prevFile);
+              if (import.meta.env?.DEV) {
+                console.debug(`[ReviewPage] 保存失败，已中止切换并还原目标：${prevFile}`);
+              }
+              break;
             }
           } else {
             // 选择“不保存”：丢弃 → 清脏，避免切回时误弹确认
@@ -799,6 +826,7 @@ export function ReviewPage() {
     // 同步捕获：loadFile effect 先于 metadata effect 执行，此刻 loadedFile 仍是 translate 文件
     const prevFile = loadedFile;
     if (!prevFile || !appState.dirtyFiles.includes(prevFile)) return;
+    const target = appState.activeFilePath;
     switching = true;
     try {
       const res = await confirm.show({
@@ -825,8 +853,14 @@ export function ReviewPage() {
           await saveCacheFile(pid, prevFile, entries().slice(), getActiveConfigFileName());
           markClean(prevFile);
         } catch (e) {
-          // 保存失败不阻塞切换（dirty 保留）
+          // 保存失败：中止切换并还原目标，dirty 保留（与 runSwitch/pendingView 守卫语义一致）。
+          // 本函数无循环，不还原会卡住：改点过的新目标 dispatch 已被 switching 拒绝，无人接手；
+          // 还原到 prevFile 后由 dispatch effect 重新分派，改点期间的点击由用户重新选择
           toast.error(`保存 ${prevFile} 失败：${getErrorMessage(e)}`);
+          setAppState("activeFilePath", prevFile);
+          if (import.meta.env?.DEV) {
+            console.debug(`[ReviewPage] 保存失败，已中止切换并还原目标：${prevFile}（原目标 ${target ?? ""}）`);
+          }
         }
       } else {
         markClean(prevFile); // 不保存 → 丢弃 → 清脏
@@ -997,8 +1031,16 @@ export function ReviewPage() {
             if (metaLoadedFullPath) markClean(metaLoadedFullPath);
             clearUndo(); // 保存即新的撤销起点（与 saveMeta 一致）
           } catch (e) {
-            // 保存失败：中止切换，保住未保存编辑（metaDirty 保持 true）
+            // 保存失败：中止切换，保住未保存编辑（metaDirty 保持 true）。
+            // 还原 activeFilePath（token 仍有效即用户未再触发切换）：不还原会残留切换意图，
+            // cacheVersion 轮询每 3 秒重跑本 effect 反复重试保存，翻译期间失败 toast 轰炸
             toast.error(`保存 ${metaLoadedFullPath} 失败：${getErrorMessage(e)}`);
+            if (myToken === metaSwitchToken && appState.activeFilePath !== metaLoadedFullPath) {
+              setAppState("activeFilePath", metaLoadedFullPath);
+              if (import.meta.env?.DEV) {
+                console.debug(`[ReviewPage] 元数据保存失败，已中止切换并还原目标：${metaLoadedFullPath}`);
+              }
+            }
             return;
           }
         }
