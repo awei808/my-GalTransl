@@ -60,6 +60,37 @@ _GLOBAL_RPM_LOCK = Lock()
 _GLOBAL_NEXT_ALLOWED_TS = 0.0
 
 
+class _MinIntervalSlotState:
+    """单个 (endpoint, token) 的最小请求间隔节流状态（进程级共享）。
+
+    next_slot_ts 为下一个可用请求发起时刻（time.monotonic 口径），
+    lock 仅保护时隙占位计算，睡眠在锁外进行。
+    """
+
+    __slots__ = ("lock", "next_slot_ts")
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.next_slot_ts = 0.0
+
+
+# (endpoint, token) -> 节流状态。同一后端账号跨引擎实例统一限速：
+# 后处理阶段每文件新建引擎实例，实例级计时会让首请求绕过节流（进程级注册表修复）。
+_MIN_INTERVAL_SLOTS: Dict[Tuple[str, str], _MinIntervalSlotState] = {}
+_MIN_INTERVAL_SLOTS_LOCK = Lock()
+
+
+def _get_min_interval_slot(domain: str, token: str) -> _MinIntervalSlotState:
+    """取（必要时创建）指定 (endpoint, token) 的共享节流状态。"""
+    key = (domain, token)
+    with _MIN_INTERVAL_SLOTS_LOCK:
+        state = _MIN_INTERVAL_SLOTS.get(key)
+        if state is None:
+            state = _MinIntervalSlotState()
+            _MIN_INTERVAL_SLOTS[key] = state
+        return state
+
+
 def _infer_provider(model_name: str) -> str:
     """按模型名自动推断服务商，用于 thinking 参数路由。"""
     n = (model_name or "").lower()
@@ -452,7 +483,8 @@ class BaseEngine:
         self.api_min_interval_sec = self._coerce_nonneg_float(backend_cfg.get("apiMinIntervalSec", 0), 0)
         self.api_max_requests = self._coerce_optional_int(backend_cfg.get("apiMaxRequests", 0), 0)
         self._request_count = 0
-        self._last_request_ts = 0.0
+        # 实例级节流状态仅作无 (endpoint, token) 键时的兜底；常规路径用进程级共享状态
+        self._min_interval_state: Optional[_MinIntervalSlotState] = None
         self._total_requests = 0
         self._failed_requests = 0
         self._rate_lock = Lock()
@@ -501,7 +533,8 @@ class BaseEngine:
             f"[api] 后端初始化 eng_type={eng_type} provider={self.provider} "
             f"stream={self.stream} thinking_mode={self.thinking_mode} "
             f"reasoning_effort={self.reasoning_effort or '未设置'} "
-            f"可用key数={len(self.client_list)}"
+            f"可用key数={len(self.client_list)} "
+            f"apiMinIntervalSec={self.api_min_interval_sec or '不限制'}"
         )
 
     @staticmethod
@@ -988,19 +1021,32 @@ class BaseEngine:
             )
             raise JobCancelledError()
 
-    async def _throttle_request_rate(self) -> None:
-        # 两次 API 请求之间的最小间隔节流（api_min_interval_sec<=0 不限制）。
+    async def _throttle_request_rate(self, throttle_key: Optional[Tuple[str, str]] = None) -> None:
+        """两次 API 请求之间的最小间隔节流（api_min_interval_sec<=0 不限制）。
+
+        时隙预占（与全局 RPM 限速同模式）：锁内原子分配本次最早发起时刻并前移
+        时隙指针，锁外睡眠——并发协程按 interval 串行排队，不会同睡同醒成簇发请求。
+        Args:
+            throttle_key: (endpoint, token) 键，节流状态进程级共享（跨引擎实例统一限速）；
+                缺省用实例级状态（单元测试与无 token 的兜底场景）。
+        """
         interval = self.api_min_interval_sec
         if interval <= 0:
             return
+        if throttle_key is not None:
+            state = _get_min_interval_slot(*throttle_key)
+        else:
+            if self._min_interval_state is None:
+                self._min_interval_state = _MinIntervalSlotState()
+            state = self._min_interval_state
         now = time.monotonic()
-        with self._rate_lock:
-            wait = max(0.0, interval - (now - self._last_request_ts))
+        with state.lock:
+            slot = max(state.next_slot_ts, now)
+            state.next_slot_ts = slot + interval
+        wait = slot - now
         if wait > 0:
             LOGGER.debug(f"[{self.eng_type}] API 请求节流，等待 {wait:.2f}s")
             await asyncio.sleep(wait)
-        with self._rate_lock:
-            self._last_request_ts = time.monotonic()
 
     # 错误率统计的最小样本量：样本过小（如仅 1~2 次请求）时错误率无统计意义，
     # 偶发网络抖动会导致早期误杀整个任务，故低于门槛时不判断。
@@ -1138,7 +1184,7 @@ class BaseEngine:
 
                 # 后端级调用限制：先检查次数上限，再做最小间隔节流。
                 self._check_request_count_quota()
-                await self._throttle_request_rate()
+                await self._throttle_request_rate((token.domain, token.token))
 
                 # Create the API call as a task so we can cancel it if
                 # the user requests a stop while the request is in-flight.

@@ -38,10 +38,16 @@
 - context.ensure_global_prompt_loaded（context.py:20-44）确实无锁，if engine._global_prompt_loaded 后为同步段、无 await。多 worker 共享同一 ForFileMetaData 实例（LLMTranslate.py:1742 创建单实例），依赖"同步段内无 await 不切换协程"不变式。存量问题，非本次改动引入（context.py 既有）。
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
-- 两个复核类后端，不会将具体的问题传给ai
+- ~~请求最小间隔秒 (apiMinIntervalSec)似乎从未生效~~ **已完成**（根因：节流状态原挂引擎实例上，后处理每文件新建实例致首请求绕过+实例间互不约束，且旧实现并发下同睡同醒成簇；已改为 (endpoint,token) 维度进程级时隙预占，BaseEngine.py）
+- 添加mcp工具：用于标注哪些json条目可以跳过检查、增删项目字典；mcp工具调用方式更改，不强制使用项目的绝对路径，也可以直接使用项目名称
 - 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示
 - 翻译控制台-当前提示词的状态指示灯中，黑色指示灯没有类似其他指示灯的“等待首字”“取消”的文字说明，需要显示为“已完成+耗时”
 - 结果预览的更新时机可能过于频繁（需先将上一条bug修好并测试后再确认这个问题是否真实存在）
+- [中低·前端] gpt.contextNum 仍在 REMOVED_CONFIG_KEYS 里被隐藏，但新的 restoreContextMode=lines 模式恰恰依赖它——用户选了 lines 后无法在 UI 调历史句数，只能手改 YAML（ProjectConfigPage.tsx:87，注释理由也已过时）。
+- [低·后端] plugin_loader.py 装载失败的结果也被进程级缓存，瞬时失败会让该项目持续不装插件直到配置变化；plugin_conf["Settings"] 缺键时整个插件被跳过（建议 setdefault）；docstring「钩子均无共享可变状态」与两个插件实际持有计数器的事实不符。
+- [低·后端] contextBatches 宣称 [1-8] 但无上限钳制，写 999 会静默注入整文件历史；mcp 概览透出的 restoreContextMode/contextBatches 是原始值未归一化；ForFixRound.py:190 换行修复提示词里「添加标点符号」重复了一次。
+- [低·前端] 重检轮询不随组件卸载/切项目终止（toast 会跨项目弹出）；后端不可达时阈值输入框显示空白；recheckAllCacheProblems 的 600s 超时注释自相矛盾。
+- [发布说明] d7a5833 后，以字面 <br> 为换行约定的项目行为有变化（缓存与输出现在是真实换行而非 <br>），建议写进更新日志。
 - MCP 的 list_projects 只枚举 workspace 根，建在自定义位置的项目不会出现在该 MCP 工具列表里（UI 不受影响）。
 - ~~双击 AI 建议没有让用户知道有这个功能的提示~~ **已完成**（首次进入校对页延时 toast 一次性提示，localStorage 标记只提示一次；校对指南篇同步说明该交互）
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善

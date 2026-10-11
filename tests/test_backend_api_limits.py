@@ -4,7 +4,8 @@
 - init_chatbot 按 eng_type 选择隔离的 API 配置段并读取三项配置
 - _coerce_ratio / _coerce_nonneg_float 对非法值的规范化
 - _check_request_count_quota：累计请求次数超过 apiMaxRequests 终止流程
-- _throttle_request_rate：两次请求间隔不小于 apiMinIntervalSec
+- _throttle_request_rate：时隙预占节流，请求发起间隔不小于 apiMinIntervalSec，
+  并发协程串行排队不聚簇，(endpoint, token) 维度进程级共享、跨实例统一限速
 - _check_error_rate_quota：错误率超过 apiMaxErrorRate 终止流程
 - 0/负/非法配置值表示「不限制」，不误触发终止
 """
@@ -12,6 +13,7 @@ import asyncio
 import threading
 import time
 import unittest
+from typing import List
 
 from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.ConfigHelper import CProjectConfig
@@ -46,7 +48,7 @@ def _make_engine(eng_type: str, section_cfg: dict) -> BaseEngine:
         section_cfg.get("apiMaxRequests", 0), 0
     )
     eng._request_count = 0
-    eng._last_request_ts = 0.0
+    eng._min_interval_state = None
     eng._total_requests = 0
     eng._failed_requests = 0
     eng._rate_lock = threading.Lock()
@@ -286,6 +288,57 @@ class ThrottleTests(unittest.TestCase):
             t0 = time.monotonic()
             await eng._throttle_request_rate()
             await eng._throttle_request_rate()
+            return time.monotonic() - t0
+
+        dt = asyncio.run(run())
+        self.assertLess(dt, 0.1)
+
+    def test_throttle_concurrent_calls_serialize(self) -> None:
+        # 时隙预占：并发协程的请求发起时刻按 interval 串行，不再同睡同醒成簇。
+        # 旧实现（读快照->睡->写时间戳）下 5 个协程会同时读到相同基线并同时醒来。
+        eng = _make_engine("gpt35", {"apiMinIntervalSec": 0.2})
+        fire_times: List[float] = []
+
+        async def call() -> None:
+            await eng._throttle_request_rate()
+            fire_times.append(time.monotonic())
+
+        async def run() -> None:
+            await asyncio.gather(*(call() for _ in range(5)))
+
+        asyncio.run(run())
+        self.assertEqual(len(fire_times), 5)
+        fire_times.sort()
+        gaps = [b - a for a, b in zip(fire_times, fire_times[1:])]
+        for gap in gaps:
+            self.assertGreaterEqual(gap, 0.15)
+
+    def test_throttle_shared_state_across_instances(self) -> None:
+        # (endpoint, token) 维度进程级共享：不同引擎实例命中同一后端账号时统一限速。
+        # 键带时间戳保证测试间互不污染（注册表随进程存活）。
+        eng_a = _make_engine("gpt35", {"apiMinIntervalSec": 0.2})
+        eng_b = _make_engine("gpt35", {"apiMinIntervalSec": 0.2})
+        key = ("https://throttle-shared.example", f"tok-{time.monotonic_ns()}")
+
+        async def run() -> float:
+            t0 = time.monotonic()
+            await eng_a._throttle_request_rate(key)
+            await eng_b._throttle_request_rate(key)  # 跨实例仍应等待约 0.2s
+            return time.monotonic() - t0
+
+        dt = asyncio.run(run())
+        self.assertGreaterEqual(dt, 0.15)
+
+    def test_throttle_different_keys_do_not_interfere(self) -> None:
+        # 不同 (endpoint, token) 各自独立计时，互不拖累
+        eng_a = _make_engine("gpt35", {"apiMinIntervalSec": 0.2})
+        eng_b = _make_engine("gpt35", {"apiMinIntervalSec": 0.2})
+        ns = time.monotonic_ns()
+
+        async def run() -> float:
+            t0 = time.monotonic()
+            await eng_a._throttle_request_rate(("https://a.example", f"tok-a-{ns}"))
+            await eng_b._throttle_request_rate(("https://b.example", f"tok-b-{ns}"))
             return time.monotonic() - t0
 
         dt = asyncio.run(run())
