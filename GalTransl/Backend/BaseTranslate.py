@@ -11,7 +11,11 @@ from GalTransl.server_runtime import set_live_snippets
 from GalTransl.Dictionary import CGptDict
 from GalTransl.Utils import fix_quotes2
 from GalTransl.Backend.BaseEngine import BaseEngine
-from GalTransl.Backend.utils import restore_line_breaks
+from GalTransl.Backend.utils import (
+    coerce_context_batches,
+    normalize_restore_context_mode,
+    restore_line_breaks,
+)
 from GalTransl.Backend.Prompts import (
     FAILED_MARKERS,
     FAILED_PREFIX,
@@ -29,23 +33,6 @@ def _print_translation_block(text: str) -> None:
     except Exception:
         pass
     print(text)
-
-
-# gpt.restoreContextMode 取值别名归一表：旧布尔写法与常见别名映射到三值模式
-_RESTORE_CONTEXT_MODE_ALIASES = {
-    "none": "none",
-    "false": "none",
-    "no": "none",
-    "0": "none",
-    "": "none",
-    "lines": "lines",
-    "line": "lines",
-    "true": "lines",
-    "yes": "lines",
-    "1": "lines",
-    "batches": "batches",
-    "batch": "batches",
-}
 
 
 class BaseTranslate(BaseEngine):
@@ -76,10 +63,8 @@ class BaseTranslate(BaseEngine):
         )
         # lines 模式的历史句数
         self.contextNum: int = config.getKey("gpt.contextNum", 8)
-        # batches 模式的历史批数（1 批 = 一次请求的实际句数）
-        self.contextBatches: int = self._coerce_positive_int(
-            config.getKey("gpt.contextBatches", 1), 1
-        )
+        # batches 模式的历史批数（1 批 = 一次请求的实际句数；钳制到 [1-8]）
+        self.contextBatches: int = coerce_context_batches(config.getKey("gpt.contextBatches", 1))
         # 动态句数（按 429/解析异常自动调节每批句数）
         self.dynamic_num_per_request = self._coerce_bool(
             config.getKey("gpt.dynamicNumPerRequestTranslate", False)
@@ -100,21 +85,8 @@ class BaseTranslate(BaseEngine):
 
     @staticmethod
     def _normalize_restore_context_mode(raw: Any) -> str:
-        """归一化 gpt.restoreContextMode 为 none/lines/batches 三值模式。
-
-        旧布尔配置向后兼容（True→lines、False→none）；无法识别的值告警后
-        回退 lines（保留上下文比静默丢弃安全）。
-        """
-        if isinstance(raw, bool):
-            return "lines" if raw else "none"
-        mode = _RESTORE_CONTEXT_MODE_ALIASES.get(str(raw).strip().lower())
-        if mode is None:
-            LOGGER.warning(
-                f"gpt.restoreContextMode 值 {raw!r} 无法识别，回退为 lines"
-                f"（可选 none/lines/batches）"
-            )
-            return "lines"
-        return mode
+        """归一化 gpt.restoreContextMode 为 none/lines/batches 三值模式（委托共享实现）。"""
+        return normalize_restore_context_mode(raw)
 
     def _get_effective_num_per_request(
         self, configured_value: int, proofread: bool = False, force_static: bool = False

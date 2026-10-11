@@ -14,8 +14,10 @@ import unittest
 from types import SimpleNamespace, MethodType
 from unittest.mock import patch
 
+from GalTransl.Backend.BaseEngine import BaseEngine
 from GalTransl.Backend.BaseTranslate import BaseTranslate
 from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
+from GalTransl.Backend.utils import coerce_context_batches
 from GalTransl.Backend.Prompts import (
     FORGAL_JSON_TRANS_PROMPT,
     FORGAL_JSON_TRANS_PROMPT_SINGLE,
@@ -183,11 +185,43 @@ class RestoreContextModeConfigTests(unittest.TestCase):
 
     def test_unknown_value_falls_back_to_lines(self) -> None:
         # 无法识别的值告警后回退 lines（保留上下文比静默丢弃安全）
-        with patch("GalTransl.Backend.BaseTranslate.LOGGER") as mock_logger:
+        with patch("GalTransl.Backend.utils.LOGGER") as mock_logger:
             self.assertEqual(
                 BaseTranslate._normalize_restore_context_mode("xxx"), "lines"
             )
             mock_logger.warning.assert_called_once()
+
+
+class ContextBatchesClampTests(unittest.TestCase):
+    """gpt.contextBatches 钳制到 [1-8]：防误写大值（如 999）静默注入近整文件历史。"""
+
+    @staticmethod
+    def _make_base(config_values) -> BaseTranslate:
+        config = _MockConfig(config_values)
+        with patch.object(BaseEngine, "__init__", lambda self, *a, **k: None):
+            return BaseTranslate(config, "eng")
+
+    def test_in_range_passthrough(self) -> None:
+        cases = [(1, 1), (3, 3), (8, 8), ("2", 2)]
+        for raw, expected in cases:
+            self.assertEqual(coerce_context_batches(raw), expected, f"raw={raw!r}")
+
+    def test_out_of_range_clamped_with_warning(self) -> None:
+        with patch("GalTransl.Backend.utils.LOGGER") as mock_logger:
+            self.assertEqual(coerce_context_batches(999), 8)
+            self.assertEqual(coerce_context_batches(0), 1)
+            self.assertEqual(mock_logger.warning.call_count, 2)
+
+    def test_invalid_value_falls_back_to_default(self) -> None:
+        with patch("GalTransl.Backend.utils.LOGGER"):
+            self.assertEqual(coerce_context_batches("abc"), 1)
+            self.assertEqual(coerce_context_batches(None), 1)
+            self.assertEqual(coerce_context_batches("abc", default=3), 3)
+
+    def test_init_clamps_context_batches(self) -> None:
+        with patch("GalTransl.Backend.utils.LOGGER"):
+            t = self._make_base({"gpt.contextBatches": 999})
+        self.assertEqual(t.contextBatches, 8)
 
 
 class RestoreContextFieldSelectionTests(unittest.TestCase):

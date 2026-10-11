@@ -393,6 +393,18 @@ class ProjectReadToolTests(ProjectFixture):
         self.assertEqual(result["config_file_name"], "config.inc.yaml")
         self.assertEqual(result["target_language"], "ja")
 
+    def test_overview_normalizes_context_settings(self) -> None:
+        # 概览透出的单轮历史注入口径与翻译引擎一致：旧布尔写法归一化、超界批数钳制
+        _write_text(
+            os.path.join(self.project, "config.yaml"),
+            "common:\n"
+            "  gpt.restoreContextMode: true\n"
+            "  gpt.contextBatches: 999\n",
+        )
+        result = self._call("galtransl_get_project_overview")
+        self.assertEqual(result["restore_context_mode"], "lines")
+        self.assertEqual(result["context_batches"], 8)
+
     def test_overview_missing_config_is_reported_not_raised(self) -> None:
         os.remove(os.path.join(self.project, "config.yaml"))
         result = self._call("galtransl_get_project_overview")

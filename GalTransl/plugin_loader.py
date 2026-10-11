@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from GalTransl import LOGGER
 from GalTransl.GTPlugin import GFilePlugin, GTextPlugin
@@ -57,7 +57,9 @@ def load_text_plugins(project_dir: str, cfg: Any) -> list:
 
     任何失败（插件目录不可用、清单缺失、模块导入或 gtp_init 异常）都只影响对应插件，
     整体失败时返回空列表并告警——调用方据此退化到「不使用文本插件」的旧行为，不得中断
-    问题检测。返回列表为缓存副本，插件对象跨调用共享（内置插件的钩子均无共享可变状态）。
+    问题检测。返回列表为缓存副本，插件对象跨调用共享：实例状态（如换行修复插件的
+    fix_count 计数器）在同一项目的多次重建间累积、不会重置（仅统计日志用途，不影响译文），
+    本路径不调用 gtp_final，不会触发依赖计数的收尾副作用。
 
     Args:
         project_dir: 项目根目录（解析项目局部插件与注入 plugin 配置用）。
@@ -83,12 +85,20 @@ def load_text_plugins(project_dir: str, cfg: Any) -> list:
             LOGGER.debug(f"[plugin] 复用已装载文本插件：{names}")
             return list(cached[1])
         plugins = _load_uncached(project_dir, cfg, names)
+        if plugins is None:
+            # 扫描/装载等结构性失败（可能是瞬时错误如文件占用）不写缓存，下次调用自动重试
+            return []
         _PLUGIN_CACHE[project_key] = (key, plugins)
         return list(plugins)
 
 
-def _load_uncached(project_dir: str, cfg: Any, names: List[str]) -> list:
-    """实际装载流程（在缓存锁内调用）：扫描 → 命中清单 → 装载 → gtp_init。"""
+def _load_uncached(project_dir: str, cfg: Any, names: List[str]) -> Optional[list]:
+    """实际装载流程（在缓存锁内调用）：扫描 → 命中清单 → 装载 → gtp_init。
+
+    Returns:
+        装载成功的插件信息对象列表（可能为空）；扫描或装载结构性失败时返回 None
+        （调用方不缓存，允许下次重试）。
+    """
     manager = PluginManager(
         {"GTextPlugin": GTextPlugin, "GFilePlugin": GFilePlugin},
         [os.path.join(resolve_app_dir(), "plugins"), os.path.join(project_dir, "plugins")],
@@ -97,7 +107,7 @@ def _load_uncached(project_dir: str, cfg: Any, names: List[str]) -> list:
         manager.locatePlugins()
     except Exception:
         LOGGER.warning("[plugin] 扫描插件目录失败，本次不应用文本插件", exc_info=True)
-        return []
+        return None
 
     candidates = []
     for name in names:
@@ -120,7 +130,7 @@ def _load_uncached(project_dir: str, cfg: Any, names: List[str]) -> list:
         manager.loadPlugins()
     except Exception:
         LOGGER.warning("[plugin] 装载文本插件失败，本次不应用文本插件", exc_info=True)
-        return []
+        return None
 
     try:
         plugin_sections = cfg.getPluginConfigSection()
@@ -137,7 +147,7 @@ def _load_uncached(project_dir: str, cfg: Any, names: List[str]) -> list:
             plugin_conf = plugin.yaml_dict
             module = (plugin_conf.get("Core") or {}).get("Module", "")
             if module and isinstance(plugin_sections, dict) and module in plugin_sections:
-                plugin_conf["Settings"].update(plugin_sections[module])
+                plugin_conf.setdefault("Settings", {}).update(plugin_sections[module])
             plugin.plugin_object.gtp_init(plugin_conf, project_conf)
         except Exception:
             LOGGER.warning(f"[plugin] 文本插件初始化失败，已跳过：{name}", exc_info=True)

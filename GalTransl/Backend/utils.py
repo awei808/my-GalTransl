@@ -15,6 +15,67 @@ from GalTransl import LOGGER
 from GalTransl.Utils import nfkc_fold
 
 
+# gpt.restoreContextMode 取值别名归一表：旧布尔写法与常见别名映射到三值模式
+_RESTORE_CONTEXT_MODE_ALIASES = {
+    "none": "none",
+    "false": "none",
+    "no": "none",
+    "0": "none",
+    "": "none",
+    "lines": "lines",
+    "line": "lines",
+    "true": "lines",
+    "yes": "lines",
+    "1": "lines",
+    "batches": "batches",
+    "batch": "batches",
+}
+
+
+def normalize_restore_context_mode(raw: Any) -> str:
+    """归一化 gpt.restoreContextMode 为 none/lines/batches 三值模式。
+
+    旧布尔配置向后兼容（True→lines、False→none）；无法识别的值告警后
+    回退 lines（保留上下文比静默丢弃安全）。BaseTranslate 与 MCP 项目概览
+    共用本函数，保证对外透出口径一致。
+    """
+    if isinstance(raw, bool):
+        return "lines" if raw else "none"
+    mode = _RESTORE_CONTEXT_MODE_ALIASES.get(str(raw).strip().lower())
+    if mode is None:
+        LOGGER.warning(
+            f"gpt.restoreContextMode 值 {raw!r} 无法识别，回退为 lines"
+            f"（可选 none/lines/batches）"
+        )
+        return "lines"
+    return mode
+
+
+# gpt.contextBatches 允许区间（与 DefaultProjectConfig 模板注释 [1-8] 一致）
+CONTEXT_BATCHES_MIN = 1
+CONTEXT_BATCHES_MAX = 8
+
+
+def coerce_context_batches(value: Any, default: int = 1) -> int:
+    """gpt.contextBatches 归一化：非法值回退默认，超界钳制到 [1-8] 并告警。
+
+    无上限时误写大值（如 999）会按批数×本批句数静默注入近整文件历史，
+    token 成本失控且无提示，故强制钳制。
+    """
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        LOGGER.warning(f"gpt.contextBatches 值 {value!r} 非法，回退为 {default}")
+        return default
+    clamped = max(CONTEXT_BATCHES_MIN, min(CONTEXT_BATCHES_MAX, result))
+    if clamped != result:
+        LOGGER.warning(
+            f"gpt.contextBatches 值 {result} 超出 "
+            f"[{CONTEXT_BATCHES_MIN}-{CONTEXT_BATCHES_MAX}]，已钳制为 {clamped}"
+        )
+    return clamped
+
+
 def detect_line_break_symbol(src_text: str) -> str:
     """
     检测原文中的换行符类型，返回用于后处理还原的换行符标记。

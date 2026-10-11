@@ -117,6 +117,15 @@ class _FakePluginManager:
         return [_FakePluginInfo(self.recorder)]
 
 
+class _NoSettingsPluginManager(_FakePluginManager):
+    """yaml_dict 缺 Settings 段的替身：验证缺键不再导致整个插件被跳过。"""
+
+    def getPluginsOfCategory(self, category):
+        info = _FakePluginInfo(self.recorder)
+        info.yaml_dict = {"Core": {"Module": "fake_plugin"}}
+        return [info]
+
+
 class TextPluginLoadingTests(unittest.TestCase):
     def setUp(self) -> None:
         _FakePluginManager.instances = []
@@ -182,6 +191,44 @@ class TextPluginLoadingTests(unittest.TestCase):
                 deps = _load_rebuild_deps(root, "config.yaml", text_plugins=[sentinel])
             loader.assert_not_called()
             self.assertEqual(deps[4], [sentinel])
+
+
+    def test_failed_load_not_cached_and_retried_next_call(self) -> None:
+        """装载失败不写进程级缓存：瞬时失败（如文件占用）恢复后下次调用即重试。"""
+        with tempfile.TemporaryDirectory() as root:
+            _write_project(root, ["text_common_normalfix"])
+            cfg = CProjectConfig(root, "config.yaml")
+            with mock.patch.object(plugin_loader, "PluginManager") as manager:
+                manager.return_value.locatePlugins.side_effect = RuntimeError("boom")
+                self.assertEqual(plugin_loader.load_text_plugins(root, cfg), [])
+                self.assertNotIn(os.path.abspath(root), plugin_loader._PLUGIN_CACHE)
+            with mock.patch.object(plugin_loader, "PluginManager", _FakePluginManager):
+                plugins = plugin_loader.load_text_plugins(root, cfg)
+            self.assertEqual(len(plugins), 1)
+            self.assertIn(os.path.abspath(root), plugin_loader._PLUGIN_CACHE)
+
+    def test_plugin_conf_missing_settings_section_still_inits(self) -> None:
+        """插件 yaml_dict 缺 Settings 段时不再整体跳过：setdefault 兜底并照常 gtp_init。"""
+        with tempfile.TemporaryDirectory() as root:
+            cfg_data = {
+                "plugin": {
+                    "filePlugin": "file_galtransl_json",
+                    "textPlugins": ["fake-plugin"],
+                    # 插件配置段存在 → update 分支被走到，而插件清单无 Settings 段
+                    "fake_plugin": {"maxFixCount": 5},
+                },
+                "common": {"language": "zh-cn", "splitFile": "no", "workersPerProject": "1"},
+                "problemAnalyze": {"problemList": ["残留日文"]},
+            }
+            config_path = os.path.join(root, "config.yaml")
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(cfg_data, f, allow_unicode=True)
+            cfg = CProjectConfig(root, "config.yaml")
+            with mock.patch.object(plugin_loader, "PluginManager", _NoSettingsPluginManager):
+                plugins = plugin_loader.load_text_plugins(root, cfg)
+            self.assertEqual(len(plugins), 1)
+            recorder = _NoSettingsPluginManager.instances[-1].recorder
+            self.assertIn("gtp_init", recorder.calls)
 
 
 class RebuildAppliesPluginHooksTests(unittest.TestCase):

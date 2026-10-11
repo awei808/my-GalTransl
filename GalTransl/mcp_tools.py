@@ -25,6 +25,10 @@ from GalTransl import (
     PASS3_CACHE_DIR,
 )
 from GalTransl.AppSettings import load_app_settings
+from GalTransl.Backend.utils import (
+    coerce_context_batches,
+    normalize_restore_context_mode,
+)
 from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.Dictionary import (
     _COMMENT_PREFIXES,
@@ -363,8 +367,10 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "auto_adjust_workers": common.get("autoAdjustWorkers", False),
         "num_per_request_translate": common.get("gpt.numPerRequestTranslate", 0),
         "context_num": common.get("gpt.contextNum", 0),
-        "restore_context_mode": common.get("gpt.restoreContextMode", "lines"),
-        "context_batches": common.get("gpt.contextBatches", 1),
+        "restore_context_mode": normalize_restore_context_mode(
+            common.get("gpt.restoreContextMode", "lines")
+        ),
+        "context_batches": coerce_context_batches(common.get("gpt.contextBatches", 1)),
         "skip_h": common.get("skipH", False),
         "translation_guideline": common.get("gpt.translation_guideline", ""),
         "stage_backends": stage_backends,
