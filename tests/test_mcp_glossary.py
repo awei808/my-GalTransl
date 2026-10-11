@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 from GalTransl.mcp_tools import (
-    _GLOSSARY_NEW_FILE_HEADER,
+    _GLOSSARY_NEW_FILE_HEADERS,
     _H_DENY_MESSAGE,
     call_mcp_tool,
     read_glossary,
@@ -262,7 +262,7 @@ class WriteGlossaryTests(GlossaryProjectFixture):
             [{"src": "词", "dst": "译"}, {"src": "词", "dst": "译"}],
         )
         self.assertEqual((result["added"], result["updated"], result["unchanged"]), (1, 0, 1))
-        self.assertEqual(self._read_glossary_text(), f"{_GLOSSARY_NEW_FILE_HEADER}\n词|译\n")
+        self.assertEqual(self._read_glossary_text(), f"{_GLOSSARY_NEW_FILE_HEADERS['gpt']}\n词|译\n")
 
     def test_delete_removes_lines_and_reports_not_found(self) -> None:
         _make_project(self.project_dir, glossary="//注释\n词|译\n别的|保持\n")
@@ -327,7 +327,7 @@ class WriteGlossaryTests(GlossaryProjectFixture):
         self.assertFalse(result["registered_in_config"])
         self.assertEqual(
             self._read_glossary_text("项目术语表_空.txt"),
-            f"{_GLOSSARY_NEW_FILE_HEADER}\n术语|Term\n",
+            f"{_GLOSSARY_NEW_FILE_HEADERS['gpt']}\n术语|Term\n",
         )
 
     def test_new_file_created_with_comment_header_and_registered(self) -> None:
@@ -341,7 +341,7 @@ class WriteGlossaryTests(GlossaryProjectFixture):
         self.assertTrue(result["registered_in_config"])
         self.assertEqual(
             self._read_glossary_text("项目新术语表.txt"),
-            f"{_GLOSSARY_NEW_FILE_HEADER}\n术语|Term|注\n",
+            f"{_GLOSSARY_NEW_FILE_HEADERS['gpt']}\n术语|Term|注\n",
         )
         self.assertIn("(project_dir)项目新术语表.txt", self._config_text())
         # 新文件同样可被读工具读到（已在 gpt.dict 中登记）

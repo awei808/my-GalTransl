@@ -39,7 +39,8 @@
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
 - ~~请求最小间隔秒 (apiMinIntervalSec)似乎从未生效~~ **已完成**（根因：节流状态原挂引擎实例上，后处理每文件新建实例致首请求绕过+实例间互不约束，且旧实现并发下同睡同醒成簇；已改为 (endpoint,token) 维度进程级时隙预占，BaseEngine.py）
-- 添加mcp工具：用于标注哪些json条目可以跳过检查、增删项目字典；mcp工具调用方式更改，不强制使用项目的绝对路径，也可以直接使用项目名称
+- ~~添加mcp工具：用于给特定json条目标记为跳过检查、给特定json条目交换备选译文与当前译文、增删项目字典；mcp工具调用方式更改，不强制使用项目的绝对路径，也可以直接使用项目名称~~ **已完成**（新增写工具 `galtransl_mark_skip_check`/`galtransl_swap_alt_translation`，逐条改 skip_check 标志/交换 alt_dst 与 pre_dst，改前快照+按 /cache/save 同口径重检+与运行中翻译任务互斥；`write_glossary`/`read_glossary` 扩展 category=gpt/pre/post 覆盖译前/译后项目字典；全部工具的 project_dir 支持项目名称——后端经 `known_projects.json` 登记「打开过/创建过/跑过任务」的项目（`GalTransl/known_projects.py`），MCP 优先按登记表解析、回退工作区根扫描，不要求项目在工作区根下，mcp_tools.py）
+- 更改新建项目时流水线设置、问题检测项、是否开启交换译文的默认设置
 - 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示
 - 翻译控制台-当前提示词的状态指示灯中，黑色指示灯没有类似其他指示灯的“等待首字”“取消”的文字说明，需要显示为“已完成+耗时”
 - 结果预览的更新时机可能过于频繁（需先将上一条bug修好并测试后再确认这个问题是否真实存在）

@@ -41,6 +41,7 @@ from GalTransl import AppSettings
 from GalTransl.Dictionary import parse_dict_line
 from GalTransl.DefaultProjectConfig import DEFAULT_PROJECT_CONFIG_YAML
 from GalTransl.Frontend.pipeline_stages import to_payload as pipeline_stages_payload
+from GalTransl.known_projects import record_known_project
 from GalTransl.UtilityEngines import UTILITY_ENGINES
 from GalTransl.backend_security import safe_under_project
 from GalTransl.mcp_heartbeat import read_heartbeat
@@ -683,6 +684,8 @@ def handle_init_project(handler: Any) -> None:
         handler._send_json({"error": f"创建项目失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
         return
     LOGGER.info(f"项目创建成功: {project_dir}")
+    # 登记已知项目（best-effort，供 MCP 按项目名解析）
+    record_known_project(project_dir, "config.yaml")
     handler._send_json(
         {
             "project_id": encode_project_dir(project_dir),

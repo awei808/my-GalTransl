@@ -210,16 +210,16 @@ class BuildServerInstructionsTests(unittest.TestCase):
         self.assertEqual(build_server_instructions(), SERVER_INSTRUCTIONS)
 
     def test_default_matches_golden_text(self) -> None:
-        # 金样本：0.6.0 静态文本原文（术语表批次只改动工具计数与写工具清单两行）。
+        # 金样本：0.6.0 静态文本原文（缓存条目批次改动计数、project_dir 口径与写工具清单）。
         # build_server_instructions 重构自它，默认参数输出必须逐字一致，
         # 防止未来编辑 f-string 拼接时静默漂移。
         golden = (
-            "GalTransl 翻译项目管理服务（19 个工具：14 个只读检索 + 5 个写操作）。"
-            "所有工具都需提供翻译项目根目录的绝对路径 project_dir。\n"
+            "GalTransl 翻译项目管理服务（21 个工具：14 个只读检索 + 7 个写操作）。"
+            "project_dir 可传翻译项目根目录的绝对路径，或项目名称（已登记/工作区根下的项目，galtransl_list_projects 可列出）。\n"
             "\n"
             "使用前必须遵守：\n"
             "1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_* / check_model）不得引发任何写入。\n"
-            "   写工具仅这 5 个：write_route_map、save_metadata、write_glossary、submit_job、stop_job，各自只能改项目内的指定产物；\n"
+            "   写工具仅这 7 个：write_route_map、save_metadata、write_glossary、mark_skip_check、swap_alt_translation、submit_job、stop_job，各自只能改项目内的指定产物；\n"
             "   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。\n"
             "2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，\n"
             "   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。\n"

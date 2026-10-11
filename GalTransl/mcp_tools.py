@@ -1,9 +1,10 @@
-"""MCP 工具层：面向外部 agent 的能力（0.5.1 只读检索；0.6.0 增写工具与作业域查询）。
+"""MCP 工具层：面向外部 agent 的能力（0.5.1 只读检索；0.6.0 起增写工具与作业域查询）。
 
-检索类与术语表读取为纯读磁盘的纯函数风格；作业域工具（任务状态/模型探测、提交/停止任务）
+检索类与字典读取为纯读磁盘的纯函数风格；作业域工具（任务状态/模型探测、提交/停止任务）
 经 HTTP 回后端（JobRegistry 只存在于后端进程内，见 mcp_backend_client），
-路线图/元数据/术语表写工具在本地原子落盘。
-所有工具以显式 project_dir 为边界，写入范围仅限项目内指定产物，无任意路径写、无命令执行。
+路线图/元数据/项目字典写工具与缓存条目写工具（跳过检查标记、备选译文交换）在本地落盘。
+所有工具以显式 project_dir 为边界（绝对路径，或已登记/工作区根下的项目名称），写入范围仅限项目内
+指定产物，无任意路径写、无命令执行。
 本模块不依赖任何 MCP 传输实现，供独立 stdio server（run_mcp_server.py）与未来内置 agent 共用，
 避免上游「工具全走 HTTP 打自家 REST」的架构绕路。
 """
@@ -13,6 +14,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from typing import Any, Callable, Collection, Dict, List, Optional, Set, Tuple
 
 from GalTransl import (
@@ -31,7 +33,9 @@ from GalTransl.Backend.utils import (
 )
 from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.Dictionary import (
+    DictRow,
     _COMMENT_PREFIXES,
+    _SITUATION_KEYS,
     _is_separator_line,
     _safe_escape,
     parse_dict_line,
@@ -49,7 +53,6 @@ from GalTransl.server_meta import _list_problem_types, _load_project_name_dict
 from GalTransl.server_scaffold import _workspace_root
 from GalTransl.server_search import (
     DEFAULT_MAX_RESULTS,
-    _dict_file_categories,
     _make_matcher,
     search_cache_entries,
     search_dict_entries,
@@ -65,7 +68,12 @@ _LOG_SOURCES = ("engine", "frontend")
 # ---------- 公共辅助 ----------
 
 def _require_project_dir(arguments: Dict[str, Any]) -> str:
-    """取出并校验 project_dir 参数（只读工具用：仅要求存在且是目录）。
+    """取出并解析 project_dir 参数：可以是项目根目录绝对路径，或工作区根下的项目名称。
+
+    解析顺序：已存在的目录按原样（normpath，含相对路径的既有行为）；否则对不含
+    路径分隔符的取值按项目名解析——优先查已登记项目（GalTransl 打开过/创建过/
+    跑过任务的项目，见 known_projects.py），再回退工作区根扫描。
+    找不到时给出可用项目名清单，便于 agent 自行纠正。
 
     只读工具**不**要求「合法项目」——指向父目录批量查看、或项目尚未生成配置时
     先看缓存都是合理用法，硬拦会变成破坏性变更。合法性问题改为在返回体里以
@@ -74,9 +82,118 @@ def _require_project_dir(arguments: Dict[str, Any]) -> str:
     raw = str(arguments.get("project_dir", "") or "").strip()
     if not raw:
         raise ValueError("project_dir is required")
-    if not os.path.isdir(raw):
-        raise ValueError(f"project_dir 不存在或不是目录: {raw}")
-    return os.path.normpath(raw)
+    if os.path.isdir(raw):
+        return os.path.normpath(raw)
+    if not any(sep in raw for sep in ("/", "\\")) and not os.path.isabs(raw):
+        return _resolve_project_name(raw)
+    raise ValueError(f"project_dir 不存在或不是目录: {raw}")
+
+
+def _workspace_projects(workspace_root: str) -> List[Dict[str, Any]]:
+    """扫描工作区根下的可识别项目（与 _tool_list_projects 同口径，供名称解析复用）。"""
+    projects = []
+    for name in sorted(os.listdir(workspace_root)):
+        path = os.path.join(workspace_root, name)
+        if not os.path.isdir(path):
+            continue
+        config_name = detect_config_file(path)
+        # detect_config_file 找不到也回退 config.yaml，故必须再确认文件真实存在
+        if not os.path.isfile(os.path.join(path, config_name)):
+            continue
+        projects.append({"name": name, "project_dir": path, "config_file_name": config_name})
+    return projects
+
+
+def _resolve_project_name(name: str) -> str:
+    """把项目名解析为绝对路径：先查已登记项目，再回退工作区根扫描。"""
+    resolved = _resolve_from_known_projects(name)
+    if resolved:
+        return resolved
+    return _resolve_in_workspace(name)
+
+
+def _valid_known_projects() -> List[Dict[str, Any]]:
+    """有效已登记项目清单（目录仍存在且是可识别项目），按 last_seen 新→旧。
+
+    供 list_projects 合并输出与错误消息的可用项目名单复用，统一「失效登记过滤」口径。
+    """
+    from GalTransl.known_projects import load_known_projects
+
+    valid: List[Dict[str, Any]] = []
+    for item in load_known_projects():
+        path = os.path.normpath(item["project_dir"])
+        if not os.path.isdir(path):
+            continue
+        try:
+            config_name = validate_project_dir(path)
+        except ValueError:
+            continue
+        valid.append({**item, "project_dir": path, "config_file_name": config_name})
+    return valid
+
+
+def _resolve_from_known_projects(name: str) -> str:
+    """按已登记项目（GalTransl 打开过/创建过/跑过任务的项目，见 known_projects.py）解析名称。
+
+    登记可能过期（项目被移动/删除），命中后须仍存在且是可识别项目才算有效。
+    精确命中取最近使用的那个（与首页「最近项目」同语义）；NFKC 容错命中要求唯一，
+    多个同名候选报错列出绝对路径，由 agent 改用绝对路径指定。未命中返回空串。
+    先按名字匹配、命中后再 validate（失效过滤只影响能否返回，不影响匹配本身）。
+    """
+    from GalTransl.known_projects import load_known_projects
+
+    target = unicodedata.normalize("NFKC", name).casefold()
+    loose: List[str] = []
+    for item in load_known_projects():
+        path = os.path.normpath(item["project_dir"])
+        if not os.path.isdir(path):
+            continue
+        if item["name"] == name or unicodedata.normalize("NFKC", item["name"]).casefold() == target:
+            # 候选须仍是可识别项目（与写工具同口径）
+            try:
+                validate_project_dir(path)
+            except ValueError:
+                continue
+            if item["name"] == name:
+                return path
+            loose.append(path)
+    if len(loose) == 1:
+        return loose[0]
+    if len(loose) > 1:
+        shown = "\n".join(loose[:10])
+        raise ValueError(f"存在 {len(loose)} 个同名项目「{name}」，请改用绝对路径指定：\n{shown}")
+    return ""
+
+
+def _resolve_in_workspace(name: str) -> str:
+    """工作区根扫描回退：与 galtransl_list_projects 的 workspace 来源同口径。"""
+    workspace_root = os.path.normpath(_workspace_root())
+    if not os.path.isdir(workspace_root):
+        raise ValueError(
+            f"project_dir 不是已存在的目录，也无法按项目名解析（工作区根不可用: {workspace_root}）：{name}。"
+            "请直接传翻译项目根目录的绝对路径。"
+        )
+    projects = _workspace_projects(workspace_root)
+    target = unicodedata.normalize("NFKC", name).casefold()
+    exact = [p for p in projects if p["name"] == name]
+    loose = [
+        p for p in projects
+        if p["name"] != name
+        and unicodedata.normalize("NFKC", p["name"]).casefold() == target
+    ]
+    if len(exact) == 1:
+        return os.path.normpath(exact[0]["project_dir"])
+    if len(loose) == 1:
+        return os.path.normpath(loose[0]["project_dir"])
+    # 两路来源合并去重后给出可用项目名，便于 agent 自行纠正
+    known_names = [item["name"] for item in _valid_known_projects()]
+    all_names = list(dict.fromkeys(known_names + [p["name"] for p in projects]))
+    shown = "、".join(all_names[:10]) + (f" 等共 {len(all_names)} 个" if len(all_names) > 10 else "")
+    available = f"可用项目：{shown}。" if all_names else "暂无已登记项目，工作区根下也没有可识别项目。"
+    raise ValueError(
+        f"未找到名为「{name}」的项目。{available}"
+        "项目在 GalTransl 中打开过/创建过即可按名称解析；也可直接传翻译项目根目录的绝对路径。"
+    )
 
 
 def validate_project_dir(project_dir: str) -> str:
@@ -304,27 +421,40 @@ def _tool_list_problems(arguments: Dict[str, Any]) -> Dict[str, Any]:
 # ---------- 只读域（5） ----------
 
 def _tool_list_projects(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """列出工作区根下疑似 GalTransl 项目的目录（判定依据：存在配置文件）。"""
+    """列出可用项目：已登记（GalTransl 打开过/创建过/跑过任务）+ 工作区根下可识别的目录。
+
+    同一目录两个来源都会命中时只保留一条（registered 优先）。
+    """
     workspace_root = os.path.normpath(str(arguments.get("workspace_root", "") or "").strip() or _workspace_root())
-    if not os.path.isdir(workspace_root):
-        return {"workspace_root": workspace_root, "exists": False, "projects": []}
-    projects = []
-    for name in sorted(os.listdir(workspace_root)):
-        path = os.path.join(workspace_root, name)
-        if not os.path.isdir(path):
-            continue
-        config_name = detect_config_file(path)
-        # detect_config_file 找不到也回退 config.yaml，故必须再确认文件真实存在
-        if not os.path.isfile(os.path.join(path, config_name)):
-            continue
-        projects.append({
+    projects: List[Dict[str, Any]] = []
+    seen_dirs: Set[str] = set()
+
+    def _entry(path: str, name: str, config_name: str, source: str) -> Dict[str, Any]:
+        return {
             "name": name,
             "project_dir": path,
             "config_file_name": config_name,
             "has_cache": os.path.isdir(os.path.join(path, CACHE_FOLDERNAME)),
             "has_input": os.path.isdir(os.path.join(path, INPUT_FOLDERNAME)),
-        })
-    return {"workspace_root": workspace_root, "exists": True, "total": len(projects), "projects": projects}
+            "source": source,
+        }
+
+    for item in _valid_known_projects():
+        path = item["project_dir"]
+        if path in seen_dirs:
+            continue
+        seen_dirs.add(path)
+        projects.append(_entry(path, item["name"], item["config_file_name"], "registered"))
+
+    if os.path.isdir(workspace_root):
+        for found in _workspace_projects(workspace_root):
+            path = os.path.normpath(found["project_dir"])
+            if path in seen_dirs:
+                continue
+            seen_dirs.add(path)
+            projects.append(_entry(path, found["name"], found["config_file_name"], "workspace"))
+
+    return {"workspace_root": workspace_root, "exists": os.path.isdir(workspace_root), "total": len(projects), "projects": projects}
 
 
 def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -485,6 +615,7 @@ def _tool_read_glossary(arguments: Dict[str, Any]) -> Dict[str, Any]:
         use_regex=bool(arguments.get("regex", False)),
         offset=arguments.get("offset", 0),
         limit=arguments.get("limit", DEFAULT_PAGE_SIZE),
+        category=str(arguments.get("category", "gpt") or "gpt").strip(),
     )
 
 
@@ -515,6 +646,7 @@ def _tool_write_glossary(arguments: Dict[str, Any]) -> Dict[str, Any]:
         str(arguments.get("file", "") or "").strip(),
         str(arguments.get("mode", "") or "").strip(),
         arguments.get("entries"),
+        category=str(arguments.get("category", "gpt") or "gpt").strip(),
     )
 
 
@@ -551,6 +683,322 @@ def _tool_stop_job(arguments: Dict[str, Any]) -> Dict[str, Any]:
     result = post_json(f"/api/projects/{encode_project_dir(project_dir)}/stop", {})
     LOGGER.info(f"[mcp] 已请求停止任务 project={project_dir}")
     return {"success": bool(result.get("success", True)), "project_dir": project_dir, "detail": result}
+
+
+# ---------- 缓存条目写工具（跳过检查 / 交换备选译文） ----------
+
+# 任务刚结束（cancelled/failed）后，后端 finally 仍会合并 .append.jsonl 增量并重检，
+# 此窗口内改写缓存会丢合并增量；翻译已停止但合并未落盘时同样拒绝写入
+_JOB_RECENT_TERMINAL_SECONDS = 30.0
+
+
+def _finished_within_seconds(finished_at: Any, seconds: float) -> bool:
+    """finished_at（UTC ISO，Z 后缀）是否落在最近 seconds 秒内；解析失败按不新处理。"""
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        ts = datetime.fromisoformat(str(finished_at).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    delta = datetime.now(timezone.utc) - ts
+    return timedelta(0) <= delta <= timedelta(seconds=seconds)
+
+
+def _active_job_of(project_dir: str) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """查询后端该项目是否有进行中/刚结束的翻译任务。返回 (任务摘要, 后端是否可达)。
+
+    缓存文件在翻译期间被 worker 增量写盘、停止后还有一次增量合并+重检，外部并发
+    改写会互相覆盖或丢数据（与 /cache/save 的 409 拒绝同一风险）。MCP 是独立进程，
+    只能经 HTTP 查询后端；后端不可达时放行并在结果里注明（此时大概率没有翻译在跑，
+    不因查询失败而阻断离线编辑）。
+    """
+    try:
+        from GalTransl.mcp_backend_client import get_json
+        from GalTransl.server_runtime import _normalize_project_dir
+
+        jobs_raw = get_json("/api/jobs").get("jobs")
+    except Exception as exc:
+        LOGGER.debug(f"[mcp] 查询后端任务状态失败（按后端不可达处理）：{exc}")
+        return None, False
+    target = _normalize_project_dir(project_dir)
+    recent_terminal: Optional[Dict[str, Any]] = None
+    for job in jobs_raw if isinstance(jobs_raw, list) else []:
+        if not isinstance(job, dict):
+            continue
+        if _normalize_project_dir(str(job.get("project_dir", ""))) != target:
+            continue
+        status = job.get("status")
+        if status in ("pending", "running"):
+            return {
+                "phase": "running",
+                "job_id": job.get("job_id"),
+                "status": status,
+                "translator": job.get("translator"),
+            }, True
+        if (
+            status in ("cancelled", "failed")
+            and recent_terminal is None
+            and _finished_within_seconds(job.get("finished_at"), _JOB_RECENT_TERMINAL_SECONDS)
+        ):
+            recent_terminal = {
+                "phase": "recent",
+                "job_id": job.get("job_id"),
+                "status": status,
+                "translator": job.get("translator"),
+            }
+    return recent_terminal, True
+
+
+def _modify_cache_entry(
+    project_dir: str,
+    filename: str,
+    index: Any,
+    mutate: Callable[[Dict[str, Any]], str],
+    action_label: str,
+) -> Dict[str, Any]:
+    """定位缓存条目 → 原地修改 → 快照 → 落盘 → 按 /cache/save 同口径重建问题标注。
+
+    mutate(entry) 返回操作描述文本；业务校验不过（如无备选译文）时在 mutate 内抛
+    ValueError。重建复用 server_cache 的检测链路（依赖加载失败时保留原 problem，
+    检测异常时不覆写已有 problem，与 /cache/save 的降级口径一致）。
+    """
+    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
+    validate_project_dir(project_dir)
+    job, backend_reachable = _active_job_of(project_dir)
+    if job:
+        if job.get("phase") == "recent":
+            raise ValueError(
+                f"翻译任务刚结束（job_id={job.get('job_id', '')}），后端正在合并增量缓存并重检，"
+                f"请等待约 {_JOB_RECENT_TERMINAL_SECONDS:.0f} 秒后再修改缓存。"
+            )
+        raise ValueError(
+            f"翻译任务进行中（job_id={job.get('job_id', '')}），请先停止翻译再修改缓存"
+            "（翻译期间 worker 会增量写盘，并发改写会互相覆盖）。"
+        )
+
+    cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
+    file_path = _resolve_project_file(project_dir, CACHE_FOLDERNAME, filename)
+    if not os.path.isfile(file_path):
+        raise ValueError(f"文件不存在: {CACHE_FOLDERNAME}/{filename}")
+    rel = os.path.relpath(file_path, cache_dir).replace("\\", "/")
+    # 只允许翻译缓存：pass1/pass2 元数据等没有 skip_check/alt_dst 语义
+    from GalTransl.server_cache import _is_translation_cache_rel
+
+    if not _is_translation_cache_rel(rel):
+        raise ValueError(f"不是翻译缓存文件（元数据/示例文件不支持该操作）: {rel}")
+
+    import orjson
+
+    with open(file_path, "rb") as f:
+        old_bytes = f.read()
+    entries = orjson.loads(old_bytes)
+    if not isinstance(entries, list):
+        raise ValueError(f"缓存文件内容不是 JSON 数组: {rel}")
+
+    try:
+        idx_int = int(index)
+    except (TypeError, ValueError):
+        raise ValueError(f"index 必须是整数: {index!r}")
+    target = next(
+        (e for e in entries if isinstance(e, dict) and e.get("index") == idx_int), None
+    )
+    if target is None:
+        # 兼容 index 落盘为数字字符串的旧缓存
+        target = next(
+            (
+                e
+                for e in entries
+                if isinstance(e, dict)
+                and isinstance(e.get("index"), str)
+                and e["index"].isdigit()
+                and int(e["index"]) == idx_int
+            ),
+            None,
+        )
+    if target is None:
+        indexes = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            val = e.get("index")
+            if isinstance(val, int):
+                indexes.append(val)
+            elif isinstance(val, str) and val.isdigit():
+                indexes.append(int(val))
+        scope = f"{min(indexes)}~{max(indexes)}" if indexes else "（文件为空）"
+        raise ValueError(f"未找到 index={idx_int} 的条目（{rel} 现有 index 范围 {scope}）")
+    problem_before = target.get("problem", "")
+    detail = mutate(target)
+    if detail is None:
+        # 本操作为 no-op：不动文件、不重检——否则整文件重检可能刷新其它条目，
+        # 造成「detail 说没改但 changed=true」的误导（审计日志同样会自相矛盾）
+        LOGGER.info(f"[mcp] {action_label} {rel} index={idx_int}（no-op）")
+        return {
+            "success": True,
+            "project_dir": project_dir,
+            "filename": rel,
+            "index": idx_int,
+            "changed": False,
+            "detail": "条目已处于目标状态，无变化",
+            "problem_before": problem_before,
+            "problem_after": problem_before,
+            "recheck_note": "",
+            "job_check": "ok" if backend_reachable else "backend_unreachable（无法确认是否有翻译任务在运行，请自行确认）",
+        }
+
+    # 重建 problem / post_dst_preview / skip_check（整文件，与 /cache/save 保存后重建一致）
+    recheck_note = ""
+    results: Optional[List[Dict[str, Any]]] = None
+    detection_ok = False
+    try:
+        from GalTransl.server_cache import _load_rebuild_deps, _resolve_cache_h_ranges, _run_problem_detection
+
+        deps = _load_rebuild_deps(project_dir, detect_config_file(project_dir))
+        if deps[0] is None:
+            recheck_note = "项目配置加载失败，已保留原 problem 字段"
+        else:
+            (
+                proj_config,
+                pre_dic,
+                post_dic,
+                gpt_dic,
+                t_plugins,
+                h_check_words,
+                forbidden_words,
+            ) = deps
+            h_ranges = [
+                (r["lo"], r["hi"])
+                for r in _resolve_cache_h_ranges(project_dir, rel).get("h_ranges", [])
+            ]
+            results, detection_ok = _run_problem_detection(
+                entries,
+                proj_config,
+                pre_dic,
+                post_dic,
+                gpt_dic,
+                t_plugins,
+                h_ranges,
+                h_check_words,
+                forbidden_words,
+            )
+    except Exception as exc:
+        LOGGER.warning(f"[mcp] 缓存条目修改后重检失败（保留原标注）：{rel}: {exc}")
+        recheck_note = f"重检失败，已保留原 problem 字段：{exc}"
+    if results is not None:
+        for e, r in zip(entries, results):
+            if (e.get("post_src", "") or e.get("post_jp", "")) == "":
+                continue
+            if detection_ok:
+                if r["problem"]:
+                    e["problem"] = r["problem"]
+                elif "problem" in e:
+                    del e["problem"]
+            e["post_dst_preview"] = r["post_dst_preview"]
+            if r["skip_check"]:
+                e["skip_check"] = True
+            elif "skip_check" in e:
+                del e["skip_check"]
+
+    new_bytes = orjson.dumps(entries, option=orjson.OPT_INDENT_2)
+    changed = new_bytes != old_bytes
+    if changed:
+        from GalTransl.server_cache import _append_engine_log, snapshot_cache_file
+
+        snapshot_cache_file(cache_dir, rel, project_dir)
+        tmp_path = file_path + ".tmp"
+        with open(tmp_path, "wb") as f:
+            f.write(new_bytes)
+        os.replace(tmp_path, file_path)
+        _append_engine_log(project_dir, f"[mcp] {action_label} {rel} index={idx_int}：{detail}")
+    LOGGER.info(f"[mcp] {action_label} {rel} index={idx_int}（changed={changed}）")
+    return {
+        "success": True,
+        "project_dir": project_dir,
+        "filename": rel,
+        "index": idx_int,
+        "changed": changed,
+        "detail": detail,
+        "problem_before": problem_before,
+        "problem_after": target.get("problem", ""),
+        "recheck_note": recheck_note,
+        "job_check": "ok" if backend_reachable else "backend_unreachable（无法确认是否有翻译任务在运行，请自行确认）",
+    }
+
+
+def mark_skip_check(project_dir: str, filename: str, index: Any, skip: bool = True) -> Dict[str, Any]:
+    """标记 / 取消某条翻译缓存条目的「跳过问题检查」（skip_check）。
+
+    标记后该条不再参与问题检测，已有 problem 标记经重建清除；取消后重检恢复检测。
+    """
+    return _modify_cache_entry(
+        project_dir,
+        filename,
+        index,
+        lambda entry: _mutate_skip_check(entry, bool(skip)),
+        "标记跳过检查" if skip else "取消跳过检查",
+    )
+
+
+def _mutate_skip_check(entry: Dict[str, Any], skip: bool) -> Optional[str]:
+    """返回操作描述；返回 None 表示条目已处于目标状态（no-op，不重检不落盘）。"""
+    if skip:
+        if bool(entry.get("skip_check", False)):
+            return None
+        entry["skip_check"] = True
+        return "已标记 skip_check=true（问题检测跳过该条，已有 problem 标记一并清除）"
+    if "skip_check" not in entry:
+        return None
+    del entry["skip_check"]
+    return "已取消 skip_check 标记（问题检测恢复覆盖该条）"
+
+
+def swap_alt_translation(project_dir: str, filename: str, index: Any) -> Dict[str, Any]:
+    """交换某条翻译缓存条目的备选译文（alt_dst）与当前译文（pre_dst），语义与校对页一致。
+
+    旧缓存条目仅有 pre_zh（无 pre_dst）时，交换会把旧 pre_zh 值写入 alt_dst——
+    读侧 pre_dst 优先，行为与校对页对该类条目的处理存在历史格式差异，但不破坏数据。
+    """
+    return _modify_cache_entry(
+        project_dir,
+        filename,
+        index,
+        _mutate_swap_alt,
+        "交换备选译文",
+    )
+
+
+def _mutate_swap_alt(entry: Dict[str, Any]) -> Optional[str]:
+    """返回操作描述；返回 None 表示 alt 与当前译文相同（交换后无变化，no-op）。"""
+    alt = entry.get("alt_dst", "")
+    if not alt:
+        raise ValueError(
+            "该条目没有备选译文（alt_dst 由后处理轮 improve/brfix/jpfix/banfix/fix 生成）；"
+            "可先用 galtransl_read_translation_file 查看哪些条目带 alt_dst"
+        )
+    pre = entry.get("pre_dst", "") or entry.get("pre_zh", "")
+    if alt == pre:
+        return None
+    entry["pre_dst"], entry["alt_dst"] = alt, pre
+    return "已交换 pre_dst 与 alt_dst（交换后按新译文重检问题标注）"
+
+
+def _tool_mark_skip_check(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_write_project_dir(arguments)
+    return mark_skip_check(
+        project_dir,
+        str(arguments.get("filename", "") or "").strip(),
+        arguments.get("index"),
+        bool(arguments.get("skip", True)),
+    )
+
+
+def _tool_swap_alt_translation(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_write_project_dir(arguments)
+    return swap_alt_translation(
+        project_dir,
+        str(arguments.get("filename", "") or "").strip(),
+        arguments.get("index"),
+    )
 
 
 # 作业状态返回体只取这些字段（to_dict 的全量字段里 file_filter/config_overrides 对 agent 有用，其余裁掉）
@@ -905,16 +1353,30 @@ def _ensure_safe_metadata_filename(filename: str) -> None:
         raise ValueError(f"非法元数据文件名（Windows 保留名）：{filename}")
 
 
-# ---------- 术语表（GPT 字典）读写 ----------
+# ---------- 术语表 / 项目字典（GPT / 译前 / 译后）读写 ----------
 
-# 术语表 = config 的 dictionary.gpt.dict 中带 (project_dir) 前缀的项目 GPT 字典文件；
-# 公共 Dict/ 下的 GPT 字典不在此工具的写入范围内（由 galtransl_search_dict 覆盖读取）。
+# 术语表与项目字典 = config 的 dictionary 各清单中带 (project_dir) 前缀的项目字典文件；
+# 公共 Dict/ 下的字典不在此工具的写入范围内（由 galtransl_search_dict 覆盖读取）。
 _GLOSSARY_MODES = ("upsert", "delete")
-_GLOSSARY_NEW_FILE_HEADER = "//术语表（GPT 字典）：格式为 日文|中文|解释（解释可不写）；本行为注释，不参与翻译"
+_GLOSSARY_CATEGORIES = ("gpt", "pre", "post")
+_GLOSSARY_CATEGORY_LABELS = {"gpt": "术语表（GPT）", "pre": "译前字典", "post": "译后字典"}
+# category -> _collect_project_dict_payload 里的文件清单键
+_GLOSSARY_CATEGORY_LIST_KEYS = {
+    "gpt": "gpt_dict_files",
+    "pre": "pre_dict_files",
+    "post": "post_dict_files",
+}
+_GLOSSARY_NEW_FILE_HEADERS = {
+    "gpt": "//术语表（GPT 字典）：格式为 日文|中文|解释（解释可不写）；本行为注释，不参与翻译",
+    "pre": "//译前字典：格式为 查找词|替换词|备注（备注可不写）；本行为注释，不参与翻译",
+    "post": "//译后字典：格式为 查找词|替换词|备注（备注可不写）；本行为注释，不参与翻译",
+}
 # 制表符/换行会破坏行结构；其余为 str.splitlines() 的行界字符（\v \f \x1c-\x1e \x85 \u2028 \u2029），
 # 落盘后下次按行读取会把一行拆成两行，一并拒绝。
 _GLOSSARY_FORBIDDEN_CHARS = ("\t", "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
-_GLOSSARY_OTHER_CATEGORY_LABELS = (
+# 全部字典类别（含本工具不写的禁用词类）：upsert 到非目标类别文件会静默失效，按类别报错
+_GLOSSARY_ALL_CATEGORY_LABELS = (
+    ("gpt_dict_files", "术语表（GPT）"),
     ("pre_dict_files", "译前字典"),
     ("post_dict_files", "译后字典"),
     ("forbidden_dict_files_h", "禁用词（H）"),
@@ -938,20 +1400,24 @@ def _ensure_safe_glossary_filename(filename: str) -> None:
         raise ValueError(f"非法术语表文件名（Windows 保留名）：{filename}")
 
 
-def _glossary_files(payload: Dict[str, Any]) -> List[str]:
-    """从字典载荷取出项目术语表文件名（去 (project_dir) 前缀，保持配置顺序）。"""
+def _glossary_files(payload: Dict[str, Any], category: str) -> List[str]:
+    """从字典载荷取出指定类别的项目字典文件名（去 (project_dir) 前缀，保持配置顺序）。"""
     return [
         str(key).replace(DICT_PROJECT_MARKER, "").strip()
-        for key in payload.get("gpt_dict_files", []) or []
+        for key in payload.get(_GLOSSARY_CATEGORY_LIST_KEYS[category], []) or []
     ]
 
 
-def _glossary_other_category(payload: Dict[str, Any], filename: str) -> str:
-    """filename 若被配置为其它类别的项目字典，返回该类别中文名（否则空串）。
+def _glossary_other_category(payload: Dict[str, Any], filename: str, category: str) -> str:
+    """filename 若被配置为**其它**类别的项目字典，返回该类别中文名（否则空串）。
 
-    术语表工具只写 gpt.dict：把 gpt 行写进译后/禁用词字典会静默失效（对方解析口径不同）。
+    把 gpt 行写进译后字典、把译前行写进 gpt 文件都会静默失效（对方解析口径不同），
+    upsert 到非目标类别文件时按此报错。
     """
-    for list_key, label in _GLOSSARY_OTHER_CATEGORY_LABELS:
+    current_key = _GLOSSARY_CATEGORY_LIST_KEYS[category]
+    for list_key, label in _GLOSSARY_ALL_CATEGORY_LABELS:
+        if list_key == current_key:
+            continue
         keys = [
             str(key).replace(DICT_PROJECT_MARKER, "").strip()
             for key in payload.get(list_key, []) or []
@@ -968,19 +1434,25 @@ def read_glossary(
     use_regex: bool = False,
     offset: Any = 0,
     limit: Any = DEFAULT_PAGE_SIZE,
+    category: str = "gpt",
 ) -> Dict[str, Any]:
-    """读取项目术语表（gpt.dict 中的项目 GPT 字典）词条，供整表浏览与筛选。
+    """读取项目字典词条，供整表浏览与筛选。category=gpt（术语表）/ pre（译前字典）/ post（译后字典）。
 
-    与 `search_dict_entries` 的分工：后者跨全部字典类别且必须给 query；本函数限定术语表，
+    与 `search_dict_entries` 的分工：后者跨全部字典类别且必须给 query；本函数限定单一类别，
     允许整表分页浏览。注释行 / 空行 / 分隔线不产条目；line_no 为文件内绝对行号，
     用于向用户报告词条位置（`write_glossary` 按 src 匹配，不按行号）。
 
+    pre/post 类别下除普通词条（查找词|替换词）外，条件/场景行也一并返回（带 row_type，
+    MCP 只读不改写它们）；src/dst 统一取生效的查找/替换对。
+
     Args:
-        filename: 只读某个术语表文件（项目根目录下的文件名）；空串读全部项目术语表。
+        filename: 只读某个字典文件（项目根目录下的文件名）；空串读全部该类别项目字典。
         query: 筛选词，匹配原文 / 译名 / 解释任一列；空串返回全部。
         use_regex: True 时 query 按正则解释（非法正则抛 ValueError）。
         offset / limit: 分页参数，收敛口径与其它分页读工具一致。
     """
+    if category not in _GLOSSARY_CATEGORIES:
+        raise ValueError(f"未知 category: {category}（可选 gpt/pre/post）")
     config_name = detect_config_file(project_dir)
     config_path = os.path.join(project_dir, config_name)
     if not os.path.isfile(config_path):
@@ -989,6 +1461,7 @@ def read_glossary(
             "project_dir": project_dir,
             "config_file_name": config_name,
             "config_exists": False,
+            "category": category,
             "files": [],
             "missing_files": [],
             "total": 0,
@@ -997,7 +1470,7 @@ def read_glossary(
             "returned": 0,
             "has_more": False,
             "entries": [],
-            "hint": "项目未找到 config.inc.yaml / config.yaml，无法确定术语表文件清单；"
+            "hint": "项目未找到 config.inc.yaml / config.yaml，无法确定字典文件清单；"
                     "请确认 project_dir 指向项目根目录。",
         }
 
@@ -1005,15 +1478,15 @@ def read_glossary(
     if target:
         _ensure_safe_glossary_filename(target)
     payload = _collect_project_dict_payload(project_dir, config_name)
-    files = _glossary_files(payload)
+    files = _glossary_files(payload, category)
     if target:
-        other = _glossary_other_category(payload, target)
+        other = _glossary_other_category(payload, target, category)
         if other:
-            raise ValueError(f"不是术语表文件: {target}（它是{other}）")
+            raise ValueError(f"不是{_GLOSSARY_CATEGORY_LABELS[category]}文件: {target}（它是{other}）")
         if target not in files:
             raise ValueError(
-                f"不是项目术语表文件: {target}"
-                "（术语表 = config 的 dictionary.gpt.dict 中带 (project_dir) 前缀的文件）"
+                f"不是{category}类项目字典文件: {target}"
+                "（项目字典 = config 的 dictionary 各清单中带 (project_dir) 前缀的文件）"
             )
         files = [target]
 
@@ -1025,7 +1498,6 @@ def read_glossary(
         except re.error as exc:
             raise ValueError(f"invalid regex: {query_text}（{exc}）")
 
-    categories = _dict_file_categories(payload)
     entries: List[Dict[str, Any]] = []
     missing_files: List[str] = []
     for name in files:
@@ -1035,37 +1507,80 @@ def read_glossary(
         if not os.path.isfile(path):
             missing_files.append(name)
             continue
-        category = categories.get(f"{DICT_PROJECT_MARKER}{name}", "gpt")
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
         for line_no, line in enumerate(lines, start=1):
             row = parse_dict_line(line, category)
-            if row.type != "gpt":
+            entry = _glossary_entry_of_row(name, line_no, row, category)
+            if entry is None:
                 continue
-            src = row.values[0] if len(row.values) > 0 else ""
-            dst = row.values[1] if len(row.values) > 1 else ""
-            if matcher and not (matcher(src) or matcher(dst) or matcher(row.note)):
+            if matcher and not (matcher(entry["src"]) or matcher(entry["dst"]) or matcher(entry["note"])):
                 continue
-            entries.append({
-                "file": name,
-                "line_no": line_no,
-                "src": src,
-                "dst": dst,
-                "note": row.note,
-                "is_regex": row.is_regex,
-                "regex_error": row.regex_error,
-            })
+            entries.append(entry)
     page_info = _paginate(entries, {"offset": offset, "limit": limit})
     offset_val, limit_val = page_info["offset"], page_info["limit"]
     return {
         "project_dir": project_dir,
         "config_file_name": config_name,
         "config_exists": True,
+        "category": category,
         "files": files,
         "missing_files": missing_files,
         **page_info,
         "entries": entries[offset_val:offset_val + limit_val] if limit_val > 0 else [],
     }
+
+
+def _glossary_entry_of_row(
+    name: str, line_no: int, row: DictRow, category: str
+) -> Optional[Dict[str, Any]]:
+    """把解析后的字典行转成浏览条目；该类别不展示的行类型返回 None。
+
+    gpt 只展示 gpt 行；pre/post 展示 normal/conditional/situation 三种生效行，
+    src/dst 统一取生效的查找/替换对（条件行另带 target 与 cond 列）。
+    """
+    if category == "gpt":
+        if row.type != "gpt":
+            return None
+        src = row.values[0] if len(row.values) > 0 else ""
+        dst = row.values[1] if len(row.values) > 1 else ""
+        return {
+            "file": name,
+            "line_no": line_no,
+            "row_type": "gpt",
+            "src": src,
+            "dst": dst,
+            "note": row.note,
+            "is_regex": row.is_regex,
+            "regex_error": row.regex_error,
+        }
+    if row.type == "normal":
+        src = row.values[0] if len(row.values) > 0 else ""
+        dst = row.values[1] if len(row.values) > 1 else ""
+    elif row.type == "conditional":
+        # values = [target, cond, search, replace, note]
+        src = row.values[2] if len(row.values) > 2 else ""
+        dst = row.values[3] if len(row.values) > 3 else ""
+    elif row.type == "situation":
+        # values = [scene, search, replace]
+        src = row.values[1] if len(row.values) > 1 else ""
+        dst = row.values[2] if len(row.values) > 2 else ""
+    else:
+        return None
+    entry = {
+        "file": name,
+        "line_no": line_no,
+        "row_type": row.type,
+        "src": src,
+        "dst": dst,
+        "note": row.note,
+        "is_regex": row.is_regex,
+        "regex_error": row.regex_error,
+    }
+    if row.type == "conditional":
+        entry["target"] = row.target
+        entry["cond"] = row.values[1] if len(row.values) > 1 else ""
+    return entry
 
 
 def _validate_glossary_field(value: Any, label: str) -> str:
@@ -1083,18 +1598,20 @@ def _validate_glossary_field(value: Any, label: str) -> str:
     return value
 
 
-def _ensure_glossary_roundtrip(expected: List[str], label: str) -> None:
+def _ensure_glossary_roundtrip(expected: List[str], label: str, category: str = "gpt") -> None:
     """把字段按落盘口径序列化成一行后按解析口径自检：必须能被原样读回。
 
     挡住单字段校验发现不了的拼接类漂移：非末位字段以反斜杠结尾会把 ``\\|`` 还原成
     字面竖线（读回 dst 丢失）、字段含 4 连续空格会被解析端当列分隔——这些都会导致
-    写入值与读回值不一致、后续按 src 匹配永远落空。
+    写入值与读回值不一致、后续按 src 匹配永远落空。pre/post 类别还要求该行解析为
+    普通词条行（而非条件/场景行），否则语义会漂移。
     """
     line = "|".join(_encode_glossary_field(field) for field in expected)
-    row = parse_dict_line(line, "gpt")
+    row = parse_dict_line(line, category)
+    expected_type = "gpt" if category == "gpt" else "normal"
     values = list(row.values) + [""] * (len(expected) - len(row.values))
-    if row.type != "gpt" or values[: len(expected)] != list(expected):
-        raise ValueError(f"{label} 无法按术语表格式原样写回并读回（请检查反斜杠结尾、连续空格等字符）")
+    if row.type != expected_type or values[: len(expected)] != list(expected):
+        raise ValueError(f"{label} 无法按字典格式原样写回并读回（请检查反斜杠结尾、连续空格等字符）")
 
 
 def _encode_glossary_field(value: str) -> str:
@@ -1137,28 +1654,34 @@ def _save_glossary_file(project_dir: str, filename: str, lines: List[str], eol: 
     return len(content.encode("utf-8"))
 
 
-def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> Dict[str, Any]:
-    """按词条增改 / 删除项目术语表（GPT 字典），原子落盘并保留原有注释与其它行。
+def write_glossary(
+    project_dir: str, filename: str, mode: str, entries: Any, category: str = "gpt"
+) -> Dict[str, Any]:
+    """按词条增改 / 删除项目字典（gpt 术语表 / pre 译前 / post 译后），原子落盘并保留原有注释与其它行。
 
     只处理调用方列出的词条：upsert 按 src 匹配（命中则原地替换、未命中追加），
-    delete 按 src 删行；**不提供整体覆盖**——读取是分页的，整体覆盖会在分页场景
-    静默删掉未读词条。文件未登记进 dictionary.gpt.dict 时自动登记，
+    delete 按 src 删行（pre/post 只匹配普通词条行，条件/场景行不动）；
+    **不提供整体覆盖**——读取是分页的，整体覆盖会在分页场景
+    静默删掉未读词条。文件未登记进对应 dictionary 清单时自动登记，
     否则写入的内容不会被翻译引擎使用。
 
     Args:
-        filename: 项目根目录下的术语表文件名（必填，避免在多个术语表文件间误写）。
+        filename: 项目根目录下的字典文件名（必填，避免在多个字典文件间误写）。
         mode: upsert（新增或更新）/ delete（删除）；空串按 upsert。
+        category: gpt（术语表）/ pre（译前字典）/ post（译后字典），默认 gpt。
         entries: ``[{"src": ..., "dst": ..., "note": ...}]``；note 省略表示更新时
             保留原备注，显式传空串表示清空备注。
     """
     # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
     config_name = validate_project_dir(project_dir)
+    if category not in _GLOSSARY_CATEGORIES:
+        raise ValueError(f"未知 category: {category}（可选 gpt/pre/post）")
     resolved_mode = str(mode or "").strip() or "upsert"
     if resolved_mode not in _GLOSSARY_MODES:
         raise ValueError(f"未知 mode: {resolved_mode}（可选 upsert/delete）")
     name = str(filename or "").strip()
     if not name:
-        raise ValueError("file 必填（项目术语表文件名，如 项目GPT字典.txt）")
+        raise ValueError(f"file 必填（项目{_GLOSSARY_CATEGORY_LABELS[category]}文件名）")
     _ensure_safe_glossary_filename(name)
     if not isinstance(entries, list) or not entries:
         raise ValueError("entries 必须是非空数组")
@@ -1174,22 +1697,27 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
             raise ValueError(f"entries[{i}].src 以 // 开头，会被解析为注释行而静默失效")
         if _is_separator_line(src):
             raise ValueError(f"entries[{i}].src 是装饰分隔线，会被解析为注释行而静默失效")
+        if category in ("pre", "post") and src.strip() in _SITUATION_KEYS:
+            raise ValueError(
+                f"entries[{i}].src 为 {src.strip()}（mono/diag 保留字），在译前/译后字典里"
+                "会解析为场景字典行而非普通词条，请改写该词条"
+            )
         note_provided = "note" in item
         note = _validate_glossary_field(item.get("note", ""), f"entries[{i}].note") if note_provided else ""
         dst = ""
         if resolved_mode == "upsert":
             dst = _validate_glossary_field(item.get("dst", ""), f"entries[{i}].dst")
             if not dst.strip():
-                raise ValueError(f"entries[{i}].dst 不能为空（术语表词条须给出译名）")
+                raise ValueError(f"entries[{i}].dst 不能为空（词条须给出替换词/译名）")
             # 整行自检：写入的行必须能被解析端原样读回，否则后续 upsert 匹配不上
-            _ensure_glossary_roundtrip([src, dst] + ([note] if note else []), f"entries[{i}]")
+            _ensure_glossary_roundtrip([src, dst] + ([note] if note else []), f"entries[{i}]", category)
         else:
             # delete 只用 src 匹配：空 dst 仅作列占位，验证 src 作为非末位字段不被转义/空格规则改写
-            _ensure_glossary_roundtrip([src, ""], f"entries[{i}].src")
+            _ensure_glossary_roundtrip([src, ""], f"entries[{i}].src", category)
         normalized.append((src, dst, note, note_provided))
 
     payload = _collect_project_dict_payload(project_dir, config_name)
-    gpt_files = _glossary_files(payload)
+    category_files = _glossary_files(payload, category)
     # H 门禁先于配置登记与落盘：命中即拒绝，保证不留任何副作用
     enforce_h_gate(
         project_dir,
@@ -1197,29 +1725,30 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
     )
 
     registered = False
-    if name not in gpt_files:
-        other = _glossary_other_category(payload, name)
+    if name not in category_files:
+        other = _glossary_other_category(payload, name, category)
         if other:
-            raise ValueError(f"{name} 是{other}，不是术语表文件；术语表请用 dictionary.gpt.dict 中的项目文件")
+            raise ValueError(f"{name} 是{other}，不是{_GLOSSARY_CATEGORY_LABELS[category]}文件")
         if resolved_mode == "delete":
             raise ValueError(
-                f"{name} 未登记为项目术语表文件（dictionary.gpt.dict）；"
-                "请先用 galtransl_read_glossary 查看现有术语表文件名"
+                f"{name} 未登记为项目{_GLOSSARY_CATEGORY_LABELS[category]}文件；"
+                "请先用 galtransl_read_glossary（category 同此处的 category）查看现有文件名"
             )
-        _ensure_project_dict_file_configured(project_dir, config_name, "gpt", name)
+        _ensure_project_dict_file_configured(project_dir, config_name, category, name)
         registered = True
-        LOGGER.info(f"[mcp] 术语表文件已登记进 config：{config_name} → gpt.dict: {name}")
+        LOGGER.info(f"[mcp] 项目字典文件已登记进 config：{config_name} → category={category}: {name}")
 
     lines, eol, exists = _read_glossary_file(project_dir, name)
-    # 新建文件与 0 字节空文件都补注释头，避免产出无说明的空术语表
+    # 新建文件与 0 字节空文件都补注释头，避免产出无说明的空字典
     if resolved_mode == "upsert" and not lines:
-        lines = [_GLOSSARY_NEW_FILE_HEADER]
+        lines = [_GLOSSARY_NEW_FILE_HEADERS[category]]
 
-    # 仅 gpt 行参与匹配；注释 / 空行 / 分隔线 / 其它行原样保留
+    # 仅普通词条参与匹配；注释 / 空行 / 分隔线 / 条件与场景行原样保留
+    expected_row_type = "gpt" if category == "gpt" else "normal"
     parsed: Dict[str, List[Dict[str, Any]]] = {}
     for idx, line in enumerate(lines):
-        row = parse_dict_line(line, "gpt")
-        if row.type != "gpt" or not row.values:
+        row = parse_dict_line(line, category)
+        if row.type != expected_row_type or not row.values:
             continue
         parsed.setdefault(row.values[0], []).append({"idx": idx, "row": row})
 
@@ -1238,7 +1767,7 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
             continue
         if not hits:
             lines.append(_serialize_glossary_line(src, dst, note))
-            parsed[src] = [{"idx": len(lines) - 1, "row": parse_dict_line(lines[-1], "gpt")}]
+            parsed[src] = [{"idx": len(lines) - 1, "row": parse_dict_line(lines[-1], category)}]
             added += 1
             continue
         for hit in hits:
@@ -1248,7 +1777,7 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
                 unchanged += 1
                 continue
             lines[hit["idx"]] = new_line
-            hit["row"] = parse_dict_line(new_line, "gpt")
+            hit["row"] = parse_dict_line(new_line, category)
             updated += 1
 
     deleted = len(removed)
@@ -1262,11 +1791,11 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
     else:
         size = os.path.getsize(target_path) if os.path.isfile(target_path) else 0
 
-    # 同名词条还存在于其它项目术语表文件时只报告不阻断（H / 非 H 术语表本就允许同词不同译）
+    # 同名词条还存在于其它同类字典文件时只报告不阻断（H / 非 H 字典本就允许同词不同译）
     also_found_in: List[Dict[str, Any]] = []
     if resolved_mode == "upsert":
         wanted = {src for src, _dst, _note, _np in normalized}
-        for other_name in gpt_files:
+        for other_name in category_files:
             if other_name == name:
                 continue
             other_path = os.path.join(project_dir, other_name)
@@ -1278,8 +1807,8 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
             except OSError:
                 continue
             for line_no, line in enumerate(other_lines, start=1):
-                row = parse_dict_line(line, "gpt")
-                if row.type != "gpt" or not row.values or row.values[0] not in wanted:
+                row = parse_dict_line(line, category)
+                if row.type != expected_row_type or not row.values or row.values[0] not in wanted:
                     continue
                 also_found_in.append({
                     "file": other_name,
@@ -1288,12 +1817,13 @@ def write_glossary(project_dir: str, filename: str, mode: str, entries: Any) -> 
                 })
 
     LOGGER.info(
-        f"[mcp] 术语表已更新: {name} mode={resolved_mode}"
+        f"[mcp] 项目字典已更新: {name} category={category} mode={resolved_mode}"
         f"（新增 {added}、更新 {updated}、未变 {unchanged}、删除 {deleted}，{size} 字节）"
     )
     return {
         "success": True,
         "project_dir": project_dir,
+        "category": category,
         "file": name,
         "mode": resolved_mode,
         "added": added,
@@ -1338,7 +1868,7 @@ def build_server_instructions(
         h_line = "4. 用户已在 GalTransl 设置中关闭 H 门禁：允许处理 H / 成人向内容，无需因此拒绝任务或中断检索。"
     return (
         f"GalTransl 翻译项目管理服务（{len(enabled)} 个工具：{n_read} 个只读检索 + {n_write} 个写操作）。"
-        "所有工具都需提供翻译项目根目录的绝对路径 project_dir。\n"
+        "project_dir 可传翻译项目根目录的绝对路径，或项目名称（已登记/工作区根下的项目，galtransl_list_projects 可列出）。\n"
         "\n"
         "使用前必须遵守：\n"
         "1. 只读工具（galtransl_search_* / lookup_name / list_* / get_* / read_* / check_model）不得引发任何写入。\n"
@@ -1420,7 +1950,10 @@ def _def(
     return item
 
 
-_PROJECT_PROP = {"type": "string", "description": "项目根目录绝对路径"}
+_PROJECT_PROP = {
+    "type": "string",
+    "description": "项目根目录绝对路径，或项目名称（已登记/工作区根下的项目，galtransl_list_projects 可列出）",
+}
 _QUERY_PROP = {"type": "string", "description": "检索词"}
 _REGEX_PROP = {"type": "boolean", "description": "是否按正则解释检索词，默认 false"}
 _MAX_RESULTS_PROP = {"type": "integer", "description": f"返回条数上限，默认 {DEFAULT_MAX_RESULTS}"}
@@ -1503,7 +2036,9 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_list_projects",
-        "列出工作区根目录下可识别的 GalTransl 项目（含项目绝对路径，供其它工具使用）。",
+        "列出可用项目：GalTransl 已登记的项目（打开过/创建过/跑过任务，含 source: registered）"
+        "与工作区根下可识别的项目目录（source: workspace）。返回的 name 可直接作为"
+        "其它工具的 project_dir 使用（无需绝对路径）。",
         {
             "workspace_root": {"type": "string", "description": "工作区根目录，默认取服务端配置"},
         },
@@ -1537,14 +2072,21 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_read_glossary",
-        "浏览项目术语表（GPT 字典，config 的 dictionary.gpt.dict 中带 (project_dir) 的项目文件）词条："
-        "支持整表分页浏览与按词筛选（匹配原文/译名/解释任一列）。"
+        "浏览项目字典词条：category=gpt（默认，术语表 GPT 字典）/ pre（译前字典）/ post（译后字典），"
+        "均为 config 的 dictionary 各清单中带 (project_dir) 的项目文件。"
+        "支持整表分页浏览与按词筛选（匹配原文/译名/解释任一列）；pre/post 类别下条件/场景行"
+        "也一并返回（带 row_type，只读不改写）。"
         "写入请用 galtransl_write_glossary（需先读现状拿到文件名）。",
         {
             "project_dir": _PROJECT_PROP,
+            "category": {
+                "type": "string",
+                "enum": ["gpt", "pre", "post"],
+                "description": "字典类别：gpt=术语表（默认），pre=译前字典，post=译后字典",
+            },
             "filename": {
                 "type": "string",
-                "description": "只读某个术语表文件（项目根目录下的文件名，如 项目GPT字典.txt）；不传则读全部项目术语表",
+                "description": "只读某个字典文件（项目根目录下的文件名，如 项目GPT字典.txt）；不传则读该类别全部项目字典",
             },
             "query": {"type": "string", "description": "筛选词（匹配原文/译名/解释任一列），留空则浏览全部"},
             "regex": _REGEX_PROP,
@@ -1630,14 +2172,20 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_write_glossary",
-        "按词条增改 / 删除项目术语表（GPT 字典）文件，原子落盘并保留原有注释与其它词条。"
-        "mode=upsert（默认，按 src 匹配：已存在则原地更新，不存在则追加）/ delete（按 src 删除）。"
-        "file 必须显式指定为项目根目录下的术语表文件名（先用 galtransl_read_glossary 读取现状与文件名）；"
-        "未登记在 dictionary.gpt.dict 的文件会自动登记，否则翻译不会使用该文件。"
+        "按词条增改 / 删除项目字典（category=gpt 术语表 / pre 译前字典 / post 译后字典），"
+        "原子落盘并保留原有注释与其它词条（pre/post 的条件/场景行不动）。"
+        "mode=upsert（默认，按 src 匹配：已存在则原地更新，不存在则追加）/ delete（按 src 删除普通词条）。"
+        "file 必须显式指定为项目根目录下的字典文件名（先用 galtransl_read_glossary 同 category 读取现状与文件名）；"
+        "未登记在对应 dictionary 清单的文件会自动登记，否则翻译不会使用该文件。"
         "每次只处理列出的词条，不做整体覆盖；note 省略表示更新时保留原备注，传空串表示清空。",
         {
             "project_dir": _PROJECT_PROP,
-            "file": {"type": "string", "description": "术语表文件名（项目根目录下），如 项目GPT字典.txt"},
+            "category": {
+                "type": "string",
+                "enum": ["gpt", "pre", "post"],
+                "description": "字典类别：gpt=术语表（默认），pre=译前字典，post=译后字典",
+            },
+            "file": {"type": "string", "description": "字典文件名（项目根目录下），如 项目GPT字典.txt"},
             "mode": {
                 "type": "string",
                 "enum": ["upsert", "delete"],
@@ -1648,8 +2196,8 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
                 "items": {
                     "type": "object",
                     "properties": {
-                        "src": {"type": "string", "description": "词条原文（匹配键），非空"},
-                        "dst": {"type": "string", "description": "译名，upsert 必填；支持 re: 正则词条"},
+                        "src": {"type": "string", "description": "词条原文/查找词（匹配键），非空；支持 re: 正则词条"},
+                        "dst": {"type": "string", "description": "译名/替换词，upsert 必填"},
                         "note": {"type": "string", "description": "解释/备注，可省略（省略时更新保留原备注）"},
                     },
                     "required": ["src"],
@@ -1658,6 +2206,36 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
             },
         },
         ["project_dir", "file", "entries"],
+        kind="write",
+    ),
+    _def(
+        "galtransl_mark_skip_check",
+        "把某条翻译缓存条目标记为「跳过问题检查」（skip_check=true，默认）或取消标记（skip=false）。"
+        "标记后该条不再参与问题检测、已有 problem 标记被清除；取消后按新译文重检恢复。"
+        "适用于译文确认无误但检测持续误报的条目。修改后按校对页保存同口径重检该文件的问题标注。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "filename": {"type": "string", "description": "相对 transl_cache 的缓存文件名（如 pass3_cache/xx.json）"},
+            "index": {"type": "integer", "description": "缓存条目 index"},
+            "skip": {
+                "type": "boolean",
+                "description": "true=标记跳过（默认），false=取消跳过",
+            },
+        },
+        ["project_dir", "filename", "index"],
+        kind="write",
+    ),
+    _def(
+        "galtransl_swap_alt_translation",
+        "把某条翻译缓存条目的备选译文（alt_dst）与当前译文（pre_dst）交换，语义与校对页「交换备选」一致，"
+        "交换后按新译文重检问题标注。仅当条目有 alt_dst 时可用"
+        "（备选译文由后处理轮 improve/brfix/jpfix/banfix/fix 生成）。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "filename": {"type": "string", "description": "相对 transl_cache 的缓存文件名（如 pass3_cache/xx.json）"},
+            "index": {"type": "integer", "description": "缓存条目 index"},
+        },
+        ["project_dir", "filename", "index"],
         kind="write",
     ),
     _def(
@@ -1711,6 +2289,8 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_write_route_map": _tool_write_route_map,
     "galtransl_save_metadata": _tool_save_metadata,
     "galtransl_write_glossary": _tool_write_glossary,
+    "galtransl_mark_skip_check": _tool_mark_skip_check,
+    "galtransl_swap_alt_translation": _tool_swap_alt_translation,
     "galtransl_submit_job": _tool_submit_job,
     "galtransl_stop_job": _tool_stop_job,
 }

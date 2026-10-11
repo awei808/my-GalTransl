@@ -33,6 +33,7 @@ from GalTransl import (
 )
 from GalTransl.Cache import CACHE_TEMP_SUFFIX
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
+from GalTransl.known_projects import record_known_project
 from GalTransl.Utils import GIT_SUGGEST_INPUT_SIZE_BYTES, get_dir_total_size
 from GalTransl.server_runtime import (
     RUNTIME_PROGRESS_CACHE,
@@ -110,6 +111,8 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
     except ValueError as exc:
         handler._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         return
+    # 登记已知项目（节流 + best-effort，供 MCP 按项目名解析 project_dir）
+    record_known_project(project_dir)
 
     # GET /api/projects/:id/config
     if sub_path == "/config":

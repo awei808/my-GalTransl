@@ -49,8 +49,13 @@ from GalTransl.mcp_tools import (
 )
 
 SERVER_NAME = "galtransl"
+# 静态默认描述（供测试与文档引用）；启动时实际下发走 _build_startup_description（随禁用集合联动）。
+# 计数从 MCP_TOOL_DEFS 派生而非手写，防止加工具后描述漂移。
+_MCP_READ_COUNT = sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "read")
+_MCP_WRITE_COUNT = len(MCP_TOOL_DEFS) - _MCP_READ_COUNT
 SERVER_DESCRIPTION = (
-    "GalTransl 翻译项目管理（19 个工具：14 只读检索 + 5 受限写入）："
+    f"GalTransl 翻译项目管理（{len(MCP_TOOL_DEFS)} 个工具："
+    f"{_MCP_READ_COUNT} 只读检索 + {_MCP_WRITE_COUNT} 受限写入）："
     "翻译缓存、原始脚本、字典与术语表、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
 )
 

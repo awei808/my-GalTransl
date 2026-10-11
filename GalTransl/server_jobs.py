@@ -19,6 +19,7 @@ from uuid import uuid4
 from GalTransl import LOGGER, TRANSLATOR_SUPPORTED
 from GalTransl import AppSettings
 from GalTransl.Service import JobSpec, JobState, create_job_state, run_job
+from GalTransl.known_projects import record_known_project
 from GalTransl.server_runtime import (
     _ConcurrentLimitError,
     _normalize_project_dir,
@@ -139,6 +140,9 @@ class JobRegistry:
                 "项目GPT字典-生成.txt",
             )
         file_filter, config_overrides = validate_job_payload_extras(payload)
+
+        # 登记已知项目（节流 + best-effort，供 MCP 按项目名解析；config 名此处已知，免探测）
+        record_known_project(project_dir, config_file_name)
 
         # 锁外重置运行时状态：避免 JobRegistry 锁 → runtime 锁的嵌套顺序（submit 已保证同项目不并发提交，无竞态）
         reset_runtime_project(project_dir)
