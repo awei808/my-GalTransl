@@ -165,6 +165,13 @@ class ForToneCheckAgain(ForToneCheck):
             f"{self._log_tag} {filename} 开始二次复核，共 {total} 句命中句，"
             f"{total_batches} 批"
         )
+        # 第一轮具体原因（tone_issue 非哨兵）注入输入行 problem 键，供 AI 针对性核实
+        reason_count = sum(1 for t in targets if self._issue_reason_of(t, "tone_issue"))
+        if reason_count:
+            LOGGER.debug(
+                f"{self._log_tag} {filename} {reason_count}/{total} 句将注入第一轮原因"
+                f"（problem 字段）"
+            )
         for batch_no, start in enumerate(range(0, total, num_per_request), start=1):
             self._check_stop_requested()
             batch = targets[start : start + num_per_request]
@@ -183,6 +190,7 @@ class ForToneCheckAgain(ForToneCheck):
                 proofread=True,
                 filename=filename,
                 include_src=True,
+                extra_problem_attr="tone_issue",
             )
             user_content = self._build_tonecheck_again_user_content(
                 input_src, tone_guide, metadata_block

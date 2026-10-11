@@ -16,6 +16,7 @@
     afterTranslation 白名单 / STANDALONE_BACKENDS
 """
 import asyncio
+import json
 import re
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -371,6 +372,68 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase, _ToneAgainTestB
             captured["user"].index("<plot_metadata>"),
             captured["user"].index("### 任务"),
         )
+
+    async def test_reason_injected_into_user_content(self) -> None:
+        # 第一轮具体原因注入输入行 problem 键；哨兵（"1"）不注入
+        obj = self._make_obj(
+            {}, batches=[{"区间": [1, 100], "用词色彩": "口语"}], llm_resp=""
+        )
+        captured = {}
+
+        async def fake_llm(messages, filename, idx_tip, cb):
+            captured["user"] = messages[1]["content"]
+            return "", None
+
+        obj._call_llm = fake_llm
+        trans_list = [
+            _trans(1, "哨兵句", "1"),
+            _trans(2, "原因句", "标注口语活泼，译文过于书面"),
+        ]
+        await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertIn('"problem": "标注口语活泼，译文过于书面"', captured["user"])
+        self.assertNotIn('"problem": "1"', captured["user"])
+
+
+class InputProblemInjectionTests(unittest.TestCase):
+    """验证复核轮输入行注入第一轮原因（_build_input_jsonlines extra_problem_attr）。"""
+
+    def _line_obj(self, trans: CSentense, **kwargs) -> dict:
+        obj = object.__new__(ForToneCheckAgain)
+        params = dict(proofread=True, filename="f.json", include_src=True)
+        params.update(kwargs)
+        input_list, _sig, _n, _src = obj._build_input_jsonlines([trans], **params)
+        self.assertEqual(len(input_list), 1)
+        return json.loads(input_list[0].split("|", 1)[1])
+
+    def test_reason_injected_into_problem_key(self) -> None:
+        trans = _trans(3, tone="标注口语活泼，译文过于书面")
+        payload = self._line_obj(trans, extra_problem_attr="tone_issue")
+        self.assertEqual(payload.get("problem"), "标注口语活泼，译文过于书面")
+        # id/name/src/dst 常规字段不受影响
+        self.assertEqual(payload["id"], 3)
+        self.assertIn("dst", payload)
+
+    def test_sentinel_not_injected(self) -> None:
+        # 共享哨兵口径：与 Problem.py 认领分支一致，"1"/"疑似错误" 均视为无原因
+        for sentinel in ("1", "疑似错误"):
+            with self.subTest(sentinel=sentinel):
+                trans = _trans(3, tone=sentinel)
+                payload = self._line_obj(trans, extra_problem_attr="tone_issue")
+                self.assertNotIn("problem", payload)
+
+    def test_non_str_coerced_to_no_injection(self) -> None:
+        for raw in (None, 123):
+            with self.subTest(raw=raw):
+                trans = _trans(3, tone="")
+                trans.tone_issue = raw
+                payload = self._line_obj(trans, extra_problem_attr="tone_issue")
+                self.assertNotIn("problem", payload)
+
+    def test_default_no_attr_no_injection(self) -> None:
+        # 不传 extra_problem_attr（翻译轮/第一轮检查口径）：原因不注入
+        trans = _trans(3, tone="标注口语活泼，译文过于书面")
+        payload = self._line_obj(trans)
+        self.assertNotIn("problem", payload)
 
 
 class ToneAgainBatchSplitTests(unittest.IsolatedAsyncioTestCase, _ToneAgainTestBase):

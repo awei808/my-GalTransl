@@ -219,6 +219,17 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         """
         return f"{sig}|" + json.dumps(obj, ensure_ascii=False)
 
+    @staticmethod
+    def _issue_reason_of(tran: CSentense, attr: str) -> str:
+        """读取第一轮判定原因文本：非 str 收敛为空串，占位哨兵（无原因）返回空串。
+
+        口径与 Problem.py 认领分支一致（""/"1"/"疑似错误" 均视为无原因），
+        供复核轮注入 problem 字段与注入句数统计共用。
+        """
+        raw = getattr(tran, attr, "")
+        text = str(raw).strip() if isinstance(raw, str) else ""
+        return "" if text in ("1", "疑似错误") else text
+
     def _build_input_jsonlines(
         self,
         trans_list: CTransList,
@@ -226,6 +237,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
         filename: str,
         problem_types: Optional[list] = None,
         include_src: bool = True,
+        extra_problem_attr: str = "",
     ) -> tuple:
         """
         输入内容处理与拼接（流程第 1 步）。
@@ -237,6 +249,7 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
           - 为每句生成唯一 3 位签名 sig（防串行校验）
           - 翻译模式构建 {id,name,src}；校对模式额外携带 dst
           - problem_types 非 None 时可选注入 problem（译文问题，供改进轮参考）
+          - extra_problem_attr 非空时注入第一轮判定原因到 problem 键（供复核轮参考）
           - include_src=False 时校对模式仅注入 dst（不注入原文），供纯译文修复
             （如换行位置修复）使用，避免模型回显/依赖原文
           - 无说话人时删除 name 字段（表示旁白/独白）
@@ -250,6 +263,9 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
                 None=不注入；空列表=注入全部；非空=仅注入白名单内类型。
             include_src: 校对模式下是否注入 src 原文；默认 True（保持既有行为）。
                 设为 False 时只注入 dst（当前译文），供换行位置修复等纯译文任务使用。
+            extra_problem_attr: 复核轮注入第一轮原因的句属性名（如 suspected_error /
+                tone_issue）；空串=不注入。占位哨兵与非 str 视为无原因，不注入；
+                与 problem_types 同传时本参数写入在后（覆盖 problem 键）。
 
         Returns:
             (input_list, sig_list, n_symbol, input_src)
@@ -327,6 +343,13 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
                     problem_str = getattr(trans, "problem", "")
                 if problem_str:
                     tmp_obj["problem"] = problem_str
+
+            # 复核轮注入第一轮具体原因（extra_problem_attr 指向 suspected_error /
+            # tone_issue），占位哨兵（"1"/"疑似错误"）与非 str 视为无原因不注入
+            if extra_problem_attr:
+                issue_text = self._issue_reason_of(trans, extra_problem_attr)
+                if issue_text:
+                    tmp_obj["problem"] = issue_text
 
             # 无说话人时删除 name 字段，表示旁白/独白
             if tmp_obj["name"] == "null":
