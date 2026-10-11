@@ -462,7 +462,7 @@ export async function requestAiSuggest(
   );
 }
 
-/** 对 pass3_cache 下全部缓存文件重新运行问题检测并写回（后端异步执行，立即返回） */
+/** 对 pass3_cache 下全部缓存文件重新运行问题检测并写回（后端起后台线程后立即返回，进度经 fetchRecheckAllStatus 轮询） */
 export async function recheckAllCacheProblems(projectId: string, configFileName?: string) {
   return apiRequest<CacheRecheckAllResponse>(`/api/projects/${projectId}/cache/recheck-all`, {
     method: "POST",
@@ -470,8 +470,6 @@ export async function recheckAllCacheProblems(projectId: string, configFileName?
     body: JSON.stringify({
       config_file_name: configFileName || "config.yaml",
     }),
-    // 大项目（数万行 × 数百词条）后端全量重检耗时可达分钟级，放宽默认 30s 超时兜底
-    timeoutMs: 600000,
   });
 }
 

@@ -84,10 +84,9 @@ const LIST_OMITTED_KEYS = new Set<string>([
   "problemAnalyze.avgSentenceLengthThreshold",
   "problemAnalyze.avgSentenceLengthThresholdH",
 ]);
-// 暂不在前端暴露的键：contextNum 改用多轮对话完整保留上下文，无需切分，故移除前端入口；
-// gpt.semCheck.* 已随 ForSemCheck 跟随主翻译 profile 而废弃（旧配置残留键一并隐藏）
+// 暂不在前端暴露的键：gpt.semCheck.* 已随 ForSemCheck 跟随主翻译 profile 而废弃（旧配置残留键一并隐藏）。
+// gpt.contextNum 曾因多轮对话完整保留上下文而移除入口，现随 restoreContextMode=lines 模式恢复暴露。
 const REMOVED_CONFIG_KEYS = new Set<string>([
-  "common.gpt.contextNum",
   "common.gpt.semCheck.enabled",
   "common.gpt.semCheck.endpoint",
   "common.gpt.semCheck.modelName",
@@ -230,7 +229,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   "common.retranslFail": { label: "重启时重翻失败句" },
   "common.gpt.contextNum": {
     label: "前文句数",
-    hint: "每次请求附带的前文句数；越大上下文越强、成本越高（常用 8）。",
+    hint: "restoreContextMode=lines 时每次请求附带的前文句数；值越大上下文越强、成本越高（常用 8，范围 0-32）。",
   },
   "common.gpt.translation_guideline": {
     label: "翻译规范文件",
@@ -247,7 +246,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "common.gpt.contextBatches": {
     label: "历史批数",
-    hint: "restoreContextMode=batches 时每次请求附带的历史批数；1 批等于一次请求的实际句数，重启续跑时按前置已译句数近似。",
+    hint: "restoreContextMode=batches 时每次请求附带的历史批数；1 批等于一次请求的实际句数，重启续跑时按前置已译句数近似。范围 1-8，超界自动钳制并告警。",
   },
   "common.gpt.change_prompt": {
     label: "提示词修改模式",
@@ -316,7 +315,7 @@ const ARRAY_LIST_KEYS = new Set([
  * 这些键不进入「通用配置列表」（在展平阶段直接跳过），改为专用卡片、隐藏行或条件板块：
  * - 后端全局管理前缀：交全局 API 配置页维护
  * - HIDDEN_CONFIG_KEYS：旧版本残留/由专用卡片接管的键
- * - REMOVED_CONFIG_KEYS：暂不在前端暴露的键（如 contextNum）
+ * - REMOVED_CONFIG_KEYS：暂不在前端暴露的键（已废弃的 gpt.semCheck.*）
  * - GUIDELINE_KEY：改为「翻译规范文件」固定卡片渲染
  * - 弃用键（numPerRequestTranslate / splitFile* / dynamicNumPerRequestTranslate*）：移入 HIDDEN_CONFIG_KEYS
  */
@@ -896,6 +895,10 @@ export function ProjectConfigPage() {
     setAdvMaxLen(v);
     setValue("problemAnalyze.adverbialMaxLength", v);
   }
+
+  // 阈值未知（加载中 / 后端不可达）时输入框占位提示，避免无解释的空白被误认为可任意填
+  const thresholdPlaceholder = () =>
+    problemTypesLoading() ? "加载中…" : problemTypes().length === 0 ? "未知（后端未连接）" : "";
 
   // 当前项目/配置名切换后，从后端拉取候选列表并同步当前勾选与阈值
   createEffect(() => {
@@ -1606,6 +1609,7 @@ export function ProjectConfigPage() {
               min={10}
               max={50}
               step={1}
+              placeholder={thresholdPlaceholder()}
               value={avgThreshold() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
@@ -1629,6 +1633,7 @@ export function ProjectConfigPage() {
               min={10}
               max={50}
               step={1}
+              placeholder={thresholdPlaceholder()}
               value={hAvgThreshold() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
@@ -1652,6 +1657,7 @@ export function ProjectConfigPage() {
               min={1}
               max={30}
               step={1}
+              placeholder={thresholdPlaceholder()}
               value={attrMaxLen() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);
@@ -1675,6 +1681,7 @@ export function ProjectConfigPage() {
               min={1}
               max={50}
               step={1}
+              placeholder={thresholdPlaceholder()}
               value={advMaxLen() ?? ""}
               onChange={(e) => {
                 const raw = Number((e.target as HTMLInputElement).value);

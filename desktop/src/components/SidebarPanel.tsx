@@ -646,6 +646,13 @@ function ProblemList() {
   // 请求序号：problemVersion 重拉 / pid 切换时递增，使旧请求的过期响应不再覆盖新结果
   let problemSeq = 0;
 
+  // 重检跟踪代号：新一轮跟踪 / 切换项目 / 组件卸载时递增，使在途轮询循环自行退出
+  // （否则完成 toast 会跨项目弹出、卸载后仍无限轮询）
+  let recheckTrackGen = 0;
+  onCleanup(() => {
+    recheckTrackGen++;
+  });
+
   createEffect(() => {
     const pid = appState.activeProjectId;
     // 依赖 problemVersion：任一缓存文件变化都刷新问题列表（修复"非当前文件保存后不刷新"盲区）
@@ -730,8 +737,11 @@ function ProblemList() {
   async function trackRecheckUntilDone(pid: string) {
     // 连续查询失败有上限：后端长时间不可达时放弃跟踪，避免无限轮询
     let failures = 0;
+    const gen = ++recheckTrackGen;
     for (;;) {
       await new Promise((r) => setTimeout(r, 1000));
+      // 已被新一轮跟踪取代、已切到别的项目或组件已卸载：静默停止（toast 不跨项目弹出）
+      if (gen !== recheckTrackGen || appState.activeProjectId !== pid) return;
       let st: CacheRecheckStatusResponse;
       try {
         st = await fetchRecheckAllStatus(pid);
@@ -746,6 +756,8 @@ function ProblemList() {
       }
       setRecheckProgress({ done: st.checked, total: st.total });
       if (!st.finished) continue;
+      // fetch 等待期间可能已切项目/开启新跟踪：提示前再校验一次，避免 toast 跨项目弹出
+      if (gen !== recheckTrackGen || appState.activeProjectId !== pid) return;
       // 后端无该项目记录（从未重检/重启后状态丢失）：如实提示而非谎报完成
       if (!st.has_state) {
         toast.warning("重检状态已重置（后端可能重启过），请重新触发重检");
