@@ -23,7 +23,10 @@ import {
   fetchWorkspaceRoot,
 } from "../../lib/api/project";
 import { ensureDesktopBackendReady, ApiError } from "../../lib/api/client";
-import { validateAfterTranslation } from "../../lib/afterTranslation";
+import {
+  createDefaultAfterTranslation,
+  validateAfterTranslation,
+} from "../../lib/afterTranslation";
 import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
 import type { PluginInfo, Job } from "../../lib/api/types";
@@ -113,8 +116,11 @@ export function NewProjectWizard() {
   // 剧情路线图：结构类型（默认树）与用户大纲（纯文本）
   const [plotStructureType, setPlotStructureType] = createSignal("树");
   const [plotOutline, setPlotOutline] = createSignal("");
-  // 修复和改进译文（阶段 8）后处理顺序：有序后端条目数组（空数组 = 不执行）
-  const [afterTranslationOrder, setAfterTranslationOrder] = createSignal<AfterTranslationEntry[]>([]);
+  // 修复和改进译文（阶段 8）后处理顺序：有序后端条目数组（默认：fix统一修复→semcheck→tonecheck，
+  // 与后端模板 gpt.afterTranslation 默认值一致）
+  const [afterTranslationOrder, setAfterTranslationOrder] = createSignal<AfterTranslationEntry[]>(
+    createDefaultAfterTranslation(),
+  );
 
   // Step 6
   const [nameJobStatus, setNameJobStatus] = createSignal<

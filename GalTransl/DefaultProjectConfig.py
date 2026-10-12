@@ -76,12 +76,22 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
-  gpt.afterTranslation: [] # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 8）：有序数组，元素顺序即执行顺序；空数组不追加。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过semcheck）；tonecheck词语色彩一致性检查（对照批次区间的用词色彩标注，标记色彩明显不符的句子写入tone_issue并标记"词语色彩不一致"问题，不改译文，需先跑过流水线批次划分）；tonecheckagain色彩命中句二次复核（对tonecheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过tonecheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/fix]
+  gpt.afterTranslation: # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 8）：有序数组，元素顺序即执行顺序；空数组不追加。默认：fix统一问题修复（残留日文/换行位置异常/多加换行/频繁换行[测试中，可能误检]/单句过长，types 需在 problemAnalyze.problemList 中启用才会被检测出）→semcheck语义差异检测→tonecheck词语色彩一致性检查。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过semcheck）；tonecheck词语色彩一致性检查（对照批次区间的用词色彩标注，标记色彩明显不符的句子写入tone_issue并标记"词语色彩不一致"问题，不改译文，需先跑过流水线批次划分）；tonecheckagain色彩命中句二次复核（对tonecheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过tonecheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/fix]
+    - fix:
+        types: # 统一问题修复的问题类型白名单（需在 problemAnalyze.problemList 中启用才会被检测出）
+          - 残留日文
+          - 换行位置异常
+          - 多加换行
+          - 频繁换行
+          - 单句过长
+        injectProblem: true # 是否把问题标注注入修复提示词
+    - semcheck # 语义差异检测：标记“疑似错误”问题供人工复核
+    - tonecheck # 词语色彩一致性检查：标记“词语色彩不一致”问题（需先跑过流水线批次划分）
   gpt.enableBetterTranslation: false # [已废弃] 由 gpt.afterTranslation 取代。旧项目兼容：true 等价于 afterTranslation=improve。[True/False]
   gpt.numPerRequestBetter: 100 # 改进轮每批发送的句子数，越小越稳但越慢[1-512]
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
   gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
-  gpt.swapFixToCurrent: false # 修复轮（brfix/jpfix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
+  gpt.swapFixToCurrent: true # 修复轮（brfix/jpfix/banfix/fix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
   stageBackends: # 每阶段独立API：值为「API 配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
@@ -181,21 +191,22 @@ proxy:
 problemAnalyze:
   problemList: # 要发现的问题清单
     - 词频过高 # 重复大于20次
-    - 标点错漏 # 标点符号多加或漏加
+    #- 标点错漏 # 标点符号多加或漏加
     - 残留日文 # 日文平假名片假名残留
     #- 丢失换行 # 缺少行内换行，一般没所谓
     - 多加换行 # 换行符比原句多，可能导致溢出屏幕
     - 比日文长 # 比日文长1.3倍以上
     - 字典使用 # 没有按GPT字典要求翻译
     - 语言不通 # 疑似没有被翻译成目标语言，翻译为中文时检查是否包含非GBK字符
-    - 缺控制符 # 检测译文丢失ruby或其他控制符的情况
-    - 独白男他 # 独白（无name）里出现“他”，排除“其他/他们/他人/他乡/他国/他日/他山”
+    #- 缺控制符 # 检测译文丢失ruby或其他控制符的情况
+    #- 独白男他 # 独白（无name）里出现“他”，排除“其他/他们/他人/他乡/他国/他日/他山”
     #- 引入英文 # 本来没有英文，译文引入了英文
     #- 比日文长严格 # 比日文长1倍以上就提醒
-    #- 单句过长 # 译文平均分句长度超过 avgSentenceLengthThreshold，单句过长（疑似丢失应有换行）
-    #- 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号/破折号等）、空格、Tab、emoji 或颜文字之后
+    - 单句过长 # 译文平均分句长度超过 avgSentenceLengthThreshold，单句过长（疑似丢失应有换行）
+    - 换行位置异常 # 换行符未紧跟中文标点（逗号/顿号/句号/破折号等）、空格、Tab、emoji 或颜文字之后
+    - 频繁换行 # 译文有效字符数不足却切出过多小句，短译文却频繁断句（测试中，可能误检）
     - 疑似错误 # AI语义检测：原文与译文语义极大差异（错译/漏译/串行），由 ForSemCheck 后端标注 suspected_error 后认领
-    #- 词语色彩不一致 # AI词语色彩检查：译文用词与批次区间标注的用词色彩明显不符，由 ForToneCheck 后端标注 tone_issue 后认领，可由 ForToneCheckAgain 二次复核确认/撤销（需先跑过流水线批次划分）
+    - 词语色彩不一致 # AI词语色彩检查：译文用词与批次区间标注的用词色彩明显不符，由 ForToneCheck 后端标注 tone_issue 后认领，可由 ForToneCheckAgain 二次复核确认/撤销（需先跑过流水线批次划分）
   avgSentenceLengthThreshold: __AVG_LEN__ # 单句过长的分句长度阈值，默认__AVG_LEN__，建议范围15~25
   avgSentenceLengthThresholdH: __H_LEN__ # 单句过长的H场景专用分句长度阈值，默认__H_LEN__，建议范围20~30
 

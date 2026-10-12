@@ -10,8 +10,8 @@
  * _resolve_after_translation_order），避免显示与执行不一致。
  *
  * 分组仅为编辑器展示（四个 AI 初步处理子分组），不影响执行顺序：执行顺序仍由
- * 数字框（数组顺序）决定；推荐顺序为 基本问题 → 风格修正 → 色彩检查 → 色彩复核
- * → 疑似错误标注 → 复核。
+ * 数字框（数组顺序）决定；新建项目默认顺序为 统一问题修复 → 语义差异检测（semcheck）
+ * → 词语色彩检查（tonecheck），semcheck/tonecheck 仅打标记不改译文、互相无先后依赖。
  */
 
 /** AI 初步处理分组（仅编辑器分组展示用） */
@@ -130,6 +130,28 @@ export function isFixEntry(entry: unknown): entry is FixEntry {
 /** 新建默认 fix 条目 */
 export function createFixEntry(): FixEntry {
   return { fix: { types: [], injectProblem: true } };
+}
+
+/**
+ * 新建项目默认统一修复的问题类型（与后端模板 GalTransl/DefaultProjectConfig.py
+ * 的 gpt.afterTranslation 默认 types 保持一致；类型须在 problemAnalyze.problemList
+ * 中启用才会被检测出，双端各自有契约测试锁定）。
+ */
+export const DEFAULT_AFTER_TRANSLATION_FIX_TYPES: string[] = [
+  "残留日文",
+  "换行位置异常",
+  "多加换行",
+  "频繁换行",
+  "单句过长",
+];
+
+/** 新建项目默认后处理清单工厂：fix 统一修复 → 语义差异检测 → 词语色彩一致性检查；每次返回全新对象（types 深拷贝），避免向导/编辑器多实例共享可变数组 */
+export function createDefaultAfterTranslation(): AfterTranslationEntry[] {
+  return [
+    { fix: { types: [...DEFAULT_AFTER_TRANSLATION_FIX_TYPES], injectProblem: true } },
+    "semcheck",
+    "tonecheck",
+  ];
 }
 
 /** 归一化 fix 条目（防御外部配置字段缺省/类型异常；残留 mode 字段直接忽略） */
