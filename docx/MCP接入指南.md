@@ -1,9 +1,9 @@
 # GalTransl MCP 接入指南（外部 Agent 调用）
 
-> 版本：0.5.1 起提供只读检索；0.6.0 起增加受限写工具（术语表批次后共 5 个）。让外部 agent
+> 版本：0.5.1 起提供只读检索；0.6.0 起增加受限写工具（缓存条目批次后共 7 个）。让外部 agent
 > （CodeBuddy / Claude Desktop / Cherry Studio / dsh 等 MCP 客户端）
-> 检索 GalTransl 项目的术语、译文、字典与术语表、人名表、日志与元数据，并写入路线图/元数据/术语表、启停翻译任务。
-> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（19 个工具）。
+> 检索 GalTransl 项目的术语、译文、字典与项目字典、人名表、日志与元数据，并写入路线图/元数据/项目字典、逐条处理缓存条目、启停翻译任务。
+> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（21 个工具）。
 
 ---
 
@@ -15,9 +15,9 @@
 - 某角色名是否已进译名表、正文用名是否与译名表一致
 - 某类问题译文（残留日文、词频过高…）分布在哪些文件、哪些行
 
-**能力边界**：12 个本地只读检索工具（含术语表读取）不需要后端运行（直接读项目文件）；
+**能力边界**：12 个本地只读检索工具（含项目字典读取）不需要后端运行（直接读项目文件）；
 2 个作业域查询工具（任务状态 / 模型探测）只读后端状态、不落盘；
-5 个写工具（路线图 / 元数据 / 术语表 / 提交任务 / 停止任务）只能改项目内的指定产物，
+7 个写工具（路线图 / 元数据 / 项目字典 / 缓存条目跳检 / 缓存条目备选交换 / 提交任务 / 停止任务）只能改项目内的指定产物，
 **不提供任意路径读写、不提供命令执行、不修改程序配置**。
 其中任务状态查询 / 模型探测 / 提交 / 停止这 4 个需要 GalTransl 后端在运行（作业状态只在后端进程内）。
 
@@ -35,7 +35,7 @@
 | GalTransl 的依赖 | `PyYAML` / `orjson` / `requests` 等（见 `requirements.txt`） |
 
 本项目内已有两个可用环境，均实测通过（`initialize` 协商 + 工具清单 + 真实项目检索；
-接入验收时是 11 个只读工具，**0.6.0 起为 15 个、0.6.x 起为 17 个、术语表批次起为 19 个**）：
+接入验收时是 11 个只读工具，**0.6.0 起为 15 个、0.6.x 起为 17 个、术语表批次起为 19 个、缓存条目批次起为 21 个**）：
 
 | 环境 | 说明 |
 |---|---|
@@ -65,7 +65,7 @@ pip install "mcp>=2.0,<3.0"
       "type": "stdio",
       "command": "python",
       "args": ["run_mcp_server.py"],
-      "description": "GalTransl 翻译项目工具（19 个：14 只读检索 + 5 受限写入）：翻译缓存 / 原始脚本 / 字典与术语表 / 人名表 / 日志 / 元数据 / 路线图 / 启停任务"
+      "description": "GalTransl 翻译项目工具（21 个：14 只读检索 + 7 受限写入）：翻译缓存 / 原始脚本 / 字典与项目字典 / 人名表 / 日志 / 元数据 / 路线图 / 缓存条目跳检与备选交换 / 启停任务"
     }
   }
 }
@@ -116,7 +116,7 @@ pip install "mcp>=2.0,<3.0"
 
 ---
 
-## 4. 可用工具（19 个 = 14 只读 + 5 写入）
+## 4. 可用工具（21 个 = 14 只读 + 7 写入）
 
 ### 只读检索（本地 12 项免后端；作业域 2 项需后端）
 
@@ -132,7 +132,7 @@ pip install "mcp>=2.0,<3.0"
 | `galtransl_get_project_overview` | 项目概览（目标语言、每请求条数、注入块开关、流水线阶段） |
 | `galtransl_read_translation_file` | 读取缓存文件条目（分页） |
 | `galtransl_read_source_script` | 读取原始脚本文件条目（分页） |
-| `galtransl_read_glossary` | 浏览项目术语表（GPT 字典）词条：整表分页 / 按词筛选（原文/译名/解释任一列） |
+| `galtransl_read_glossary` | 浏览项目字典词条（`category` = gpt 术语表 / pre 译前字典 / post 译后字典）：整表分页 / 按词筛选（原文/译名/解释任一列） |
 | `galtransl_get_project_metadata` | 读元数据（globalprompt / plotroute / filemeta / batchmeta / routeanalysis） |
 | `galtransl_get_job_status` | 查任务状态与实时进度摘要（阶段/百分比/worker/速度）——**需后端运行** |
 | `galtransl_check_model` | 校验模型/令牌可用性——**需后端运行**；发一次真实探测请求（消耗极小额度），建议 submit_job 前调用 |
@@ -143,7 +143,9 @@ pip install "mcp>=2.0,<3.0"
 |---|---|---|
 | `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 需先读现状；mermaid 经生成侧校验；未提供字段保留旧值 |
 | `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta（plotroute 走 `write_route_map`，globalprompt 由流水线生成不开放写） |
-| `galtransl_write_glossary` | 按词条增改 / 删除项目术语表（GPT 字典） | `mode` = upsert（按 src 匹配，原地更新或追加）/ delete；`file` 必填；保留原注释与行尾，未登记文件自动登记 gpt.dict；**不做整体覆盖** |
+| `galtransl_write_glossary` | 按词条增改 / 删除项目字典（`category` = gpt 术语表 / pre 译前字典 / post 译后字典） | `mode` = upsert（按 src 匹配，原地更新或追加）/ delete；`file` 必填；保留原注释与行尾，未登记文件自动登记进对应清单；**不做整体覆盖** |
+| `galtransl_mark_skip_check` | 逐条标记 / 取消缓存条目的「跳过问题检查」（`skip` 默认 true） | 只改 `skip_check` 标志位并按保存同口径**整份文件重检**问题标注与 `post_dst_preview`，**不改译文**；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝（后端正在合并增量缓存）；后端不可达时放行，返回体 `job_check` 会注明 |
+| `galtransl_swap_alt_translation` | 逐条交换缓存条目的备选译文（`alt_dst`）与当前译文（`pre_dst`） | 语义与校对页「交换备选」一致，**只对调既有文本**；仅当条目有 `alt_dst` 时可用；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝；后端不可达时放行，返回体 `job_check` 会注明 |
 | `galtransl_submit_job` | 提交翻译任务 | **需后端运行**；会真实消耗 API 额度，仅在用户明确要求时调用 |
 | `galtransl_stop_job` | 停止项目当前任务 | **需后端运行**；无任务时 409 |
 
@@ -162,7 +164,7 @@ pip install "mcp>=2.0,<3.0"
 |---|---|
 | `initialize` | 返回 `protocolVersion: 2025-06-18`、`capabilities.tools`、`serverInfo{name: galtransl}` |
 | `notifications/initialized` | 无响应（通知不产生响应，符合协议） |
-| `tools/list` | 0.5.1 时返回 **11** 个工具；0.6.0 增至 **15** 个（+4 写工具）、术语表批次增至 **19** 个（+1 只读 +1 写），`inputSchema` 合法 |
+| `tools/list` | 0.5.1 时返回 **11** 个工具；0.6.0 增至 **15** 个（+4 写工具）；0.6.x 增至 **17** 个（+2 作业域只读：任务状态 / 模型探测）；术语表批次增至 **19** 个（+1 只读 +1 写）；缓存条目批次增至 **21** 个（+2 写），`inputSchema` 合法 |
 | `tools/call` → `galtransl_get_project_overview` | 在真实项目上正确读出 `language: zh-cn`、`numPerRequestTranslate: 16`、`translation_guideline` 等 |
 | `tools/call` → `galtransl_search_scripts` | 在真实项目上成功命中「クルト」及其所在文件与 index |
 | `tools/call` → 未知工具 | 返回 `isError: true` + 「未知工具」文案，**协议连接未中断** |
@@ -189,7 +191,7 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
   "available": true,
   "path": "D:\\...\\mcp_status.json",
   "pid": 34964,
-  "tools": 15,
+  "tools": 21,
   "started_at": "2026-09-22T15:07:56+00:00",
   "updated_at": "2026-09-22T15:07:56+00:00",
   "age_seconds": 0.8,
@@ -218,7 +220,7 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
 - **路径边界要说清**：
   - 读取文件时经 `safe_under_project` 做归属校验（拒绝 `../` 与绝对路径），
     `save_metadata` / `write_route_map` 的 `filename` 也经穿越校验。
-  - **写工具有路径白名单**：5 个写工具硬校验 `project_dir` 是「可识别的 GalTransl 项目」
+  - **写工具有路径白名单**：7 个写工具硬校验 `project_dir` 是「可识别的 GalTransl 项目」
     （目录下确实存在 `config.inc.yaml` 或 `config.yaml`），否则拒绝执行。这挡住了
     「把 `project_dir` 指向仓库根/系统目录后落盘」这类误用。
   - **只读工具不硬拦**：仅要求目录存在，非法项目时在返回体给出 `project_dir_valid: false`
@@ -230,7 +232,7 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
     （`forbiddenDictH`，走与问题重建相同的 `_load_rebuild_deps` 链路），命中即**拒绝写入并返回错误**，不落盘。
   - ⚠️ **门禁是 fail-open 的**：判定不了就放行。项目**未配置 H 词库**或**尚无批次元数据**时，
     两个维度都判为「非 H」，写工具**实际不会拦截**。故门禁不能当作「H 一定被挡住」的保证。
-- **写工具的能力边界**：仅 5 个写工具，各自只能改项目内指定产物（路线图 / 元数据 / 术语表 / 任务启停）；
+- **写工具的能力边界**：仅 7 个写工具，各自只能改项目内指定产物（路线图 / 元数据 / 项目字典 / 缓存条目标志位与备选译文 / 任务启停）；
   无任意路径写、无命令执行、不改程序配置。写工具不下发 `read_only_hint`，客户端会按写操作征询用户确认。
 - 服务进程读得到项目目录下的一切文件（包括日志），请只把 `project_dir` 指向自己的翻译项目目录。
 - `submit_job` / `stop_job` 经 HTTP 回到 `127.0.0.1:12333`（可用 `GALTRANSL_BACKEND_URL` 覆盖），

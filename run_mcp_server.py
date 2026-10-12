@@ -56,7 +56,8 @@ _MCP_WRITE_COUNT = len(MCP_TOOL_DEFS) - _MCP_READ_COUNT
 SERVER_DESCRIPTION = (
     f"GalTransl 翻译项目管理（{len(MCP_TOOL_DEFS)} 个工具："
     f"{_MCP_READ_COUNT} 只读检索 + {_MCP_WRITE_COUNT} 受限写入）："
-    "翻译缓存、原始脚本、字典与术语表、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
+    "翻译缓存、原始脚本、字典与项目字典、人名表、日志、元数据、路线图、"
+    "缓存条目跳检与备选交换、任务状态、启停翻译任务"
 )
 
 
@@ -76,7 +77,8 @@ def _build_startup_description() -> str:
     n_write = len(defs) - n_read
     return (
         f"GalTransl 翻译项目管理（{len(defs)} 个工具：{n_read} 只读检索 + {n_write} 受限写入）："
-        "翻译缓存、原始脚本、字典、人名表、日志、元数据、路线图、任务状态、启停翻译任务"
+        "翻译缓存、原始脚本、字典与项目字典、人名表、日志、元数据、路线图、"
+        "缓存条目跳检与备选交换、任务状态、启停翻译任务"
     )
 
 

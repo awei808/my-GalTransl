@@ -21,7 +21,7 @@
 # 实测结论（0.6.0，dsh --dump-config + 实际启动）：
 #   - 本清单经 home 层 `cordis:include` 加载成功，preset 行正确注册；
 #   - 实际启动时 galtransl MCP 成功握手（`[galtransl-mcp] 启动 stdio 服务（版本 0.6.0）`），
-#     下发 19 个工具（14 只读带 annotations + 5 写不带）。
+#     下发 21 个工具（14 只读带 annotations + 7 写不带）。
 #     （工具计数为默认状态实测；用户在设置中禁用工具后，以会话实际挂载清单为准。）
 #
 # ⚠️ 下方 mcp-galtransl 行的三处路径需按实际安装位置修改。

@@ -11,6 +11,15 @@
   - 影响：连续 user 破坏交替结构。OpenAI 兼容 API 通常容忍（不报错）但语义错乱——u1 是含完整提示词的"首轮输入"，其后紧跟无对应回复的 user，模型会误把后续批次当第一轮，翻译质量隐性下降；严格交替的 API（如 Anthropic）会直接报错导致整批失败；首轮译文 a1 丢失。
   - 修复方向（未实施）：`head = messages[:3]` 保留完整首轮 `[system, u1, a1]`，`tail = messages[3:]` 从 u2 开始（偶数长度，截取后从 user 开头，交替结构完整）；并同步调整 `len(messages) <= 3` 的提前返回边界。
 - 从其他界面切回翻译控制台时，会有toast重复提示
+- **「写工具都带 H 硬门禁」的夸大表述散落在多处（含运行时下发给 agent 的服务说明）**
+  - 位置（全部为全称口径，未限定只覆盖 3 个工具）：
+    - 用户可见文档：`README.md:24`、`README.md:62`、`README_EN.md:21`、`README_EN.md:59`、`guides/07-mcp.md:11`、`skills/galtransl-mcp/SKILL.md:144`（小节标题「写入（受 H 门禁与路径约束）」覆盖表内全部 7 个工具）、`SKILL.md:211`、`docx/MCP接入指南.md:140`（小节标题「写入（0.6.0 新增，受 H 门禁与路径约束）」，其下 142-150 行表格同样覆盖全部 7 个写工具）
+    - **运行时下发文本**：`GalTransl/mcp_tools.py:1864` 的 `build_server_instructions()` 第 4 条「写工具对 H 内容有硬门禁，命中即拒绝」——这是每个接入 agent 在 initialize 时都会收到的契约文本，被金样本测试锁死（`tests/test_mcp_gate_settings.py:227` `test_default_matches_golden_text`），改文案必须同步改该测试
+  - 对照实现：`GalTransl/mcp_tools.py` 的 `enforce_h_gate` 调用点
+  - 产生原因：文案是「0.6.0 有 4 个写工具」时期留下的概括句（原文「5 个写工具还带 H 硬门禁」，术语表批次改为 5 后措辞未复核），本轮工具数同步为 7 时只改了数字，未复核门禁覆盖面。实际 `enforce_h_gate` 仅 3 处调用：`write_route_map`（`mcp_tools.py:1133`，按 `用户大纲`+`节点剧情` 文本判定）、`save_metadata`（`:1317`，按解析后的真实输入名判 H 区间）、`write_glossary`（`:1722`，按 `src`/`dst`/`note` 文本判定）。而后加入的 `mark_skip_check` / `swap_alt_translation` 在 `_modify_cache_entry`（`:752`）中**只做 L3 项目校验、任务互斥与 `_is_translation_cache_rel` 校验，全程不调 `enforce_h_gate`**；`submit_job` / `stop_job` 是作业域操作，本就无内容写入。
+  - 说明：`mark_skip_check` 只改 `skip_check` 标志位、`swap_alt_translation` 只在既有 `alt_dst` 与 `pre_dst` 之间对调文本，**都不引入新文本内容**，故不过门禁本身是合理的；问题只在文档/说明把它说成全称。`SKILL.md:27-30` 与 `docx/MCP接入指南.md` §8 的列举本身是**准确的**（只点名 3 个工具，并明说 `mark_skip_check`/`swap_alt_translation`/`submit_job`/`stop_job` 无门禁检查），故这两份文件各自**内部自相矛盾**：`SKILL.md:27-30` vs `:144`/`:211`；`MCP接入指南.md` §8（`:230` 起）vs §4 的 `:140`。另一句「路径白名单」是准确的——`_require_write_project_dir` 确由 7 个写工具全部调用（`:625`/`:630`/`:643`/`:656`/`:682`/`:986`/`:996`）。
+  - 影响：文档口径失真，无功能影响，但**运行时服务说明也在夸大**——agent 因此可能认为「任何 MCP 写入都受 H 门禁兜底」，在 H 项目上放松对缓存条目改动的警惕（实际 `swap_alt_translation` 可对调 H 区间条目的既有译文、`mark_skip_check` 可改其标志位）。
+  - 修复方向（未实施）：把上述各处改为按覆盖面表述，如「写工具均带**路径白名单**；其中 3 个内容写入类工具（路线图/元数据/项目字典）另带 **H 硬门禁**」，与 `docx/MCP接入指南.md` §8「写工具已做硬门禁」的准确列举对齐；`mcp_tools.py:1864` 与 `tests/test_mcp_gate_settings.py:227` 必须**成对修改**。`mark_skip_check`/`swap_alt_translation` 是否应补门禁需先决策（补则要明确「交换既有 H 译文」是否属允许操作）。
 - **字典里的纯符号分隔线被当成真实词条（译前字典不跳过，与 h 词库加载器口径不一致）**
   - 位置：数据 `Dict/01H字典_矫正_译前.txt:105`（一行 `=======================`）；加载器 `GalTransl/Dictionary.py`（译前/译后/GPT 字典解析）与 `GalTransl/Problem.py:118 load_h_check_words`
   - 产生原因：只有**整行行首 `//`** 才算注释。`====` 这类装饰分隔线既没有 `//` 也不含 `|`，于是被解析成真实词条：`src="======================="`、`dst=""`（语义是"替换为空"）、`row_type: normal`（已用 `galtransl_search_dict` 实测确认）。而 `load_h_check_words` 的文档明确写了「另跳过纯符号分隔线」——**两个加载器口径不一致**。
