@@ -49,19 +49,14 @@
 
 - ~~请求最小间隔秒 (apiMinIntervalSec)似乎从未生效~~ **已完成**（根因：节流状态原挂引擎实例上，后处理每文件新建实例致首请求绕过+实例间互不约束，且旧实现并发下同睡同醒成簇；已改为 (endpoint,token) 维度进程级时隙预占，BaseEngine.py）
 - ~~添加mcp工具：用于给特定json条目标记为跳过检查、给特定json条目交换备选译文与当前译文、增删项目字典；mcp工具调用方式更改，不强制使用项目的绝对路径，也可以直接使用项目名称~~ **已完成**（新增写工具 `galtransl_mark_skip_check`/`galtransl_swap_alt_translation`，逐条改 skip_check 标志/交换 alt_dst 与 pre_dst，改前快照+按 /cache/save 同口径重检+与运行中翻译任务互斥；`write_glossary`/`read_glossary` 扩展 category=gpt/pre/post 覆盖译前/译后项目字典；全部工具的 project_dir 支持项目名称——后端经 `known_projects.json` 登记「打开过/创建过/跑过任务」的项目（`GalTransl/known_projects.py`），MCP 优先按登记表解析、回退工作区根扫描，不要求项目在工作区根下，mcp_tools.py）
-- 更改新建项目时流水线设置、问题检测项、是否开启交换译文的默认设置
 - 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示
 - 翻译控制台-当前提示词的状态指示灯中，黑色指示灯没有类似其他指示灯的“等待首字”“取消”的文字说明，需要显示为“已完成+耗时”
 - 结果预览的更新时机可能过于频繁（需先将上一条bug修好并测试后再确认这个问题是否真实存在）
-- [中低·前端] gpt.contextNum 仍在 REMOVED_CONFIG_KEYS 里被隐藏，但新的 restoreContextMode=lines 模式恰恰依赖它——用户选了 lines 后无法在 UI 调历史句数，只能手改 YAML（ProjectConfigPage.tsx:87，注释理由也已过时）。
-- [低·后端] plugin_loader.py 装载失败的结果也被进程级缓存，瞬时失败会让该项目持续不装插件直到配置变化；plugin_conf["Settings"] 缺键时整个插件被跳过（建议 setdefault）；docstring「钩子均无共享可变状态」与两个插件实际持有计数器的事实不符。
-- [低·后端] contextBatches 宣称 [1-8] 但无上限钳制，写 999 会静默注入整文件历史；mcp 概览透出的 restoreContextMode/contextBatches 是原始值未归一化；ForFixRound.py:190 换行修复提示词里「添加标点符号」重复了一次。
-- [低·前端] 重检轮询不随组件卸载/切项目终止（toast 会跨项目弹出）；后端不可达时阈值输入框显示空白；recheckAllCacheProblems 的 600s 超时注释自相矛盾。
 - [发布说明] d7a5833 后，以字面 <br> 为换行约定的项目行为有变化（缓存与输出现在是真实换行而非 <br>），建议写进更新日志。
 - MCP 的 list_projects 只枚举 workspace 根，建在自定义位置的项目不会出现在该 MCP 工具列表里（UI 不受影响）。
 - ~~双击 AI 建议没有让用户知道有这个功能的提示~~ **已完成**（首次进入校对页延时 toast 一次性提示，localStorage 标记只提示一次；校对指南篇同步说明该交互）
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善
-- 新增：对于行数小于20的文件，不用处理元数据
+- ~~新增：对于行数小于20的文件，不用处理元数据~~ **已完成**（新增 `internals.pipeline.metaMinLines`（默认 20，0=不跳过，前端「翻译后端-文件/批次元数据提取」组可调）：文件级与批次级元数据两阶段都跳过「非空行数 < 阈值」的文件——不调用 AI、不写 pass1/pass2 产物；口径复用 `metadata.count_nonempty_lines`（与进度分母同源），`_run_meta_worker_pool` 返回 `MetaPoolResult` 单独汇报小文件跳过数，四个调用点（流水线两阶段 + 独立后端两分支）改用「剔除跳过后的预期文件数」做交叉验证，避免误报缺失；文件进度面板按 `meta_min_lines` 把这类文件的 meta/batch 阶段判为已跳过（否则永远不亮绿灯）。既有产物不清理，forceRegen 也不使小文件复活）
 - 翻译控制台的文件进度显示不完善：当前阶段完成后且未完成所有翻译任务时，显示的是“排队中”，而不是“已完成某个阶段”
 - **设置界面新增mcp门禁设置** **已完成**（独立页面：设置页「AI API 调用接口相关」分区提示词模板下方留「MCP 服务与门禁 →」入口，标题栏「翻译」菜单同步加「MCP 设置」；页面含① MCP H 门禁开关（`app_settings.json` 的 `mcpHGateEnabled`，关闭后 `enforce_h_gate` 直接放行，SERVER_INSTRUCTIONS 第 4 条随开关改写为放行说明）；② MCP 工具逐个开关（`mcpDisabledTools` 黑名单，工具清单经新端点 `/api/mcp-tools` 下发供渲染；`tools/list`/调用分发/心跳均按启用集合过滤，调用被禁工具返回「已由用户禁用」，实时读设置无需重启；instructions/工具计数为 MCP 进程启动快照，重开 agent 会话刷新）。设置文件经 `resolve_app_dir()` 与打包版同目录，MCP 独立进程与后端读同一份；dsh 预设 persona 的 H 段同步改为条件式（以 MCP 服务说明为准，随门禁开关联动，未见到说明时保守按禁止处理），工具面段注明实际可用工具以会话挂载清单为准）
 

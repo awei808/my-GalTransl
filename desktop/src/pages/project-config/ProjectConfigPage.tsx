@@ -259,6 +259,10 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "internals.pipeline.forceRegenDic": { label: "强制重新生成术语表" },
   "internals.pipeline.abortOnDicFailure": { label: "术语表失败即中止" },
+  "internals.pipeline.metaMinLines": {
+    label: "元数据行数阈值",
+    hint: "文件的非空行数小于此值时，不生成文件级/批次级元数据（不调用 AI、不写 pass1/pass2 产物）。0 表示不跳过任何文件。",
+  },
   "internals.forglobalprompt.inject_guideline": {
     label: "全局分析参考翻译规范",
     hint: "开启后，生成游戏概况与角色档案时参考翻译规范，影响描写风格与措辞。",

@@ -87,6 +87,30 @@ describe("settings-taxonomy 全局分析（路线分片+汇总）组", () => {
   });
 });
 
+describe("settings-taxonomy 元数据行数阈值组", () => {
+  // 行数不足 metaMinLines 的文件不生成元数据：新键须归入元数据提取组而非「其他设置」
+  it("metaMinLines 已声明在「翻译后端-文件/批次元数据提取」组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-文件/批次元数据提取",
+    );
+    expect(section).toBeDefined();
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    expect(keys).toContain("internals.pipeline.metaMinLines");
+  });
+
+  it("classifyKeys 将 metaMinLines 归入元数据提取组", () => {
+    const { groups, unclassified } = classifyKeys([
+      "internals.pipeline.metaMinLines",
+    ]);
+    const group = groups.find(
+      (g) => g.section.title === "翻译后端-文件/批次元数据提取",
+    );
+    const keys = (group?.subsections ?? []).flatMap((s) => s.keys);
+    expect(keys).toContain("internals.pipeline.metaMinLines");
+    expect(unclassified).not.toContain("internals.pipeline.metaMinLines");
+  });
+});
+
 describe("settings-taxonomy 提示词注入块组", () => {
   const BLOCK_KEYS = [
     "internals.promptBlocks.translationGuideline",

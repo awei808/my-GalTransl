@@ -196,6 +196,9 @@ class RuntimeState:
     updated_at: str = field(default_factory=_utcnow_text)
     file_totals: dict[str, int] = field(default_factory=dict)
     cache_file_display_map: dict[str, str] = field(default_factory=dict)
+    # 元数据阶段的行数阈值（internals.pipeline.metaMinLines）：供文件进度面板把
+    # 行数不足而被跳过元数据的文件判为「已跳过」而非永远未完成（0=不跳过）
+    meta_min_lines: int = 0
     # 进度是否已封口：reset 后若沿用旧 file_totals 则为 False（重建中），收到新 file_totals 后置 True
     progress_sealed: bool = True
     # Per-file deque of recent success events (newest-first, appendleft for O(1) merging)
@@ -253,11 +256,13 @@ class RuntimeRegistry:
             normalized = _normalize_project_dir(project_dir)
             previous = self._states.get(normalized)
             if previous is not None:
-                # 沿用上一轮的 file_totals / display_map，避免轮询窗口内 total=0 致进度条消失
+                # 沿用上一轮的 file_totals / display_map / meta_min_lines，
+                # 避免轮询窗口内 total=0 致进度条消失、阈值丢失致阶段绿灯判定回退
                 state = RuntimeState(
                     project_dir=project_dir,
                     file_totals=previous.file_totals,
                     cache_file_display_map=previous.cache_file_display_map,
+                    meta_min_lines=previous.meta_min_lines,
                 )
                 state.progress_sealed = False
                 # 仅测试用，测完删除
@@ -278,6 +283,7 @@ class RuntimeRegistry:
         workers_configured: int | None = None,
         file_totals: dict[str, int] | None = None,
         cache_file_display_map: dict[str, str] | None = None,
+        meta_min_lines: int | None = None,
     ) -> None:
         with self._lock:
             state = self._states.get(_normalize_project_dir(project_dir))
@@ -301,6 +307,8 @@ class RuntimeRegistry:
                 state.progress_sealed = True
             if cache_file_display_map is not None:
                 state.cache_file_display_map = dict(cache_file_display_map)
+            if meta_min_lines is not None:
+                state.meta_min_lines = max(0, int(meta_min_lines))
             state.updated_at = _utcnow_text()
 
     def append_success(
@@ -461,6 +469,7 @@ class RuntimeRegistry:
                     "translation_speed_lpm": 0,
                     "file_totals": {},
                     "cache_file_display_map": {},
+                    "meta_min_lines": 0,
                     "recent_errors": [],
                     "recent_successes": [],
                     "notices": [],
@@ -512,6 +521,7 @@ class RuntimeRegistry:
                 "translation_speed_lpm": speed,
                 "file_totals": dict(state.file_totals),
                 "cache_file_display_map": dict(state.cache_file_display_map),
+                "meta_min_lines": state.meta_min_lines,
                 "recent_errors": [event.to_dict() for event in state.recent_errors],
                 "recent_successes": [event.to_dict() for event in merged_successes],
                 "notices": list(state.notices),
@@ -831,6 +841,7 @@ class RuntimeProgressCache:
         retran_key: str | list[str] = "",
         retran_terms: list[str] | None = None,
         current_job_started_at_ns: int | None = None,
+        meta_min_lines: int = 0,
     ) -> dict[str, Any]:
         normalized = _normalize_project_dir(project_dir)
         cache_dir = os.path.join(project_dir, CACHE_FOLDERNAME)
@@ -1151,9 +1162,20 @@ class RuntimeProgressCache:
                 # 校对暂无独立缓存文件（结果写回 pass3 条目 proofread_dst 字段），先预留接口
                 # TODO: 校对缓存独立成文件后，在此检测该文件前缀的校对缓存并置位 done
                 file_base = os.path.basename(file_progress["filename"])
+                # 行数不足 metaMinLines 的文件不生成元数据（无缓存文件是预期行为），
+                # 故按「已跳过」等同完成，否则这两个阶段会永远显示未完成。
+                # 仅取本轮 file_totals 的真实行数判定：分母回退为「缓存条目数」时
+                # 该值不是文件行数，凭它判跳过会把部分翻译的大文件误标为已跳过。
+                line_total = int(file_totals.get(file_progress["filename"], 0) or 0)
+                if meta_min_lines > 0 and 0 < line_total < meta_min_lines:
+                    meta_done = True
+                    batch_done = True
+                else:
+                    meta_done = file_base in meta_map
+                    batch_done = file_base in batch_map
                 file_progress["stages"] = [
-                    {"key": "meta", "done": file_base in meta_map},
-                    {"key": "batch", "done": file_base in batch_map},
+                    {"key": "meta", "done": meta_done},
+                    {"key": "batch", "done": batch_done},
                     {"key": "trans", "done": trans_done},
                     {"key": "proofread", "done": False},
                 ]
@@ -1200,6 +1222,7 @@ def update_runtime_status(
     workers_configured: int | None = None,
     file_totals: dict[str, int] | None = None,
     cache_file_display_map: dict[str, str] | None = None,
+    meta_min_lines: int | None = None,
 ) -> None:
     RUNTIME_REGISTRY.update_status(
         project_dir,
@@ -1211,6 +1234,7 @@ def update_runtime_status(
         workers_configured=workers_configured,
         file_totals=file_totals,
         cache_file_display_map=cache_file_display_map,
+        meta_min_lines=meta_min_lines,
     )
 
 

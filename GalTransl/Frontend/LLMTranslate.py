@@ -273,10 +273,14 @@ async def doLLMTranslate(
                 f"[FileMetaData] 开始为 {total} 个文件生成文件级元数据"
             )
             _update_runtime(projectConfig, stage="生成文件级元数据")
+            # 行数阈值：非空行数小于该值的文件不生成元数据（0=不跳过）
+            from GalTransl.Backend.metadata import get_meta_min_lines
+            min_lines = get_meta_min_lines(projectConfig)
             # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
             _update_runtime(
                 projectConfig,
                 file_totals=_build_meta_file_totals(file_json_lists, input_dir),
+                meta_min_lines=min_lines,
             )
             # 载入已有缓存映射，跳过已生成元数据的文件
             existing_fm_map = {}
@@ -290,27 +294,30 @@ async def doLLMTranslate(
             # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
             workers_per_project = projectConfig.get_workers_per_project()
             worker_count = max(1, workers_per_project)
-            await _run_meta_worker_pool(
+            fm_result = await _run_meta_worker_pool(
                 projectConfig, gptapi, file_json_lists,
                 existing_map=existing_fm_map,
                 worker_count=worker_count,
                 tag="FileMetaData", stage_prefix="文件级元数据",
+                min_lines=min_lines,
             )
             LOGGER.info("文件级元数据生成完成，已写入 transl_cache/pass1_cache/")
+            # 预期应生成元数据的文件数：剔除按行数阈值预期跳过的文件
+            expected = total - fm_result.skipped_small
 
             # 交叉验证：检查 pass1_cache 元数据条目数
             from GalTransl.Backend.metadata import load_file_metadata_map
             try:
                 fm_map = load_file_metadata_map(projectConfig)
                 fm_count = len(fm_map)
-                if fm_count < total:
+                if fm_count < expected:
                     LOGGER.warning(
-                        f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件生成了元数据，"
-                        f"缺失 {total - fm_count} 个文件，请检查对应文件的 WARNING 日志"
+                        f"[FileMetaData] 交叉验证：{fm_count}/{expected} 个文件生成了元数据，"
+                        f"缺失 {expected - fm_count} 个文件，请检查对应文件的 WARNING 日志"
                     )
                 else:
                     LOGGER.info(
-                        f"[FileMetaData] 交叉验证：{fm_count}/{total} 个文件全部生成元数据"
+                        f"[FileMetaData] 交叉验证：{fm_count}/{expected} 个文件全部生成元数据"
                     )
             except Exception as e:
                 LOGGER.debug(
@@ -362,10 +369,14 @@ async def doLLMTranslate(
                 f"[BatchMetaData] 开始为 {total} 个文件划分翻译区间"
             )
             _update_runtime(projectConfig, stage="划分翻译区间")
+            # 行数阈值：与文件级元数据同一键，非空行数小于该值的文件不划分区间（0=不跳过）
+            from GalTransl.Backend.metadata import get_meta_min_lines
+            min_lines = get_meta_min_lines(projectConfig)
             # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
             _update_runtime(
                 projectConfig,
                 file_totals=_build_meta_file_totals(file_json_lists, input_dir),
+                meta_min_lines=min_lines,
             )
             # 载入已有缓存映射，跳过已划分批次的文件
             existing_bm_map = {}
@@ -379,27 +390,30 @@ async def doLLMTranslate(
             # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
             workers_per_project = projectConfig.get_workers_per_project()
             worker_count = max(1, workers_per_project)
-            await _run_meta_worker_pool(
+            bm_result = await _run_meta_worker_pool(
                 projectConfig, gptapi, file_json_lists,
                 existing_map=existing_bm_map,
                 worker_count=worker_count,
                 tag="BatchMetaData", stage_prefix="批次划分",
+                min_lines=min_lines,
             )
             LOGGER.info("批次级元数据生成完成，已写入 transl_cache/pass2_cache/")
+            # 预期应划分批次的文件数：剔除按行数阈值预期跳过的文件
+            expected = total - bm_result.skipped_small
 
             # 交叉验证：检查 pass2_cache 批次元数据条目数
             from GalTransl.Backend.metadata import load_batch_metadata_map
             try:
                 bm_map = load_batch_metadata_map(projectConfig)
                 bm_count = len(bm_map)
-                if bm_count < total:
+                if bm_count < expected:
                     LOGGER.warning(
-                        f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件划分了批次，"
-                        f"缺失 {total - bm_count} 个文件，请检查对应文件的 WARNING 日志"
+                        f"[BatchMetaData] 交叉验证：{bm_count}/{expected} 个文件划分了批次，"
+                        f"缺失 {expected - bm_count} 个文件，请检查对应文件的 WARNING 日志"
                     )
                 else:
                     LOGGER.info(
-                        f"[BatchMetaData] 交叉验证：{bm_count}/{total} 个文件全部划分批次"
+                        f"[BatchMetaData] 交叉验证：{bm_count}/{expected} 个文件全部划分批次"
                     )
             except Exception as e:
                 LOGGER.debug(

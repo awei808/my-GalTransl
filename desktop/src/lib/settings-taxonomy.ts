@@ -120,6 +120,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.forbatchmeta.max_batches",
           "internals.forbatchmeta.min_batch_size",
           "internals.forbatchmeta.max_batch_size",
+          "internals.pipeline.metaMinLines",
         ],
       },
     ],

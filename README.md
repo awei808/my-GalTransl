@@ -205,7 +205,7 @@
 &nbsp;&nbsp;&nbsp;&nbsp;从全文提取专名/术语，自动生成项目 GPT 字典（`项目GPT字典-生成.txt`）。项目已有非空 GPT 字典时跳过（`forceRegenDic=true` 可强制重新生成）；该阶段未充分优化，可在向导中关闭。
 
 &nbsp;&nbsp;&nbsp;&nbsp;**阶段四 · 文件级剧情元数据（ForFileMetaData）**
-&nbsp;&nbsp;&nbsp;&nbsp;逐文件分析剧本，生成该文件剧情梗概与出场角色等元数据（不翻译、无多轮），写入缓存 `transl_cache/pass1_cache/{文件名}.meta.json`（存在即跳过该文件）。
+&nbsp;&nbsp;&nbsp;&nbsp;逐文件分析剧本，生成该文件剧情梗概与出场角色等元数据（不翻译、无多轮），写入缓存 `transl_cache/pass1_cache/{文件名}.meta.json`（存在即跳过该文件）。**非空行数少于 20 的文件不生成元数据**（不调用 AI；批次划分同此阈值），阈值可在 `internals.pipeline.metaMinLines` 调整，0 表示不跳过任何文件。
 
 &nbsp;&nbsp;&nbsp;&nbsp;**阶段 4.5 · 剧情路线图生成（ForPlotRouteMap）**
 &nbsp;&nbsp;&nbsp;&nbsp;基于各文件剧情摘要与用户设置的**剧情结构类型**（线性/树/有向无环图/有向有环图/混合）与**剧情大纲**，生成全作剧情路线图：mermaid 图 + 文件→路线归属 + 路线→剧情摘要，写入 `transl_cache/pass0_cache/PlotRouteMap.json`（存在即跳过，`forceRegenPlotRoute=true` 强制重新生成）。下游批次划分与翻译会注入**当前文件所属路线**的剧情上下文；路线图生成失败或未配置时自动回退为全量全局分析。依赖阶段四（文件级元数据）产物，阶段四被禁用时本阶段自动跳过。

@@ -84,6 +84,86 @@ class RuntimeFileStageTests(unittest.TestCase):
         self.assertFalse(stages_b["batch"])
         self.assertFalse(stages_b["trans"])
 
+    def test_small_files_marked_done_for_meta_and_batch(self) -> None:
+        """行数不足 metaMinLines 的文件不生成元数据：meta/batch 阶段按「已跳过」判为完成。
+
+        否则这两个阶段会永远不亮绿灯（小文件不会有 pass1/pass2 缓存文件）。
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_project(tmpdir)
+            input_dir = os.path.join(tmpdir, "gt_input")
+            for name in ("small.json", "big.json"):
+                with open(os.path.join(input_dir, name), "w", encoding="utf-8") as f:
+                    f.write("[]")
+            file_totals = {"small.json": 12, "big.json": 30}
+
+            skipped = RuntimeProgressCache().get_progress(
+                tmpdir, file_totals=file_totals, cache_file_display_map={},
+                meta_min_lines=20,
+            )
+            disabled = RuntimeProgressCache().get_progress(
+                tmpdir, file_totals=file_totals, cache_file_display_map={},
+                meta_min_lines=0,
+            )
+
+        small = {f["filename"]: f for f in skipped["files"]}["small.json"]
+        stages_small = {s["key"]: s["done"] for s in small["stages"]}
+        self.assertTrue(stages_small["meta"])
+        self.assertTrue(stages_small["batch"])
+        # 阈值达到/超过的文件仍按缓存存在性判定
+        big = {f["filename"]: f for f in skipped["files"]}["big.json"]
+        stages_big = {s["key"]: s["done"] for s in big["stages"]}
+        self.assertFalse(stages_big["meta"])
+        self.assertFalse(stages_big["batch"])
+        # metaMinLines=0（关闭规则）时行为回退到原口径
+        small_off = {f["filename"]: f for f in disabled["files"]}["small.json"]
+        stages_off = {s["key"]: s["done"] for s in small_off["stages"]}
+        self.assertFalse(stages_off["meta"])
+        self.assertFalse(stages_off["batch"])
+
+    def test_small_file_without_line_total_not_marked_done(self) -> None:
+        """缺 file_totals（后端重启）时无法判定行数：不得凭空气标记为已跳过。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_project(tmpdir)
+            input_dir = os.path.join(tmpdir, "gt_input")
+            with open(os.path.join(input_dir, "small.json"), "w", encoding="utf-8") as f:
+                f.write("[]")
+
+            result = RuntimeProgressCache().get_progress(
+                tmpdir, file_totals={}, cache_file_display_map={}, meta_min_lines=20,
+            )
+
+        small = {f["filename"]: f for f in result["files"]}["small.json"]
+        stages = {s["key"]: s["done"] for s in small["stages"]}
+        self.assertFalse(stages["meta"])
+        self.assertFalse(stages["batch"])
+
+    def test_cache_count_fallback_never_triggers_skip_rule(self) -> None:
+        """分母回退为「缓存条目数」时该值不是文件行数：不得据此判元数据已跳过。
+
+        触发路径：文件不在 file_totals（本轮未上报）且 pass3 只有部分条目，
+        条目数恰好落在 (0, metaMinLines) —— 此时凭它判跳过会误标大文件。
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = self._make_project(tmpdir)
+            self._write_json(
+                os.path.join(cache_dir, "pass3_cache", "big.json"),
+                [
+                    _make_cache_entry(0, "", "A", "译A"),
+                    _make_cache_entry(1, "", "B", ""),
+                ],
+            )
+
+            result = RuntimeProgressCache().get_progress(
+                tmpdir, file_totals={}, cache_file_display_map={}, meta_min_lines=20,
+            )
+
+        big = {f["filename"]: f for f in result["files"]}["big.json"]
+        self.assertEqual(big["total"], 2)  # 回退分母
+        stages = {s["key"]: s["done"] for s in big["stages"]}
+        self.assertFalse(stages["meta"])
+        self.assertFalse(stages["batch"])
+
     def test_total_falls_back_to_cache_entry_count(self) -> None:
         """后端重启后 file_totals 为空：用 pass3 缓存条目数回退分母。"""
         with tempfile.TemporaryDirectory() as tmpdir:

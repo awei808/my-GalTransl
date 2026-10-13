@@ -20,6 +20,7 @@ from time import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from GalTransl import LOGGER, NEED_OpenAITokenPool
+from GalTransl.Backend.metadata import count_nonempty_lines
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.CSplitter import SplitChunkMetadata
 from GalTransl.server_runtime import WORKER_ID_CTX
@@ -45,6 +46,25 @@ def _update_runtime(projectConfig: CProjectConfig, **kwargs: Any) -> None:
         return
 
 
+@dataclass
+class MetaPoolResult:
+    """元数据阶段 worker 池的处理结果（供调用方准确汇报与交叉验证）。
+
+    返回值从 int 改为本对象的原因：调用方原先用 ``total_files - processed``
+    反推「因已有缓存而跳过」的数量，小文件跳过加入后该反推会把小文件误计为
+    缓存命中，并使交叉验证误报「N 个文件未生成元数据」。
+
+    Attributes:
+        processed: 实际交给后端处理且成功的文件数。
+        skipped_existing: 因已有缓存（且未 force_regen）跳过的文件数。
+        skipped_small: 因行数不足 min_lines 跳过的文件数。
+    """
+
+    processed: int = 0
+    skipped_existing: int = 0
+    skipped_small: int = 0
+
+
 async def _run_meta_worker_pool(
     projectConfig: CProjectConfig,
     gptapi: Any,
@@ -54,7 +74,8 @@ async def _run_meta_worker_pool(
     tag: str,
     stage_prefix: str,
     force_regen: bool = False,
-) -> int:
+    min_lines: int = 0,
+) -> MetaPoolResult:
     """多 worker 并发执行文件级/批次级元数据生成。
 
     与翻译阶段 worker 池同构：队列分发 + 每 worker 绑定 WORKER_ID_CTX，
@@ -69,21 +90,37 @@ async def _run_meta_worker_pool(
         tag: 日志前缀（"FileMetaData" / "BatchMetaData"）。
         stage_prefix: 运行时阶段提示前缀。
         force_regen: 为 True 时忽略已有缓存，强制重新生成。
+        min_lines: 行数阈值，非空行数小于该值的文件不生成元数据（0 表示不跳过）。
+            判定与进度面板同口径（metadata.count_nonempty_lines）。
 
     Returns:
-        实际处理的文件数（跳过缓存的不计）。
+        MetaPoolResult：实际处理的文件数与两类跳过计数。
     """
     todo = []
+    skipped_existing = 0
+    skipped_small = 0
+    small_names: list[str] = []
     for file_path, jsons in file_json_lists.items():
         fname = os_basename(file_path)
         if fname in existing_map and not force_regen:
             LOGGER.debug(f"[{tag}] 跳过已有缓存: {fname}")
+            skipped_existing += 1
+            continue
+        if min_lines > 0 and count_nonempty_lines(jsons) < min_lines:
+            small_names.append(fname)
+            skipped_small += 1
             continue
         todo.append((fname, jsons))
 
+    if skipped_small:
+        LOGGER.info(
+            f"[{tag}] 跳过 {skipped_small} 个行数不足 {min_lines} 的文件（不生成元数据）"
+        )
+        LOGGER.debug(f"[{tag}] 跳过的文件：{small_names}")
+
     if not todo:
-        LOGGER.info(f"[{tag}] 全部文件已有缓存，无需处理")
-        return 0
+        LOGGER.info(f"[{tag}] 无可处理文件（全部已有缓存或行数不足），无需处理")
+        return MetaPoolResult(0, skipped_existing, skipped_small)
 
     queue: asyncio.Queue = asyncio.Queue()
     for item in todo:
@@ -148,7 +185,7 @@ async def _run_meta_worker_pool(
         raise
     finally:
         _update_runtime(projectConfig, workers_active=0)
-    return processed
+    return MetaPoolResult(processed, skipped_existing, skipped_small)
 
 
 def _pass3_cache_dir(projectConfig: CProjectConfig) -> str:
@@ -330,20 +367,13 @@ def _build_meta_file_totals(file_json_lists: dict, input_dir: str) -> dict[str, 
 
     元数据阶段（ForFileMetaData / ForBatchMetaData）不经过切块，无法复用
     _build_runtime_file_maps（其输入是 SplitChunkMetadata 列表）。此函数直接从
-    file_json_lists 统计每个输入文件的非空行数，作为前端文件进度面板的进度分母。
+    file_json_lists 统计每个输入文件的非空行数，作为前端文件进度面板的进度分母；
+    行数口径复用 metadata.count_nonempty_lines（亦为小文件跳过判定口径）。
     """
     file_totals: dict[str, int] = {}
     for file_path, json_list in file_json_lists.items():
         display_name = file_path.replace(input_dir, "").lstrip(os_sep).replace(os_sep, "/")
-        count = 0
-        for row in json_list:
-            if not isinstance(row, dict):
-                continue
-            message = str(row.get("message", "") or "").strip()
-            if not message:
-                continue
-            count += 1
-        file_totals[display_name] = count
+        file_totals[display_name] = count_nonempty_lines(json_list)
     return file_totals
 
 

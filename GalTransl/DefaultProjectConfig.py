@@ -117,6 +117,7 @@ internals:
     maxInputChars: 950000         # 全局分析阶段压缩后文本的“软阈值”：超过此值仅打印告警、不做截断（无损原则，绝不删行）。0 表示不检查。[1000-1000000]
     forceRegenDic: false          # 是否强制重新生成术语表（即使已存在，同时忽略 gendic_cache 断点分片缓存重算）[True/False]
     abortOnDicFailure: false      # 是否在术语表生成失败时中止流水线 [True/False]
+    metaMinLines: 20              # 元数据阶段行数阈值：文件的非空行数小于此值时，不生成文件级/批次级元数据（不调用 AI、不写 pass1/pass2 产物）。0 表示不跳过任何文件。[0-1000]
     # === 流水线阶段开关（false 则跳过该阶段）===
     enableValidate: true          # 阶段0 输入数据校验 [True/False]
     enableCompress: true          # 阶段1 文本无损压缩（全局分析需要）[True/False]

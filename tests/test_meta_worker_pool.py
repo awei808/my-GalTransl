@@ -4,6 +4,7 @@ _run_meta_worker_pool 多 worker 并发正确性测试。
 验证：
   - 所有待处理文件都被处理且每个文件恰好处理一次
   - 缓存跳过的文件不会被处理
+  - 行数不足 min_lines 的小文件被跳过（不调用后端），计数单独汇报
   - force_regen 时忽略缓存，全部重新处理
   - 返回的实际处理数正确
   - worker 并发数正确（多个 worker 同时在途）
@@ -78,12 +79,12 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
     async def test_all_files_processed_once_each(self) -> None:
         gptapi = FakeGptApi()
         files = _mk_files(6)
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, files,
             existing_map={}, worker_count=3,
             tag="Test", stage_prefix="测试",
         )
-        self.assertEqual(processed, 6)
+        self.assertEqual(result.processed, 6)
         # 每个文件恰好处理一次（默认 force_regen=False）
         self.assertEqual(
             sorted(c[0] for c in gptapi.calls),
@@ -98,12 +99,12 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
         gptapi = FakeGptApi()
         files = _mk_files(4)
         existing = {"f0.txt.json", "f2.txt.json"}
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, files,
             existing_map=existing, worker_count=2,
             tag="Test", stage_prefix="测试",
         )
-        self.assertEqual(processed, 2)
+        self.assertEqual(result.processed, 2)
         self.assertEqual(
             sorted(c[0] for c in gptapi.calls), ["f1.txt.json", "f3.txt.json"]
         )
@@ -112,60 +113,60 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
         gptapi = FakeGptApi()
         files = _mk_files(3)
         existing = {"f0.txt.json", "f1.txt.json", "f2.txt.json"}
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, files,
             existing_map=existing, worker_count=2,
             tag="Test", stage_prefix="测试", force_regen=True,
         )
-        self.assertEqual(processed, 3)
+        self.assertEqual(result.processed, 3)
         self.assertEqual(len(gptapi.calls), 3)
         # force_regen 被透传到引擎层
         self.assertTrue(all(c[1] is True for c in gptapi.calls))
 
     async def test_empty_input_returns_zero(self) -> None:
         gptapi = FakeGptApi()
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, {},
             existing_map={}, worker_count=3,
             tag="Test", stage_prefix="测试",
         )
-        self.assertEqual(processed, 0)
+        self.assertEqual(result.processed, 0)
         self.assertEqual(gptapi.calls, [])
 
     async def test_all_cached_returns_zero(self) -> None:
         gptapi = FakeGptApi()
         files = _mk_files(2)
         existing = {"f0.txt.json", "f1.txt.json"}
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, files,
             existing_map=existing, worker_count=3,
             tag="Test", stage_prefix="测试",
         )
-        self.assertEqual(processed, 0)
+        self.assertEqual(result.processed, 0)
         self.assertEqual(gptapi.calls, [])
 
     async def test_worker_more_than_tasks_still_finishes(self) -> None:
         # worker 数 > 任务数：多余 worker 拿到 None 立即退出，不报错
         gptapi = FakeGptApi()
         files = _mk_files(1)
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, files,
             existing_map={}, worker_count=5,
             tag="Test", stage_prefix="测试",
         )
-        self.assertEqual(processed, 1)
+        self.assertEqual(result.processed, 1)
         self.assertEqual([c[0] for c in gptapi.calls], ["f0.txt.json"])
 
     async def test_failed_files_not_counted_as_processed(self) -> None:
         # batch_translate 返回 False（LLM 业务失败）不抛异常，不计入 processed
         gptapi = FailingGptApi()
         files = _mk_files(4)
-        processed = await _run_meta_worker_pool(
+        result = await _run_meta_worker_pool(
             FakeProjectConfig(), gptapi, files,
             existing_map={}, worker_count=3,
             tag="Test", stage_prefix="测试",
         )
-        self.assertEqual(processed, 0)
+        self.assertEqual(result.processed, 0)
         # 文件仍被全部尝试处理
         self.assertEqual(
             sorted(c[0] for c in gptapi.calls),
@@ -190,6 +191,118 @@ class RunMetaWorkerPoolTests(IsolatedAsyncioTestCase):
         self.assertEqual(pending, [])
 
 
+class SmallFileSkipTests(IsolatedAsyncioTestCase):
+    """行数阈值跳过：非空行数 < min_lines 的文件不调用后端、不计入 processed。"""
+
+    @staticmethod
+    def _file(lines: int, empty_lines: int = 0) -> list:
+        rows = [{"message": f"line-{i}"} for i in range(lines)]
+        rows += [{"message": ""} for _ in range(empty_lines)]
+        return rows
+
+    async def test_below_threshold_skipped_at_threshold_processed(self) -> None:
+        gptapi = FakeGptApi()
+        files = {
+            "d:/game/gt_input/small.txt.json": self._file(19),
+            "d:/game/gt_input/exact.txt.json": self._file(20),
+        }
+        result = await _run_meta_worker_pool(
+            FakeProjectConfig(), gptapi, files,
+            existing_map={}, worker_count=2,
+            tag="Test", stage_prefix="测试", min_lines=20,
+        )
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.skipped_small, 1)
+        self.assertEqual(result.skipped_existing, 0)
+        self.assertEqual([c[0] for c in gptapi.calls], ["exact.txt.json"])
+
+    async def test_empty_message_lines_not_counted(self) -> None:
+        # 19 条非空 + 5 条空 message：按进度面板同口径仍算 19 行 → 跳过
+        gptapi = FakeGptApi()
+        files = {"d:/game/gt_input/a.txt.json": self._file(19, empty_lines=5)}
+        result = await _run_meta_worker_pool(
+            FakeProjectConfig(), gptapi, files,
+            existing_map={}, worker_count=2,
+            tag="Test", stage_prefix="测试", min_lines=20,
+        )
+        self.assertEqual(result.processed, 0)
+        self.assertEqual(result.skipped_small, 1)
+        self.assertEqual(gptapi.calls, [])
+
+    async def test_zero_min_lines_never_skips(self) -> None:
+        gptapi = FakeGptApi()
+        files = {"d:/game/gt_input/tiny.txt.json": self._file(1)}
+        result = await _run_meta_worker_pool(
+            FakeProjectConfig(), gptapi, files,
+            existing_map={}, worker_count=1,
+            tag="Test", stage_prefix="测试", min_lines=0,
+        )
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.skipped_small, 0)
+
+    async def test_force_regen_does_not_resurrect_small_files(self) -> None:
+        # force_regen 只覆盖「已有缓存」跳过，不改变行数阈值跳过
+        gptapi = FakeGptApi()
+        files = {"d:/game/gt_input/a.txt.json": self._file(5)}
+        result = await _run_meta_worker_pool(
+            FakeProjectConfig(), gptapi, files,
+            existing_map={}, worker_count=1,
+            tag="Test", stage_prefix="测试", force_regen=True, min_lines=20,
+        )
+        self.assertEqual(result.processed, 0)
+        self.assertEqual(result.skipped_small, 1)
+        self.assertEqual(gptapi.calls, [])
+
+    async def test_force_regen_with_existing_cache_still_skips_small(self) -> None:
+        # 小文件同时命中「已有缓存」与「行数不足」：force_regen 绕过缓存分支后
+        # 仍必须被行数阈值拦下，且计入 skipped_small（不是 skipped_existing）
+        gptapi = FakeGptApi()
+        files = {"d:/game/gt_input/a.txt.json": self._file(3)}
+        result = await _run_meta_worker_pool(
+            FakeProjectConfig(), gptapi, files,
+            existing_map={"a.txt.json"}, worker_count=1,
+            tag="Test", stage_prefix="测试", force_regen=True, min_lines=20,
+        )
+        self.assertEqual(result.processed, 0)
+        self.assertEqual(result.skipped_small, 1)
+        self.assertEqual(result.skipped_existing, 0)
+        self.assertEqual(gptapi.calls, [])
+
+    async def test_small_and_cached_counted_separately(self) -> None:
+        # 小而跳过 / 已有缓存 / 待处理三类并存：计数互不混淆（交叉验证分母依赖该口径）
+        gptapi = FakeGptApi()
+        files = {
+            "d:/game/gt_input/small.txt.json": self._file(3),
+            "d:/game/gt_input/cached.txt.json": self._file(50),
+            "d:/game/gt_input/todo.txt.json": self._file(50),
+        }
+        result = await _run_meta_worker_pool(
+            FakeProjectConfig(), gptapi, files,
+            existing_map={"cached.txt.json"}, worker_count=2,
+            tag="Test", stage_prefix="测试", min_lines=20,
+        )
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.skipped_small, 1)
+        self.assertEqual(result.skipped_existing, 1)
+        self.assertEqual([c[0] for c in gptapi.calls], ["todo.txt.json"])
+
+    async def test_all_small_returns_zero_without_reporting(self) -> None:
+        # 全部因行数不足跳过：与「全部命中缓存」同路径，不触碰并发状态上报
+        reports: list = []
+        with patch(
+            "GalTransl.Frontend.llm_runtime._update_runtime",
+            side_effect=lambda cfg, **kw: reports.append(kw),
+        ):
+            result = await _run_meta_worker_pool(
+                FakeProjectConfig(), FakeGptApi(), {"d:/game/gt_input/a.txt.json": self._file(2)},
+                existing_map={}, worker_count=3,
+                tag="Test", stage_prefix="测试", min_lines=20,
+            )
+        self.assertEqual(result.processed, 0)
+        self.assertEqual(result.skipped_small, 1)
+        self.assertEqual(reports, [])
+
+
 class WorkerReportingTests(IsolatedAsyncioTestCase):
     """并发状态上报：启动 0/配置值，处理中随文件取放增减，结束归零。"""
 
@@ -207,12 +320,12 @@ class WorkerReportingTests(IsolatedAsyncioTestCase):
         reports: list = []
         with self._record(reports):
             gptapi = FakeGptApi()
-            processed = await _run_meta_worker_pool(
+            result = await _run_meta_worker_pool(
                 FakeProjectConfig(), gptapi, _mk_files(4),
                 existing_map={}, worker_count=2,
                 tag="Test", stage_prefix="测试",
             )
-        self.assertEqual(processed, 4)
+        self.assertEqual(result.processed, 4)
         actives = self._actives(reports)
         # 启动上报 0/配置值
         self.assertEqual(actives[0], 0)
@@ -242,12 +355,12 @@ class WorkerReportingTests(IsolatedAsyncioTestCase):
         # 全部命中缓存提前返回：不触碰并发状态
         reports: list = []
         with self._record(reports):
-            processed = await _run_meta_worker_pool(
+            result = await _run_meta_worker_pool(
                 FakeProjectConfig(), FakeGptApi(), _mk_files(2),
                 existing_map={"f0.txt.json", "f1.txt.json"}, worker_count=3,
                 tag="Test", stage_prefix="测试",
             )
-        self.assertEqual(processed, 0)
+        self.assertEqual(result.processed, 0)
         self.assertEqual(reports, [])
 
 

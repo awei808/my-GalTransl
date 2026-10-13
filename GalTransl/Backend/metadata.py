@@ -114,6 +114,55 @@ class FileMetaData:
         )
 
 
+# 小文件跳过元数据生成的行数阈值默认值（config: internals.pipeline.metaMinLines）
+META_MIN_LINES_DEFAULT = 20
+
+
+def count_nonempty_lines(json_list: object) -> int:
+    """统计 json_list 的「有效行数」：message 非空的 dict 行。
+
+    该口径与前端文件进度面板的分母（LLMTranslate._build_meta_file_totals /
+    _build_runtime_file_maps）一致——写成 ``{"message": ""}`` 的空行不计入。
+    元数据阶段的跳过判定必须复用同一口径，否则会出现「进度显示 18 行、
+    判定却按 23 条」的分裂。
+    """
+    if not json_list:
+        return 0
+    count = 0
+    for row in json_list:  # type: ignore[union-attr]
+        if not isinstance(row, dict):
+            continue
+        if not str(row.get("message", "") or "").strip():
+            continue
+        count += 1
+    return count
+
+
+def get_meta_min_lines(projectConfig: "CProjectConfig") -> int:
+    """读「小于此行数的文件不生成元数据」阈值（0 = 不跳过任何文件）。
+
+    配置键 ``internals.pipeline.metaMinLines``，默认 20。非法值（布尔/非数字/
+    非整数/负数）一律回退默认值；``0`` 是合法值，表示关闭该跳过规则。
+    写法 ``20.0`` / ``0.0`` 的空小数按整数值接受（YAML 手改常见），非空小数
+    （如 ``17.5``）视为非法。
+    """
+    raw = projectConfig.getKey(
+        "internals.pipeline.metaMinLines", META_MIN_LINES_DEFAULT
+    )
+    if isinstance(raw, bool):
+        return META_MIN_LINES_DEFAULT
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text.isdigit():
+            return META_MIN_LINES_DEFAULT
+        return int(text)
+    if isinstance(raw, int):
+        return raw if raw >= 0 else META_MIN_LINES_DEFAULT
+    if isinstance(raw, float) and raw.is_integer() and raw >= 0:
+        return int(raw)
+    return META_MIN_LINES_DEFAULT
+
+
 def format_file_metadata_block(
     metadata: "FileMetaData", include_guidance: bool = True
 ) -> str:

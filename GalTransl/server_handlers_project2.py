@@ -130,6 +130,7 @@ def route_project_api_part2(
             retran_key=retran_key,
             retran_terms=retran_terms,
             current_job_started_at_ns=current_job_started_at_ns,
+            meta_min_lines=int(runtime.get("meta_min_lines", 0) or 0),
         )
         total = progress_payload["total"]
         translated = progress_payload["translated"]

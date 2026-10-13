@@ -434,12 +434,19 @@ async def _run_stage_file_meta(
 ) -> None:
     """阶段：文件级元数据（pass1_cache/FileMetaData.json）。"""
     _stage_begin(projectConfig, "file_meta", "生成文件级元数据")
+
+    from GalTransl.Backend.metadata import get_meta_min_lines
+
+    # 行数阈值：非空行数小于该值的文件不生成元数据（0=不跳过）；随 file_totals 上报，
+    # 供文件进度面板把这类文件的 meta/batch 阶段判为「已跳过」而不是永远未完成
+    min_lines = get_meta_min_lines(projectConfig)
     # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
     _update_runtime(
         projectConfig,
         file_totals=_build_meta_file_totals(
             file_json_lists, projectConfig.getInputPath()
         ),
+        meta_min_lines=min_lines,
     )
     # 总文件数在文件级/批次级元数据阶段共用，写入 stage_ctx 供后者复用
     total_files = len(file_json_lists)
@@ -468,35 +475,46 @@ async def _run_stage_file_meta(
         # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
         workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
-        processed_fm = await _run_meta_worker_pool(
+        fm_result = await _run_meta_worker_pool(
             projectConfig, gptapi_filemeta, file_json_lists,
             existing_map=existing_fm_map,
             worker_count=worker_count,
             tag="FileMetaData", stage_prefix="文件级元数据",
             force_regen=force_regen_fm,
+            min_lines=min_lines,
         )
-        skipped_files = total_files - processed_fm
+        skipped_small = fm_result.skipped_small
+        # 预期应生成元数据的文件数：剔除按行数阈值预期跳过的文件，
+        # 否则小文件会被误报为「未生成元数据」
+        expected_fm = total_files - skipped_small
 
         # 交叉验证 FileMetaData 条目数
         fm_map = load_file_metadata_map(projectConfig)
         fm_count = len(fm_map)
-        if fm_count < total_files:
+        if fm_count < expected_fm:
             LOGGER.warning(
-                f"[流水线] 文件级元数据警告：{fm_count}/{total_files} 个文件"
-                f"生成了元数据，缺失 {total_files - fm_count} 个"
+                f"[流水线] 文件级元数据警告：{fm_count}/{expected_fm} 个文件"
+                f"生成了元数据，缺失 {expected_fm - fm_count} 个"
             )
             record_runtime_notice(
                 projectConfig.getProjectDir(),
-                f"警告：{total_files - fm_count} 个文件未生成文件级元数据",
+                f"警告：{expected_fm - fm_count} 个文件未生成文件级元数据",
             )
         else:
-            LOGGER.info(f"[流水线] 文件级元数据完成：{fm_count}/{total_files} 个文件")
+            LOGGER.info(f"[流水线] 文件级元数据完成：{fm_count}/{expected_fm} 个文件")
             record_runtime_notice(
                 projectConfig.getProjectDir(),
-                f"文件级元数据完成（{fm_count}/{total_files} 个文件）",
+                f"文件级元数据完成（{fm_count}/{expected_fm} 个文件）",
             )
-        if skipped_files:
-            LOGGER.info(f"[流水线] 跳过 {skipped_files} 个已存在文件级元数据的文件")
+        if skipped_small:
+            LOGGER.info(
+                f"[流水线] 跳过 {skipped_small} 个行数不足 {min_lines} 的文件"
+                f"（未生成文件级元数据）"
+            )
+        if fm_result.skipped_existing:
+            LOGGER.info(
+                f"[流水线] 跳过 {fm_result.skipped_existing} 个已存在文件级元数据的文件"
+            )
     finally:
         if hasattr(gptapi_filemeta, "shutdown"):
             await gptapi_filemeta.shutdown()
@@ -571,12 +589,18 @@ async def _run_stage_batch_meta(
 ) -> None:
     """阶段：批次级元数据（pass2_cache/BatchMetadata.json）。"""
     _stage_begin(projectConfig, "batch_meta", "划分翻译区间")
+
+    from GalTransl.Backend.metadata import get_meta_min_lines
+
+    # 与文件级元数据同一行数阈值：非空行数小于该值的文件不划分翻译区间（0=不跳过）
+    min_lines = get_meta_min_lines(projectConfig)
     # 上报输入文件总行数：使前端文件进度面板在元数据阶段显示输入文件而非缓存文件
     _update_runtime(
         projectConfig,
         file_totals=_build_meta_file_totals(
             file_json_lists, projectConfig.getInputPath()
         ),
+        meta_min_lines=min_lines,
     )
 
     if not _stage_enabled(projectConfig, "batch_meta"):
@@ -605,35 +629,45 @@ async def _run_stage_batch_meta(
         # workersPerProject 解析统一走 CProjectConfig.get_workers_per_project（兼容字符串/非法回退 1）
         workers_per_project = projectConfig.get_workers_per_project()
         worker_count = max(1, workers_per_project)
-        processed_bm = await _run_meta_worker_pool(
+        bm_result = await _run_meta_worker_pool(
             projectConfig, gptapi_batchmeta, file_json_lists,
             existing_map=existing_bm_map,
             worker_count=worker_count,
             tag="BatchMetaData", stage_prefix="批次划分",
             force_regen=force_regen_bm,
+            min_lines=min_lines,
         )
-        skipped_batches = total_files - processed_bm
+        skipped_small = bm_result.skipped_small
+        # 预期应划分批次的文件数：剔除按行数阈值预期跳过的文件
+        expected_bm = total_files - skipped_small
 
         # 交叉验证 BatchMetadata 条目数
         bm_map = load_batch_metadata_map(projectConfig)
         bm_count = len(bm_map)
-        if bm_count < total_files:
+        if bm_count < expected_bm:
             LOGGER.warning(
-                f"[流水线] 批次级元数据警告：{bm_count}/{total_files} 个文件"
-                f"划分了批次，缺失 {total_files - bm_count} 个"
+                f"[流水线] 批次级元数据警告：{bm_count}/{expected_bm} 个文件"
+                f"划分了批次，缺失 {expected_bm - bm_count} 个"
             )
             record_runtime_notice(
                 projectConfig.getProjectDir(),
-                f"警告：{total_files - bm_count} 个文件未划分翻译区间",
+                f"警告：{expected_bm - bm_count} 个文件未划分翻译区间",
             )
         else:
-            LOGGER.info(f"[流水线] 翻译区间划分完成：{bm_count}/{total_files} 个文件")
+            LOGGER.info(f"[流水线] 翻译区间划分完成：{bm_count}/{expected_bm} 个文件")
             record_runtime_notice(
                 projectConfig.getProjectDir(),
-                f"翻译区间划分完成（{bm_count}/{total_files} 个文件）",
+                f"翻译区间划分完成（{bm_count}/{expected_bm} 个文件）",
             )
-        if skipped_batches:
-            LOGGER.info(f"[流水线] 跳过 {skipped_batches} 个已存在批次级元数据的文件")
+        if skipped_small:
+            LOGGER.info(
+                f"[流水线] 跳过 {skipped_small} 个行数不足 {min_lines} 的文件"
+                f"（未划分翻译区间）"
+            )
+        if bm_result.skipped_existing:
+            LOGGER.info(
+                f"[流水线] 跳过 {processed_bm.skipped_existing} 个已存在批次级元数据的文件"
+            )
     finally:
         if hasattr(gptapi_batchmeta, "shutdown"):
             await gptapi_batchmeta.shutdown()

@@ -43,6 +43,15 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
     def test_swap_fix_to_current_default_true(self) -> None:
         self.assertIs(self.config["common"]["gpt.swapFixToCurrent"], True)
 
+    def test_meta_min_lines_default(self) -> None:
+        """元数据阶段行数阈值默认 20：行数不足的文件不生成文件级/批次级元数据。
+
+        0 是合法值（关闭该跳过规则），故此处不能按「必须为正」的口径锁定。
+        """
+        value = self.config["internals"]["pipeline"]["metaMinLines"]
+        self.assertEqual(value, 20)
+        self.assertNotIsInstance(value, bool)
+
     def test_problem_list_covers_default_fix_types(self) -> None:
         problem_list = self.config["problemAnalyze"]["problemList"]
         self.assertIsInstance(problem_list, list)
