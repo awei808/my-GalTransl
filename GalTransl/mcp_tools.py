@@ -1895,7 +1895,8 @@ def build_server_instructions(
         "7. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。\n"
         "8. 交付结论 + 定位（文件名 + index + 最短必要引文），不要堆砌原文/译文。\n"
         "\n"
-        "完整约束见随项目分发的 skills/galtransl-mcp/SKILL.md。"
+        # 路径要给到「程序目录」：agent 的 cwd 不是 GalTransl 程序目录，只写相对路径无法定位
+        "完整约束见 GalTransl 程序目录下的 skills/galtransl-mcp/SKILL.md。"
     )
 
 

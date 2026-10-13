@@ -108,8 +108,11 @@ pip install "mcp>=2.0,<3.0"
 
 | 路径 | 命令 |
 |---|---|
-| 一键构建脚本 | `python build_release_py312.py`（产 `backend/galtransl_mcp.exe` + 后端 exe；冒烟验 `initialize` 握手、`instructions` 非空、工具数口径） |
+| 一键构建脚本 | `python build_release_py312.py`（产 `backend/galtransl_mcp.exe` + 后端 exe；冒烟验 `initialize` 握手、`instructions` 非空、工具数口径、`instructions` 点名的约束文档随包） |
 
+> 约束文档 `skills/galtransl-mcp/SKILL.md` 随发布包复制到**程序目录**（`release/GalTransl_{版本}_win/skills/galtransl-mcp/SKILL.md`），
+> 与 `instructions` 末句「完整约束见 GalTransl 程序目录下的 skills/galtransl-mcp/SKILL.md」对应；缺失会被构建的完整性校验拦下。
+>
 > 0.6.0 起移除了 `galtransl_mcp.spec`（连同 `galtransl_backend.spec` 一并进 `.gitignore`）：
 > 两份 spec 都硬编码了绝对路径，换个机器就失效；构建脚本内的 PyInstaller 命令已覆盖同样参数
 > 且用 `ROOT` 相对定位。需要手工打包时，直接照搬 `build_release_py312.py:build_mcp()` 的命令即可。

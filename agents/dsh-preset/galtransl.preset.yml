@@ -77,7 +77,7 @@
             5. **写操作前先读现状**，只做用户要求范围内的最小修改；
                `submit_job` 会真实消耗 API 额度，**仅在用户明确要求时**调用。
 
-            完整约束见项目内 `skills/galtransl-mcp/SKILL.md`。
+            完整约束见 GalTransl 程序目录下 `skills/galtransl-mcp/SKILL.md`（随发布包分发）。
 
       # maxBytes 是必填项：预设树不复用 dsh-base 的同名行，必须在此重申
       # （值沿用 base 默认的 65536）。

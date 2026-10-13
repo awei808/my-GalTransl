@@ -5,14 +5,15 @@ GalTransl Windows 发布版构建脚本
 一键构建整个桌面可发行版本，产出含前端 + 后端的便携版目录及 zip 压缩包。
 
 用法:
-  python build_release.py                # 构建全部
-  python build_release.py --skip-fe      # 跳过前端构建（可复用已有 exe）
-  python build_release.py --skip-be      # 跳过后端构建
-  python build_release.py --clean        # 构建前清理旧产物
-  python build_release.py --no-zip       # 不创建 zip 压缩包
-  python build_release.py --no-smoke     # 跳过构建后后端冒烟测试
-  python build_release.py --allow-incomplete  # 允许产物不完整仍继续（默认缺失即失败）
-  python build_release.py --no-deps-cache     # 禁用 venv 依赖缓存（强制重建）
+  python build_release_py312.py                # 构建全部
+  python build_release_py312.py --skip-fe      # 跳过前端构建（可复用已有 exe）
+  python build_release_py312.py --skip-be      # 跳过后端构建
+  python build_release_py312.py --clean        # 构建前清理旧产物
+  python build_release_py312.py --no-zip       # 不创建 zip 压缩包
+  python build_release_py312.py --no-smoke     # 跳过构建后后端冒烟测试
+  python build_release_py312.py --allow-incomplete  # 允许产物缺失仍继续（默认缺失即失败；
+                                                    # 冒烟里的内容校验不受它放行，需 --no-smoke）
+  python build_release_py312.py --no-deps-cache     # 禁用 venv 依赖缓存（强制重建）
 
 产出目录:
   release/
@@ -22,7 +23,9 @@ GalTransl Windows 发布版构建脚本
       backend/galtransl_mcp.exe      # MCP 服务 (PyInstaller，外部 agent 接入)
       plugins/                       # 插件目录（仅运行所需文件）
       Dict/                          # 字典
-      translation_guidelines/        # 翻译指南
+      translation_guidelines/        # 翻译规范文件
+      guides/                        # 使用指南（帮助菜单的内容载体）
+      skills/                        # MCP 约束文档（instructions 点名的 SKILL.md）
       res/                           # 运行时资源
     GalTransl_{version}_win.zip       # 便携版压缩包
 
@@ -144,6 +147,9 @@ PLUGINS_DIR = ROOT / "plugins"
 DICT_DIR = ROOT / "Dict"
 GUIDELINES_DIR = ROOT / "translation_guidelines"
 GUIDES_DIR = ROOT / "guides"
+# MCP 约束文档：run_mcp_server 下发的 instructions 末句点名 skills/galtransl-mcp/SKILL.md，
+# 不随包分发等于让外接 agent 拿着一条读不到的路径（构建完整性校验与此处配对）
+SKILLS_DIR = ROOT / "skills"
 RES_DIR = ROOT / "res"
 
 BACKEND_ENTRY = ROOT / "run_backend.py"
@@ -615,6 +621,13 @@ def assemble_release(
     else:
         missing.append("guides/ 目录")
 
+    # MCP 约束文档（instructions 点名的 skills/galtransl-mcp/SKILL.md，接入 agent 的完整契约）
+    if SKILLS_DIR.exists():
+        copy_dir_filtered(SKILLS_DIR, BUILD_DIR / "skills")
+        log_ok("MCP 约束文档 -> skills/")
+    else:
+        missing.append("skills/ 目录")
+
     # 资源
     if RES_DIR.exists():
         copy_dir_filtered(RES_DIR, BUILD_DIR / "res")
@@ -788,6 +801,28 @@ def expected_mcp_tool_count() -> int:
     return total + sum(lists[name] for name in extend_targets)
 
 
+def _check_instructions_doc_ships(instructions: str) -> bool:
+    """校验 instructions 点名的文档确实随包分发（返回 False 即阻断构建）。
+
+    冒烟以发布根目录为 cwd 启动 MCP（见 `smoke_test_mcp` 的 `cwd=BUILD_DIR`），
+    故文案里的相对路径就是「发布根目录下」的路径：文案点名而包里没有，
+    等于给外接 agent 一条读不到的路径（0.6.0 曾如此：skills/ 未随包复制）。
+    """
+    # 路径字符集限定 ASCII：`\w` 是 Unicode 感知的，会把「程序目录下skills/…」里的中文一起吃进来
+    referenced = re.findall(r"[A-Za-z0-9_./-]*skills/[A-Za-z0-9_./-]+\.md", instructions)
+    if not referenced:
+        log_warn("instructions 未点名 skills 文档路径，跳过随包校验（口径变化时同步本检查）")
+        return True
+    base = BUILD_DIR.resolve()
+    for rel in referenced:
+        target = (base / rel).resolve()
+        # 越界（前导 / 或 ../）与「只是个同名目录」都不算随包分发
+        if base not in target.parents or not target.is_file():
+            log_err(f"MCP 冒烟失败：instructions 点名的 {rel} 不在发布目录内（随包分发缺失）")
+            return False
+    return True
+
+
 def smoke_test_mcp() -> bool:
     """用 stdio 发一次 initialize，验证 MCP exe 能完成协议握手。
 
@@ -864,6 +899,8 @@ def smoke_test_mcp() -> bool:
                 f"MCP 冒烟失败：instructions 未声明 {expected_count} 个工具（口径过时）"
                 f" → {instructions[:120]}"
             )
+            return False
+        if not _check_instructions_doc_ships(instructions):
             return False
         log_ok(
             f"MCP 冒烟通过 (protocolVersion={result.get('protocolVersion')}, "

@@ -13,6 +13,8 @@
 import ast
 import os
 import pathlib
+import re
+import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -246,8 +248,6 @@ class InstructionsContractTests(unittest.TestCase):
         self.assertRegex(SERVER_INSTRUCTIONS, r"（\s*\d+\s*个工具")
 
     def test_instructions_count_matches_tool_defs(self) -> None:
-        import re
-
         from GalTransl.mcp_tools import MCP_TOOL_DEFS, SERVER_INSTRUCTIONS
 
         # 用与冒烟测试相同的严格口径（「（N 个工具」），避免宽松子串带来的假通过
@@ -257,11 +257,201 @@ class InstructionsContractTests(unittest.TestCase):
     def test_strict_pattern_rejects_partial_count(self) -> None:
         # 审查实证：旧口径 `f"{11} 个" in text` 会被「11 个只读」假命中；
         # 若派生值算成半量（11），旧口径反而 PASS，漏检真问题
-        import re
-
         misleading = "（11 个只读检索，没有写工具）"
         self.assertIn("11 个", misleading)  # 旧口径会误判通过
         self.assertIsNone(re.search(r"（\s*11\s*个工具", misleading))  # 新口径不误判
+
+
+class SkillsDocShipsTests(unittest.TestCase):
+    """instructions 点名的约束文档必须真的随发布包分发。
+
+    缺陷背景（0.6.0）：文案点名 `skills/galtransl-mcp/SKILL.md`，但 `assemble_release`
+    不复制 `skills/`、PyInstaller 数据白名单也不含 `.md`，便携版用户与接入 agent
+    都拿不到该文件。这里把「文案点名 → 仓库存在 → 打包复制（含 fail-closed）→
+    冒烟按发布目录复核」四段串起来锁住，并对复核函数本身补三态行为测例。
+    """
+
+    def _referenced_skill_path(self) -> str:
+        """从下发的 instructions 里取出被点名的 skills 文档相对路径。"""
+        from GalTransl.mcp_tools import SERVER_INSTRUCTIONS
+
+        match = re.search(r"[A-Za-z0-9_./-]*skills/[A-Za-z0-9_./-]+\.md", SERVER_INSTRUCTIONS)
+        self.assertIsNotNone(match, "instructions 未点名 skills 文档（口径变化时同步本测例）")
+        return match.group(0)
+
+    def _skills_dir_constant(self) -> str:
+        """构建脚本里唯一指向该目录的常量名（复制步骤与常量必须同源）。"""
+        top = self._referenced_skill_path().split("/")[0]
+        with open(BUILD_SCRIPT, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        names = {
+            node.targets[0].id
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.BinOp)
+            and isinstance(node.value.op, ast.Div)
+            and isinstance(node.value.right, ast.Constant)
+            and node.value.right.value == top
+        }
+        self.assertEqual(len(names), 1, f"构建脚本缺少唯一指向 {top}/ 的目录常量：{sorted(names)}")
+        return names.pop()
+
+    def _assemble_guard(self) -> ast.If:
+        """`assemble_release` 里 `if <目录常量>.exists():` 那个分支节点。"""
+        const_name = self._skills_dir_constant()
+        body = ast.parse(_extract_function_source("assemble_release"))
+        for node in ast.walk(body):
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Call):
+                func = node.test.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "exists"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == const_name
+                ):
+                    return node
+        raise AssertionError(f"assemble_release 里没有 if {const_name}.exists() 分支")
+
+    def _doc_ship_checker(self, build_dir: pathlib.Path):
+        """隔离执行 `_check_instructions_doc_ships`（不 import 构建脚本，见文件头约定）。"""
+        errors: list = []
+        warns: list = []
+        namespace = _module_level_imports()
+        namespace.update({"BUILD_DIR": build_dir, "log_err": errors.append, "log_warn": warns.append})
+        exec(
+            compile(_extract_function_source("_check_instructions_doc_ships"), "<build>", "exec"),
+            namespace,
+        )
+        return namespace["_check_instructions_doc_ships"], errors, warns
+
+    def _instructions_text(self) -> str:
+        from GalTransl.mcp_tools import SERVER_INSTRUCTIONS
+
+        return SERVER_INSTRUCTIONS
+
+    def _write_skill_doc(self, base_dir: pathlib.Path, rel: str) -> None:
+        target = base_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x", encoding="utf-8")
+
+    def test_referenced_skill_doc_exists_in_repo(self) -> None:
+        rel = self._referenced_skill_path()
+        self.assertTrue(
+            os.path.isfile(os.path.join(REPO_ROOT, rel)),
+            f"仓库内缺少 instructions 点名的 {rel}",
+        )
+
+    def test_assemble_release_copies_skill_dir(self) -> None:
+        # 复制调用必须在 if <常量>.exists() 正文里（只看 body，if/else 写反要能失败），
+        # 且目标是 BUILD_DIR 下的同名目录
+        const_name = self._skills_dir_constant()
+        top = self._referenced_skill_path().split("/")[0]
+        guard = self._assemble_guard()
+        copies = [
+            node
+            for node in ast.walk(ast.If(test=guard.test, body=guard.body, orelse=[]))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "copy_dir_filtered"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == const_name
+        ]
+        self.assertTrue(copies, f"{const_name} 未在 if exists() 分支内被复制（{top}/ 不进发布包）")
+        dest_ok = any(
+            len(node.args) > 1
+            and isinstance(node.args[1], ast.BinOp)
+            and isinstance(node.args[1].left, ast.Name)
+            and node.args[1].left.id == "BUILD_DIR"
+            and isinstance(node.args[1].right, ast.Constant)
+            and node.args[1].right.value == top
+            for node in copies
+        )
+        self.assertTrue(dest_ok, f"{const_name} 的复制目标不是 BUILD_DIR/{top}")
+
+    def test_missing_skill_dir_blocks_build(self) -> None:
+        # fail-closed：缺失必须落在 else 分支的 missing.append（与 plugins/Dict/guides 同口径）
+        guard = self._assemble_guard()
+        self.assertTrue(guard.orelse, "if exists() 没有 else 分支（缺失时静默放行）")
+        appends = [
+            node
+            for node in ast.walk(ast.If(test=guard.test, body=guard.orelse, orelse=[]))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "append"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "missing"
+        ]
+        self.assertTrue(appends, "该目录缺失未记入 missing（应 fail-closed 中止构建）")
+        dir_name = self._referenced_skill_path().split("/")[0]
+        self.assertTrue(
+            any(
+                isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value.startswith(f"{dir_name}/")
+                for node in appends
+            ),
+            f"missing 里登记的条目不是 {dir_name}/ 目录",
+        )
+
+    def test_smoke_test_verifies_doc_ships(self) -> None:
+        # 冒烟以发布根目录为 cwd，正好能按 instructions 里的相对路径复核该文件在不在包里；
+        # 且必须据其返回值阻断构建，不能只调用不用
+        smoke_body = ast.parse(_extract_function_source("smoke_test_mcp"))
+        aborts = [
+            node
+            for node in ast.walk(smoke_body)
+            if isinstance(node, ast.If)
+            and any(
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id == "_check_instructions_doc_ships"
+                for sub in ast.walk(node.test)
+            )
+            and any(
+                isinstance(sub, ast.Return)
+                and isinstance(sub.value, ast.Constant)
+                and sub.value.value is False
+                for sub in ast.walk(node)
+            )
+        ]
+        self.assertTrue(aborts, "smoke_test_mcp 未据 _check_instructions_doc_ships 的返回值阻断构建")
+
+    def test_doc_ship_check_accepts_shipped_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = pathlib.Path(tmp)
+            self._write_skill_doc(build_dir, self._referenced_skill_path())
+            checker, errors, warns = self._doc_ship_checker(build_dir)
+            self.assertTrue(checker(self._instructions_text()))
+            self.assertEqual(errors, [])
+            self.assertEqual(warns, [])
+
+    def test_doc_ship_check_rejects_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            checker, errors, _warns = self._doc_ship_checker(pathlib.Path(tmp))
+            self.assertFalse(checker(self._instructions_text()))
+            self.assertTrue(errors, "缺文件时必须报错（而非静默放行）")
+
+    def test_doc_ship_check_rejects_path_outside_release_dir(self) -> None:
+        # 越界路径（../ 或前导 /）不得因包外存在同名文件而假通过
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = pathlib.Path(tmp) / "GalTransl_0.6.0_win"
+            build_dir.mkdir()
+            rel = self._referenced_skill_path()
+            self._write_skill_doc(pathlib.Path(tmp), rel)  # 刻意放在发布目录之外
+            checker, errors, _warns = self._doc_ship_checker(build_dir)
+            self.assertFalse(checker(f"完整约束见 ../{rel}。"))
+            self.assertTrue(errors)
+
+    def test_doc_ship_check_warns_when_no_path_named(self) -> None:
+        # 未点名路径属口径变化：告警放行（与 expected_mcp_tool_count 派生失败同风格），不阻断构建
+        with tempfile.TemporaryDirectory() as tmp:
+            checker, errors, warns = self._doc_ship_checker(pathlib.Path(tmp))
+            self.assertTrue(checker("本说明未点名任何文档路径。"))
+            self.assertEqual(errors, [])
+            self.assertTrue(warns)
 
 
 if __name__ == "__main__":
