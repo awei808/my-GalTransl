@@ -36,7 +36,7 @@ export const AFTER_TRANSLATION_GROUPS: {
 }[] = [
   { key: "basic", label: "基本问题处理", hint: "换行位置、残留日文、禁用词等基本问题修复。" },
   { key: "style", label: "修正翻译风格", hint: "整文件评估译文质量，对可改进句给出备选译文。" },
-  { key: "tone", label: "词语色彩一致性检查", hint: "对照批次区间的用词色彩标注检查译文，并可二次复核撤销误报。" },
+  { key: "tone", label: "词语色彩一致性检查", hint: "对照色彩基准（批次区间「用词色彩」标注优先，无标注时对照原文语气）检查译文，并可二次复核撤销误报。" },
   { key: "semcheck", label: "标注疑似错误", hint: "AI 判定错译/漏译/串行并标记，供人工复核。" },
 ];
 
@@ -75,7 +75,7 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
     key: "tonecheck",
     label: "词语色彩一致性检查",
     group: "tone",
-    hint: "对照批次划分标注的「用词色彩」（视角/氛围），标记用词色彩明显不符的句子（不改译文）。需先在完整流水线中生成批次级元数据。",
+    hint: "标记用词色彩明显偏离色彩基准的句子（不改译文）：基准优先取批次划分标注的「用词色彩」（视角/氛围），无批次元数据或该批无标注时对照原文语气判断，无需先生成批次级元数据。",
   },
   {
     key: "tonecheckagain",

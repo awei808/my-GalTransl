@@ -1,19 +1,20 @@
 """词语色彩复核后端：对 ForToneCheck 标记的「词语色彩不一致」命中句做二次复核。
 
 第一轮 ForToneCheck 判定为色彩不一致的句子（tone_issue 非空）作为本引擎的输入；
-本引擎重新注入该批句子的区间色彩标注，逐句要求 AI 给出「确认/撤销」结论，仅保留
-确认仍明显偏离标注的标记，撤销属于可接受译文（表达普通、轻微语气差异、折中判定）
+本引擎重新注入该批句子的色彩基准，逐句要求 AI 给出「确认/撤销」结论，仅保留
+确认仍明显偏离基准的标记，撤销属于可接受译文（表达普通、轻微语气差异、折中判定）
 的误报标记。不产译文、不触碰主译文与备选译文。可独立运行，也可在色彩检查之后按
 文件调用。
 
 与第一轮 ForToneCheck 的关键差异（复核轮必须保守，绝不误删真错）：
 - 不预清 tone_issue：仅显式 keep:false 才撤销，保留第一轮信号；
 - 输出为全量判定（每行 keep），而非稀疏命中，不适用整批回显判定；
-- 无批次级元数据（无标注基准）时**保留**既有标记并跳过（第一轮为清标记后跳过）；
-- 本批句子无任何色彩标注时跳过该批并保留标记，避免「无依据撤销」；
+- 无批次级元数据时**不再跳过**：与第一轮同源回退到 src 原文语气基准继续复核；
+- 仅在基准段意外为空（防御分支）时保留标记并跳过该校批次，避免「无依据撤销」；
 - LLM 调用失败 / 判定行缺失 / keep 值异常一律 fail-safe 保留既有标记。
 
-依赖 pass2_cache 批次级元数据（区间→用词色彩/视角/氛围），与第一轮同源。
+色彩基准与 pass2_cache 批次级元数据为软依赖（区间色彩标注优先，缺失时回退原文
+语气），与第一轮同源。
 引擎标识：ForToneCheckAgain
 """
 
@@ -37,10 +38,11 @@ from GalTransl.Backend.utils import decode_json_line_part, preprocess_jsonline_r
 class ForToneCheckAgain(ForToneCheck):
     """词语色彩复核后端（命中句二次复核）。
 
-    输入为第一轮 ForToneCheck 已标记 tone_issue 的句子；本引擎把「区间色彩标注 +
+    输入为第一轮 ForToneCheck 已标记 tone_issue 的句子；本引擎把「色彩基准 +
     原文 + 译文」重新发给 AI，并要求对输入每一行显式给出 keep: true/false 结论，
-    只保留确认的标记、撤销误报。继承 ForToneCheck 以复用区间色彩标注渲染
-    （_format_tone_guide）与主 profile 令牌池降级逻辑，仅重写复核语义相关部分。
+    只保留确认的标记、撤销误报。继承 ForToneCheck 以复用色彩基准渲染
+    （_format_tone_guide，含无标注时的原文口径回退）与主 profile 令牌池降级逻辑，
+    仅重写复核语义相关部分。
 
     与主翻译 profile 共用令牌池（与其他后处理后端一致）：外部 OpenAI 兼容
     大模型与本地 llama.cpp 均可直接使用，取决于「API 配置」页所选端点；主池
@@ -95,11 +97,12 @@ class ForToneCheckAgain(ForToneCheck):
         translist_hit: Optional[list] = None,
         translist_unhit: Optional[list] = None,
     ) -> CTransList:
-        """复核轮入口：禁用/未配置/无标注依据时降级跳过；否则对命中句逐批二次复核。
+        """复核轮入口：禁用/未配置时降级跳过；否则对命中句逐批二次复核。
 
         与第一轮不同：不预清 tone_issue（第一轮信号保留），仅对显式 keep:false 的
-        句子撤销标记；无批次元数据或本批无色彩标注时保留标记并跳过；LLM 调用失败/
-        判定缺失按 fail-safe 保留处理。
+        句子撤销标记；色彩基准为软依赖（区间标注优先，无可用标注时回退原文语气），
+        不再因缺批次元数据整文件跳过；仅在基准段意外为空（防御分支）时保留标记并
+        跳过该校批次；LLM 调用失败/判定缺失按 fail-safe 保留处理。
         """
         if self._disabled_reason:
             LOGGER.warning(
@@ -128,15 +131,14 @@ class ForToneCheckAgain(ForToneCheck):
                     f"跳过；若需复核请先执行词语色彩检查（ForToneCheck）产生标记"
                 )
             return trans_list
-        # 色彩标注是复核的唯一判定依据：无批次级元数据时保留既有标记并跳过，
-        # 与第一轮（清标记后跳过）相反——复核轮绝不因缺依据而丢弃第一轮信号
+        # 色彩基准为软依赖：无批次级元数据时回退到原文口径（不跳过），
+        # 与第一轮同源；仅在基准段意外为空时才保留标记并跳过该校批次
         batch_metadata = self._resolve_batch_metadata(filename)
         if batch_metadata is None or not getattr(batch_metadata, "batches", None):
             LOGGER.info(
-                f"{self._log_tag} {filename} 无批次级元数据（用词色彩标注），"
-                f"无复核依据，保留既有标记并跳过词语色彩复核"
+                f"{self._log_tag} {filename} 无批次级元数据（区间色彩标注），"
+                f"按原文口径复核"
             )
-            return trans_list
         # 复核独立批次：与第一轮共用 gpt.numPerRequestToneCheck（默认20），未配置时
         # 回退语义检测批次、改进轮批次，再兜底调用方实参。本地小模型批次不宜过大。
         num_per_request = self._coerce_positive_int(
@@ -153,6 +155,10 @@ class ForToneCheckAgain(ForToneCheck):
         confirm_count = 0
         dismiss_count = 0
         skip_no_guide = 0
+        # 基准模式统计：annotated=按区间色彩标注复核，fallback=按原文口径复核；
+        # dispatched 只计真正下发请求的批次（防御性跳过不计）
+        fallback_batches = 0
+        dispatched_batches = 0
         # 文件级元数据：作为复核语境注入（每文件解析一次，供本文件各批复用），
         # pass1_cache 无对应条目时返回 None → 不注入，行为与第一轮一致。
         metadata = self._resolve_file_metadata(filename)
@@ -175,15 +181,20 @@ class ForToneCheckAgain(ForToneCheck):
         for batch_no, start in enumerate(range(0, total, num_per_request), start=1):
             self._check_stop_requested()
             batch = targets[start : start + num_per_request]
-            tone_guide = self._format_tone_guide(batch, batch_metadata)
+            tone_guide, annotated = self._format_tone_guide(batch, batch_metadata)
             if not tone_guide:
-                # 本批句子无任何色彩标注 → 无判定依据，保留标记、不发请求
+                # 防御分支（正常流程不会为空：无标注时用原文口径回退段）：
+                # 无判定依据时保留标记、不发请求，绝不「无依据撤销」。
+                # 该批未下发请求，不计入「按原文口径复核」统计。
                 skip_no_guide += len(batch)
                 LOGGER.debug(
                     f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches} "
-                    f"无相交色彩标注，保留本批 {len(batch)} 句既有标记并跳过"
+                    f"色彩基准段为空，保留本批 {len(batch)} 句既有标记并跳过"
                 )
                 continue
+            if not annotated:
+                fallback_batches += 1
+            dispatched_batches += 1
             idx_tip = self._build_idx_tip(batch)
             _input_list, _sig_list, n_symbol, input_src = self._build_input_jsonlines(
                 batch,
@@ -227,11 +238,21 @@ class ForToneCheckAgain(ForToneCheck):
             LOGGER.debug(
                 f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
                 f"（序号 {idx_tip}）确认 {c} 句，撤销 {d} 句"
+                f"（基准：{'区间标注' if annotated else '原文口径'}）"
             )
         LOGGER.info(
             f"{self._log_tag} {filename} 二次复核完成：确认 {confirm_count} 句，"
             f"撤销 {dismiss_count} 句"
-            + (f"，{skip_no_guide} 句因无色彩标注保留" if skip_no_guide else "")
+            + (f"，{skip_no_guide} 句因色彩基准段为空保留" if skip_no_guide else "")
+            + (
+                (
+                    "，全部批次按原文口径复核"
+                    if fallback_batches >= dispatched_batches
+                    else f"，其中 {fallback_batches}/{dispatched_batches} 批按原文口径复核"
+                )
+                if fallback_batches
+                else ""
+            )
         )
         return trans_list
 
@@ -240,11 +261,11 @@ class ForToneCheckAgain(ForToneCheck):
     ) -> str:
         """拼接复核轮 user 提示词：替换 [ToneGuide]/[TargetLang]/[Input]/[plot_metadata] 占位符。
 
-        除区间色彩标注、文件级元数据、任务说明与批次 input 外，不注入术语表/
+        除色彩基准段、文件级元数据、任务说明与批次 input 外，不注入术语表/
         批次元数据/历史结果/翻译规范。固定的任务说明置于最前作为缓存头（保证
         API 前缀缓存可跨文件/批次命中），metadata_block 经模板 [plot_metadata]
-        占位符注入其后，tone_guide 为空时移除标注段（防御性分支：正常流程已在
-        调用前跳过该批）。
+        占位符注入其后。正常流程下 tone_guide 恒非空（无标注时用原文口径回退段），
+        空值时的移除分支仅为防御。
         """
         prompt_req = self.trans_prompt
         if not tone_guide:

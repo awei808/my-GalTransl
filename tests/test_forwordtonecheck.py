@@ -5,9 +5,10 @@
   - _parse_fix_response：按 id 稀疏解析（id/可选 reason），命中句置 tone_issue
   - find_problems 认领：tone_issue 非空 → 输出「词语色彩不一致」（reason 附带展示）
   - _filter_target_translations：全量已译句，排除无译文/Failed/skip_check
-  - batch_translate：禁用降级跳过（保留旧标记）；无批次元数据跳过（幂等清旧标记）
+  - batch_translate：禁用降级跳过（保留旧标记）；无批次元数据按原文口径继续检查（幂等清旧标记）
   - 分批：优先 gpt.numPerRequestToneCheck，回退 numPerRequestSemCheck / numPerRequestBetter / 实参
-  - 区间色彩标注渲染与 user 提示词占位符替换（无标注时移除 tone_guide 段）
+  - 色彩基准渲染与 user 提示词占位符替换（有区间标注渲染标注段；无标注/区间不相交/色彩字段空
+    /无有效行号时回退原文口径段；基准段为空时移除 tone_guide 段仅防御）
   - Cache._build_cache_obj：tone_issue 随快照落盘
   - 注册链：ENGINE_MODULE_PATHS / ENGINE_REGISTRY / NEED_OpenAITokenPool / afterTranslation 白名单
 """
@@ -20,7 +21,10 @@ from GalTransl.CSentense import CSentense
 from GalTransl.Cache import _build_cache_obj
 from GalTransl.Problem import find_problems
 from GalTransl.ConfigHelper import CProblemType
-from GalTransl.Backend.Prompts import FORGAL_JSON_FORWORDTONE_PROMPT
+from GalTransl.Backend.Prompts import (
+    FORGAL_JSON_FORWORDTONE_PROMPT,
+    FORWORDTONE_GUIDE_FALLBACK,
+)
 from GalTransl.Backend.ForToneCheck import ForToneCheck
 from GalTransl.Backend.metadata import BatchMetadata
 
@@ -199,18 +203,52 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase, _ToneCheckTestB
         self.assertIs(result, trans_list)
         self.assertEqual(trans.tone_issue, "旧标记")  # 降级不清理旧标记
 
-    async def test_no_batch_metadata_skips_after_clearing(self) -> None:
-        # 无批次元数据（无标注基准）→ 清旧标记后跳过（幂等），不发请求
-        obj = self._make_obj({}, batches=None)
+    async def test_no_batch_metadata_checks_with_src_fallback(self) -> None:
+        # 无批次元数据（无区间标注）→ 不再跳过：清旧标记后按原文口径照常检查
+        obj = self._make_obj({}, batches=None, llm_resp='ab1|{"id": 2, "reason": "过于书面"}')
         trans_list = [_trans(1), _trans(2)]
         trans_list[0].tone_issue = "旧标记"
         with patch.object(
             ForToneCheck, "_filter_target_translations", return_value=trans_list
-        ):
+        ), self.assertLogs("GalTransl", level="INFO") as cm:
             result = await obj.batch_translate("f.json", "c.json", trans_list, 20)
         self.assertIs(result, trans_list)
-        self.assertEqual(trans_list[0].tone_issue, "")
-        self.assertEqual(len(obj._llm_calls), 0)
+        self.assertEqual(trans_list[0].tone_issue, "")  # 旧标记仍被清（幂等）
+        self.assertEqual(trans_list[1].tone_issue, "过于书面")  # 命中照常置标记
+        self.assertEqual(len(obj._llm_calls), 1)
+        # 提示词下发的是原文口径回退段，而非区间色彩标注
+        user = obj._llm_calls[0][-1]["content"]
+        self.assertIn(FORWORDTONE_GUIDE_FALLBACK, user)
+        self.assertNotIn("区间色彩标注如下", user)
+        # 日志口径：无批次元数据的回退说明 + 汇总注明全部批次按原文口径判定
+        joined = "\n".join(cm.output)
+        self.assertIn("无批次级元数据（区间色彩标注），按原文口径判定用词色彩", joined)
+        self.assertIn("全部批次按原文口径判定", joined)
+
+    async def test_all_fallback_batches_summary_wording(self) -> None:
+        # 有批次元数据但区间不相交（全批回退）→ 汇总用「全部 N 批」而非「其中 N/N」
+        batches = [{"区间": [50, 60], "用词色彩": "口语"}]
+        obj = self._make_obj({}, batches=batches, llm_resp="")
+        trans_list = [_trans(1), _trans(2)]
+        with patch.object(
+            ForToneCheck, "_filter_target_translations", return_value=trans_list
+        ), self.assertLogs("GalTransl", level="INFO") as cm:
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        joined = "\n".join(cm.output)
+        self.assertIn("全部批次按原文口径判定", joined)
+        self.assertNotIn("其中 1/1 批按原文口径判定", joined)
+
+    async def test_no_valid_translation_logs_skip_without_fallback_notice(self) -> None:
+        # 无有效译文时只报跳过，不再先报基准回退（避免无意义的两行日志）
+        obj = self._make_obj({}, batches=None)
+        trans_list = [_trans(1, pre_dst="")]
+        with patch.object(
+            ForToneCheck, "_filter_target_translations", return_value=[]
+        ), self.assertLogs("GalTransl", level="INFO") as cm:
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        joined = "\n".join(cm.output)
+        self.assertIn("无可检查的有效译文，跳过", joined)
+        self.assertNotIn("按原文口径判定用词色彩", joined)
 
     async def test_marks_written_and_cleared_idempotently(self) -> None:
         batches = [{"区间": [1, 10], "视角": "创", "氛围": "日常", "用词色彩": "口语活泼"}]
@@ -295,7 +333,8 @@ class ToneGuideFormatTests(unittest.TestCase):
         trans1, trans2 = _trans(1), _trans(12)
         trans1.runtime_index = 1
         trans2.runtime_index = 12
-        guide = obj._format_tone_guide([trans1, trans2], bm)
+        guide, annotated = obj._format_tone_guide([trans1, trans2], bm)
+        self.assertTrue(annotated)
         self.assertIn("区间[1-10]", guide)
         self.assertIn("视角:凛音", guide)
         self.assertIn("用词色彩:露骨、感官", guide)
@@ -312,16 +351,81 @@ class ToneGuideFormatTests(unittest.TestCase):
         )
         t = _trans(1)
         t.runtime_index = 3
-        guide = obj._format_tone_guide([t], bm)
+        guide, annotated = obj._format_tone_guide([t], bm)
+        self.assertTrue(annotated)
         self.assertIn("区间[1-10]", guide)
         self.assertNotIn("区间[11-20]", guide)
 
-    def test_guide_empty_when_no_intersection(self) -> None:
+    def test_annotated_guide_text_locked(self) -> None:
+        # 有标注路径逐字锁定（解绑不得改动既有渲染口径）
+        obj = self._make_obj()
+        bm = _batch_meta(
+            [{"区间": [1, 10], "视角": "凛音", "氛围": "日常", "用词色彩": "口语活泼"}]
+        )
+        t = _trans(1)
+        t.runtime_index = 1
+        guide, annotated = obj._format_tone_guide([t], bm)
+        self.assertTrue(annotated)
+        self.assertEqual(
+            guide,
+            "本文件已按剧情划分为若干翻译区间，本批句子涉及的区间色彩标注如下"
+            "（行号为文件内全局行号）：\n- 区间[1-10] 视角:凛音 氛围:日常 用词色彩:口语活泼",
+        )
+
+    def test_annotated_mode_keeps_unannotated_fields_rendering(self) -> None:
+        # 混合场景：只要有一条带「用词色彩」即按标注模式，缺字段仍渲染为「未标注」
+        obj = self._make_obj()
+        bm = _batch_meta(
+            [
+                {"区间": [1, 10], "用词色彩": "口语"},
+                {"区间": [11, 20]},  # 无任何字段
+            ]
+        )
+        t1, t2 = _trans(1), _trans(12)
+        t1.runtime_index = 1
+        t2.runtime_index = 12
+        guide, annotated = obj._format_tone_guide([t1, t2], bm)
+        self.assertTrue(annotated)
+        self.assertIn("- 区间[11-20] 视角:未标注 氛围:未标注 用词色彩:未标注", guide)
+
+    def test_guide_falls_back_when_no_intersection(self) -> None:
+        # 区间不相交 → 回退原文口径（解绑后不再返回空串）
         obj = self._make_obj()
         bm = _batch_meta([{"区间": [50, 60], "用词色彩": "口语"}])
         t = _trans(1)
         t.runtime_index = 1
-        self.assertEqual(obj._format_tone_guide([t], bm), "")
+        guide, annotated = obj._format_tone_guide([t], bm)
+        self.assertFalse(annotated)
+        self.assertEqual(guide, FORWORDTONE_GUIDE_FALLBACK)
+
+    def test_guide_falls_back_when_no_batch_metadata(self) -> None:
+        obj = self._make_obj()
+        t = _trans(1)
+        t.runtime_index = 1
+        guide, annotated = obj._format_tone_guide([t], None)
+        self.assertFalse(annotated)
+        self.assertEqual(guide, FORWORDTONE_GUIDE_FALLBACK)
+
+    def test_guide_falls_back_when_tone_field_blank(self) -> None:
+        # 区间相交但「用词色彩」为空/未标注 → 视作无可用标注，回退原文口径
+        obj = self._make_obj()
+        bm = _batch_meta([{"区间": [1, 10], "视角": "凛音", "氛围": "日常", "用词色彩": ""}])
+        t = _trans(1)
+        t.runtime_index = 1
+        guide, annotated = obj._format_tone_guide([t], bm)
+        self.assertFalse(annotated)
+        self.assertEqual(guide, FORWORDTONE_GUIDE_FALLBACK)
+
+    def test_guide_falls_back_when_no_valid_index(self) -> None:
+        # 句子无有效行号（无法对齐区间）→ 回退原文口径（解绑前返回空串）
+        obj = self._make_obj()
+        bm = _batch_meta([{"区间": [1, 10], "用词色彩": "口语"}])
+        t = _trans(1)
+        t.runtime_index = "x"  # 非整数行号：runtime_index 与 index 都取不到整数
+        t.index = "x"
+        guide, annotated = obj._format_tone_guide([t], bm)
+        self.assertFalse(annotated)
+        self.assertEqual(guide, FORWORDTONE_GUIDE_FALLBACK)
 
     def test_user_content_replaces_placeholders(self) -> None:
         obj = self._make_obj()

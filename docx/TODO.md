@@ -30,6 +30,11 @@
   - 产生原因：BadRequestError 400「Input exceeds the context limit」是确定性失败（重试必然再失败），但重试逻辑未区分错误类型，仍按退避重试到 maxApiRetries；实测（魔王的地下要塞2 GlobalPrompt 全文分析）连续 400 仍 sleeping 2s/4s 交替重试，并伴随 timeout INFO 逐次刷屏。
   - 影响：输入超限时白白消耗退避等待与重试预算，浪费时间且日志刷屏。
   - 修复方向（未实施）：识别 400 + context limit 类错误为不可重试错误，直接失败并给出可读原因（建议调大 maxInputChars 或分文件发送）。
+- **子目录输入文件的批次元数据键口径不一致（basename vs 扁平化路径），带子目录的项目里批次标注全程失效**
+  - 位置：写入侧 `GalTransl/Frontend/llm_runtime.py` 的 `_run_meta_worker_pool`（`fname = os_basename(file_path)` → `pass2_cache/{basename}.batch.json`，`id` 也是 basename）；读取侧 `GalTransl/Backend/ForGalJsonTranslate.py` 的 `_resolve_batch_metadata`（先按传入名查、再 `strip_chunk_suffix` 剥 `_N` 分批后缀，不做 `-}` 还原）
+  - 产生原因：阶段 8 与独立引擎传入的 filename 是「相对输入目录路径 + 分隔符替换为 `-}`」（`llm_postprocess._improve_single_file` 与 `llm_standalone` 的 `file_name` 拼接），翻译阶段的切块键同为扁平化形态；而批次元数据按 basename 存。**输入目录只有一个层级时两者恰好相同**，含子目录（`sub/a.json` → 传入 `sub-}a.json`）时读取侧全部落空。
+  - 影响：带子目录的项目里，翻译轮的 `[batch_metadata]` 区间指导与 tonecheck 的区间色彩标注始终注入为空（走各自降级路径：翻译退化为按 `numPerRequestTranslate` 的 count 切批、tonecheck 自本次解绑后转为原文口径并打 INFO，行为安全）；无报错、无 WARNING，只有 `batchmeta=✗` 的 DEBUG 可见，容易被误判为「模型没生成标注」。
+  - 修复方向（未实施）：统一键口径——写入侧改存扁平化名（`file_path` 相对化 + `-}`）或在读取侧做 `-}` → 分隔符的双向还原（`_resolve_display`/`cache_file_display_map` 已有同类还原逻辑可复用）；改动涉及 pass2 产物命名，需兼容既有项目的旧键（两种键都尝试命中）。
 
 
 # 存在且上线前必须修复的bug/值得优化项

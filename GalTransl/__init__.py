@@ -109,12 +109,12 @@ TRANSLATOR_SUPPORTED = {
         "en": "Second-pass confirmation for 'suspected error' flags: re-checks each flagged sentence and keeps only confirmed mistranslations, dismissing acceptable translations (false positives)."
     },
     "ForToneCheck": {
-        "zh-cn": "词语色彩一致性检查：对照批次级元数据的「用词色彩」标注，标记用词色彩明显偏离所属区间的句子（tone_issue 标记，不改译文）；需先在流水线中生成批次级元数据。",
-        "en": "Word-tone consistency check: flags sentences whose wording tone clearly deviates from the per-interval tone annotations in BatchMetadata (tone_issue flag, translation untouched); requires batch metadata from the pipeline."
+        "zh-cn": "词语色彩一致性检查：标记用词色彩明显偏离色彩基准的句子（tone_issue 标记，不改译文）；基准优先取批次元数据里的「用词色彩」区间标注，无批次元数据或该批无标注时对照原文语气。",
+        "en": "Word-tone consistency check: flags sentences whose wording tone clearly deviates from the tone reference (per-interval tone annotations in BatchMetadata when available, otherwise the source line's own tone; tone_issue flag, translation untouched)."
     },
     "ForToneCheckAgain": {
         "zh-cn": "对已标记为「词语色彩不一致」的句子逐句复核。",
-        "en": "Second-pass confirmation for 'word-tone inconsistent' flags: re-checks each flagged sentence against its interval tone annotations and keeps only confirmed deviations, dismissing acceptable translations (false positives)."
+        "en": "Second-pass confirmation for 'word-tone inconsistent' flags: re-checks each flagged sentence against the same tone reference and keeps only confirmed deviations, dismissing acceptable translations (false positives)."
     },
     "ForFixRound": {
         "zh-cn": "统一问题修复：按所选问题类型组合修复译文（多类可并行处理），每类按对应修复指令生成备选译文；输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文）。",

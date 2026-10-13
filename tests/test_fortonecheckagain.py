@@ -6,12 +6,12 @@
     keep:false 撤销 / 乱码 reason 不覆盖 / keep 值异常与判定缺失 fail-safe
     保留 / 未知 id 与非 JSON 行跳过 / 重复 id 后行覆盖前行 / 空响应全缺失
   - batch_translate：无命中句跳过不发请求（引导先跑 tonecheck）/ 有标记但译文
-    失效跳过 / 禁用降级保留旧标记 / 无批次元数据保留标记并跳过（与第一轮相反）/
-    本批无相交色彩标注跳过且保留标记（防无依据撤销）/ LLM 调用失败 fail-safe
-    保留并上报 / 混合判定应用
+    失效跳过 / 禁用降级保留旧标记 / 无批次元数据按原文口径复核（不再跳过）/
+    本批区间不相交按原文口径复核（不再跳过）/ 色彩基准段为空（防御分支）保留标记
+    且不发请求 / LLM 调用失败 fail-safe 保留并上报 / 混合判定应用
   - 分批：优先 numPerRequestToneCheck，回退 numPerRequestSemCheck /
     numPerRequestBetter / 实参
-  - user 提示词：仅注入色彩标注、任务说明与批次 input；元数据块置于任务说明之前
+  - user 提示词：仅注入色彩基准段、任务说明与批次 input；元数据块置于任务说明之前
   - 注册链：ENGINE_MODULE_PATHS / ENGINE_REGISTRY / NEED_OpenAITokenPool /
     afterTranslation 白名单 / STANDALONE_BACKENDS
 """
@@ -22,7 +22,10 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from GalTransl.CSentense import CSentense
-from GalTransl.Backend.Prompts import FORGAL_JSON_FORWORDTONE_AGAIN_PROMPT
+from GalTransl.Backend.Prompts import (
+    FORGAL_JSON_FORWORDTONE_AGAIN_PROMPT,
+    FORWORDTONE_GUIDE_FALLBACK,
+)
 from GalTransl.Backend.ForToneCheckAgain import ForToneCheckAgain
 from GalTransl.Backend.metadata import BatchMetadata
 
@@ -268,33 +271,72 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase, _ToneAgainTestB
         self.assertIs(result, trans_list)
         self.assertEqual(trans_list[0].tone_issue, "词语色彩不一致")
 
-    async def test_no_batch_metadata_keeps_marks_and_skips(self) -> None:
-        # 无批次元数据（无标注基准）→ 保留既有标记并跳过（与第一轮「清标记后跳过」相反）
-        obj = self._make_obj({}, batches=None)
+    async def test_no_batch_metadata_rechecks_with_src_fallback(self) -> None:
+        # 无批次元数据（无区间标注）→ 不再跳过：按原文口径复核，撤销仍生效
+        obj = self._make_obj(
+            {}, batches=None, llm_resp='a1b|{"id": 1, "keep": false}'
+        )
         trans_list = [_trans(1, "译文", "词语色彩不一致")]
-        with patch.object(
-            ForToneCheckAgain, "_call_llm", new=AsyncMock()
-        ) as mock_llm, self.assertLogs("GalTransl", level="INFO") as cm:
-            result = await obj.batch_translate("f.json", "c.json", trans_list, 20)
-        mock_llm.assert_not_awaited()
+        result = await obj.batch_translate("f.json", "c.json", trans_list, 20)
         self.assertIs(result, trans_list)
-        self.assertEqual(trans_list[0].tone_issue, "词语色彩不一致")
-        self.assertIn("无复核依据，保留既有标记", "\n".join(cm.output))
+        self.assertEqual(len(obj._llm_calls), 1)
+        self.assertEqual(trans_list[0].tone_issue, "")  # 显式 keep:false → 撤销
+        user = obj._llm_calls[0][-1]["content"]
+        self.assertIn(FORWORDTONE_GUIDE_FALLBACK, user)
+        self.assertNotIn("区间色彩标注如下", user)
 
-    async def test_batch_without_guide_skips_and_keeps_marks(self) -> None:
-        # 本批句子落在无标注区间（[50-60] 与句子 [1,2] 不相交）→ 保留标记、不发请求
-        obj = self._make_obj({}, batches=[{"区间": [50, 60], "用词色彩": "口语"}])
+    async def test_no_batch_metadata_confirm_keeps_mark(self) -> None:
+        # 无标注时确认同样生效（保留标记；提供干净新 reason 时覆盖）
+        obj = self._make_obj(
+            {}, batches=None,
+            llm_resp='a1b|{"id": 1, "keep": true, "reason": "原文粗俗，译文过于文雅"}',
+        )
+        trans_list = [_trans(1, "译文", "词语色彩不一致")]
+        await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertEqual(trans_list[0].tone_issue, "原文粗俗，译文过于文雅")
+
+    async def test_batch_without_intersection_rechecks_with_src_fallback(self) -> None:
+        # 本批句子落在无标注区间（[50-60] 与句子 [1,2] 不相交）→ 回退原文口径复核
+        obj = self._make_obj(
+            {}, batches=[{"区间": [50, 60], "用词色彩": "口语"}],
+            llm_resp='a1b|{"id": 1, "keep": false}\nc2d|{"id": 2, "keep": false}',
+        )
         trans_list = [
             _trans(1, "译文一", "词语色彩不一致"),
             _trans(2, "译文二", "词语色彩不一致"),
         ]
+        await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertEqual(len(obj._llm_calls), 1)
+        self.assertTrue(all(t.tone_issue == "" for t in trans_list))  # 均可撤销
+
+    async def test_empty_guide_defensive_branch_keeps_marks(self) -> None:
+        # 防御分支：基准段为空（正常流程不会出现）→ 保留标记、不发请求，绝不无依据撤销；
+        # 该批未下发请求，汇总不得把它算进「按原文口径复核」的批数
+        obj = self._make_obj({}, batches=[{"区间": [1, 10], "用词色彩": "口语"}])
+        trans_list = [_trans(1, "译文", "词语色彩不一致")]
         with patch.object(
-            ForToneCheckAgain, "_call_llm", new=AsyncMock()
-        ) as mock_llm:
+            ForToneCheckAgain,
+            "_format_tone_guide",
+            return_value=("", False),
+        ), patch.object(ForToneCheckAgain, "_call_llm", new=AsyncMock()) as mock_llm, self.assertLogs(
+            "GalTransl", level="INFO"
+        ) as cm:
             await obj.batch_translate("f.json", "c.json", trans_list, 20)
         mock_llm.assert_not_awaited()
-        self.assertEqual(len(obj._llm_calls), 0)
-        self.assertTrue(all(t.tone_issue == "词语色彩不一致" for t in trans_list))
+        self.assertEqual(trans_list[0].tone_issue, "词语色彩不一致")
+        joined = "\n".join(cm.output)
+        self.assertIn("1 句因色彩基准段为空保留", joined)
+        self.assertNotIn("按原文口径复核", joined)
+
+    async def test_fallback_summary_counts_dispatched_batches(self) -> None:
+        # 无批次元数据 → 全部下发批次按原文口径复核，汇总批数 = 实际下发批数
+        obj = self._make_obj({}, batches=None, llm_resp='a1b|{"id": 1, "keep": false}')
+        trans_list = [_trans(1, "译文", "词语色彩不一致")]
+        with self.assertLogs("GalTransl", level="INFO") as cm:
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        joined = "\n".join(cm.output)
+        self.assertIn("无批次级元数据（区间色彩标注），按原文口径复核", joined)
+        self.assertIn("全部批次按原文口径复核", joined)
 
     async def test_llm_failure_keeps_marks_and_records_error(self) -> None:
         obj = self._make_obj({}, batches=[{"区间": [1, 100], "用词色彩": "口语"}])
@@ -481,7 +523,7 @@ class ToneAgainBatchSplitTests(unittest.IsolatedAsyncioTestCase, _ToneAgainTestB
 
 
 class ToneAgainPromptInjectionTests(unittest.TestCase):
-    """验证 user 提示词：仅注入色彩标注、任务说明与批次 input，不注入其它内容。"""
+    """验证 user 提示词：仅注入色彩基准段、文件级元数据、任务说明与批次 input，不注入其它内容。"""
 
     def _make_obj(self) -> ForToneCheckAgain:
         obj = object.__new__(ForToneCheckAgain)
@@ -532,7 +574,7 @@ class ToneAgainPromptInjectionTests(unittest.TestCase):
         self.assertIn("Simplified_Chinese", prompt)
 
     def test_empty_guide_removes_guide_segment(self) -> None:
-        # 防御性分支：正常流程已在调用前跳过无标注批
+        # 防御性分支：正常流程下基准段恒非空（无标注时用原文口径回退段），仅为兜底
         obj = self._make_obj()
         prompt = obj._build_tonecheck_again_user_content('#01|{"id":1}', "")
         self.assertNotIn("<tone_guide>", prompt)
