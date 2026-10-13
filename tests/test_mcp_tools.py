@@ -182,8 +182,9 @@ class ConstraintDeliveryTests(unittest.TestCase):
         self.assertEqual(tool_annotations(probe_def), {"read_only_hint": False})
 
     def test_instructions_length_is_bounded(self) -> None:
-        # 防膨胀：instructions 过长有被客户端截断的风险（当前实测 1847 字节）
-        self.assertLessEqual(len(SERVER_INSTRUCTIONS.encode("utf-8")), 2000)
+        # 防膨胀：instructions 过长有被客户端截断的风险（当前实测约 2.1KB）。
+        # 上限只挡无界膨胀、非协议限制：第 4 条按 H 门禁覆盖面点名工具后由 2000 提到 2300（同见 test_mcp_gate_settings）。
+        self.assertLessEqual(len(SERVER_INSTRUCTIONS.encode("utf-8")), 2300)
 
     def test_instructions_tool_count_matches_defs(self) -> None:
         # 文案里的工具数与 MCP_TOOL_DEFS 同源，数量变更（如 0.6.0 加作业域）时立即暴露

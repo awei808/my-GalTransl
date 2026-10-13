@@ -5,8 +5,10 @@
 2. enforce_h_gate 随 mcpHGateEnabled 开关放行/拦截（含真实项目夹具的端到端写入）；
 3. call_mcp_tool 对禁用工具的拦截与未知工具口径；
 4. enabled_tool_defs / build_server_instructions 按启用集合联动；
-5. /api/mcp-tools 端点与 run_mcp_server 的 tools/list 过滤、禁用错误包装。
+5. /api/mcp-tools 端点与 run_mcp_server 的 tools/list 过滤、禁用错误包装；
+6. H 门禁覆盖面口径：第 4 条点名的工具与 enforce_h_gate 的实际调用点一致（源码 AST 派生）。
 """
+import ast
 import asyncio
 import os
 import shutil
@@ -21,6 +23,7 @@ from GalTransl.mcp_tools import (
     MCPToolDisabledError,
     SERVER_INSTRUCTIONS,
     _H_DENY_MESSAGE,
+    _TOOL_HANDLERS,
     build_server_instructions,
     call_mcp_tool,
     enabled_tool_defs,
@@ -210,9 +213,8 @@ class BuildServerInstructionsTests(unittest.TestCase):
         self.assertEqual(build_server_instructions(), SERVER_INSTRUCTIONS)
 
     def test_default_matches_golden_text(self) -> None:
-        # 金样本：0.6.0 静态文本原文（缓存条目批次改动计数、project_dir 口径与写工具清单）。
-        # build_server_instructions 重构自它，默认参数输出必须逐字一致，
-        # 防止未来编辑 f-string 拼接时静默漂移。
+        # 金样本：0.6.0 静态文本原文（工具计数、project_dir 口径、写工具清单）；第 4 条按 H 门禁覆盖面修正。
+        # 默认参数输出必须与它逐字一致，防止未来编辑 f-string 拼接时静默漂移。
         golden = (
             "GalTransl 翻译项目管理服务（21 个工具：14 个只读检索 + 7 个写操作）。"
             "project_dir 可传翻译项目根目录的绝对路径，或项目名称（已登记/工作区根下的项目，galtransl_list_projects 可列出）。\n"
@@ -224,8 +226,9 @@ class BuildServerInstructionsTests(unittest.TestCase):
             "2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，\n"
             "   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。\n"
             "3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具直接读磁盘。\n"
-            "4. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，\n"
-            "   不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。\n"
+            "4. 禁止查看 H / 成人向内容：写工具中仅 write_route_map / save_metadata / write_glossary 带 H 硬门禁（命中即拒绝）；\n"
+            "   mark_skip_check / swap_alt_translation 只改标志位或对调既有译文、不引入新文本，故不受门禁约束。\n"
+            "   识别到成人向内容必须立即停止该方向检索，不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。\n"
             "5. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。\n"
             "6. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。\n"
             "7. 禁止规模化拉取：搜索 max_results 默认 200 / 硬顶 2000，分页 limit 默认 100 / 硬顶 1000。不要全量拉取，也不要用宽正则做枚举式扫描。\n"
@@ -252,6 +255,12 @@ class BuildServerInstructionsTests(unittest.TestCase):
         write_names = {item["name"] for item in MCP_TOOL_DEFS if item["kind"] == "write"}
         text = build_server_instructions(disabled_tools=write_names)
         self.assertIn("本服务当前未开放任何写工具", text)
+        # 第 4 条不得再点名写工具（否则与第 1 条「未开放任何写工具」自相矛盾）
+        clause = _h_clause(text)
+        self.assertIn("本服务未开放任何写工具", clause)
+        for short in _short_names(write_names):
+            with self.subTest(tool=short):
+                self.assertNotIn(short, clause)
 
     def test_gate_off_rewrites_h_clause(self) -> None:
         text = build_server_instructions(h_gate_enabled=False)
@@ -259,12 +268,159 @@ class BuildServerInstructionsTests(unittest.TestCase):
         self.assertNotIn("硬门禁", text)
 
     def test_variants_length_bounded(self) -> None:
+        # 上限只需挡住文案无界膨胀，不是协议限制：第 4 条按门禁覆盖面改写时
+        # 需点名 3 个受门禁工具 + 2 个不受约束的工具，故从 2000 提到 2300。
         for text in (
             SERVER_INSTRUCTIONS,
             build_server_instructions(h_gate_enabled=False),
             build_server_instructions(disabled_tools={"galtransl_submit_job"}),
         ):
-            self.assertLessEqual(len(text.encode("utf-8")), 2000)
+            self.assertLessEqual(len(text.encode("utf-8")), 2300)
+
+
+def _h_clause(text: str) -> str:
+    """截取第 4 条（H 条）全文，供门禁覆盖面口径测试断言。"""
+    start = text.index("\n4. ") + 1
+    return text[start : text.index("\n5. ", start)]
+
+
+def _direct_calls(node: ast.AST) -> set:
+    """收集一个函数体里直接调用的名字（不并入嵌套 def 的调用）。"""
+    found: set = set()
+    stack = list(getattr(node, "body", []))
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(current, ast.Call):
+            func = current.func
+            if isinstance(func, ast.Name):
+                found.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                found.add(func.attr)
+        stack.extend(ast.iter_child_nodes(current))
+    return found
+
+
+def _mcp_tools_functions() -> dict:
+    """mcp_tools.py 源码里每个函数 → 其直接调用到的**模块内**函数名集合。
+
+    只保留模块内定义的函数：调用名可能来自属性链（LOGGER.info、os.path.join），
+    不过滤会把 `info`/`join` 这类同名误当成调用边。
+    """
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "GalTransl", "mcp_tools.py"
+    )
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+
+    defined = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return {
+        node.name: {name for name in _direct_calls(node) if name in defined}
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _write_tool_reach() -> dict:
+    """从 mcp_tools.py 源码派生每个写工具 handler 的模块内调用闭包。
+
+    处理器名取自运行期分发表 `_TOOL_HANDLERS`（命名约定 `_tool_<短名>` 不作为真相源）；
+    调用关系用源码 AST 而非运行期桩：门禁覆盖面是「代码里到底在哪调了 enforce_h_gate」，
+    与执行路径/夹具无关；闭包覆盖 handler → 领域函数 → 内部助手多级调用
+    （如 mark_skip_check → _modify_cache_entry）。返回 `{工具名: (handler 名, 闭包)}`，
+    handler 名缺失时闭包为空集，由用例断言暴露，不静默通过。
+    """
+    calls = _mcp_tools_functions()
+
+    def closure(entry: str) -> set:
+        seen, stack = set(), [entry]
+        while stack:
+            for callee in calls.get(stack.pop(), ()):
+                if callee not in seen:
+                    seen.add(callee)
+                    stack.append(callee)
+        return seen
+
+    reach = {}
+    for item in MCP_TOOL_DEFS:
+        if item["kind"] != "write":
+            continue
+        handler = _TOOL_HANDLERS.get(item["name"])
+        handler_name = getattr(handler, "__name__", None)
+        reach[item["name"]] = (handler_name, closure(handler_name) if handler_name else set())
+    return reach
+
+
+def _short_names(names: set) -> set:
+    """工具全名 → 下发文案里的短名（去掉 galtransl_ 前缀）。"""
+    return {name.removeprefix("galtransl_") for name in names}
+
+
+class HGateScopeTests(unittest.TestCase):
+    """H 门禁覆盖面口径：文案点名的工具必须与 enforce_h_gate 的实际调用点一致。
+
+    旧全称口径（「写工具对 H 内容有硬门禁」）会让 agent 以为任何 MCP 写入都有 H 兜底，
+    在 H 项目上放松对缓存条目改动的警惕——而 mark_skip_check / swap_alt_translation
+    只改标志位或对调既有译文、不过门禁。
+    """
+
+    def test_every_write_tool_handler_is_in_source(self) -> None:
+        source_functions = _mcp_tools_functions()
+        for name, (handler_name, _closure) in _write_tool_reach().items():
+            with self.subTest(tool=name):
+                self.assertTrue(handler_name, f"{name} 在 _TOOL_HANDLERS 中没有处理器")
+                self.assertIn(
+                    handler_name,
+                    source_functions,
+                    f"{name} 的处理器 {handler_name} 不在 mcp_tools.py 源码函数中（闭包口径失效）",
+                )
+
+    def test_h_clause_names_exactly_the_gated_and_unguarded_tools(self) -> None:
+        # 第 4 条把工具分成两半：受门禁的（调用链命中 enforce_h_gate）与只走 _modify_cache_entry 的（须写明不受约束）。
+        # 两半各自与源码派生结果**双向**相等：实现撤掉门禁而文案仍宣称受门禁、或文案把两半写反，都会失败。
+        gated, unguarded = set(), set()
+        for name, (_handler, closure) in _write_tool_reach().items():
+            if "enforce_h_gate" in closure:
+                gated.add(name)
+            if "_modify_cache_entry" in closure:
+                unguarded.add(name)
+        self.assertTrue(gated, "派生不到任何受门禁写工具（AST 解析口径失效）")
+        self.assertTrue(unguarded, "派生不到缓存条目写工具（AST 解析口径失效）")
+        self.assertFalse(gated & unguarded, "同一写工具不应既受门禁又走缓存条目改动")
+
+        clause = _h_clause(build_server_instructions())
+        # 半句边界用两个收尾锚点，而不是「不受门禁约束」（它在不受约束半句的**末尾**，
+        # 拿它切会把两个不受约束的工具名算进受门禁半句）
+        gate_anchor = "带 H 硬门禁"
+        free_anchor = "只改标志位或对调既有译文"
+        for anchor in (gate_anchor, free_anchor, "不受门禁约束"):
+            self.assertIn(
+                anchor, clause, f"H 条文案结构变了：缺少「{anchor}」，请同步本测例 → {clause}"
+            )
+
+        write_shorts = _short_names(
+            {item["name"] for item in MCP_TOOL_DEFS if item["kind"] == "write"}
+        )
+        end_of_gated = clause.index(gate_anchor)
+        end_of_unguarded = clause.index(free_anchor)
+        named_gated = {short for short in write_shorts if short in clause[:end_of_gated]}
+        named_unguarded = {
+            short for short in write_shorts if short in clause[end_of_gated:end_of_unguarded]
+        }
+        self.assertEqual(named_gated, _short_names(gated), f"受门禁半句口径不符：{clause}")
+        self.assertEqual(named_unguarded, _short_names(unguarded), f"不受约束半句口径不符：{clause}")
+        self.assertFalse(named_gated & named_unguarded, "同一工具不得同时出现在两半句中")
+
+    def test_h_clause_does_not_claim_all_write_tools_are_gated(self) -> None:
+        # 全称口径不得回归（agent 侧安全契约的失真点）
+        text = build_server_instructions()
+        self.assertNotIn("写工具对 H 内容有硬门禁", text)
+        self.assertIn("不受门禁约束", _h_clause(text))
 
 
 class McpToolsEndpointTests(unittest.TestCase):

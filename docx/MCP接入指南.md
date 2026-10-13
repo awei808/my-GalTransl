@@ -137,19 +137,21 @@ pip install "mcp>=2.0,<3.0"
 | `galtransl_get_job_status` | 查任务状态与实时进度摘要（阶段/百分比/worker/速度）——**需后端运行** |
 | `galtransl_check_model` | 校验模型/令牌可用性——**需后端运行**；发一次真实探测请求（消耗极小额度），建议 submit_job 前调用 |
 
-### 写入（0.6.0 新增，受 H 门禁与路径约束）
+### 写入（0.6.0 新增，受路径约束；其中路线图/元数据/项目字典另受 H 门禁）
 
 | 工具 | 用途 | 备注 |
 |---|---|---|
-| `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 需先读现状；mermaid 经生成侧校验；未提供字段保留旧值 |
-| `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta（plotroute 走 `write_route_map`，globalprompt 由流水线生成不开放写） |
-| `galtransl_write_glossary` | 按词条增改 / 删除项目字典（`category` = gpt 术语表 / pre 译前字典 / post 译后字典） | `mode` = upsert（按 src 匹配，原地更新或追加）/ delete；`file` 必填；保留原注释与行尾，未登记文件自动登记进对应清单；**不做整体覆盖** |
-| `galtransl_mark_skip_check` | 逐条标记 / 取消缓存条目的「跳过问题检查」（`skip` 默认 true） | 只改 `skip_check` 标志位并按保存同口径**整份文件重检**问题标注与 `post_dst_preview`，**不改译文**；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝（后端正在合并增量缓存）；后端不可达时放行，返回体 `job_check` 会注明 |
-| `galtransl_swap_alt_translation` | 逐条交换缓存条目的备选译文（`alt_dst`）与当前译文（`pre_dst`） | 语义与校对页「交换备选」一致，**只对调既有文本**；仅当条目有 `alt_dst` 时可用；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝；后端不可达时放行，返回体 `job_check` 会注明 |
-| `galtransl_submit_job` | 提交翻译任务 | **需后端运行**；会真实消耗 API 额度，仅在用户明确要求时调用 |
-| `galtransl_stop_job` | 停止项目当前任务 | **需后端运行**；无任务时 409 |
+| `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 需先读现状；mermaid 经生成侧校验；未提供字段保留旧值；**受 H 硬门禁** |
+| `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta（plotroute 走 `write_route_map`，globalprompt 由流水线生成不开放写）；**受 H 硬门禁** |
+| `galtransl_write_glossary` | 按词条增改 / 删除项目字典（`category` = gpt 术语表 / pre 译前字典 / post 译后字典） | `mode` = upsert（按 src 匹配，原地更新或追加）/ delete；`file` 必填；保留原注释与行尾，未登记文件自动登记进对应清单；**不做整体覆盖**；**受 H 硬门禁** |
+| `galtransl_mark_skip_check` | 逐条标记 / 取消缓存条目的「跳过问题检查」（`skip` 默认 true） | 只改 `skip_check` 标志位并按保存同口径**整份文件重检**问题标注与 `post_dst_preview`，**不改译文**；**不受 H 门禁约束**（H 区间条目的标志位同样可改）；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝（后端正在合并增量缓存）；后端不可达时放行，返回体 `job_check` 会注明 |
+| `galtransl_swap_alt_translation` | 逐条交换缓存条目的备选译文（`alt_dst`）与当前译文（`pre_dst`） | 语义与校对页「交换备选」一致，**只对调既有文本**（故对调 H 区间条目的既有译文属允许操作，**不受 H 门禁约束**）；仅当条目有 `alt_dst` 时可用；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝；后端不可达时放行，返回体 `job_check` 会注明 |
+| `galtransl_submit_job` | 提交翻译任务 | **需后端运行**；会真实消耗 API 额度，仅在用户明确要求时调用；无内容写入，无门禁 |
+| `galtransl_stop_job` | 停止项目当前任务 | **需后端运行**；无任务时 409；无内容写入，无门禁 |
 
 写入工具的边界：只能改项目内的指定产物，**无任意路径写、无命令执行、不改程序配置**。
+7 个写工具**均**走路径白名单（`_require_write_project_dir`，见 §8）；其中 `write_route_map` / `save_metadata` / `write_glossary`
+经 `enforce_h_gate` 做 H 拦截，另 4 个（缓存条目标记/交换、任务启停）不引入新文本、**无门禁检查**——口径见 §8。
 写工具**下发时不含 `read_only_hint`**（`kind=write` → 空 annotations），客户端会按写操作征询用户确认。
 
 所有工具都需要 `project_dir`（项目根目录绝对路径）。工作流建议见 `skills/galtransl-mcp/SKILL.md`。
@@ -227,11 +229,14 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
     与 `project_dir_hint`（只告警不阻断），以免破坏「指向父目录批量查看」等既有用法。
 - **H 内容**：
   - **读路径未做 H 门禁过滤**（只读工具会原样返回 H 原文/译文），需由 agent 自行遵守 `skills/galtransl-mcp/SKILL.md` §1 的约束。
-  - **写工具已做硬门禁**：`write_route_map` / `save_metadata` / `write_glossary` 会检查目标缓存文件是否落在 H 区间
+  - **内容写入类写工具已做硬门禁**：`write_route_map` / `save_metadata` / `write_glossary` 会检查目标缓存文件是否落在 H 区间
     （复用校对界面同源的 `_resolve_cache_h_ranges`）与待写入文本是否命中项目 H 词库
     （`forbiddenDictH`，走与问题重建相同的 `_load_rebuild_deps` 链路），命中即**拒绝写入并返回错误**，不落盘。
+  - **门禁只覆盖上述 3 个工具**：`mark_skip_check` / `swap_alt_translation` 只在已有文本之间改标志位或对调
+    （不引入新文本），故不调 `enforce_h_gate`——**H 区间条目的标志位与既有译文仍可被改动**，其中对调备选译文属允许操作，
+    不是门禁失效；`submit_job` / `stop_job` 无内容写入。agent 侧别把「任何写入都有 H 兜底」当事实。
   - ⚠️ **门禁是 fail-open 的**：判定不了就放行。项目**未配置 H 词库**或**尚无批次元数据**时，
-    两个维度都判为「非 H」，写工具**实际不会拦截**。故门禁不能当作「H 一定被挡住」的保证。
+    两个维度都判为「非 H」，上述 3 个工具**实际不会拦截**。故门禁不能当作「H 一定被挡住」的保证。
 - **写工具的能力边界**：仅 7 个写工具，各自只能改项目内指定产物（路线图 / 元数据 / 项目字典 / 缓存条目标志位与备选译文 / 任务启停）；
   无任意路径写、无命令执行、不改程序配置。写工具不下发 `read_only_hint`，客户端会按写操作征询用户确认。
 - 服务进程读得到项目目录下的一切文件（包括日志），请只把 `project_dir` 指向自己的翻译项目目录。

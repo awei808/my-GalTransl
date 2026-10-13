@@ -630,7 +630,7 @@ export type AppSettings = {
   maxConcurrentJobs?: number;
   writeApiCallLog?: boolean;
   writeFrontendLog?: boolean;
-  /** MCP 写工具的 H 门禁开关（默认开启；MCP 独立进程实时读同一份 app_settings.json） */
+  /** H 门禁开关，作用于 3 个内容写入类写工具（路线图/元数据/项目字典）；默认开启，MCP 独立进程实时读同一份 app_settings.json */
   mcpHGateEnabled?: boolean;
   /** 被禁用的 MCP 工具名黑名单（未列入者默认启用） */
   mcpDisabledTools?: string[];

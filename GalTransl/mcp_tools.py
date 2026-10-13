@@ -1182,7 +1182,7 @@ def enabled_tool_defs() -> List[Dict[str, Any]]:
     return [item for item in MCP_TOOL_DEFS if item["name"] not in disabled]
 
 
-# ---------- H 门禁（写工具硬拦截） ----------
+# ---------- H 门禁（内容写入类写工具的硬拦截） ----------
 
 _H_DENY_MESSAGE = (
     "写入被拒绝：目标内容被判定为 H / 成人向。本服务不下发此类内容，"
@@ -1257,8 +1257,10 @@ def _text_has_h(project_dir: str, *texts: str) -> bool:
 
 
 def enforce_h_gate(project_dir: str, *, cache_filename: str = "", texts: Optional[List[str]] = None) -> None:
-    """写工具的 H 硬门禁：命中即抛 ValueError，不落盘。
+    """H 硬门禁：命中即抛 ValueError，不落盘。
 
+    只由 3 个内容写入类写工具调用（路线图 / 元数据 / 项目字典）；缓存条目标记与备选交换
+    不引入新文本，不调用本函数（对调 H 区间条目的既有译文属允许操作）。
     两条判据任一成立即拒绝：(1) 目标缓存文件落在 H 区间；(2) 待写入文本命中 H 词库。
     元数据类写入（filemeta/batchmeta）本身不含对话原文，故主要靠文件维度判定。
     用户可在设置中关闭门禁（mcpHGateEnabled），关闭时直接放行。
@@ -1845,8 +1847,10 @@ def build_server_instructions(
 ) -> str:
     """按门禁开关与禁用工具黑名单构建下发说明。
 
-    默认参数（门禁开 + 全启用）的输出与 0.6.0 静态文本逐字一致（测试与打包冒烟按此锁定）；
-    工具计数与写工具清单按启用集合计算，门禁关闭时第 4 条改写为放行说明。
+    工具计数与写工具清单按启用集合计算；门禁关闭时第 4 条改写为放行说明，
+    开启时第 4 条按 `enforce_h_gate` 的实际覆盖面写明（仅 3 个内容写入类写工具受门禁，
+    缓存条目标记/交换不引入新文本故不受约束——写成全称会让 agent 以为任何写入都有 H 兜底）。
+    文本被金样本测试与打包冒烟锁定，改文案须同步 `tests/test_mcp_gate_settings.py`。
     """
     disabled = set(disabled_tools or ())
     enabled = [item for item in MCP_TOOL_DEFS if item["name"] not in disabled]
@@ -1860,9 +1864,17 @@ def build_server_instructions(
     else:
         write_line = "   本服务当前未开放任何写工具；"
     if h_gate_enabled:
+        # 门禁覆盖面按实现如实写（见 docstring）；写工具全禁用时不点名工具，避免与第 1 条自相矛盾
+        gate_scope = (
+            "写工具中仅 write_route_map / save_metadata / write_glossary 带 H 硬门禁（命中即拒绝）；\n"
+            "   mark_skip_check / swap_alt_translation 只改标志位或对调既有译文、不引入新文本，故不受门禁约束。\n"
+            if n_write
+            else "本服务未开放任何写工具，不存在经 MCP 写入 H 内容的路径。\n"
+        )
         h_line = (
-            "4. 禁止查看 H / 成人向内容：写工具对 H 内容有硬门禁，命中即拒绝。识别到成人向内容必须立即停止该方向检索，\n"
-            "   不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。"
+            "4. 禁止查看 H / 成人向内容："
+            + gate_scope
+            + "   识别到成人向内容必须立即停止该方向检索，不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。"
         )
     else:
         h_line = "4. 用户已在 GalTransl 设置中关闭 H 门禁：允许处理 H / 成人向内容，无需因此拒绝任务或中断检索。"

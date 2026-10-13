@@ -24,14 +24,15 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 ### 1. 禁止查看：H / 成人向内容（最高优先级）
 
 **事实依据（0.6.0 实测）**：MCP **读路径仍然没有 H 门禁过滤**——只读工具会原样返回 H 原文/译文。
-但**写工具已有硬门禁**：`galtransl_write_route_map` / `galtransl_save_metadata` / `galtransl_write_glossary` 在写入前会检查
+但**部分写工具有硬门禁**：`galtransl_write_route_map` / `galtransl_save_metadata` / `galtransl_write_glossary` 在写入前会检查
 目标缓存文件是否落在 H 区间、待写入文本是否命中项目 H 词库（`forbiddenDictH`），命中即**拒绝写入并返回错误**。
-即：**读要自己守规矩，写由服务兜底**。（`mark_skip_check` / `swap_alt_translation` / `submit_job` / `stop_job`
-不写入新文本，无门禁检查，但 §1 对 H 内容的读取纪律同样适用。）
+即：**读要自己守规矩，而写的兜底只覆盖这 3 个内容写入工具**。（`mark_skip_check` / `swap_alt_translation`
+只改标志位或对调既有译文、`submit_job` / `stop_job` 无内容写入，均无门禁检查——H 区间条目的标志位与既有译文
+仍可被改动；但 §1 对 H 内容的读取纪律同样适用。）
 
 > **门禁的失效边界（务必知道）**：门禁是 **fail-open** 的——判定不了就放行，宁可漏拦也不阻断正常写入。
 > 因此当项目**未配置 H 词库**（`forbiddenDictH` / `hCheckDict` 均无）或**尚无批次元数据**时，
-> 文件维度与文本维度都判为「非 H」，写工具**实际不会拦截**。
+> 文件维度与文本维度都判为「非 H」，上述 3 个工具**实际不会拦截**。
 > 即门禁只在「项目已配 H 词库 + 已有批次元数据」时才是有效防线，**不能据此认为 H 一定被挡住**。
 > H 内容仍须自行遵守本节 §1。
 
@@ -53,6 +54,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - 只允许报告**位置**（文件名 + index + 区间），并明确请用户决定是否处理。
 - H 文本不得写入任何外部产物：commit message、issue/PR、报告文档、其他会话上下文、联网请求。
 - 写工具被 H 门禁拒绝时，**如实转告用户**「该部分因 H 门禁未执行」，请其在 GalTransl 界面手动处理；**不要**改写措辞绕过门禁重试。
+- 门禁**不覆盖**缓存条目的两个写工具（`galtransl_mark_skip_check` / `galtransl_swap_alt_translation`）：它们只改标志位或对调**既有**译文，不引入新文本，**H 区间条目同样可操作**（`swap_alt_translation` 对调 H 译文属允许操作，别把它当门禁失效去报 bug）。但**这不放宽读取纪律**——不得为了判断该不该标记 / 交换而逐条翻阅 H 译文，需要判断时请用户决定。
 
 
 ### 2. 禁止查看：凭据、密钥与端点
@@ -79,7 +81,9 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 ### 4. 写操作边界（缓存条目批次后共 7 个写工具）
 
-写能力**仅限**下列 7 个工具，每个都只能改项目内的指定产物：
+写能力**仅限**下列 7 个工具，每个都只能改项目内的指定产物。
+其中 `write_route_map` / `save_metadata` / `write_glossary` 另受 **H 硬门禁**（见 §1）；
+`mark_skip_check` / `swap_alt_translation` 只改标志位或对调既有文本、不引入新文本，**不在门禁范围内**。
 
 | 写工具 | 能做什么 | 边界 |
 |---|---|---|
@@ -141,7 +145,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | `galtransl_get_job_status` | 查**任务状态与实时进度**（阶段/百分比/worker/速度；**需后端**） | — |
 | `galtransl_check_model` | 校验模型/令牌可用性（**发一次真实探测请求；需后端**） | `translator`、`config_file_name`、`backend_profile` |
 
-### 写入（受 H 门禁与路径约束）
+### 写入（均受路径白名单约束；其中路线图/元数据/项目字典另受 H 门禁）
 
 | 工具 | 用途 | 关键参数 |
 |---|---|---|
@@ -208,7 +212,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 ## 注意事项
 
 - **只读 + 受限写入**：14 个只读工具 + 7 个写工具（边界见 §4）。项目字典可用 `write_glossary` 按词条增改；缓存条目可逐条标记跳过检查或交换备选译文；需要人工改译文/公共字典/配置时，请指导用户在 GalTransl 界面里操作。
-- **H 内容**：读路径**无 H 门禁过滤**（须自行遵守 §1）；写工具**有硬门禁**，命中 H 区间或 H 词库即拒绝写入——但门禁 **fail-open**，项目未配 H 词库时不拦，详见 §1 的失效边界。
+- **H 内容**：读路径**无 H 门禁过滤**（须自行遵守 §1）；写工具中**仅** `write_route_map` / `save_metadata` / `write_glossary` **有硬门禁**，命中 H 区间或 H 词库即拒绝写入；`mark_skip_check` / `swap_alt_translation` 只改标志位或对调既有译文，**不在门禁范围内**（H 区间条目同样可操作）。门禁 **fail-open**，项目未配 H 词库时不拦，详见 §1 的失效边界。
 - **作业域工具需后端**：`get_job_status` / `check_model` / `submit_job` / `stop_job` 需要 GalTransl 程序在运行；后端未启动时会返回「无法连接 GalTransl 后端」的中文错误，此时转告用户启动程序即可，不要反复重试。`check_model` 会向模型端点发起一次真实探测请求（消耗极小额度），不要在无谓的场景反复调用。
 - **结果上限**：搜索类工具默认最多返回 200 条（硬顶 2000），超出时返回体里 `truncated` 为 `true`，`total` 才是全部命中数。需要更多就加 `regex` 收窄检索词，或提高 `max_results`。
 - **正则**：`regex: true` 时检索词按正则解释；非法正则会返回参数错误。
