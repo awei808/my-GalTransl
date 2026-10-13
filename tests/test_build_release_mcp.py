@@ -398,12 +398,14 @@ class SkillsDocShipsTests(unittest.TestCase):
 
     def test_smoke_test_verifies_doc_ships(self) -> None:
         # 冒烟以发布根目录为 cwd，正好能按 instructions 里的相对路径复核该文件在不在包里；
-        # 且必须据其返回值阻断构建，不能只调用不用
+        # 且必须据其返回值**否定式**阻断构建（条件取反成「随包才阻断」也要能失败）
         smoke_body = ast.parse(_extract_function_source("smoke_test_mcp"))
         aborts = [
             node
             for node in ast.walk(smoke_body)
             if isinstance(node, ast.If)
+            and isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
             and any(
                 isinstance(sub, ast.Call)
                 and isinstance(sub.func, ast.Name)
@@ -435,15 +437,17 @@ class SkillsDocShipsTests(unittest.TestCase):
             self.assertTrue(errors, "缺文件时必须报错（而非静默放行）")
 
     def test_doc_ship_check_rejects_path_outside_release_dir(self) -> None:
-        # 越界路径（../ 或前导 /）不得因包外存在同名文件而假通过
+        # 越界路径不得因包外存在同名文件而假通过（相对上跳 / 前导斜杠 / 盘符绝对路径三种写法）
         with tempfile.TemporaryDirectory() as tmp:
             build_dir = pathlib.Path(tmp) / "GalTransl_0.6.0_win"
             build_dir.mkdir()
             rel = self._referenced_skill_path()
             self._write_skill_doc(pathlib.Path(tmp), rel)  # 刻意放在发布目录之外
-            checker, errors, _warns = self._doc_ship_checker(build_dir)
-            self.assertFalse(checker(f"完整约束见 ../{rel}。"))
-            self.assertTrue(errors)
+            for written in (f"../{rel}", f"/{rel}", f"D:/{rel}", rel):
+                with self.subTest(text=written):
+                    checker, errors, _warns = self._doc_ship_checker(build_dir)
+                    self.assertFalse(checker(f"完整约束见 {written}。"))
+                    self.assertTrue(errors)
 
     def test_doc_ship_check_warns_when_no_path_named(self) -> None:
         # 未点名路径属口径变化：告警放行（与 expected_mcp_tool_count 派生失败同风格），不阻断构建

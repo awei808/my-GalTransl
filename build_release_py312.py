@@ -816,9 +816,12 @@ def _check_instructions_doc_ships(instructions: str) -> bool:
     base = BUILD_DIR.resolve()
     for rel in referenced:
         target = (base / rel).resolve()
-        # 越界（前导 / 或 ../）与「只是个同名目录」都不算随包分发
-        if base not in target.parents or not target.is_file():
-            log_err(f"MCP 冒烟失败：instructions 点名的 {rel} 不在发布目录内（随包分发缺失）")
+        # 越界（前导 / 或 ../）与「只是个同名目录」都不算随包分发，分别报错便于定位
+        if target == base or not target.is_relative_to(base):
+            log_err(f"MCP 冒烟失败：instructions 点名的 {rel} 越出发布目录（随包分发缺失）")
+            return False
+        if not target.is_file():
+            log_err(f"MCP 冒烟失败：instructions 点名的 {rel} 在发布目录里不是文件（随包分发缺失）")
             return False
     return True
 
