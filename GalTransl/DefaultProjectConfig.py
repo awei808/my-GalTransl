@@ -29,6 +29,7 @@ backendSpecific:
     apiTimeout: 300 # 请求超时时间，单位秒
     apiErrorWait: auto # 发生API Error时的等待时间，包括频率限制。auto将自动适应[auto/0-120]。所有重试会在退避时长基础上额外+1秒
     maxApiRetries: 6 # 单次LLM调用的最大尝试次数（429限流不计入，仅退避重试），耗尽后本批失败交由上层兜底。[1-100]
+    apiMinIntervalSec: 0.5 # 两次API请求最小间隔(秒)，用于节流。0表示不限制。[0-60]
 
 # 插件，插件列表可在启动程序后选择show-plugs查看，或在plugins目录内查看
 plugin:

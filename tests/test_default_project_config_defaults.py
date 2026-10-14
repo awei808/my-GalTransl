@@ -5,9 +5,12 @@
    的 createDefaultAfterTranslation 保持一致，双端各自有测试锁定）；
 2. gpt.swapFixToCurrent 默认开启；
 3. problemAnalyze.problemList 默认启用清单须覆盖 fix 默认修复类型（fix 轮消费
-   find_problems 按 problemList 检测出的问题，类型未启用则无问题可修）。
+   find_problems 按 problemList 检测出的问题，类型未启用则无问题可修）；
+4. backendSpecific.OpenAI-Compatible.apiMinIntervalSec 默认 0.5 秒节流
+   （与 sampleProject/config.inc.yaml 模板同口径；0 表示不限制，是合法值）。
 """
 import unittest
+from pathlib import Path
 
 from yaml import safe_load
 
@@ -42,6 +45,25 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
 
     def test_swap_fix_to_current_default_true(self) -> None:
         self.assertIs(self.config["common"]["gpt.swapFixToCurrent"], True)
+
+    def test_api_min_interval_sec_default(self) -> None:
+        """新建项目默认节流 0.5 秒，且与 sampleProject 模板同口径（防两份模板漂移）。
+
+        0 是合法值（不限制），故此处锁定的是具体默认值而非「必须为正」。
+        """
+        value = self.config["backendSpecific"]["OpenAI-Compatible"]["apiMinIntervalSec"]
+        self.assertEqual(value, 0.5)
+        self.assertNotIsInstance(value, bool)
+
+        sample_path = Path(__file__).resolve().parents[1] / "sampleProject" / "config.inc.yaml"
+        self.assertTrue(sample_path.is_file(), f"缺少样例模板：{sample_path}")
+        sample_cfg = safe_load(sample_path.read_text(encoding="utf-8"))
+        sample_value = sample_cfg["backendSpecific"]["OpenAI-Compatible"]["apiMinIntervalSec"]
+        self.assertEqual(
+            sample_value,
+            value,
+            "sampleProject/config.inc.yaml 与 DefaultProjectConfig 模板的 apiMinIntervalSec 已漂移",
+        )
 
     def test_meta_min_lines_default(self) -> None:
         """元数据阶段行数阈值默认 20：行数不足的文件不生成文件级/批次级元数据。

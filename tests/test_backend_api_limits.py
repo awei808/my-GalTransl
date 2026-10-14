@@ -168,7 +168,8 @@ class InitChatbotRealPathTests(unittest.TestCase):
         self.assertEqual(eng.api_max_requests, 1000)
 
     def test_init_chatbot_default_zero_when_no_fields(self) -> None:
-        # 内置默认配置（backendSpecific 段无这三个字段）经真实 init_chatbot 应读默认 0（不限制）。
+        # backendSpecific 段为空（项目未配置这三个键）经真实 init_chatbot 应读默认 0（不限制）。
+        # 注：出厂模板 DefaultProjectConfig 另自带 apiMinIntervalSec=0.5，此处刻意传空段以锁定缺键口径。
         cfg = _build_config({"OpenAI-Compatible": {}})
         eng = BaseEngine.__new__(BaseEngine)
         eng.trans_prompt = None
@@ -210,7 +211,7 @@ class RequestCountQuotaTests(unittest.TestCase):
             eng._check_request_count_quota()  # 不触发
 
     def test_default_config_no_field_means_unlimited(self) -> None:
-        # 内置默认配置（backendSpecific 段无这三个字段）应读不到值 -> 默认 0 -> 不限制
+        # backendSpecific 段为空（项目未配置这三个键）应读不到值 -> 默认 0 -> 不限制
         eng = _make_engine("gpt35", {})
         self.assertEqual(eng.api_max_error_rate, 0)
         self.assertEqual(eng.api_min_interval_sec, 0.0)

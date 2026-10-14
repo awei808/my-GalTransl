@@ -476,9 +476,11 @@ class BaseEngine:
         backend_cfg = self._effective_backend_section(section_name, config)
 
         # API 调用限制（后端级、可独立配置）：错误率上限 / 最小请求间隔 / 请求次数上限。
-        # 默认值为 0 表示「不限制」，需用户在 config.inc.yaml 的 backendSpecific 段显式配置才启用，
-        # 避免内置默认配置（无这三个字段）的用户被悄悄开启限流与终止。
-        # 0 或不合法均表示不限制；非法值回退为 0。
+        # 缺键或值为 0 均表示「不限制」；非法值回退为 0。
+        # DefaultProjectConfig 出厂模板（新建项目与旧项目深合并共用）自带
+        # apiMinIntervalSec=0.5，即默认节流 0.5 秒；但全局 API 配置（profile）会整段覆盖
+        # backendSpecific，那一路以 profile 为准。错误率上限与请求次数上限在出厂模板中不设置，
+        # 需用户在 backendSpecific 段显式配置才启用，避免被悄悄开启终止条件。
         self.api_max_error_rate = self._coerce_ratio(backend_cfg.get("apiMaxErrorRate", 0), 0)
         self.api_min_interval_sec = self._coerce_nonneg_float(backend_cfg.get("apiMinIntervalSec", 0), 0)
         self.api_max_requests = self._coerce_optional_int(backend_cfg.get("apiMaxRequests", 0), 0)
