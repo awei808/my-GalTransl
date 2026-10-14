@@ -284,28 +284,87 @@
   overflow: hidden;
 }
 
+/* ── 校对页工具栏（两行分组） ──
+   第 1 行 .review-toolbar-main：文件身份 + 状态 + 动作（翻译/元数据两种模式共用）
+   第 2 行 .review-toolbar-filters：筛选 + 跳转（仅翻译校对模式，元数据模式不渲染）
+   行高与控件高度集中在这一组规则里，调整密度只改这里。 */
 .review-toolbar {
+  --review-ctl-h: 26px; /* 工具控件统一高度：下拉触发器 / 说话人 select / 跳转输入 / .btn--sm */
+  --review-row-main-h: 32px; /* 第 1 行（主行）：比控件高 6px，上下各留 3px 呼吸 */
+  --review-row-filters-h: 30px; /* 第 2 行：比控件高 4px，形成"主行略高"的层级 */
+
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
+  flex-direction: column;
+  gap: var(--space-05);
+  /* 块级 padding 取半格：两行各自的 min-height 已含呼吸（26px 控件 → 32/30px 行），
+     此处再留 8px 会把工具栏顶到 80px 以上、白占条目区 */
+  padding: var(--space-05) 0;
   flex-shrink: 0;
   border-bottom: 1px solid var(--color-border-default);
 }
 
+.review-toolbar-main,
+.review-toolbar-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0; /* 允许子项收缩：长文件名/筛选控件超宽时先省略，而不是溢出被裁 */
+}
+
+.review-toolbar-main {
+  min-height: var(--review-row-main-h);
+}
+
+.review-toolbar-filters {
+  min-height: var(--review-row-filters-h);
+}
+
+/* 工具栏内按钮/输入框统一高度（筛选类控件的高度在 part01.css，同取 --review-ctl-h） */
+.review-toolbar .btn--sm,
+.review-toolbar .review-jump-input {
+  height: var(--review-ctl-h);
+  font-size: var(--font-sm);
+  border-radius: var(--radius-sm);
+  white-space: nowrap; /* 文本单行，不压缩换行 */
+}
+
+.review-toolbar .btn--sm {
+  flex-shrink: 0; /* 保持宽度，不被状态文本挤压 */
+}
+
+/* 指南入口：与同行按钮同高（基础样式在 guide.css，字号仍为 xs 的次级强调） */
+.review-toolbar .guide-link {
+  height: var(--review-ctl-h);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 文件身份：单行 + 省略号（文件名长度不可控，曾是顶开整行的元凶）。
+   高度由 .review-toolbar-main 的 min-height 固定，不再随文件名长短/行数变化。
+   省略号落在内层 .review-filename-text 上：跨引擎（WebView2）在按钮内解析更稳。 */
 .review-filename {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-05);
   font-size: var(--font-base);
   font-weight: var(--weight-medium);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
-  /* 固定两行文字高度：避免文件名换行数不同导致工具栏高度变化 */
-  display: block;
   line-height: var(--leading-normal);
-  height: calc(var(--font-base) * 2 * var(--leading-normal));
-  overflow: hidden;
-  word-break: break-all;
-  flex-shrink: 0;
+  max-width: 40ch;
   min-width: 0;
+  flex: 0 1 auto; /* 可收缩，不硬撑整行 */
+}
+
+.review-filename-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-filename-swap {
+  flex-shrink: 0;
 }
 
 .review-filename--jump {
@@ -323,22 +382,50 @@
   text-decoration: none;
 }
 
+/* 状态簇：本行唯一 auto 外边距持有者，把「状态 + 动作」整体推到右侧。
+   窄窗下负剩余空间按 flex-shrink 比例分摊到文件名/状态簇/动作簇；
+   子项单行 + 省略号，不会因折行把工具栏顶高，也不会被硬切。 */
+.review-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+
+.review-status > * {
+  min-width: 0;
+  /* 窄窗下状态文本走省略号，而不是被簇的 overflow:hidden 硬切掉半句 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 动作簇：按钮各自保持宽度（shrink:0），整体可收缩，收缩量全部由最软的
+   .review-ai-hint 承担。此处**不设** min-width:0 —— 默认的 min-width:auto
+   正好等于簇内按钮的内容下限，保证簇不会被压到按钮之下、把「指南」右缘切掉。 */
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 1;
+}
+
 .review-jump-group {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  align-self: flex-start; /* 跳转组贴工具栏顶部，不随工具栏高度居中 */
+  gap: var(--space-05);
+  margin-left: auto; /* 第 2 行唯一 auto 持有者 */
   flex-shrink: 0; /* 保持宽度，不被筛选栏变宽时挤压 */
 }
 
 .review-jump-input {
   width: 90px;
-  padding: 4px 8px;
-  font-size: var(--font-base);
+  padding: 0 var(--space-1);
   font-family: var(--font-sans);
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-sm);
   background: var(--color-bg-input);
   color: var(--color-text-primary);
   flex-shrink: 0; /* 保持 90px 固定宽度 */
@@ -354,20 +441,28 @@
   color: var(--color-text-tertiary);
 }
 
-/* 工具栏按钮：固定一行文字高度，顶部对齐（不随文件名两行高度垂直居中） */
-.review-toolbar .btn--sm {
-  height: calc(var(--font-sm) * var(--leading-normal) + 6px);
-  align-self: flex-start;
-  position: relative;
-  top: 0;
-  flex-shrink: 0;      /* 保持宽度，不被筛选栏变宽时挤压 */
-  white-space: nowrap; /* 文本单行显示，不被压缩换行 */
+/* 筛选生效时的计数：恢复二级文字色（合并前筛选栏计数即 secondary：
+   此时这行数字是"你看到的是子集"的提示，比纯总数更该被看见） */
+.review-count--filtered {
+  color: var(--color-text-secondary);
 }
 
-/* AI 精修常驻提示：不参与右对齐组（避免与 .review-jump-group 的 auto 外边距相互分流），
-   空间不足时先省略号收缩，不挤压其它控件 */
+/* H 区间徽标：只报段数，完整区间文本进 title（区间多时不再撑宽工具栏） */
+.review-h-ranges {
+  font-size: var(--font-xs);
+  color: var(--color-status-warning);
+  font-weight: 600;
+  cursor: default;
+}
+
+.review-dirty-dot {
+  font-size: var(--font-sm);
+  color: var(--color-status-warning);
+}
+
+/* AI 精修常驻提示：动作簇内唯一可被吸干的项（按钮 shrink:0 不参与收缩），
+   窄窗下与文件名、状态簇按比例分摊收缩，收缩后走省略号 */
 .review-ai-hint {
-  margin-left: var(--space-2);
   min-width: 0;
   flex-shrink: 1;
   overflow: hidden;
@@ -548,14 +643,6 @@
   border-top: 2px dashed var(--color-status-warning);
   border-bottom: none;
   margin-top: 6px;
-}
-
-.review-h-ranges {
-  margin-left: 8px;
-  font-size: var(--font-xs);
-  color: var(--color-status-warning);
-  font-weight: 600;
-  cursor: default;
 }
 
 /* 分页信息栏与分页控件 */

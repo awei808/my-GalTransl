@@ -195,8 +195,11 @@ describe("ReviewPage 双击 → AI 精修 → 采纳链路", () => {
       expect(document.querySelector(".entry-card")).not.toBeNull();
     });
 
-    // 工具栏常驻提示（不新增条目按钮，靠顶部空白处告知功能存在）
-    expect(document.querySelector(".review-ai-hint")!.textContent).toContain("AI 精修");
+    // 工具栏常驻提示（不新增条目按钮，靠顶部空白处告知功能存在）；
+    // 文案与筛选行分家后缩短为「✦ AI 精修」，完整操作说明落在 title 上
+    const hint = document.querySelector(".review-ai-hint")!;
+    expect(hint.textContent).toContain("AI 精修");
+    expect(hint.getAttribute("title")).toContain("双击条目空白处");
 
     fireEvent.doubleClick(document.querySelector(".entry-card") as HTMLElement);
     await vi.waitFor(() => {

@@ -26,6 +26,7 @@
 - **状态管理**：`appStore`（全局：视图/项目/连接/侧边栏/缓存树）、`undoStore`（校对撤销重做）、`confirmStore`/`toastStore`/`logStore`
 - **主题与外观**：浅色/深色 × 扁平/鲜艳双风格（`theme.ts` + `styles/tokens.css` 设计令牌）；支持自定义背景图（`customBackground.ts` + `custom-background.css`）
 - **自动保存**：页面卸载自动保存统一骨架 `usePageAutosave.ts`（配合显式保存按钮）
+- **校对页顶部工具栏**：两行分组——第 1 行「文件身份 + 状态 + 动作」（翻译/元数据两种模式共用，元数据模式不渲染第 2 行），第 2 行「筛选 + 跳转」（仅翻译校对模式）。行高与控件统一高度集中在 `styles/part03.css` 的 `.review-toolbar` 一组变量（`--review-ctl-h` 控件高 / `--review-row-main-h`、`--review-row-filters-h` 两行行高），筛选控件度量在 `styles/part01.css` 同取 `--review-ctl-h`（工具栏外回退同值，供问题检测侧栏复用）。结构契约见 `__tests__/reviewToolbarLayout.test.tsx`
 - **测试**：Vitest + jsdom + `@solidjs/testing-library`
 - **代码质量**：ESLint（`eslint-plugin-solid`，`no-explicit-any: error`）+ Prettier
 

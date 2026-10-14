@@ -415,8 +415,7 @@ textarea {
 .review-filter-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: 12px;
+  gap: var(--space-1);
   flex-wrap: wrap;
 }
 .review-filter-chip {
@@ -434,13 +433,19 @@ textarea {
   border-color: var(--color-brand-primary);
   color: var(--color-text-on-brand);
 }
-.review-filter-select {
-  padding: 3px 6px;
-  font-size: 12px;
+/* 筛选控件统一度量：与工具栏（part03.css .review-toolbar）同高同字号，
+   高度取 --review-ctl-h（工具栏内定义），在工具栏外单独使用时（问题检测侧栏
+   的类型下拉）回退到同一数值，避免脱离工具栏祖先就塌成一行文字高。 */
+.review-filter-select,
+.review-filter-dropdown-trigger {
+  height: var(--review-ctl-h, 26px);
+  padding: 0 var(--space-1);
+  font-size: var(--font-sm);
   border: 1px solid var(--color-border-default);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--color-bg-input);
   color: var(--color-text-primary);
+  white-space: nowrap;
 }
 /* 视图筛选多选下拉（问题句/备选/H场景） */
 .review-filter-dropdown {
@@ -448,16 +453,10 @@ textarea {
   display: inline-block;
 }
 .review-filter-dropdown-trigger {
-  padding: 3px 8px;
-  font-size: 12px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 4px;
-  background: var(--color-bg-input);
-  color: var(--color-text-primary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-05);
 }
 .review-filter-dropdown-trigger--active {
   border-color: var(--color-brand-primary);
@@ -498,13 +497,11 @@ textarea {
   margin: 0;
   accent-color: var(--color-brand-primary);
 }
-.review-filter-count {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
+/* 清除筛选：筛选控件同高的文字按钮，紧邻三个筛选控件 */
 .review-filter-clear {
-  padding: 3px 8px;
-  font-size: 12px;
+  height: var(--review-ctl-h, 26px);
+  padding: 0 var(--space-1);
+  font-size: var(--font-sm);
   border: none;
   background: transparent;
   color: var(--color-brand-primary);

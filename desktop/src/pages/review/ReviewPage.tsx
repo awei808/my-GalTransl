@@ -1680,141 +1680,205 @@ export function ReviewPage() {
   return (
     <div class="page page-review">
       {/* ── 工具栏 ── */}
+      {/* 两行分组：第 1 行「文件身份 · 状态 · 动作」（翻译/元数据两模式共用），
+          第 2 行「筛选 · 导航」（仅翻译校对模式，元数据模式不渲染该行）。
+          行高与控件高度集中在 part03.css 的 .review-toolbar 一组规则里。 */}
       <div class="review-toolbar">
-        <Show when={reviewMode() === "translate"}>
-        <Show when={file()}>
-          <Show when={jumpTarget()} fallback={<span class="review-filename">{displayFileName()}</span>}>
-            <button
-              class="review-filename review-filename--jump"
-              title={`${jumpTarget()!.label}（点击跳转）`}
-              onClick={handleJumpToCounterpart}
+        <div class="review-toolbar-main">
+          {/* 左：文件身份（当前查看的是哪个缓存文件，可跳转到对应文件） */}
+          <Show when={reviewMode() === "translate"}>
+            <Show when={file()}>
+              <Show
+                when={jumpTarget()}
+                fallback={
+                  <span class="review-filename" title={displayFileName()}>
+                    <span class="review-filename-text">{displayFileName()}</span>
+                  </span>
+                }
+              >
+                <button
+                  class="review-filename review-filename--jump"
+                  title={`${displayFileName()} · ${jumpTarget()!.label}（点击跳转）`}
+                  onClick={handleJumpToCounterpart}
+                >
+                  <span class="review-filename-text">{displayFileName()}</span>
+                  <span class="review-filename-swap">⇄</span>
+                </button>
+              </Show>
+            </Show>
+          </Show>
+
+          <Show when={reviewMode() === "metadata"}>
+            <Show
+              when={jumpTarget()}
+              fallback={
+                <span
+                  class="review-filename"
+                  title={
+                    metaType() === "globalprompt"
+                      ? "GlobalPrompt"
+                      : metaType() === "plotroute"
+                        ? "PlotRouteMap"
+                        : metaSourceFile()
+                  }
+                >
+                  <span class="review-filename-text">
+                    {metaType() === "globalprompt"
+                      ? "GlobalPrompt"
+                      : metaType() === "plotroute"
+                        ? "PlotRouteMap"
+                        : metaSourceFile()}
+                  </span>
+                </span>
+              }
             >
-              {displayFileName()} ⇄
-            </button>
+              <button
+                class="review-filename review-filename--jump"
+                title={`${metaSourceFile()} · ${jumpTarget()!.label}（点击跳转）`}
+                onClick={handleJumpToCounterpart}
+              >
+                <span class="review-filename-text">
+                  {metaType() === "globalprompt"
+                    ? "GlobalPrompt"
+                    : metaType() === "plotroute"
+                      ? "PlotRouteMap"
+                      : metaSourceFile()}
+                </span>
+                <span class="review-filename-swap">⇄</span>
+              </button>
+            </Show>
           </Show>
-        </Show>
 
+          {/* 中右：状态簇。本行唯一的 margin-left:auto 持有者——不可再给它后面的元素
+              加 auto 外边距，否则剩余空间被两个 auto 分流（跳转组在下一行同理）。 */}
+          <div class="review-status">
+            <Show when={reviewMode() === "translate"}>
+              {/* 条数：无筛选显示文件总条数；有筛选显示「筛选后/总数 条 · 问题 N」
+                  （原工具栏条数 + 筛选栏计数两处合并为一个元素） */}
+              <Show when={hasFilter() || entries().length > 0}>
+                <span
+                  class={hasFilter() ? "review-count review-count--filtered" : "review-count"}
+                  title={hasFilter() ? "筛选后条数/文件总条数" : "文件总条数"}
+                >
+                  {hasFilter()
+                    ? `${filteredEntries().length}/${entries().length} 条${problemCount() > 0 ? ` · 问题 ${problemCount()}` : ""}`
+                    : `${entries().length} 条`}
+                </span>
+              </Show>
+              {/* H 区间：只显示段数，完整区间文本进 title（区间多时不再撑宽工具栏；
+                  条目列表内的 H 区间分隔条仍标出具体位置） */}
+              <Show when={hBatchExists() && hRanges().length > 0}>
+                <span
+                  class="review-h-ranges"
+                  title={`该文件含 H 剧情区间（来自 pass2 批次元数据，数字为缓存条目序号范围，H 为强度 0-1）：${hRanges()
+                    .map(
+                      (r) =>
+                        `#${r.lo}~#${r.hi}${typeof r.h === "number" ? ` H${r.h.toFixed(1)}` : ""}`,
+                    )
+                    .join(" · ")}`}
+                >
+                  H 区间 {hRanges().length} 段
+                </span>
+              </Show>
+              <Show when={appState.dirtyFiles.includes(appState.activeFilePath ?? "")}>
+                <span class="review-dirty-dot" title="有未保存的修改">
+                  ● 未保存
+                </span>
+              </Show>
+            </Show>
+            <Show when={reviewMode() === "metadata"}>
+              <Show when={metaEntry()}>
+                <span class="review-count">1 条</span>
+              </Show>
+            </Show>
+          </div>
 
-        {/* 快捷筛选：视图多选（问题句/备选/H场景）+ 类型 / 说话人 */}
-        <div class="review-filter-bar">
-          <ViewFilterDropdown
-            problems={filterProblemsOnly}
-            alts={filterAltOnly}
-            hOnly={filterHOnly}
-            onProblems={setFilterProblemsOnly}
-            onAlts={setFilterAltOnly}
-            onHOnly={setFilterHOnly}
-          />
-          <ProblemTypeFilterDropdown
-            value={filterProblemTypes}
-            types={problemTypes}
-            onChange={setFilterProblemTypes}
-          />
-          <select
-            class="review-filter-select"
-            value={filterSpeaker()}
-            onChange={(e) => setFilterSpeaker(e.currentTarget.value)}
-          >
-            <option value="all">全部说话人</option>
-            <option value="__no_speaker__">旁白独白</option>
-            <For each={speakers()}>
-              {(s) => <option value={s}>{displaySpeakerName(s, nameDict())}</option>}
-            </For>
-          </select>
-          <Show when={hasFilter()}>
-            <span class="review-filter-count">
-              {filteredEntries().length}/{entries().length} 条
-              {problemCount() > 0 ? ` · 问题 ${problemCount()}` : ""}
-            </span>
-          </Show>
-          <Show when={hasFilter()}>
-            <button class="review-filter-clear" onClick={clearFilters}>
-              清除筛选
-            </button>
-          </Show>
+          {/* 右：动作簇 */}
+          <div class="review-actions">
+            <Show when={reviewMode() === "translate"}>
+              <button
+                class="btn btn--sm"
+                title="保存当前文件的修改，并重新运行问题检测；检测结果写回缓存并同步到问题检测侧栏"
+                onClick={() => void handleRefresh()}
+              >
+                保存并重检问题
+              </button>
+            </Show>
+            <Show when={reviewMode() === "metadata"}>
+              <Show when={metaEntry()}>
+                <button
+                  class="btn btn--sm"
+                  title="保存当前元数据文件的修改"
+                  onClick={() => void handleMetaManualSave()}
+                  disabled={metaSaving() || metaSavePending}
+                >
+                  {metaSaving() ? "保存中…" : "保存"}
+                </button>
+              </Show>
+            </Show>
+            <Show when={reviewMode() === "translate"}>
+              <span
+                class="review-ai-hint"
+                title="AI 精修：双击条目空白处，让 AI 依据原文、当前译文与上下文给出改进译文，采纳后写入备选译文。所用后端取项目设置「人工校对时 AI 精修」(common.stageBackends.proofread)，留空则跟随任务主配置。"
+              >
+                ✦ AI 精修
+              </span>
+            </Show>
+            <GuideLink guide="04-review.md" />
+          </div>
         </div>
 
-        <div class="review-jump-group">
-          <input
-            class="review-jump-input"
-            type="number"
-            placeholder="跳转到 #"
-            value={jumpValue()}
-            onInput={(e) => setJumpValue(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleJump()}
-          />
-          <button class="btn btn--sm" onClick={handleJump}>
-            跳转
-          </button>
-        </div>
-        <Show when={entries().length > 0}>
-          <span class="review-count">{entries().length} 条</span>
-        </Show>
-        <Show when={hBatchExists() && hRanges().length > 0}>
-          <span
-            class="review-h-ranges"
-            title="该文件含 H 剧情区间（来自 pass2 批次元数据，数字为缓存条目序号范围，H 为强度 0-1）"
-          >
-            H 区间：{hRanges().map((r) => `#${r.lo}~#${r.hi}${typeof r.h === "number" ? ` H${r.h.toFixed(1)}` : ""}`).join(" · ")}
-          </span>
-        </Show>
-        <Show when={appState.dirtyFiles.includes(appState.activeFilePath ?? "")}>
-          <span style="color:var(--color-status-warning);margin-left:8px" title="有未保存的修改">
-            ● 未保存
-          </span>
-        </Show>
-        <button
-          class="btn btn--sm"
-          title="保存当前文件的修改，并重新运行问题检测；检测结果写回缓存并同步到问题检测侧栏"
-          onClick={() => void handleRefresh()}
-        >
-          保存并重检问题
-        </button>
-        </Show>{/* /translate mode */}
-
-        <Show when={reviewMode() === "metadata"}>
-          <Show when={jumpTarget()} fallback={
-            <span class="review-filename">
-              {metaType() === "globalprompt"
-                ? "GlobalPrompt"
-                : metaType() === "plotroute"
-                  ? "PlotRouteMap"
-                  : metaSourceFile()}
-            </span>
-          }>
-            <button
-              class="review-filename review-filename--jump"
-              title={`${jumpTarget()!.label}（点击跳转）`}
-              onClick={handleJumpToCounterpart}
-            >
-              {metaType() === "globalprompt"
-                ? "GlobalPrompt"
-                : metaType() === "plotroute"
-                  ? "PlotRouteMap"
-                  : metaSourceFile()}{" "}⇄
-            </button>
-          </Show>
-          <Show when={metaEntry()}>
-            <span class="review-count">1 条</span>
-            <button
-              class="btn btn--sm"
-              title="保存当前元数据文件的修改"
-              onClick={() => void handleMetaManualSave()}
-              disabled={metaSaving() || metaSavePending}
-            >
-              {metaSaving() ? "保存中…" : "保存"}
-            </button>
-          </Show>
-        </Show>
+        {/* 第 2 行：筛选 + 跳转（同属"在当前文件里挑/走"） */}
         <Show when={reviewMode() === "translate"}>
-          <span
-            class="review-ai-hint"
-            title="AI 精修：双击条目空白处，让 AI 依据原文、当前译文与上下文给出改进译文，采纳后写入备选译文。所用后端取项目设置「人工校对时 AI 精修」(common.stageBackends.proofread)，留空则跟随任务主配置。"
-          >
-            ✦ AI 精修：双击条目空白处
-          </span>
+          <div class="review-toolbar-filters">
+            {/* 快捷筛选：视图多选（问题句/备选/H场景）+ 类型 / 说话人 */}
+            <div class="review-filter-bar">
+              <ViewFilterDropdown
+                problems={filterProblemsOnly}
+                alts={filterAltOnly}
+                hOnly={filterHOnly}
+                onProblems={setFilterProblemsOnly}
+                onAlts={setFilterAltOnly}
+                onHOnly={setFilterHOnly}
+              />
+              <ProblemTypeFilterDropdown
+                value={filterProblemTypes}
+                types={problemTypes}
+                onChange={setFilterProblemTypes}
+              />
+              <select
+                class="review-filter-select"
+                value={filterSpeaker()}
+                onChange={(e) => setFilterSpeaker(e.currentTarget.value)}
+              >
+                <option value="all">全部说话人</option>
+                <option value="__no_speaker__">旁白独白</option>
+                <For each={speakers()}>
+                  {(s) => <option value={s}>{displaySpeakerName(s, nameDict())}</option>}
+                </For>
+              </select>
+              <Show when={hasFilter()}>
+                <button class="review-filter-clear" onClick={clearFilters}>
+                  清除筛选
+                </button>
+              </Show>
+            </div>
+
+            <div class="review-jump-group">
+              <input
+                class="review-jump-input"
+                type="number"
+                placeholder="跳转到 #"
+                value={jumpValue()}
+                onInput={(e) => setJumpValue(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleJump()}
+              />
+              <button class="btn btn--sm" onClick={handleJump}>
+                跳转
+              </button>
+            </div>
+          </div>
         </Show>
-        <GuideLink guide="04-review.md" />
       </div>
 
       {/* ── 条目列表 ── */}
