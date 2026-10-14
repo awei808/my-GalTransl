@@ -2,8 +2,9 @@
 """ForToneCheck 词语色彩一致性检查的单元测试。
 
 覆盖：
-  - _parse_fix_response：按 id 稀疏解析（id/可选 reason），命中句置 tone_issue
-  - find_problems 认领：tone_issue 非空 → 输出「词语色彩不一致」（reason 附带展示）
+  - _parse_fix_response：按 id 稀疏解析（id/可选 reason），命中句置 tone_issue（reason 半角逗号落盘即归一）
+  - find_problems 认领：tone_issue 非空 → 输出「词语色彩不一致」（reason 附带展示；细节半角逗号归一，
+    保证 problem 只切出类型名本身，不出伪类型）
   - _filter_target_translations：全量已译句，排除无译文/Failed/skip_check
   - batch_translate：禁用降级跳过（保留旧标记）；无批次元数据按原文口径继续检查（幂等清旧标记）
   - 分批：优先 gpt.numPerRequestToneCheck，回退 numPerRequestSemCheck / numPerRequestBetter / 实参
@@ -63,6 +64,15 @@ def _trans(index: int, pre_dst: str = "译文", post_src: str = "原文") -> CSe
     return t
 
 
+def problem_types_of(problem: str) -> list:
+    """problem 的类型名列表：与前端 problemTypesOf 同一切分口径（不含其旧名映射）。"""
+    return [
+        seg.strip().split("：")[0].split(":")[0]
+        for seg in problem.split(",")
+        if seg.strip()
+    ]
+
+
 def _batch_meta(batches: list) -> BatchMetadata:
     return BatchMetadata(id="f.json", batches=batches)
 
@@ -82,6 +92,18 @@ class ParseToneJsonlineTests(unittest.TestCase):
         line = '1mj|{"id": 12, "reason": "标注口语活泼，译文过于书面"}'
         parser._parse_fix_response(line, [trans], "\r\n")
         self.assertEqual(trans.tone_issue, "标注口语活泼，译文过于书面")
+
+    def test_reason_halfwidth_commas_normalized(self) -> None:
+        # reason 自带半角逗号：落盘即转全角，否则 find_problems 拼接的 problem 会被
+        # 逗号切分侧（前端 problemTypesOf / 后端 _filter_problem_by_types）切成伪类型
+        parser = _make_parser()
+        trans = _trans(41)
+        line = r'1mj|{"id": 41, "reason": "标注轻松调侃区间,译文\"已经结束了\"过于生硬书面,缺乏口语轻浮感"}'
+        parser._parse_fix_response(line, [trans], "\r\n")
+        self.assertEqual(
+            trans.tone_issue,
+            '标注轻松调侃区间，译文"已经结束了"过于生硬书面，缺乏口语轻浮感',
+        )
 
     def test_sparse_by_id_and_unknown_skipped(self) -> None:
         parser = _make_parser()
@@ -126,6 +148,42 @@ class FindProblemsClaimTests(unittest.TestCase):
 
         self.assertIn(CProblemType.词语色彩不一致, _FIX_SPECS)
         self.assertIn("用词色彩", build_fix_instructions([CProblemType.词语色彩不一致]))
+
+    def test_tone_issue_halfwidth_commas_claim_single_type(self) -> None:
+        # 存量/外部写入的 tone_issue 带半角逗号时，problem 仍只应切出「词语色彩不一致」一个类型
+        trans = _trans(41)
+        trans.tone_issue = '标注轻松调侃区间,译文"已经结束了"过于生硬书面,缺乏口语轻浮感'
+        find_problems([trans], _FakePjConfig())
+        self.assertEqual(
+            trans.problem,
+            '词语色彩不一致：标注轻松调侃区间，译文"已经结束了"过于生硬书面，缺乏口语轻浮感',
+        )
+        self.assertEqual(problem_types_of(trans.problem), ["词语色彩不一致"])
+
+
+class _SuspectedOnlyPjConfig(_FakePjConfig):
+    """find_problems 配置替身：仅启用「疑似错误」检测项。"""
+
+    def getProblemAnalyzeConfig(self, key: str) -> list:
+        return [CProblemType.疑似错误] if key == "problemList" else []
+
+
+class SuspectedErrorClaimTests(unittest.TestCase):
+    def test_halfwidth_commas_normalized_in_problem(self) -> None:
+        # 疑似错误原因带半角逗号 → problem 内归一为全角（拼接口径由 normalize_problem_detail 保证）
+        trans = _trans(3)
+        trans.suspected_error = "语义反转：我的事无所谓→我的事就别提了,漏译：少了一句"
+        find_problems([trans], _SuspectedOnlyPjConfig())
+        self.assertEqual(
+            trans.problem, "疑似错误：语义反转：我的事无所谓→我的事就别提了，漏译：少了一句"
+        )
+        self.assertEqual(problem_types_of(trans.problem), ["疑似错误"])
+
+    def test_placeholder_suspected_error_claimed_plain(self) -> None:
+        trans = _trans(4)
+        trans.suspected_error = "1"
+        find_problems([trans], _SuspectedOnlyPjConfig())
+        self.assertEqual(trans.problem, "疑似错误")
 
 
 class FilterTargetTranslationsTests(unittest.TestCase):

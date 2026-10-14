@@ -13,6 +13,7 @@ from GalTransl import LOGGER
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
+from GalTransl.Problem import normalize_problem_detail
 from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseImproveRound
@@ -280,7 +281,9 @@ class ForSemCheck(BaseImproveRound):
             # 占位/旧版固定文案视为无原因，维持 "1" 哨兵口径
             if reason_text in ("疑似错误", "1"):
                 reason_text = ""
-            tran.suspected_error = reason_text if reason_text else "1"
+            tran.suspected_error = (
+                normalize_problem_detail(reason_text) if reason_text else "1"
+            )
             hit_count += 1
             LOGGER.debug(
                 f"{self._log_tag} 句子 {line_id} 判定疑似错误（reason={tran.suspected_error}）"

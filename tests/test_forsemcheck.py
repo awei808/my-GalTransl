@@ -79,6 +79,16 @@ class ParseSemcheckJsonlineTests(unittest.TestCase):
         self.assertEqual(found, 1)
         self.assertEqual(trans.suspected_error, "译文串行")
 
+    def test_reason_halfwidth_commas_normalized(self) -> None:
+        # reason 自带半角逗号：落盘即转全角，与 tone_issue 同口径（problem 按半角逗号分隔类型）
+        parser = _make_parser()
+        trans = _trans(41)
+        line = r'1mj|{"id": 41, "reason": "语义反转：我的事无所谓→我的事就别提了,漏译：少了一句"}'
+        parser._parse_fix_response(line, [trans], "\r\n")
+        self.assertEqual(
+            trans.suspected_error, "语义反转：我的事无所谓→我的事就别提了，漏译：少了一句"
+        )
+
     def test_placeholder_reason_normalized_to_one(self) -> None:
         # 旧版固定文案 "疑似错误" / 数字占位 "1" 均归一为哨兵 "1"
         parser = _make_parser()

@@ -302,7 +302,7 @@ if __name__ == "__main__":
 | `Cache.py` | 翻译缓存：`save_transCache_to_json`/`get_transCache_from_json`、`.append.jsonl` 增量合并（`compact_cache_append_logs`）、原子写入 |
 | `Dictionary.py` | 字典系统：`CNormalDic`（译前/译后替换，条件规则）、`CGptDict`（GPT 字典）、`CBasicDicElement` 等 |
 | `Name.py` | 人名替换表（CSV/XLSX）提取、加载、导出；`extract_names_from_dir`/`load_name_table`/`dump_name_table_from_chunks` |
-| `Problem.py` | 质量检查：`find_problems()` 逐句检测并写入 `tran.problem` 属性 |
+| `Problem.py` | 质量检查：`find_problems()` 逐句检测并写入 `tran.problem` 属性。`problem` 为「半角逗号分隔的类型列表」，细节文本统一经 `normalize_problem_detail()` 把半角逗号转全角（前端 `lib/problems.ts` 的 `problemTypesOf` 与后端 `_filter_problem_by_types` 均按半角逗号切分，不归一会切出伪类型名） |
 | `GTPlugin.py` | 插件基类：`GTextPlugin`（before/after_src_processed、before/after_dst_processed）、`GFilePlugin`（load/save） |
 | `TextCompressor.py` | 文本无损压缩器，压缩全文供全局分析并校验完整性（`verify_compression`） |
 | `DataValidator.py` | 统一数据校验：输入/压缩/LLM 响应/元数据/输出五层校验（`validate_input_json`/`validate_global_prompt` 等） |

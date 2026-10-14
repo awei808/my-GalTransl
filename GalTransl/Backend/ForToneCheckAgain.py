@@ -24,6 +24,7 @@ from GalTransl import LOGGER
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
+from GalTransl.Problem import normalize_problem_detail
 from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.ForToneCheck import ForToneCheck
@@ -314,7 +315,7 @@ class ForToneCheckAgain(ForToneCheck):
             if keep is True:
                 reason = obj.get("reason")
                 if isinstance(reason, str) and reason.strip() and "�" not in reason:
-                    tran.tone_issue = reason.strip()
+                    tran.tone_issue = normalize_problem_detail(reason.strip())
                 confirm_count += 1
                 LOGGER.debug(
                     f"{self._log_tag} 句子 {line_id} 复核确认（reason={tran.tone_issue}）"

@@ -66,6 +66,15 @@ class ParseConfirmResponseTests(unittest.TestCase):
         self.assertEqual((confirm, dismiss), (1, 0))
         self.assertEqual(trans.suspected_error, "人名错译：華恋→华良")
 
+    def test_confirm_reason_halfwidth_commas_normalized(self) -> None:
+        # 复核轮新 reason 同样归一：否则 problem 拼接后被逗号切分侧当作伪类型名
+        parser = _make_parser()
+        trans = _trans(3, suspected="旧原因")
+        line = r'tma|{"id": 3, "keep": true, "reason": "人名错译：華恋→华良,漏译：少了一句"}'
+        confirm, dismiss = parser._parse_confirm_response(line, [trans])
+        self.assertEqual((confirm, dismiss), (1, 0))
+        self.assertEqual(trans.suspected_error, "人名错译：華恋→华良，漏译：少了一句")
+
     def test_confirm_without_reason_keeps_old_mark(self) -> None:
         parser = _make_parser()
         trans = _trans(3, suspected="旧原因")

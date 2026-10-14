@@ -160,6 +160,18 @@ def load_h_check_words(dict_paths: list) -> list:
     return words
 
 
+def normalize_problem_detail(text: str) -> str:
+    """归一化并入 problem 的细节文本：半角逗号转全角，守住「半角逗号分隔类型」口径。
+
+    problem 由 ", ".join(problem_list) 拼接，半角逗号是唯一分隔符；细节来自 AI 判定
+    文案（suspected_error / tone_issue）或用户字典词条，自带半角逗号会被前端
+    problemTypesOf 与后端 _filter_problem_by_types 的逗号切分当成第二个类型名
+    （统计里出现伪类型）。suspected_error / tone_issue 落盘时（ForSemCheck /
+    ForToneCheck 及各自复核轮）同样先经本函数，使缓存字段本身即合规。
+    """
+    return text.replace(",", "，")
+
+
 def find_problems(
     trans_list: CTransList,
     projectConfig: CProjectConfig,
@@ -385,8 +397,7 @@ def find_problems(
                 # null 等非 str 沿用"非空即标记"语义，只标纯类型名
                 problem_list.append("疑似错误")
             elif suspected_reason:
-                # ASCII 逗号归一为全角，避免破坏 problem 的逗号分隔口径
-                problem_list.append("疑似错误：" + suspected_reason.replace(",", "，"))
+                problem_list.append("疑似错误：" + suspected_reason)
 
         # AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销）：字段非空即标"词语色彩不一致"。
         # reason 非"1"时附进问题文案，供校对者与统一修复后端获知期望色彩方向。
@@ -436,4 +447,4 @@ def find_problems(
 
         # 以本次检测结果覆盖 tran.problem（清空旧缓存遗留的问题，避免累积）。
         # 不要加 if problem_list 判断：无问题时需显式置空以清除旧 problem。
-        tran.problem = ", ".join(problem_list)
+        tran.problem = ", ".join(normalize_problem_detail(p) for p in problem_list)

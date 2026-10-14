@@ -18,6 +18,7 @@ from GalTransl import LOGGER
 from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.CSentense import CSentense, CTransList
 from GalTransl.ConfigHelper import CProxyPool, CProjectConfig
+from GalTransl.Problem import normalize_problem_detail
 from GalTransl.Service import JobCancelledError
 from GalTransl.Backend.BaseEngine import register_engine
 from GalTransl.Backend.BaseFixRound import BaseImproveRound
@@ -370,7 +371,7 @@ class ForToneCheck(BaseImproveRound):
                 # 乱码 reason 视为输出异常：降级为默认标记，避免污染 tone_issue
                 reason = ""
             tran.tone_issue = (
-                str(reason).strip()
+                normalize_problem_detail(str(reason).strip())
                 if isinstance(reason, str) and str(reason).strip()
                 else "1"
             )
