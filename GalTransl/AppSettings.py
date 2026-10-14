@@ -4,6 +4,7 @@ import json
 import os
 from typing import Any
 
+from GalTransl import LOGGER
 from GalTransl.Utils import resolve_app_dir
 
 
@@ -90,10 +91,34 @@ def load_app_settings() -> dict[str, Any]:
         return dict(DEFAULT_APP_SETTINGS)
 
 
-def save_app_settings(settings: dict[str, Any]) -> dict[str, Any]:
+def _log_api_call_log_switch(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    payload: Any,
+    source: str,
+) -> None:
+    """记录 writeApiCallLog 的每次写盘（本模块是该键唯一的落盘路径）。
+
+    额外记录 payload 是否携带该键：缺键会经 _normalize_settings 回落为默认 false，
+    日志据此区分「显式写入」与「缺键回落」，便于排查开关被静默改回 false。
+    """
+    old = previous.get("writeApiCallLog", DEFAULT_APP_SETTINGS["writeApiCallLog"])
+    new = current["writeApiCallLog"]
+    explicit = isinstance(payload, dict) and "writeApiCallLog" in payload
+    detail = f"来源={source or '未知'}, 写盘数据含该键={explicit}"
+    if old == new:
+        LOGGER.debug(f"[AppSettings] writeApiCallLog 写盘（值未变）：{new}（{detail}）")
+    else:
+        LOGGER.info(f"[AppSettings] writeApiCallLog 变更：{old} -> {new}（{detail}）")
+
+
+def save_app_settings(settings: dict[str, Any], source: str = "") -> dict[str, Any]:
+    # 变更前值取自落盘文件（读取失败时按默认值口径），供开关变更日志比对
+    previous = load_app_settings()
     normalized = _normalize_settings(settings)
     tmp_path = _SETTINGS_PATH + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(normalized, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, _SETTINGS_PATH)
+    _log_api_call_log_switch(previous, normalized, settings, source)
     return normalized

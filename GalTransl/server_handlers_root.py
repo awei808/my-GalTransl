@@ -504,7 +504,7 @@ def do_put(handler: Any, registry: JobRegistry) -> None:
     if path == "/api/app-settings":
         try:
             payload = handler._read_json_body()
-            settings = AppSettings.save_app_settings(payload)
+            settings = AppSettings.save_app_settings(payload, source="PUT /api/app-settings")
             # 同步更新并发上限数值；线程池在下次 submit 时懒重建
             new_max = settings.get("maxConcurrentJobs")
             if isinstance(new_max, int) and new_max > 0 and new_max != registry._max_workers:
