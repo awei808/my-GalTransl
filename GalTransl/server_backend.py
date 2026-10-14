@@ -4,7 +4,7 @@
 - 全局 API 配置的读写（_BACKEND_PROFILES_PATH / _read_backend_profiles / _write_backend_profiles）；
 - 提示词模板默认值汇总（_DEFAULT_TRANSLATOR_PROMPTS / _build_prompt_templates_payload）；
 - 模型 / token 可用性检测（_check_model_availability / _check_stage_model_availability）；
-- 校对页 AI 建议的后端解析（_resolve_suggest_backend，含 _REVIEW_SUGGEST_LOCK）。
+- 校对页 AI 精修的后端解析（_resolve_suggest_backend，含 _REVIEW_SUGGEST_LOCK）。
 
 _REVIEW_SUGGEST_LOCK 与其使用者 _resolve_suggest_backend 同模块，避免状态与函数分离。
 """
@@ -21,7 +21,7 @@ from GalTransl import (
     ReviewAssist,
 )
 from GalTransl.COpenAI import COpenAITokenPool
-from GalTransl.ConfigHelper import CProjectConfig
+from GalTransl.ConfigHelper import CProjectConfig, resolve_stage_backend_profile
 from GalTransl.ConfigHelper import detect_config_file as _detect_config_file
 from GalTransl.Utils import resolve_app_dir
 from GalTransl.Backend.Prompts import (
@@ -215,51 +215,108 @@ _STAGE_CHECK_SKIP_MESSAGE = "与已检测的 API 配置相同，跳过重复检�
 
 
 class _SuggestConfigError(Exception):
-    """AI 建议的 API 配置不可用（无 token / 无可用 profile），映射为 400。"""
+    """AI 精修的 API 配置不可用（无 token / 无可用 profile / 槽位引用失效），映射为 400。"""
 
 
-# 校对页 AI 建议的全局单飞锁：同一时刻只允许一个请求在跑（防误触连发打爆 API）
+# 校对页 AI 精修的全局单飞锁：同一时刻只允许一个请求在跑（防误触连发打爆 API）
 _REVIEW_SUGGEST_LOCK = threading.Lock()
 
 
-def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str, str]:
-    """解析 AI 建议用的 (api_key, base_url, model)。
+# 校对页 AI 精修的后端槽位：common.stageBackends.proofread（「人工校对时 AI 精修」）
+_SUGGEST_STAGE_KEY = "proofread"
 
-    口径：请求携带的 profile_data → 请求携带的 profile 名 → 项目配置 backendSpecific
-    → 首个含 OpenAI-Compatible 的全局 profile。与 check-model / name-table 的
-    解析顺序保持一致，任何一步都跳过 -example- 示例 key。
+
+def _load_project_config(project_dir: str) -> "CProjectConfig | None":
+    """构造项目配置（供阶段槽位与项目主后端解析复用）；失败返回 None 并告警。"""
+    try:
+        resolved_config = _detect_config_file(project_dir)
+        cfg = CProjectConfig(project_dir, resolved_config)
+        cfg.non_interactive = True
+        return cfg
+    except Exception as exc:
+        # 配置读不出来就无法判定槽位是否已配置：留可见告警（面板会显示实际来源），不静默吞掉
+        LOGGER.warning(
+            f"AI 精修：读取项目配置失败，本次无法检查「人工校对时 AI 精修」槽位，"
+            f"将回退其它 API 配置: {exc}"
+        )
+        return None
+
+
+def _resolve_proofread_slot(cfg: Any, profiles: dict) -> tuple[dict | None, str, str]:
+    """解析 common.stageBackends.proofread 槽位。
+
+    Returns:
+        (oai_section, source_label, error)：未配置 → (None, "", "")；
+        已配置但引用失效 → (None, "", 可读错误文案)，由调用方 fail-fast。
+    """
+    if cfg is None:
+        return None, "", ""
+    stage_map = cfg.keyValues.get("stageBackends")
+    if not isinstance(stage_map, dict) or not stage_map:
+        return None, "", ""
+    name = str(stage_map.get(_SUGGEST_STAGE_KEY, "") or "").strip()
+    if not name:
+        return None, "", ""
+    profile, error = resolve_stage_backend_profile(_SUGGEST_STAGE_KEY, name, profiles)
+    if error:
+        return None, "", error
+    return profile.get("OpenAI-Compatible"), f"校对精修专用配置「{name}」", ""
+
+
+def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str, str, str]:
+    """解析 AI 精修用的 (api_key, base_url, model, source)。
+
+    口径：请求携带的 profile_data → 请求携带的 profile 名 → 校对精修专用槽位
+    common.stageBackends.proofread → 项目配置 backendSpecific → 首个含
+    OpenAI-Compatible 的全局 profile。与 check-model / name-table 的解析顺序保持
+    一致，任何一步都跳过 -example- 示例 key；槽位已配置但引用失效时直接报错，
+    不静默回退主配置（否则会在用户不知情时烧错 API）。
     """
     oai_section: dict | None = None
+    source = ""
+    profiles: dict = {}
     profile_data = payload.get("backend_profile_data")
     if isinstance(profile_data, dict) and profile_data:
         candidate = profile_data.get("OpenAI-Compatible")
         if isinstance(candidate, dict):
             oai_section = candidate
+            source = "请求指定配置"
     if oai_section is None:
-        profile_name = str(payload.get("backend_profile", "")).strip()
         profiles = _read_backend_profiles().get("profiles", {})
+        profile_name = str(payload.get("backend_profile", "")).strip()
         if profile_name:
-            candidate = profiles.get(profile_name, {}).get("OpenAI-Compatible")
+            named = profiles.get(profile_name)
+            candidate = named.get("OpenAI-Compatible") if isinstance(named, dict) else None
             if isinstance(candidate, dict):
                 oai_section = candidate
+                source = f"请求指定配置「{profile_name}」"
             else:
                 raise _SuggestConfigError(f"API 配置「{profile_name}」不存在或无 OpenAI-Compatible 段")
+    # 项目配置只读一次：阶段槽位与项目主后端共用同一份实例
+    cfg = None if oai_section is not None else _load_project_config(project_dir)
     if oai_section is None:
+        section, slot_source, slot_error = _resolve_proofread_slot(cfg, profiles)
+        if slot_error:
+            LOGGER.error(f"AI 精修配置错误: {slot_error}")
+            raise _SuggestConfigError(slot_error)
+        if isinstance(section, dict):
+            oai_section = section
+            source = slot_source
+    if oai_section is None and cfg is not None:
         # 项目自身的 backendSpecific（翻译任务实际使用的后端）
         try:
-            resolved_config = _detect_config_file(project_dir)
-            cfg = CProjectConfig(project_dir, resolved_config)
-            cfg.non_interactive = True
             candidate = cfg.getBackendConfigSection("OpenAI-Compatible")
             if isinstance(candidate, dict):
                 oai_section = candidate
-        except Exception:
-            oai_section = None
+                source = "项目主配置"
+        except Exception as exc:
+            LOGGER.warning(f"AI 精修：读取项目主后端配置失败，将回退全局 API 配置: {exc}")
     if oai_section is None:
-        for _name, _conf in _read_backend_profiles().get("profiles", {}).items():
-            candidate = _conf.get("OpenAI-Compatible") if isinstance(_conf, dict) else None
+        for name, conf in profiles.items():
+            candidate = conf.get("OpenAI-Compatible") if isinstance(conf, dict) else None
             if isinstance(candidate, dict):
                 oai_section = candidate
+                source = f"全局配置「{name}」"
                 break
     if not isinstance(oai_section, dict):
         raise _SuggestConfigError("未找到可用的 OpenAI 兼容 API 配置，请先在「API 配置」页添加")
@@ -274,7 +331,7 @@ def _resolve_suggest_backend(payload: dict, project_dir: str) -> tuple[str, str,
         or oai_section.get("rewriteModelName")
         or "gpt-4o-mini"
     )
-    return api_key, ReviewAssist.normalize_base_url(endpoint), model
+    return api_key, ReviewAssist.normalize_base_url(endpoint), model, source
 
 
 async def _check_stage_model_availability(

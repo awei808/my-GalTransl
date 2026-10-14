@@ -364,6 +364,20 @@
   white-space: nowrap; /* 文本单行显示，不被压缩换行 */
 }
 
+/* AI 精修常驻提示：不参与右对齐组（避免与 .review-jump-group 的 auto 外边距相互分流），
+   空间不足时先省略号收缩，不挤压其它控件 */
+.review-ai-hint {
+  margin-left: var(--space-2);
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  cursor: help;
+}
+
 .review-sort-btn {
   margin-left: var(--space-2);
 }

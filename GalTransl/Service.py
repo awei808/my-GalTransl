@@ -11,7 +11,7 @@ from typing import Any
 
 from GalTransl import LOGGER, resolve_translator_alias
 from GalTransl.Cache import cleanup_stale_cache_temp_files, compact_cache_append_logs
-from GalTransl.ConfigHelper import ALL_STAGE_BACKEND_KEYS, CProjectConfig
+from GalTransl.ConfigHelper import ALL_STAGE_BACKEND_KEYS, CProjectConfig, resolve_stage_backend_profile
 from GalTransl.Runner import run_galtransl
 from GalTransl.i18n import get_text, GT_LANG
 from GalTransl.AppSettings import load_app_settings
@@ -51,18 +51,11 @@ def _resolve_stage_backend_profiles(stage_map: Any, profiles: dict) -> dict:
                 f"stageBackends 含未知阶段键 '{stage_key}'，"
                 f"可用键：{', '.join(ALL_STAGE_BACKEND_KEYS)}"
             )
-        candidate = profiles.get(profile_name)
-        if not isinstance(candidate, dict):
-            raise ValueError(
-                f"stageBackends.{stage_key} 引用的 API 配置 '{profile_name}' 不存在，"
-                f"请在「API 配置」页检查（当前可用：{', '.join(sorted(profiles)) or '无'}）"
-            )
-        if not isinstance(candidate.get("OpenAI-Compatible"), dict):
-            raise ValueError(
-                f"stageBackends.{stage_key} 引用的 API 配置 '{profile_name}' "
-                f"缺少 OpenAI-Compatible 配置段"
-            )
-        resolved[stage_key] = candidate
+        candidate, error = resolve_stage_backend_profile(stage_key, profile_name, profiles)
+        if error:
+            raise ValueError(error)
+        if candidate is not None:
+            resolved[stage_key] = candidate
     return resolved
 
 

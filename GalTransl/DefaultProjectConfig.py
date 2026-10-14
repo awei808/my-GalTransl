@@ -104,7 +104,7 @@ common:
     batch_meta: "" # 阶段6 批次级元数据；留空时回退下方 metadata（旧键）
     translate: "" # 阶段7 翻译执行
     afterTrans: "" # 阶段8 修复和改进译文（全部后处理引擎）
-    proofread: "" # 人工校对时AI精修（功能预留，当前版本未实现）
+    proofread: "" # 人工校对时AI精修：校对页「AI 精修」（双击条目空白处）所用后端；留空=用任务主配置
     metadata: "" # [旧键] 元数据域统一后端：被上面 5 个元数据阶段作为回退目标，仅兼容旧项目保留
   # 调试日志
   loggingLevel: info # 日志输出级别：debug详细，info常规，warning仅警告。[debug/info/warning]

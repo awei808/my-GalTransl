@@ -1,10 +1,14 @@
-"""校对页单句 AI 建议端点（/review/ai-suggest）与 ReviewAssist 纯函数的行为验证。
+"""校对页单句 AI 精修端点（/review/ai-suggest）与 ReviewAssist 纯函数的行为验证。
 
 覆盖：
 - ReviewAssist 纯函数：提示词装配、建议提取（剥围栏/前缀/包裹引号）、
   端点规范化、真实 token 挑选；
 - HTTP 端点：正常建议（含提取）、条目不存在 404、非法路径 400、
-  空建议 502、单飞锁 409、翻译任务运行中 409。
+  空建议 502、单飞锁 409、翻译任务运行中 409；
+- 校对精修专用槽位 common.stageBackends.proofread：槽位生效（token/端点/来源）、
+  引用失效 400 且不调用 LLM、留空回退项目主配置、请求体指定优先于槽位、
+  请求体前后句与 draft 空串口径；
+- 槽位解析公共函数与 Service 任务期解析同口径（防两处漂移）。
 """
 
 import base64
@@ -23,6 +27,8 @@ from unittest.mock import patch
 from GalTransl import ReviewAssist
 from GalTransl import server as _server_mod  # noqa: F401  （保留：验证 re-export 面）
 from GalTransl import server_backend
+from GalTransl.ConfigHelper import resolve_stage_backend_profile
+from GalTransl.Service import _resolve_stage_backend_profiles
 
 _ENTRIES = [
     {"index": 1, "name": "創", "pre_src": "……そんな目で見るなよ", "pre_dst": "……别用那种眼神看我啊"},
@@ -182,6 +188,205 @@ class ReviewAiSuggestHttpTests(unittest.TestCase):
             self.assertEqual(status, 409)
         finally:
             del self.registry._jobs["fake-job"]
+
+
+_SLOT_PROFILES = {
+    "profiles": {
+        "精修配置": {
+            "OpenAI-Compatible": {
+                "tokens": [
+                    {
+                        "token": "sk-fix",
+                        "endpoint": "https://fix.example.com",
+                        "modelName": "fix-model",
+                    }
+                ]
+            }
+        },
+        "请求配置": {
+            "OpenAI-Compatible": {
+                "tokens": [
+                    {
+                        "token": "sk-req",
+                        "endpoint": "https://req.example.com",
+                        "modelName": "req-model",
+                    }
+                ]
+            }
+        },
+    }
+}
+
+# 项目配置：主后端（backendSpecific）+ 校对精修槽位（common.stageBackends.proofread）
+_CONFIG_TEMPLATE = """backendSpecific:
+  OpenAI-Compatible:
+    tokens:
+      - token: sk-main
+        endpoint: https://main.example.com
+        modelName: main-model
+common:
+  stageBackends:
+    proofread: {slot}
+"""
+
+
+class StageSlotSharedResolutionTests(unittest.TestCase):
+    """公共解析函数与 Service 任务期解析同口径（防两处判定漂移）。"""
+
+    def test_service_and_shared_helper_agree_on_missing_profile(self) -> None:
+        profiles = {"存在": _PROFILE_DATA}
+        with self.assertRaises(ValueError) as ctx:
+            _resolve_stage_backend_profiles({"proofread": "不存在"}, profiles)
+        profile, error = resolve_stage_backend_profile("proofread", "不存在", profiles)
+        self.assertIsNone(profile)
+        self.assertEqual(str(ctx.exception), error)
+
+    def test_shared_helper_skips_blank_and_reports_missing_section(self) -> None:
+        self.assertEqual(
+            resolve_stage_backend_profile("proofread", "   ", {"p": _PROFILE_DATA}),
+            (None, ""),
+        )
+        profile, error = resolve_stage_backend_profile("proofread", "p", {"p": {}})
+        self.assertIsNone(profile)
+        self.assertIn("OpenAI-Compatible", error)
+
+    def test_shared_helper_returns_profile_when_valid(self) -> None:
+        profile, error = resolve_stage_backend_profile("proofread", "p", {"p": _PROFILE_DATA})
+        self.assertEqual(error, "")
+        self.assertEqual(profile, _PROFILE_DATA)
+
+
+class ReviewAiSuggestStageSlotTests(unittest.TestCase):
+    """校对精修专用槽位 common.stageBackends.proofread 的端点行为。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmpdir = tempfile.mkdtemp(prefix="gt_ai_slot_")
+        pass3 = os.path.join(cls.tmpdir, "transl_cache", "pass3_cache")
+        os.makedirs(pass3)
+        with open(os.path.join(pass3, "t01.txt.json"), "wb") as f:
+            f.write(json.dumps(_ENTRIES, ensure_ascii=False).encode("utf-8"))
+        cls._saved_token = os.environ.pop("GALTRANSL_API_TOKEN", None)
+        importlib.reload(_server_mod)
+        cls.registry = _server_mod.JobRegistry()
+        cls.server = _server_mod.ThreadingHTTPServer(
+            ("127.0.0.1", 0), _server_mod.build_handler(cls.registry)
+        )
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        if cls._saved_token is not None:
+            os.environ["GALTRANSL_API_TOKEN"] = cls._saved_token
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def _write_config(self, slot: str) -> None:
+        path = os.path.join(self.tmpdir, "config.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_CONFIG_TEMPLATE.format(slot=json.dumps(slot, ensure_ascii=False)))
+
+    def _pid(self) -> str:
+        return base64.urlsafe_b64encode(self.tmpdir.encode("utf-8")).decode("ascii")
+
+    def _post(self, body: dict) -> tuple[int, dict]:
+        url = f"http://127.0.0.1:{self.port}/api/projects/{self._pid()}/review/ai-suggest"
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8") or "{}")
+
+    def _suggest_body(self, **overrides) -> dict:
+        body = {"file": "pass3_cache/t01.txt.json", "index": 2}
+        body.update(overrides)
+        return body
+
+    def test_slot_profile_is_used_and_reported_as_source(self) -> None:
+        self._write_config("精修配置")
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value=_SLOT_PROFILES
+        ), patch.object(
+            ReviewAssist, "request_suggestion", return_value="精修后的译文"
+        ) as mock_call:
+            status, data = self._post(self._suggest_body())
+        self.assertEqual(status, 200)
+        self.assertEqual(data["suggestion"], "精修后的译文")
+        self.assertEqual(data["model"], "fix-model")
+        self.assertEqual(data["source"], "校对精修专用配置「精修配置」")
+        # 走的确实是槽位配置的 token 与端点（而非项目主配置 sk-main）
+        self.assertEqual(mock_call.call_args.kwargs.get("api_key"), "sk-fix")
+        self.assertEqual(mock_call.call_args.kwargs.get("base_url"), "https://fix.example.com/v1")
+
+    def test_broken_slot_reference_returns_400_without_llm_call(self) -> None:
+        self._write_config("不存在的配置")
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value=_SLOT_PROFILES
+        ), patch.object(ReviewAssist, "request_suggestion") as mock_call:
+            status, data = self._post(self._suggest_body())
+        self.assertEqual(status, 400)
+        self.assertIn("stageBackends.proofread", data.get("error", ""))
+        mock_call.assert_not_called()
+
+    def test_empty_slot_falls_back_to_project_main_backend(self) -> None:
+        self._write_config("")
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value=_SLOT_PROFILES
+        ), patch.object(ReviewAssist, "request_suggestion", return_value="ok"):
+            status, data = self._post(self._suggest_body())
+        self.assertEqual(status, 200)
+        self.assertEqual(data["source"], "项目主配置")
+        self.assertEqual(data["model"], "main-model")
+
+    def test_payload_profile_overrides_slot(self) -> None:
+        self._write_config("精修配置")
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value=_SLOT_PROFILES
+        ), patch.object(ReviewAssist, "request_suggestion", return_value="ok"):
+            status, data = self._post(self._suggest_body(backend_profile="请求配置"))
+        self.assertEqual(status, 200)
+        self.assertEqual(data["source"], "请求指定配置「请求配置」")
+        self.assertEqual(data["model"], "req-model")
+
+    def test_payload_prev_next_used_and_empty_draft_means_untranslated(self) -> None:
+        self._write_config("")
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value=_SLOT_PROFILES
+        ), patch.object(
+            ReviewAssist, "request_suggestion", return_value="ok"
+        ) as mock_call:
+            status, _ = self._post(
+                self._suggest_body(draft="", prev_dst="内存上句", next_dst="内存下句")
+            )
+        self.assertEqual(status, 200)
+        sent = mock_call.call_args.kwargs.get("messages") or mock_call.call_args[0][0]
+        content = sent[1]["content"]
+        # draft 空串 = 校对员已清空 → 按未翻译，而不是回退磁盘上的「早上好」
+        self.assertIn("尚未翻译", content)
+        self.assertNotIn("早上好", content)
+        self.assertIn("内存上句", content)
+        self.assertIn("内存下句", content)
+
+    def test_disk_context_used_when_payload_omits_neighbours(self) -> None:
+        self._write_config("")
+        with patch.object(
+            server_backend, "_read_backend_profiles", return_value=_SLOT_PROFILES
+        ), patch.object(
+            ReviewAssist, "request_suggestion", return_value="ok"
+        ) as mock_call:
+            status, _ = self._post(self._suggest_body())
+        self.assertEqual(status, 200)
+        sent = mock_call.call_args.kwargs.get("messages") or mock_call.call_args[0][0]
+        content = sent[1]["content"]
+        # 缺 prev_dst/next_dst 时回退磁盘：#1「……别用那种眼神看我啊」/#3「走吧」
+        self.assertIn("别用那种眼神看我啊", content)
+        self.assertIn("走吧", content)
 
 
 if __name__ == "__main__":

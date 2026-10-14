@@ -67,7 +67,7 @@
   color: #d8dee7;
 }
 
-/* AI 建议面板：双击条目空白处发起，采纳后写入备选译文 */
+/* AI 精修面板：双击条目空白处发起，采纳后写入备选译文 */
 .suggest-panel {
   margin-top: var(--space-1);
   border: 1px solid var(--color-border-default);
@@ -86,6 +86,19 @@
   font-size: var(--font-sm);
   font-weight: 600;
   color: var(--color-text-secondary);
+}
+
+/* 后端来源徽标：长配置名不撑破面板头，超出省略 */
+.suggest-panel-source {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-xs);
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
 }
 
 .suggest-panel-model {

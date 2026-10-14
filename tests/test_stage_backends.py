@@ -88,8 +88,8 @@ class ResolveStageBackendProfilesTests(unittest.TestCase):
             _resolve_stage_backend_profiles({"metadata": "pBad"}, {"pBad": {"proxy": {}}})
         self.assertIn("OpenAI-Compatible", str(ctx.exception))
 
-    def test_reserved_proofread_key_accepted(self) -> None:
-        # proofread 为预留键：合法解析保存，供后续版本消费
+    def test_proofread_key_accepted(self) -> None:
+        # proofread 为校对页 AI 精修槽位（0.6.0 起由 /review/ai-suggest 消费）：合法解析保存
         resolved = _resolve_stage_backend_profiles(
             {"proofread": "pA"}, {"pA": _profile()}
         )

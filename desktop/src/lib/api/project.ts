@@ -446,18 +446,25 @@ export async function checkCacheProblems(
   });
 }
 
-/** 校对页单句 AI 建议译文（一次性，不落盘）。LLM 生成较慢，放宽超时到 120s */
+/** 校对页单句 AI 精修（一次性，不落盘）。LLM 生成较慢，超时放宽到 135s（略高于服务端 120s，避免客户端先断） */
 export async function requestAiSuggest(
   projectId: string,
-  body: { file: string; index: number; draft?: string; instruction?: string },
+  body: {
+    file: string;
+    index: number;
+    draft?: string;
+    prev_dst?: string;
+    next_dst?: string;
+    instruction?: string;
+  },
 ) {
-  return apiRequest<{ suggestion: string; model: string }>(
+  return apiRequest<{ suggestion: string; model: string; source?: string }>(
     `/api/projects/${projectId}/review/ai-suggest`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      timeoutMs: 120000,
+      timeoutMs: 135000,
     },
   );
 }

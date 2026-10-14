@@ -364,7 +364,7 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             handler._send_json({"error": f"打开文件管理器失败: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
         return
 
-    # POST /api/projects/:id/review/ai-suggest — 校对页单句 AI 建议译文（一次性，不落盘）
+    # POST /api/projects/:id/review/ai-suggest — 校对页单句 AI 精修（一次性，不落盘）
     if sub_path == "/review/ai-suggest":
         if handler.command != "POST":
             handler._send_json({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
@@ -376,7 +376,10 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             return
         file_name = str(payload.get("file", "")).strip()
         instruction = str(payload.get("instruction", "") or "").strip()
-        draft = str(payload.get("draft", "") or "")
+        # draft 键存在即按原值使用（空串 = 校对员已清空该句，按"未翻译"交给 AI）；
+        # 缺键才回退磁盘译文，避免清空后仍把旧译文当"当前译文"送进提示词
+        draft_raw = payload.get("draft", None)
+        draft = draft_raw if isinstance(draft_raw, str) else None
         try:
             index = int(payload.get("index"))
         except (TypeError, ValueError):
@@ -386,10 +389,11 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             handler._send_json({"error": "missing file"}, status=HTTPStatus.BAD_REQUEST)
             return
         if registry._has_running_job_for_project(project_dir):
-            handler._send_json({"error": "翻译任务运行中，请先停止任务再使用 AI 建议"}, status=HTTPStatus.CONFLICT)
+            handler._send_json({"error": "翻译任务运行中，请先停止任务再使用 AI 精修"}, status=HTTPStatus.CONFLICT)
             return
         if not _REVIEW_SUGGEST_LOCK.acquire(blocking=False):
-            handler._send_json({"error": "已有一个 AI 建议请求进行中，请稍候"}, status=HTTPStatus.CONFLICT)
+            LOGGER.debug(f"AI 精修：已有请求进行中，拒绝并发请求 {file_name}#{index}")
+            handler._send_json({"error": "已有一个 AI 精修请求进行中，请稍候"}, status=HTTPStatus.CONFLICT)
             return
         try:
             # 读缓存条目（路径穿越防护与 /cache/:filename 一致）
@@ -430,15 +434,36 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             prev_entry = cache_entries[pos - 1] if pos > 0 else {}
             next_entry = cache_entries[pos + 1] if pos + 1 < len(cache_entries) else {}
 
-            api_key, base_url, model = _resolve_suggest_backend(payload, project_dir)
+            api_key, base_url, model, source = _resolve_suggest_backend(payload, project_dir)
+            src_text = str(entry.get("pre_src", "") or "")
+            problem_text = str(entry.get("problem", "") or "")
+            doub_text = str(entry.get("doub_content", "") or "")
+            # 前后句优先取请求体（前端传内存中的条目，避免未保存编辑导致上下文陈旧）；
+            # 缺键才回退磁盘缓存中的前后句
+            prev_raw = payload.get("prev_dst", None)
+            next_raw = payload.get("next_dst", None)
+            prev_dst = (
+                prev_raw if isinstance(prev_raw, str)
+                else str(prev_entry.get("pre_dst", "") or "")
+            )
+            next_dst = (
+                next_raw if isinstance(next_raw, str)
+                else str(next_entry.get("pre_dst", "") or "")
+            )
+            disk_dst = str(entry.get("proofread_dst", "") or entry.get("pre_dst", "") or "")
             messages = ReviewAssist.build_suggest_messages(
-                str(entry.get("pre_src", "") or ""),
-                draft if draft else str(entry.get("proofread_dst", "") or entry.get("pre_dst", "") or ""),
-                prev_dst=str(prev_entry.get("pre_dst", "") or ""),
-                next_dst=str(next_entry.get("pre_dst", "") or ""),
-                problem=str(entry.get("problem", "") or ""),
-                doub_content=str(entry.get("doub_content", "") or ""),
+                src_text,
+                draft if draft is not None else disk_dst,
+                prev_dst=prev_dst,
+                next_dst=next_dst,
+                problem=problem_text,
+                doub_content=doub_text,
                 instruction=instruction,
+            )
+            LOGGER.debug(
+                f"AI 精修上下文: {norm}#{index} 原文={len(src_text)} 字"
+                f" 已检出问题={bool(problem_text)} 存疑内容={bool(doub_text)}"
+                f" 前句={bool(prev_dst)} 后句={bool(next_dst)} 补充要求={len(instruction)} 字"
             )
             raw = ReviewAssist.request_suggestion(
                 messages, api_key=api_key, base_url=base_url, model=model
@@ -447,13 +472,15 @@ def route_project_api(handler: Any, registry: JobRegistry, project_id: str, sub_
             if not suggestion:
                 handler._send_json({"error": "AI 返回了空建议，请重试"}, status=HTTPStatus.BAD_GATEWAY)
                 return
-            LOGGER.info(f"AI 建议: {norm}#{index} model={model} 建议 {len(suggestion)} 字")
-            handler._send_json({"suggestion": suggestion, "model": model})
+            LOGGER.info(
+                f"AI 精修: {norm}#{index} 来源={source} model={model} 建议 {len(suggestion)} 字"
+            )
+            handler._send_json({"suggestion": suggestion, "model": model, "source": source})
         except _SuggestConfigError as exc:
             handler._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:
-            LOGGER.warning(f"AI 建议失败: {file_name}#{index}: {exc}")
-            handler._send_json({"error": f"AI 建议失败: {exc}"}, status=HTTPStatus.BAD_GATEWAY)
+            LOGGER.warning(f"AI 精修失败: {file_name}#{index}: {exc}")
+            handler._send_json({"error": f"AI 精修失败: {exc}"}, status=HTTPStatus.BAD_GATEWAY)
         finally:
             _REVIEW_SUGGEST_LOCK.release()
         return

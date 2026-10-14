@@ -137,7 +137,7 @@ export function ReviewPage() {
   let lastSaveFailed = false;
   // 元数据切换令牌：每次 effect 触发递增，过期切换闭包（保存/加载响应）直接丢弃
   let metaSwitchToken = 0;
-  // 「双击获取 AI 建议」一次性提示的定时器（卸载时清理，避免对已卸载组件弹 toast）
+  // 「双击 AI 精修」一次性提示的定时器（卸载时清理，避免对已卸载组件弹 toast）
   let aiSuggestTipTimer: ReturnType<typeof setTimeout> | undefined;
   // 非法 JSON 已提示标志：连续非法输入只提示一次，避免 onInput 逐键 toast 轰炸
   let metaJsonInvalidShown = false;
@@ -264,10 +264,10 @@ export function ReviewPage() {
     void fetchProblemTypes().then((r) => {
       if (r) setProblemTypes(r);
     });
-    // 双击空白处获取 AI 建议是隐藏交互，首次进入延后一次性提示（不干扰首屏其他 toast）
+    // 双击空白处 AI 精修是隐藏交互，首次进入延后一次性提示（顶部常驻提示见工具栏）
     if (!getAiSuggestTipShown()) {
       aiSuggestTipTimer = setTimeout(() => {
-        toast.info("小技巧：双击条目空白处，可让 AI 给出该句的建议译文");
+        toast.info("小技巧：双击条目空白处，可让 AI 精修该句译文");
         setAiSuggestTipShown();
       }, 1500);
     }
@@ -1306,13 +1306,14 @@ export function ReviewPage() {
     entriesRev++;
   }
 
-  // ── AI 建议面板（单句，一次性调用，不落盘；采纳写入 alt_dst）──
+  // ── AI 精修面板（单句，一次性调用，不落盘；采纳写入 alt_dst）──
   const [suggestIndex, setSuggestIndex] = createSignal<number | null>(null);
   const [suggestPanel, setSuggestPanel] = createSignal<{
     loading: boolean;
     text: string;
     error: string;
     model: string;
+    source: string;
     currentDst: string;
   } | null>(null);
   // 过期响应丢弃计数：连点/切文件时旧响应不回填面板
@@ -1339,12 +1340,24 @@ export function ReviewPage() {
     }
     const seq = ++suggestSeq;
     setSuggestIndex(serial);
-    setSuggestPanel({ loading: true, text: "", error: "", model: "", currentDst });
+    setSuggestPanel({ loading: true, text: "", error: "", model: "", source: "", currentDst });
+    // 前后句取内存条目（未保存的校对改动也能被 AI 看到）；按数组位置取，条目删除后依然正确。
+    // 未命中内存条目（异常情形）时不发该键，由后端回退磁盘上下文
+    const all = entries();
+    const pos = all.findIndex((e) => e.index === serial);
+    const context =
+      pos < 0
+        ? {}
+        : {
+            prev_dst: pos > 0 ? String(all[pos - 1].pre_dst ?? "") : "",
+            next_dst: pos + 1 < all.length ? String(all[pos + 1].pre_dst ?? "") : "",
+          };
     try {
       const res = await requestAiSuggest(pid, {
         file,
         index: serial,
-        draft: currentDst || undefined,
+        draft: currentDst,
+        ...context,
         instruction: instruction || undefined,
       });
       if (seq !== suggestSeq) return; // 过期响应（已关闭/已重新发起）
@@ -1353,13 +1366,14 @@ export function ReviewPage() {
         text: res.suggestion,
         error: "",
         model: res.model,
+        source: res.source ?? "",
         currentDst,
       });
     } catch (err) {
       if (seq !== suggestSeq) return;
       const msg = getErrorMessage(err);
-      setSuggestPanel({ loading: false, text: "", error: msg, model: "", currentDst });
-      toast.error(`AI 建议失败：${msg}`);
+      setSuggestPanel({ loading: false, text: "", error: msg, model: "", source: "", currentDst });
+      toast.error(`AI 精修失败：${msg}`);
     }
   }
 
@@ -1376,12 +1390,12 @@ export function ReviewPage() {
     // 与当前备选译文相同（按换行规范化比较）时 handleFieldChange 幂等跳过，这里如实提示
     const current = entries().find((e) => e.index === serial);
     if (normNewlines(String(current?.alt_dst ?? "")) === normNewlines(panel.text)) {
-      toast.info("AI 建议与当前备选译文相同");
+      toast.info("AI 精修结果与当前备选译文相同");
       return;
     }
     // 走统一字段修改链路：自动入撤销栈、标脏
     handleFieldChange(serial, "alt_dst", panel.text);
-    toast.success("AI 建议已写入备选译文");
+    toast.success("AI 精修结果已写入备选译文");
   }
 
   function handleJump() {
@@ -1791,6 +1805,14 @@ export function ReviewPage() {
               {metaSaving() ? "保存中…" : "保存"}
             </button>
           </Show>
+        </Show>
+        <Show when={reviewMode() === "translate"}>
+          <span
+            class="review-ai-hint"
+            title="AI 精修：双击条目空白处，让 AI 依据原文、当前译文与上下文给出改进译文，采纳后写入备选译文。所用后端取项目设置「人工校对时 AI 精修」(common.stageBackends.proofread)，留空则跟随任务主配置。"
+          >
+            ✦ AI 精修：双击条目空白处
+          </span>
         </Show>
         <GuideLink guide="04-review.md" />
       </div>

@@ -2,7 +2,7 @@
  * 单条 CacheEntry 卡片（0.4.10 从 ReviewPage.tsx 抽出）。
  *
  * 译文条目的完整交互：主译文草稿（失焦提交）、展开字段编辑、
- * 跳过检查、删除、AI 建议面板、问题标记、角色名彩色标签。
+ * 跳过检查、删除、AI 精修面板、问题标记、角色名彩色标签。
  */
 import { createSignal, createEffect, createMemo, Show } from "solid-js";
 import type { CacheEntry } from "../../lib/api/types";
@@ -25,12 +25,14 @@ export function EntryCard(props: {
   onFocusChange?: (focused: boolean) => void;
   // 角色名替换表（仅显示层使用，不写入缓存）
   nameDict: Record<string, string>;
-  // AI 建议面板（仅当前条目非 null）：父级发起请求并持有状态
+  // AI 精修面板（仅当前条目非 null）：父级发起请求并持有状态
   suggestPanel?: {
     loading: boolean;
     text: string;
     error: string;
     model: string;
+    // 后端来源（如「校对精修专用配置「X」」）；缺省时不显示来源徽标
+    source?: string;
   } | null;
   onRequestSuggest?: (currentDst: string) => void;
   onSuggestAccept?: () => void;
@@ -122,9 +124,9 @@ export function EntryCard(props: {
     };
   }
 
-  // AI 建议面板的补充要求草稿（重新生成时传给父级）
+  // AI 精修面板的补充要求草稿（重新生成时传给父级）
   const [suggestInstruction, setSuggestInstruction] = createSignal("");
-  // 双击条目空白处发起 AI 建议：文本区/输入框/按钮/原文区不算空白（双击常用于选词）
+  // 双击条目空白处发起 AI 精修：文本区/输入框/按钮/原文区不算空白（双击常用于选词）
   function handleCardDblClick(ev: MouseEvent) {
     const el = ev.target as HTMLElement;
     if (el.closest("textarea, input, button, select, a, .entry-src, .entry-problem-text")) return;
@@ -296,18 +298,23 @@ export function EntryCard(props: {
           </button>
         </div>
 
-        {/* AI 建议面板：双击空白处发起，采纳后写入 alt_dst 走既有交换/撤销链路 */}
+        {/* AI 精修面板：双击空白处发起，采纳后写入 alt_dst 走既有交换/撤销链路 */}
         <Show when={props.suggestPanel}>
           <div class="suggest-panel">
             <div class="suggest-panel-head">
-              <span class="suggest-panel-title">AI 建议译文</span>
+              <span class="suggest-panel-title">AI 精修</span>
+              <Show when={props.suggestPanel!.source}>
+                <span class="suggest-panel-source" title="本次请求使用的后端来源（项目设置「人工校对时 AI 精修」）">
+                  {props.suggestPanel!.source}
+                </span>
+              </Show>
               <Show when={props.suggestPanel!.model}>
                 <span class="suggest-panel-model" title="生成所用模型">{props.suggestPanel!.model}</span>
               </Show>
               <button
                 type="button"
                 class="suggest-panel-close"
-                title="关闭建议面板"
+                title="关闭精修面板"
                 onClick={() => props.onSuggestClose?.()}
               >
                 ✕

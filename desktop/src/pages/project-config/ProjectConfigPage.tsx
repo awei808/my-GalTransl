@@ -546,7 +546,7 @@ const FIXED_CARD_SEARCH_TEXT: Record<FixedCardKind, string> = {
   afterTranslation:
     "翻译后处理后端 阶段8 执行顺序 common.gpt.afterTranslation improve brfix jpfix banfix semcheck fix 备选译文 疑似错误",
   stageBackends:
-    "大阶段独立 API 接入 common.stageBackends API 配置 元数据阶段 翻译执行 修复改进 全局分析 术语表 文件级元数据 剧情路线图 批次划分 跟随任务主配置",
+    "大阶段独立 API 接入 common.stageBackends API 配置 元数据阶段 翻译执行 修复改进 全局分析 术语表 文件级元数据 剧情路线图 批次划分 校对精修 AI 精修 人工校对 proofread 跟随任务主配置",
   problemAnalyze:
     "问题检测 problemAnalyze 检测项 平均分句长度阈值 单句过长 定语过长 状语过长 H场景 阈值 启用检测项",
 };
@@ -1508,7 +1508,7 @@ export function ProjectConfigPage() {
         </div>
       );
     }
-    // kind === "stageBackends"：每大阶段独立 API（元数据/翻译/AI初步处理/预留校对精修）
+    // kind === "stageBackends"：每大阶段独立 API（元数据/翻译/AI初步处理/校对精修）
     if (kind === "stageBackends") {
       const stageValue = () => stageBackendsValue();
       return (

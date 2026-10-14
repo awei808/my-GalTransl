@@ -75,11 +75,14 @@ describe("buildStageBackendFields 后端清单可达", () => {
     expect(f?.desc).toBe("后端槽位：brand_new");
   });
 
-  it("末尾始终保留旧键 metadata 与预留 proofread", () => {
+  it("末尾始终保留旧键 metadata 与校对精修 proofread（已落地，不再是预留项）", () => {
     const fields = buildStageBackendFields(BACKEND_STAGES);
     const tail = fields.slice(-2).map((f) => f.key);
     expect(tail).toEqual(["proofread", "metadata"]);
-    expect(fields.find((f) => f.key === "proofread")?.reserved).toBe(true);
+    const proofread = fields.find((f) => f.key === "proofread");
+    expect(proofread?.reserved).toBeFalsy();
+    expect(proofread?.label).toBe("人工校对时 AI 精修");
+    expect(proofread?.desc).toContain("AI 精修");
   });
 });
 

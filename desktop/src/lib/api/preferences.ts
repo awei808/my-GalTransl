@@ -682,7 +682,7 @@ export function setGitSuggestAcknowledged(projectId: string): void {
   }
 }
 
-// ---- 校对页「双击获取 AI 建议」一次性提示（本机记录，提示过就不再弹） ----
+// ---- 校对页「双击条目空白处用 AI 精修」一次性提示（本机记录，提示过就不再弹） ----
 
 const AI_SUGGEST_TIP_KEY = "galtransl:ai-suggest-tip";
 

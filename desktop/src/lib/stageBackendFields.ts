@@ -24,7 +24,11 @@ export const LEGACY_STAGE_BACKEND_FIELDS: StageBackendField[] = [
     label: "修复和改进译文",
     desc: "阶段 8 全部后处理引擎（改进轮/换行修复/色彩检查/语义检测等）",
   },
-  { key: "proofread", label: "人工校对时 AI 精修", desc: "功能预留，当前版本未实现", reserved: true },
+  {
+    key: "proofread",
+    label: "人工校对时 AI 精修",
+    desc: "校对页「AI 精修」所用后端（双击条目空白处发起）；留空跟随任务主配置",
+  },
   {
     key: "metadata",
     label: "元数据阶段（旧键·回退）",

@@ -1,4 +1,4 @@
-"""校对页单句 AI 建议：上下文装配、提示词构建与 LLM 调用。
+"""校对页单句 AI 精修：上下文装配、提示词构建与 LLM 调用。
 
 与 HTTP 解耦的纯逻辑模块：server 端点只做参数校验、单飞与缓存读取；
 build_suggest_messages / request_suggestion / extract_suggestion 可被
@@ -11,7 +11,7 @@ from typing import Any
 
 from GalTransl import LOGGER
 
-# 单次建议请求的默认超时（秒）：单句生成通常很快，留足慢模型/推理模型的余量
+# 单次精修请求的默认超时（秒）：单句生成通常很快，留足慢模型/推理模型的余量
 DEFAULT_SUGGEST_TIMEOUT = 120
 
 # 回复开头常见的说明性前缀（剥掉后才是译文本身）
@@ -97,7 +97,7 @@ def request_suggestion(
     resp = client.chat.completions.create(model=model, messages=messages)
     content = resp.choices[0].message.content or "" if resp.choices else ""
     LOGGER.info(
-        f"AI 建议请求完成: model={model} 耗时={time.time() - start:.1f}s 回复长度={len(content)}"
+        f"AI 精修请求完成: model={model} 耗时={time.time() - start:.1f}s 回复长度={len(content)}"
     )
     return content
 

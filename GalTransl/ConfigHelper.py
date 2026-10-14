@@ -18,7 +18,7 @@ import os
 import yaml
 from httpx import AsyncClient, TimeoutException
 from time import time
-from typing import Optional
+from typing import Any, Optional
 from random import choice
 from yaml import safe_load
 from os import path, sep
@@ -188,6 +188,39 @@ STAGE_BACKEND_FALLBACKS: dict = {
     "afterTrans": "",
     "proofread": "",
 }
+
+
+def resolve_stage_backend_profile(
+    stage_key: str, profile_name: Any, profiles: dict
+) -> tuple[dict | None, str]:
+    """解析单个阶段槽位（common.stageBackends.<stage_key>）引用的全局 API 配置。
+
+    任务启动期（Service）与请求期（校对页 AI 精修）共用同一口径，避免两处判定漂移。
+
+    Args:
+        stage_key: 阶段键（如 "proofread"），仅用于拼接错误文案。
+        profile_name: 槽位值（全局 API 配置名）；空/空白视为未配置。
+        profiles: backend_profiles.yaml 的 profiles 段。
+
+    Returns:
+        (profile, error)：未配置时为 (None, "")；引用不存在或缺 OpenAI-Compatible
+        段时为 (None, 中文错误文案)，由调用方决定 fail-fast 还是回退。
+    """
+    name = str(profile_name or "").strip()
+    if not name:
+        return None, ""
+    candidate = profiles.get(name) if isinstance(profiles, dict) else None
+    if not isinstance(candidate, dict):
+        return None, (
+            f"stageBackends.{stage_key} 引用的 API 配置 '{name}' 不存在，"
+            f"请在「API 配置」页检查（当前可用：{', '.join(sorted(profiles)) or '无'}）"
+        )
+    if not isinstance(candidate.get("OpenAI-Compatible"), dict):
+        return None, (
+            f"stageBackends.{stage_key} 引用的 API 配置 '{name}' "
+            f"缺少 OpenAI-Compatible 配置段"
+        )
+    return candidate, ""
 
 
 # problemAnalyze 各阈值默认值：检测侧 getter、提示词注入与桌面端表单回退共用同一份真源
