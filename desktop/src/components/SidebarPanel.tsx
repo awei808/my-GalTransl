@@ -11,7 +11,7 @@ import { buildReplaceUndoEntries } from "../lib/replaceUndo";
 import { confirm } from "../stores/confirmStore";
 import { startCacheWatcher, stopCacheWatcher } from "../lib/cacheWatcher";
 import { getErrorMessage } from "../lib/errors";
-import { problemTypesOf } from "../lib/problems";
+import { countProblemTypes, problemTypesOf } from "../lib/problems";
 import { fetchProblemTypes } from "../lib/api/general";
 import { ProblemTypeFilterDropdown } from "./ProblemTypeFilterDropdown";
 import type {
@@ -674,16 +674,8 @@ function ProblemList() {
       .catch(() => {});
   });
 
-  // 各类型出现次数统计
-  const typeCounts = createMemo(() => {
-    const map = new Map<string, number>();
-    for (const p of problems()) {
-      for (const t of problemTypesOf(p.problem)) {
-        map.set(t, (map.get(t) ?? 0) + 1);
-      }
-    }
-    return map;
-  });
+  // 各类型条目数统计（与上方总数同口径：problem 非空的条目数，条目内同类型只计一次）
+  const typeCounts = createMemo(() => countProblemTypes(problems()));
 
   // 按类型筛选后的问题列表（多选 AND 语义：须同时命中所有勾选类型，与校对审核页一致）
   const filteredProblems = createMemo(() => {
@@ -850,14 +842,20 @@ function ProblemList() {
       </div>
       <div class="sidebar-content">
         <Show when={problems().length > 0}>
-          {/* 统计条：总数 + 各类型计数 */}
+          {/* 统计条：条目总数 + 各类型条目数（problem 非空的条数口径，条目内同类型只计一次） */}
           <div class="problem-stats">
-            <span class="problem-stats-total">共 {problems().length} 处</span>
+            <span
+              class="problem-stats-total"
+              title="统计口径：problem 非空的条目数（一条译文可命中多个类型，故各类型条目数之和可能大于此数）"
+            >
+              共 {problems().length} 条
+            </span>
             <For each={[...typeCounts().entries()]}>
               {([t, n]) => (
                 <span
                   class="problem-stat-chip"
                   style={{ color: typeColor(t) }}
+                  title={`含该类型的条目数：${n}`}
                   onClick={() => {
                     // 统计条点击为多选 toggle：与下拉框选中状态联动
                     const cur = filterTypes();
