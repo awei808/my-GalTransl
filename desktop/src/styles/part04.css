@@ -438,12 +438,18 @@
   color: var(--color-text-primary);
 }
 
+/* 简要描述最多两行，超出以省略号收尾；完整文本由 span 的 title 悬浮展示 */
 .mcp-tool-desc {
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.5;
+  max-height: calc(1.5em * 2);
+  overflow-wrap: break-word;
+  cursor: help;
 }
 
 /* ── 问题检测项 ── */
