@@ -21,8 +21,14 @@ import unittest
 import urllib.error
 import urllib.request
 
+from GalTransl import AppSettings
 from GalTransl import server as _server_mod
+from GalTransl import server_backend
 from GalTransl.server_runtime import encode_project_dir
+
+# _start_server 会把两类全局配置钉到临时目录（见该函数注释），class 结束还原
+_ORIGINAL_SETTINGS_PATH = AppSettings._SETTINGS_PATH
+_ORIGINAL_PROFILES_PATH = server_backend._BACKEND_PROFILES_PATH
 
 # 允许的返回码（500 之外的任何"正常"响应）。
 # 502/504：/api/openai-models 等会转发上游请求的路由，上游不可达时返回网关错误，
@@ -87,6 +93,17 @@ PROJECT_ROUTES = [
 
 
 def _start_server(workspace_root: str):
+    # 两类全局配置（app_settings.json / backend_profiles.yaml）钉到临时目录：本文件用
+    # 最小请求探测全部路由，其中 PUT /api/app-settings 是**整份覆写**语义，落到真实
+    # 程序目录会把开发机的 app_settings.json 清成默认值（实测静默关掉 writeApiCallLog，
+    # 并抹掉 maxConcurrentJobs / mcpDisabledTools 等）。
+    # 注：pytest 下逐用例的保护主要来自 conftest 的 _isolate_app_settings_file——
+    # function 作用域夹具晚于 class 作用域的 setUpClass 执行，会把这里的 pin 再覆盖
+    # 一次；本 pin 保证不经 pytest 直接跑本文件（`python -m tests.test_server_routes_smoke`，
+    # 实测可用）时同样不写真实程序目录。backend_profiles.yaml 只在此处 pin：
+    # test_app_dir 断言其真实路径，放 conftest 会误伤。
+    AppSettings._SETTINGS_PATH = os.path.join(workspace_root, "app_settings.json")
+    server_backend._BACKEND_PROFILES_PATH = os.path.join(workspace_root, "backend_profiles.yaml")
     os.environ["GALTRANSL_WORKSPACE_ROOT"] = workspace_root
     os.environ.pop("GALTRANSL_API_TOKEN", None)
     importlib.reload(_server_mod)
@@ -105,6 +122,18 @@ class RouteDispatchSmokeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.mkdtemp()
+        # 先登记还原再启动：setUpClass 中途抛错时 tearDownClass 不执行，
+        # addClassCleanup 仍会跑（否则 _SETTINGS_PATH 会停留在临时目录）
+        cls.addClassCleanup(setattr, AppSettings, "_SETTINGS_PATH", _ORIGINAL_SETTINGS_PATH)
+        cls.addClassCleanup(
+            setattr, server_backend, "_BACKEND_PROFILES_PATH", _ORIGINAL_PROFILES_PATH
+        )
+        # server.py 对 _BACKEND_PROFILES_PATH 是**值拷贝** re-export，_start_server 里
+        # reload 后它会固化成临时路径，不还原会让 test_backend_profiles 的
+        # 「server 与 server_backend re-export 同一对象」断言在本文件先跑时挂掉
+        cls.addClassCleanup(
+            setattr, _server_mod, "_BACKEND_PROFILES_PATH", _ORIGINAL_PROFILES_PATH
+        )
         cls.server, cls.port = _start_server(cls.tmp)
         # 构造一个真实存在的项目目录，使 /api/projects/:id/* 走到真实 handler
         cls.project_dir = os.path.join(cls.tmp, "probe_project")

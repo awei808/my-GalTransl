@@ -308,7 +308,7 @@ if __name__ == "__main__":
 | `DataValidator.py` | 统一数据校验：输入/压缩/LLM 响应/元数据/输出五层校验（`validate_input_json`/`validate_global_prompt` 等） |
 | `TerminalOutput.py` | 终端进度条封装：`terminal_progress`、`NullProgressBar`、`should_print_translation_logs` |
 | `ApiLogger.py` | API 调用结构化日志（`api_calls.log`），异步 writer，TraceID 串联请求/响应 |
-| `AppSettings.py` | 应用级设置（`app_settings.json`）：`printTranslationLogInTerminal`/`maxConcurrentJobs`/`writeApiCallLog`/`writeFrontendLog`/`mcpHGateEnabled`（MCP H 门禁开关）/`mcpDisabledTools`（禁用工具名黑名单）——MCP 独立进程经 `resolve_app_dir()` 读同一份文件 |
+| `AppSettings.py` | 应用级设置（`app_settings.json`）：`printTranslationLogInTerminal`/`maxConcurrentJobs`/`writeApiCallLog`/`writeFrontendLog`/`mcpHGateEnabled`（MCP H 门禁开关）/`mcpDisabledTools`（禁用工具名黑名单）——MCP 独立进程经 `resolve_app_dir()` 读同一份文件。`save_app_settings` 是该文件唯一写路径且为**整份覆写**（缺键/null 回落默认值），故它统一留痕：有变更记 INFO、请求未携带却被改动记 WARNING（护栏，见端点表 PUT 说明） |
 | `DefaultProjectConfig.py` | 新项目的默认 `config.yaml` 模板内容（字符串常量） |
 | `backend_security.py` | 后端 HTTP 安全策略：CORS 源白名单、`GALTRANSL_API_TOKEN` Bearer 鉴权（写端点可选）、路径穿越防护纯函数 |
 | `i18n.py` | 多语言文本表（zh-cn/en）：`get_text()`/`GT_LANG` |
@@ -423,7 +423,7 @@ if __name__ == "__main__":
 | GET | `/api/plugins` | 插件元数据列表 |
 | GET | `/api/problem-types` | 问题检测类型定义 |
 | GET | `/api/translation-guidelines` | 翻译规范文件列表 |
-| GET | `/api/app-settings` / PUT | 应用全局设置读写（含 MCP 门禁 `mcpHGateEnabled`/`mcpDisabledTools`） |
+| GET | `/api/app-settings` / PUT | 应用全局设置读写（含 MCP 门禁 `mcpHGateEnabled`/`mcpDisabledTools`）。**PUT 为整份覆写**：请求缺键或显式 null 一律回落默认值，调用方必须先 GET 再合并；写盘统一经 `AppSettings.save_app_settings` 留痕，其中「请求未携带却被改动」的键记 WARNING（缺键 PUT 会静默关掉 `writeApiCallLog`、清空 `mcpDisabledTools` 等） |
 | GET | `/api/mcp-tools` | MCP 工具清单 `{tools: [{name, description, kind}]}`（设置页工具开关的唯一真源） |
 | GET | `/api/project-config-template` | 默认项目配置 YAML 模板（带注释） |
 | GET | `/api/prompt-templates` | 提示词模板列表 |

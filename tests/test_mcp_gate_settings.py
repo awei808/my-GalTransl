@@ -6,10 +6,13 @@
 3. call_mcp_tool 对禁用工具的拦截与未知工具口径；
 4. enabled_tool_defs / build_server_instructions 按启用集合联动；
 5. /api/mcp-tools 端点与 run_mcp_server 的 tools/list 过滤、禁用错误包装；
-6. H 门禁覆盖面口径：第 4 条点名的工具与 enforce_h_gate 的实际调用点一致（源码 AST 派生）。
+6. H 门禁覆盖面口径：第 4 条点名的工具与 enforce_h_gate 的实际调用点一致（源码 AST 派生）；
+7. 设置写盘留痕与「请求未携带却被改动」报警（缺键/显式 null 清空任一键，如
+   writeApiCallLog 被清回 false、mcpDisabledTools 被清空）。
 """
 import ast
 import asyncio
+import logging
 import os
 import shutil
 import tempfile
@@ -96,6 +99,36 @@ class AppSettingsGateKeysTests(unittest.TestCase):
         # bool(None)=False 会静默关门禁，显式 null 必须回退默认开启
         self.assertTrue(AppSettings._normalize_settings({"mcpHGateEnabled": None})["mcpHGateEnabled"])
 
+    def test_max_concurrent_jobs_explicit_null_falls_back_to_default(self) -> None:
+        # 同口径：int(None) 会抛 TypeError 让 PUT 变 500（缺键/null 应一律回落默认值）
+        default = AppSettings.DEFAULT_APP_SETTINGS["maxConcurrentJobs"]
+        self.assertEqual(AppSettings._normalize_settings({"maxConcurrentJobs": None})["maxConcurrentJobs"], default)
+        # 显式 0/负数仍按既有语义钳到下限 1
+        self.assertEqual(AppSettings._normalize_settings({"maxConcurrentJobs": 0})["maxConcurrentJobs"], 1)
+
+    def test_terminal_log_explicit_null_falls_back_to_default(self) -> None:
+        # 默认 True 的键同样不能被 bool(None)=False 静默关掉；显式 false 仍是 false
+        self.assertTrue(
+            AppSettings._normalize_settings({"printTranslationLogInTerminal": None})[
+                "printTranslationLogInTerminal"
+            ]
+        )
+        self.assertFalse(
+            AppSettings._normalize_settings({"printTranslationLogInTerminal": False})[
+                "printTranslationLogInTerminal"
+            ]
+        )
+
+    def test_missing_or_all_null_payload_equals_defaults(self) -> None:
+        # 所有键统一口径：显式 null 一律回落默认值（缺键与 null 等价）
+        for payload in ({}, {"printTranslationLogInTerminal": None, "maxConcurrentJobs": None,
+                             "writeApiCallLog": None, "writeFrontendLog": None,
+                             "mcpHGateEnabled": None, "mcpDisabledTools": None}):
+            with self.subTest(payload=payload):
+                self.assertEqual(
+                    AppSettings._normalize_settings(payload), dict(AppSettings.DEFAULT_APP_SETTINGS)
+                )
+
     def test_save_load_roundtrip_in_temp_dir(self) -> None:
         tmp = tempfile.mkdtemp(prefix="gt_appset_")
         try:
@@ -109,6 +142,94 @@ class AppSettingsGateKeysTests(unittest.TestCase):
                 loaded = AppSettings.load_app_settings()
                 self.assertFalse(loaded["mcpHGateEnabled"])
                 self.assertEqual(loaded["mcpDisabledTools"], ["galtransl_submit_job"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class ApiCallLogSwitchWriteLogTests(unittest.TestCase):
+    """设置写盘留痕与报警：整份覆写语义下的「未携带却被改动」护栏。"""
+
+    def test_implicit_wipe_alarms(self) -> None:
+        # 部分字段 PUT（缺 writeApiCallLog）会把开关清回 false：必须告警
+        tmp = tempfile.mkdtemp(prefix="gt_appset_wipe_")
+        try:
+            target = os.path.join(tmp, "app_settings.json")
+            with mock.patch.object(AppSettings, "_SETTINGS_PATH", target):
+                AppSettings.save_app_settings({"writeApiCallLog": True})
+                with self.assertLogs("GalTransl", level="WARNING") as ctx:
+                    AppSettings.save_app_settings(
+                        {"mcpDisabledTools": []}, source="PUT /api/app-settings"
+                    )
+                text = "\n".join(ctx.output)
+                self.assertIn("请求未携带却被改动", text)
+                self.assertIn("writeApiCallLog", text)
+                self.assertIn("True -> False", text)
+                self.assertIn("PUT /api/app-settings", text)
+                # 报警归报警，值仍按 false 落盘（不改变 PUT 的整份覆写语义）
+                self.assertFalse(AppSettings.load_app_settings()["writeApiCallLog"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_explicit_null_also_alarms(self) -> None:
+        # 键存在但为 null（前端 undefined/null 序列化）：与缺键同效，同样告警
+        tmp = tempfile.mkdtemp(prefix="gt_appset_null_")
+        try:
+            target = os.path.join(tmp, "app_settings.json")
+            with mock.patch.object(AppSettings, "_SETTINGS_PATH", target):
+                AppSettings.save_app_settings({"writeApiCallLog": True})
+                with self.assertLogs("GalTransl", level="WARNING") as ctx:
+                    AppSettings.save_app_settings({"writeApiCallLog": None})
+                self.assertIn("writeApiCallLog", "\n".join(ctx.output))
+                self.assertFalse(AppSettings.load_app_settings()["writeApiCallLog"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_explicit_toggle_logs_info_without_alarm(self) -> None:
+        # payload 带真实值 = 显式变更（用户关开关/代码有意关），只记 INFO 不报警
+        tmp = tempfile.mkdtemp(prefix="gt_appset_toggle_")
+        try:
+            target = os.path.join(tmp, "app_settings.json")
+            with mock.patch.object(AppSettings, "_SETTINGS_PATH", target):
+                AppSettings.save_app_settings({"writeApiCallLog": True})
+                with self.assertLogs("GalTransl", level="INFO") as ctx:
+                    AppSettings.save_app_settings({"writeApiCallLog": False})
+                self.assertTrue(
+                    any(
+                        r.levelno == logging.INFO
+                        and "设置变更" in r.getMessage()
+                        and "writeApiCallLog" in r.getMessage()
+                        for r in ctx.records
+                    )
+                )
+                self.assertFalse([r for r in ctx.records if r.levelno >= logging.WARNING])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_unchanged_write_stays_debug(self) -> None:
+        # 缺键且值本就是 false（如空 body 的探测请求）：无变更，不得进 INFO/WARNING
+        tmp = tempfile.mkdtemp(prefix="gt_appset_noop_")
+        try:
+            target = os.path.join(tmp, "app_settings.json")
+            with mock.patch.object(AppSettings, "_SETTINGS_PATH", target):
+                with self.assertLogs("GalTransl", level="DEBUG") as ctx:
+                    AppSettings.save_app_settings({}, source="PUT /api/app-settings")
+                self.assertFalse([r for r in ctx.records if r.levelno >= logging.INFO])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_other_silent_key_change_alarms_too(self) -> None:
+        # 同类静默清空不限 writeApiCallLog：mcpDisabledTools 被清空 = 写工具被重新启用
+        tmp = tempfile.mkdtemp(prefix="gt_appset_tools_")
+        try:
+            target = os.path.join(tmp, "app_settings.json")
+            with mock.patch.object(AppSettings, "_SETTINGS_PATH", target):
+                AppSettings.save_app_settings({"mcpDisabledTools": ["galtransl_write_glossary"]})
+                with self.assertLogs("GalTransl", level="WARNING") as ctx:
+                    AppSettings.save_app_settings({"writeApiCallLog": True})
+                text = "\n".join(ctx.output)
+                self.assertIn("mcpDisabledTools", text)
+                self.assertIn("请求未携带却被改动", text)
+                self.assertEqual(AppSettings.load_app_settings()["mcpDisabledTools"], [])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

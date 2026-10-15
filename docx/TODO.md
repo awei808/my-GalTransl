@@ -28,6 +28,17 @@
   - 产生原因：阶段 8 与独立引擎传入的 filename 是「相对输入目录路径 + 分隔符替换为 `-}`」（`llm_postprocess._improve_single_file` 与 `llm_standalone` 的 `file_name` 拼接），翻译阶段的切块键同为扁平化形态；而批次元数据按 basename 存。**输入目录只有一个层级时两者恰好相同**，含子目录（`sub/a.json` → 传入 `sub-}a.json`）时读取侧全部落空。
   - 影响：带子目录的项目里，翻译轮的 `[batch_metadata]` 区间指导与 tonecheck 的区间色彩标注始终注入为空（走各自降级路径：翻译退化为按 `numPerRequestTranslate` 的 count 切批、tonecheck 自本次解绑后转为原文口径并打 INFO，行为安全）；无报错、无 WARNING，只有 `batchmeta=✗` 的 DEBUG 可见，容易被误判为「模型没生成标注」。
   - 修复方向（未实施）：统一键口径——写入侧改存扁平化名（`file_path` 相对化 + `-}`）或在读取侧做 `-}` → 分隔符的双向还原（`_resolve_display`/`cache_file_display_map` 已有同类还原逻辑可复用）；改动涉及 pass2 产物命名，需兼容既有项目的旧键（两种键都尝试命中）。
+- **`PUT /api/app-settings` 的非法载荷返回 500 而非 400（400-vs-500 家族，两例）**
+  - 位置：兜底在 `GalTransl/server_handlers_root.py` 的 `PUT /api/app-settings` 分支（`save_app_settings` 调用后的 `except Exception`）；两个来源分别是 `GalTransl/AppSettings.py:45`（`max(1, int(_raw_or_default(source, "maxConcurrentJobs")))`）与 `GalTransl/server.py:262-268`（`_read_json_body` 对非对象 JSON 抛 `ValueError`）
+  - 产生原因：`int("abc")` 抛 ValueError；`_read_json_body` 抛的也是裸 ValueError（`except json.JSONDecodeError` 接不住——JSONDecodeError 是 ValueError 的子类，反向不成立），两者都落到 handler 的 `except Exception` 兜底 → 500。2026-10-15 的写盘留痕改动只统一了「缺键/显式 null 回落默认值」（`_raw_or_default`），非数值字符串等非法类型仍是原状。
+  - 实测（临时设置目录 + 无令牌的进程内测试 server）：`body=[]` → 500 `failed to write app settings: json body must be an object`；`{"maxConcurrentJobs":"abc"}` → 500 `invalid literal for int() with base 10: 'abc'`；`body={}` → 200。
+  - 影响：客户端拿到 500 与实现细节回声，语义上应为 400；设置不落盘（无副作用），故不紧急。
+  - 修复方向（未实施）：handler 内把 `ValueError/TypeError/KeyError` 归为 400（`invalid settings payload`），只把真正的落盘 `OSError` 留给 500；或在 `_normalize_settings` 内对非法类型也回落默认值（与 null 同口径，代价是静默吞掉客户端拼写错误）。
+- **`load_app_settings` 的「文件不存在/不可读」分支返回与全局默认值共享的 `mcpDisabledTools` 列表**
+  - 位置：`GalTransl/AppSettings.py:70-80`（三处 `return dict(DEFAULT_APP_SETTINGS)`）
+  - 产生原因：`dict(...)` 为浅拷贝，`mcpDisabledTools` 是 list → 与 `DEFAULT_APP_SETTINGS["mcpDisabledTools"]` 同一对象；而走 `_normalize_settings` 的分支（:78）经 `_normalize_disabled_tools` 的 `list(seen)` 新建列表，两条路径口径不一致。
+  - 影响：当前无调用方原地修改（`mcp_tools.py` 转 `frozenset`、`run_mcp_server.py:69` 只读），无现实风险；将来任一处 `settings["mcpDisabledTools"].append(...)` 会污染进程内全局默认值，并波及后续所有「设置文件缺失/不可读」场景。
+  - 修复方向（未实施）：三处返回统一构造深拷贝（如 `{**DEFAULT_APP_SETTINGS, "mcpDisabledTools": list(DEFAULT_APP_SETTINGS["mcpDisabledTools"])}`），或抽一个 `_default_settings_copy()` 供三处共用。
 
 
 # 存在且上线前必须修复的bug/值得优化项
@@ -62,6 +73,7 @@
 
 
 # 需修复的技术债务
+- `GalTransl/server.py:32` 的 `from GalTransl.AppSettings import load_app_settings, save_app_settings` 中 `save_app_settings` 已无使用（该名字在本文件全文仅此一处出现）；直接删掉即可，`load_app_settings` 的调用点不要动（`/api/app-settings` GET 与前端日志判定仍在用它）。
 - 后端文件存在冗余未复用代码和层次不清晰的代码。未来需要提取公用函数并重新划分层级
 - ~~后端退化读取的文件路径（如：项目根目录 `FileMetaData.json`、`gt_input/FileMetaData.json`）是修改架构不完全的产物，未及时删除~~ **0.4.6 已清理**（死注入链与 /files 兼容块已删；`get_file_list` 对残留文件的排除保留）
 - 多个依赖存在不兼容（原项目就有，暂时无影响）：
