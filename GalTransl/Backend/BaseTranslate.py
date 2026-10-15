@@ -421,8 +421,8 @@ class BaseTranslate(BaseEngine):
 
             _print_translation_block(result_output)
             trans_result_list += trans_result
-            # 实时推送结果预览（前端翻译控制台"结果预览"，所有 BaseTranslate 系后端通用；
-            # 预览仅用于 UI 展示，任何异常都不影响翻译主流程）
+            # 实时推送结果预览（前端翻译控制台"结果预览"）；本路径仅服务未重写
+            # batch_translate 的后端（如 rebuildr/rebuilda），后处理系修复轮改经 BaseEngine.push_result_preview 推送
             if trans_result:
                 try:
                     set_live_snippets(

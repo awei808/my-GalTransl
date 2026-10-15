@@ -258,6 +258,8 @@ class ForSemCheckAgain(BaseImproveRound):
         id_map = {t.index: t for t in trans_list}
         confirm_count = 0
         dismiss_count = 0
+        confirmed = []
+        dismissed = []
         missing = set(id_map)
         for line in result_text.splitlines():
             line = line.strip()
@@ -283,17 +285,27 @@ class ForSemCheckAgain(BaseImproveRound):
                 if isinstance(reason, str) and reason.strip() and "�" not in reason:
                     tran.suspected_error = normalize_problem_detail(reason.strip())
                 confirm_count += 1
+                confirmed.append(tran)
                 LOGGER.debug(
                     f"{self._log_tag} 句子 {line_id} 复核确认（reason={tran.suspected_error}）"
                 )
             elif keep is False:
                 tran.suspected_error = ""
                 dismiss_count += 1
+                dismissed.append(tran)
                 LOGGER.debug(f"{self._log_tag} 句子 {line_id} 复核撤销（可接受译文）")
             else:
                 LOGGER.warning(
                     f"{self._log_tag} 句子 {line_id} 的 keep 值异常（{keep!r}），按保留处理"
                 )
+        if confirmed or dismissed:
+            # 实时推送结果预览（前端翻译控制台"结果预览"，展示确认保留与已撤销的命中句）
+            self.push_result_preview(
+                self.pj_config,
+                self._format_result_preview(
+                    confirmed, "suspected_error", "疑似错误", dismissed
+                ),
+            )
         if missing:
             LOGGER.warning(
                 f"{self._log_tag} 本批 {len(missing)} 句未获得复核判定"

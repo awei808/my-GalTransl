@@ -413,6 +413,10 @@ class ForPlotRouteMap(BaseEngine):
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             LOGGER.info(f"[PlotRouteMap] 已保存 {path}")
+            # 实时推送结果预览（前端翻译控制台"结果预览"；预览异常不影响主流程）
+            self.push_result_preview(
+                self.pj_config, json.dumps(payload, ensure_ascii=False, indent=2)
+            )
             return True
         except Exception as e:
             LOGGER.error(f"[PlotRouteMap] 写入 {path} 失败：{e}")

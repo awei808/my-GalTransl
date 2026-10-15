@@ -270,7 +270,7 @@ if __name__ == "__main__":
 | `Runner.py` | 翻译运行编排器：`run_galtransl()` 挂载 job 日志 handler（线程过滤防并发重复）、插件加载（yapsy）、代理池/令牌池/分割器初始化、`start_time` 定时启动 |
 | `plugin_loader.py` | 文本插件装载（服务端非任务路径复用）：`get_plugin_info_path()` 插件清单路径解析（与 Runner 共用）、`load_text_plugins()` 定位→装载→`gtp_init`（只文本插件、不调 `gtp_final`），按「项目目录 + 插件名单 + 配置文件/插件清单 mtime」进程级缓存。缓存重建/问题重检/构建输出据此与流水线同口径（缺插件会让检测跑在未规整文本上而虚报换行/标点类问题） |
 | `Frontend/LLMTranslate.py` | **主翻译编排器**：`doLLMTranslate()` 读文件 → 切 chunk → worker 协程池（队列+哨兵）→ 单 chunk 翻译 → 后处理合并输出；`doLLMTranslSingleChunk()`；完整流水线 `_run_full_pipeline()`；自适应并发（`autoAdjustWorkers`） |
-| `Backend/BaseEngine.py` | **所有 LLM 后端 API 客户端基类**：OpenAI 兼容客户端构建（多 token）、`ask_chatbot()`（流式/重试/429 退避/RPM 限制/API 调用日志）、`maxApiRetries` 尝试预算（默认 6，429 不计入）、思考参数路由、全局 RPM 限制、请求健康度统计；含引擎注册表 `ENGINE_REGISTRY`/`@register_engine` |
+| `Backend/BaseEngine.py` | **所有 LLM 后端 API 客户端基类**：OpenAI 兼容客户端构建（多 token）、`ask_chatbot()`（流式/重试/429 退避/RPM 限制/API 调用日志）、`maxApiRetries` 尝试预算（默认 6，429 不计入）、思考参数路由、全局 RPM 限制、请求健康度统计；含引擎注册表 `ENGINE_REGISTRY`/`@register_engine`；结果预览统一入口 `push_result_preview(config, text)`（各后端解析成功后调一处，worker 归属由 server_runtime 按 WORKER_ID_CTX 解析） |
 | `Backend/BaseTranslate.py` | **翻译轮流水线基类**（继承 BaseEngine）：`batch_translate()`、`_batch_translate_common()`、切批/动态句数调节、上下文恢复（`restore_context`）、译文归一化与缓存落盘 |
 | `Backend/ForGalJsonTranslate.py` | **主翻译后端**（继承 BaseTranslate，混入 MultiRoundChatMixin）：对话模式可选（`gpt.chatMode`：multi 多轮对话 / single 单轮独立请求+`[history_result]` 上下文注入，单轮用专用提示词 `FORGAL_JSON_TRANS_PROMPT_SINGLE`）、注入 FileMetaData/BatchMetadata/GlobalPrompt、H 词过滤；引擎 ID `ForGal-json-translate`（旧名 `ForGal-json-multi-chat` 经 `TRANSLATOR_ALIASES` 兼容） |
 | `Backend/Conversation.py` | 多轮对话状态管理 Mixin（`MultiRoundChatMixin`）：按文件隔离的 conversations、历史裁剪、失败强制首轮标记，与翻译流程解耦 |
@@ -388,7 +388,7 @@ if __name__ == "__main__":
 
 ### RuntimeState（GalTransl/server_runtime.py）
 
-服务端模式下每项目一个，供前端 `/runtime` 轮询：`stage`/`stage_index`/`stage_total`（9 阶段）、`current_file`/`current_batch`/`batch_total`、`workers_active`/`workers_configured`、`translation_speed_lpm`（1 分钟窗口速度）、`latest_prompt_preview`/`translation_previews`（实时提示词/译文预览）、`ttft_states`（各 worker 流式首字延迟状态与预览，前端 TTFT 状态灯）、`recent_errors`/`recent_successes`（环形队列）、`notices`（一次性用户提示，前端 toast 后清除）。
+服务端模式下每项目一个，供前端 `/runtime` 轮询：`stage`/`stage_index`/`stage_total`（9 阶段）、`current_file`/`current_batch`/`batch_total`、`workers_active`/`workers_configured`、`translation_speed_lpm`（1 分钟窗口速度）、`latest_prompt_preview`/`translation_previews`（实时提示词/译文预览；译文预览由各后端经 `BaseEngine.push_result_preview` 统一写入，按 worker_id 分板块、非 worker 上下文写公共 key "-1"）、`ttft_states`（各 worker 流式首字延迟状态与预览，前端 TTFT 状态灯）、`recent_errors`/`recent_successes`（环形队列）、`notices`（一次性用户提示，前端 toast 后清除）。
 
 ### 缓存条目（CacheEntry）
 

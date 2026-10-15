@@ -919,6 +919,31 @@ class BaseEngine:
         except Exception:
             pass
 
+    @staticmethod
+    def push_result_preview(config: CProjectConfig, text: str) -> None:
+        """推送结果预览到翻译控制台"结果预览"面板（统一入口，失败静默）。
+
+        各后端解析成功后调一处即可，无需关心 worker 归属：server_runtime 按
+        WORKER_ID_CTX 自动分板块写入，非 worker 上下文（元数据、全局分析等
+        单上下文后端）写公共 key "-1"。预览仅用于 UI 展示，任何异常都不影响
+        翻译主流程；超长文本由 server_runtime 侧封顶（保留尾部 10000 字符）。
+
+        Args:
+            config: 项目配置对象，用于定位 runtime_project_dir。
+            text: 结果预览文本；为空时跳过不写。
+        """
+        if not text:
+            return
+        try:
+            runtime_dir = getattr(config, "runtime_project_dir", None) or getattr(
+                config, "getProjectDir", lambda: ""
+            )()
+            if not runtime_dir:
+                return
+            set_live_snippets(runtime_dir, translation_preview=text)
+        except Exception:
+            pass
+
     def get_last_chatbot_model(self) -> str:
         """返回当前 task 最近一次 LLM 请求使用的模型名（多 worker 场景下按 task 隔离）。"""
         return _LAST_CHATBOT_MODEL_CTX.get()

@@ -285,6 +285,7 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         id_map = {t.index: t for t in trans_list}
         success_count = 0
         found_count = 0
+        applied = []
         for line in result_text.splitlines():
             line = line.strip()
             if not line:
@@ -349,6 +350,12 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                     continue
             if self._apply_better_result(tran, current_dst, normalized, line_id):
                 success_count += 1
+                applied.append(tran)
+        if applied:
+            # 实时推送结果预览（前端翻译控制台"结果预览"，覆盖 improve/brfix/jpfix/banfix/fix 各修复轮）
+            self.push_result_preview(
+                self.pj_config, self._format_result_preview(applied)
+            )
         return success_count, found_count
 
     def _is_echo_response(self, found_count: int, batch_size: int) -> bool:
@@ -369,6 +376,37 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         """默认只写 alt_dst；Problem 修复轮可覆盖为 swapFixToCurrent。"""
         tran.alt_dst = normalized
         return True
+
+    def _format_result_preview(
+        self,
+        sentences: list,
+        issue_attr: str = "",
+        issue_label: str = "",
+        dismissed: Optional[list] = None,
+    ) -> str:
+        """修复/检测轮结果预览文本：逐句显示原文、当前译文与处理后字段。
+
+        格式参照 str(CSentense) 并补充 alt_dst；检测轮经 issue_attr/issue_label
+        展示命中标记与原因，复核轮经 dismissed 展示已撤销句子。
+        """
+        lines: List[str] = []
+        for t in sentences:
+            lines.append(f"v--{t.index}")
+            lines.append(f"> Src: {t.post_src}")
+            lines.append(f"> Dst: {t.pre_dst}")
+            if t.alt_dst:
+                lines.append(f"> Better: {t.alt_dst}")
+            if issue_attr:
+                issue = getattr(t, issue_attr, "") or ""
+                if issue:
+                    lines.append(f"> {issue_label or issue_attr}: {issue}")
+            lines.append("")
+        for t in dismissed or []:
+            lines.append(f"v--{t.index}（已撤销：可接受译文）")
+            lines.append(f"> Src: {t.post_src}")
+            lines.append(f"> Dst: {t.pre_dst}")
+            lines.append("")
+        return "\n".join(lines).strip()
 
     def _record_round_runtime_error(
         self, filename: str, idx_tip: str, message: str, model: Optional[str]

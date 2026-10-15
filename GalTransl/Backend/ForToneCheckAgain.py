@@ -292,6 +292,8 @@ class ForToneCheckAgain(ForToneCheck):
         id_map = {t.index: t for t in trans_list}
         confirm_count = 0
         dismiss_count = 0
+        confirmed = []
+        dismissed = []
         missing = set(id_map)
         for line in result_text.splitlines():
             line = line.strip()
@@ -317,17 +319,27 @@ class ForToneCheckAgain(ForToneCheck):
                 if isinstance(reason, str) and reason.strip() and "�" not in reason:
                     tran.tone_issue = normalize_problem_detail(reason.strip())
                 confirm_count += 1
+                confirmed.append(tran)
                 LOGGER.debug(
                     f"{self._log_tag} 句子 {line_id} 复核确认（reason={tran.tone_issue}）"
                 )
             elif keep is False:
                 tran.tone_issue = ""
                 dismiss_count += 1
+                dismissed.append(tran)
                 LOGGER.debug(f"{self._log_tag} 句子 {line_id} 复核撤销（可接受译文）")
             else:
                 LOGGER.warning(
                     f"{self._log_tag} 句子 {line_id} 的 keep 值异常（{keep!r}），按保留处理"
                 )
+        if confirmed or dismissed:
+            # 实时推送结果预览（前端翻译控制台"结果预览"，展示确认保留与已撤销的命中句）
+            self.push_result_preview(
+                self.pj_config,
+                self._format_result_preview(
+                    confirmed, "tone_issue", "色彩不一致", dismissed
+                ),
+            )
         if missing:
             LOGGER.warning(
                 f"{self._log_tag} 本批 {len(missing)} 句未获得复核判定"

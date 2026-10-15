@@ -349,6 +349,7 @@ class ForToneCheck(BaseImproveRound):
         """
         id_map = {t.index: t for t in trans_list}
         hit_count = 0
+        hits = []
         for line in result_text.splitlines():
             line = line.strip()
             if not line:
@@ -376,8 +377,15 @@ class ForToneCheck(BaseImproveRound):
                 else "1"
             )
             hit_count += 1
+            hits.append(tran)
             LOGGER.debug(
                 f"{self._log_tag} 句子 {line_id} 判定色彩不一致（reason={tran.tone_issue}）"
+            )
+        if hits:
+            # 实时推送结果预览（前端翻译控制台"结果预览"，仅判定不产译文，展示命中标记与原因）
+            self.push_result_preview(
+                self.pj_config,
+                self._format_result_preview(hits, "tone_issue", "色彩不一致"),
             )
         return hit_count, hit_count
 
