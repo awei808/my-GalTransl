@@ -1,5 +1,4 @@
-import { createSignal, createEffect, createMemo, onMount, onCleanup, Show, For, Switch, Match, untrack } from "solid-js";
-import { Icon } from "../../components/icons";
+import { createSignal, createEffect, createMemo, onCleanup, Show, For, Switch, Match, untrack } from "solid-js";
 import {
   appState,
   setAppState,
@@ -20,6 +19,7 @@ import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize, fe
 import { decodeProjectDir } from "../../lib/api/client";
 import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload, getGitSuggestAcknowledged, setGitSuggestAcknowledged } from "../../lib/api/preferences";
 import { projectName } from "../home/homeUtils";
+import { BackendPicker } from "../../components/BackendPicker";
 import { GuideLink } from "../../components/GuideLink";
 import type {
   ModelCheckResult,
@@ -101,21 +101,6 @@ function fileDesc(
   return `文件 ${filename}`;
 }
 
-/* ── 后端下拉项的简洁中文说明（面向零基础用户，直接跟在后端名字后）── */
-const BACKEND_HINTS: Record<string, string> = {
-  "ForGal-json-translate": "按批次翻译原文，为取得最好效果，建议在最后执行本后端",
-  "ForImproveTranslation": "AI 评估整文件译文质量，对可改进的句子给出备选译文（可在校对审核页一键交换）",
-  "ForGal-json": "逐句翻译原文（旧格式兼容）",
-  "ForFileMetaData": "AI 分析每个文件的剧情与角色",
-  "ForBatchMetaData": "AI 分析文件内容，将文本按剧情划分批次，并生成每个批次的指导语言风格",
-  "ForGlobalPrompt": "AI通读全文，生成世界观与角色档案作为全局提示词",
-  "ForGal-full-pipeline": "一键跑完字典+全局、文件、批次分析+翻译全流程（不建议启用）",
-  "GenDic": "AI 自动生成gpt字典",
-};
-function backendHint(name: string): string {
-  return BACKEND_HINTS[name] || "";
-}
-
 /* ── 文件进度阶段绿矩形的悬停名称（key 与后端 stages[].key 对应）── */
 const FILE_STAGE_LABELS: Record<string, string> = {
   meta: "文件级元数据",
@@ -131,8 +116,9 @@ function stageChipLabel(key: string): string {
 export function TranslateConsole() {
   const [runtime, setRuntime] = createSignal<ProjectRuntimeResponse | null>(null);
   const [translators, setTranslators] = createSignal<TranslatorOption[]>([]);
+  // 后端清单拉取失败（后端未运行/接口失败）：与「尚未加载完」区分，避免首帧误显示失败态
+  const [translatorsFailed, setTranslatorsFailed] = createSignal(false);
   const [running, setRunning] = createSignal(false);
-  const [dropdownOpen, setDropdownOpen] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
 
   // 模型可用性检测状态（全局持久，见 appStore.modelCheck，避免组件重挂后重复检测/丢失结果）
@@ -147,7 +133,6 @@ export function TranslateConsole() {
   const MAX_AUTO_RETRIES = 3; // 错误状态下最多自动重试 3 次
 
   let pollTimer: ReturnType<typeof setInterval> | undefined;
-  let dropdownRef: HTMLDivElement | undefined;
   let pollErrorCount = 0;
   // prevJobStatus 已提升为全局 appState.prevJobStatus（见 appStore），避免切回页面时误弹“已开始”
 
@@ -323,14 +308,15 @@ export function TranslateConsole() {
       pollTimer = undefined;
     });
 
-    // 翻译器列表只加载一次
+    // 翻译器列表只加载一次；失败标记供 BackendPicker 区分「加载中」与「加载失败」
     if (translators().length === 0) {
       fetchTranslators()
         .then((list) => {
           setTranslators(list);
+          setTranslatorsFailed(false);
           ensureBackendSelection(list);
         })
-        .catch(() => {});
+        .catch(() => setTranslatorsFailed(true));
     } else {
       ensureBackendSelection(translators());
     }
@@ -565,14 +551,7 @@ export function TranslateConsole() {
       });
   }
 
-  // 点击外部关闭下拉菜单
-  function handleOutsideClick(e: MouseEvent) {
-    if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
-      setDropdownOpen(false);
-    }
-  }
-  onMount(() => document.addEventListener("click", handleOutsideClick));
-  onCleanup(() => document.removeEventListener("click", handleOutsideClick));
+  // 后端下拉的「点击外部收起 / Esc 收起」已下沉到 BackendPicker 内部
 
   const summary = createMemo(() => runtime()?.summary);
   // 进度兜底：后端沿用旧 file_totals 时 percent 有效；极端 total=0 时保留上一帧值避免进度条闪烁
@@ -719,33 +698,14 @@ export function TranslateConsole() {
 
           {/* ── 右侧操作区 ── */}
           <div class="translate-actions">
-            <div class="backend-selector" ref={dropdownRef}>
+            <div class="backend-selector">
               <Show when={!isRunning()}>
-                <div class="backend-select-wrapper">
-                  <div
-                    class="backend-select-trigger"
-                    onClick={() => setDropdownOpen(!dropdownOpen())}
-                  >
-                    <span>{appState.selectedBackend || "选择后端"}</span>
-                    <Icon name="chevron-down" size={12} strokeWidth={2} />
-                  </div>
-                  <Show when={dropdownOpen()}>
-                    <div class="backend-dropdown">
-                      {translators().map((t) => (
-                        <div
-                          class={`backend-option ${appState.selectedBackend === t.name ? "active" : ""}`}
-                          onClick={() => {
-                            setAppState("selectedBackend", t.name);
-                            setDropdownOpen(false);
-                          }}
-                        >
-                          <div class="backend-option__name">{t.name}</div>
-                          <div class="backend-option__hint">{backendHint(t.name) || t.description}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </Show>
-                </div>
+                <BackendPicker
+                  translators={translators()}
+                  loadFailed={translatorsFailed()}
+                  value={appState.selectedBackend}
+                  onSelect={(name) => setAppState("selectedBackend", name)}
+                />
                 <button class="btn btn--primary" onClick={handleStart} disabled={submitting()}>
                   {submitting() ? "提交中…" : "启动流程"}
                 </button>

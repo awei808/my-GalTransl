@@ -44,3 +44,6 @@ cc_probe
 backend_profiles.yaml
 mcp_status.json
 known_projects.json
+
+# 根目录工具链缓存（vitest 等在根目录运行时产生）
+/node_modules/

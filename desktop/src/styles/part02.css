@@ -630,13 +630,13 @@
 
 .backend-select-wrapper {
   position: relative;
-  width: 200px;
+  width: 240px;
 }
 
 .backend-select-trigger {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-1);
   padding: 6px 10px;
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
@@ -647,47 +647,176 @@
   user-select: none;
 }
 
-.backend-select-trigger:hover {
+.backend-select-trigger:not(.backend-select-trigger--disabled):hover {
   border-color: var(--color-border-hover);
+}
+
+.backend-select-trigger:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+/* 后端清单未加载（后端未运行/接口失败）：给出可见状态，不静默无反应 */
+.backend-select-trigger--disabled {
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.backend-select-trigger--disabled .backend-select-trigger__label {
+  color: var(--color-text-tertiary);
+}
+
+/* 中文短名占主位，引擎名次要色右对齐并省略——两者同时可见，便于与日志/任务列表对号。
+   标签与箭头不压缩，宽度不足时省略的是引擎名 */
+.backend-select-trigger__label {
+  flex-shrink: 0;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.backend-select-trigger > svg {
+  flex-shrink: 0;
+}
+
+.backend-select-trigger__engine {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: right;
+  font-size: var(--font-xs, 11px);
+  color: var(--color-text-tertiary);
 }
 
 .backend-dropdown {
   position: absolute;
   top: 100%;
-  left: 0;
+  /* 面板宽于触发框，靠右对齐向左展开，避免顶出右边界 */
+  left: auto;
   right: 0;
+  width: 340px;
   margin-top: 2px;
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   z-index: var(--z-dropdown);
-  max-height: 200px;
+  /* 上限同时受视口高度约束：矮窗口下不越过页面滚动容器下沿被裁切 */
+  max-height: min(48vh, 340px);
+  overflow: hidden;
+}
+
+.backend-search-row {
+  flex-shrink: 0;
+  padding: 6px;
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.backend-search {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
+}
+
+.backend-search:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+/* 列表是唯一的滚动区，搜索行固定在上方 */
+.backend-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+.backend-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 6px 2px;
+  background: var(--color-bg-panel);
+  font-size: var(--font-xs, 11px);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-tertiary);
 }
 
 .backend-option {
-  padding: 6px 10px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-base);
   cursor: pointer;
   color: var(--color-text-primary);
 }
 
 .backend-option:hover,
-.backend-option.active {
+.backend-option--hl {
   background: var(--color-bg-hover);
-  color: var(--color-brand-primary);
+}
+
+/* 当前选中项：左侧色条 + 勾选标记，与键盘高亮（--hl）区分 */
+.backend-option.active {
+  background: var(--color-bg-active);
+  box-shadow: inset 2px 0 0 var(--color-brand-primary);
+}
+
+.backend-option__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
 }
 
 .backend-option__name {
   font-weight: var(--weight-semibold);
   color: var(--color-text-primary);
+  white-space: nowrap;
 }
-.backend-option__hint {
+
+.backend-option__engine {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: var(--font-xs, 11px);
   color: var(--color-text-tertiary);
-  margin-top: 2px;
+}
+
+.backend-option.active .backend-option__name {
+  color: var(--color-brand-primary);
+}
+
+.backend-option__check {
+  color: var(--color-brand-primary);
+  font-size: var(--font-sm);
+  line-height: 1;
+}
+
+/* 单行说明：完整文案在选项 title 里（约 44px/项，旧版折行后约 80px/项） */
+.backend-option__hint {
+  margin-top: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-xs, 11px);
   line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+.backend-empty {
+  padding: 10px;
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
 }
 
 /* ── 翻译主体两栏 ── */

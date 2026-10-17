@@ -13,6 +13,7 @@
 | `src/lib/cacheWatcher.ts` | 缓存文件夹轮询监控（3s），驱动文件树/问题侧栏刷新 |
 | `src/lib/replaceEntries.ts` | 缓存查找替换的前端字段口径（`dst`/`all`）与替换逻辑 |
 | `src/lib/afterTranslation.ts` + `src/components/AfterTranslationOrderEditor.tsx` | 阶段 8 后处理有序数组的类型/编辑逻辑与项目配置页顺序编辑器 |
+| `src/lib/engineDisplay.ts` + `src/components/BackendPicker.tsx` | 翻译后端下拉的展示元数据（中文短名/短说明/分组/组内顺序）与过滤、分组纯函数；`BackendPicker` 是控制台后端选择器的交互封装（搜索 + 分组 + 键盘）。选项值始终是引擎名，不改变提交任务与模型检测的口径。后端清单覆盖度由 `__tests__/engineDisplay.test.ts` 与根目录 `tests/test_engine_display_consistency.py` 双向锁定 |
 | `src/lib/usePageAutosave.ts` | 页面卸载自动保存统一骨架 |
 | `src/lib/globalSave.ts` | 全局保存注册表：Ctrl+S / 菜单「保存」统一入口（页面注册 `save` 函数，未注册视图提示无可保存内容） |
 | `src/lib/customBackground.ts` + `src/styles/custom-background.css` | 自定义背景图设置与样式 |

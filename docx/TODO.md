@@ -42,7 +42,6 @@
 
 
 # 存在且上线前必须修复的bug/值得优化项
-- ~~首页如何开始和引导用户~~ **已完成**（首页「快速上手」三步卡：新建项目 → 配置 API → 启动翻译，各自可点击跳转；底部「查看完整指南 →」进使用指南入门篇）
 - 考虑合并自动生成字典功能至全局分析中，合并批次划分至文件元数据获取中；
 - 输入框代码不复用，需优化
 - **新建项目向导需持续更进新流程**
@@ -56,18 +55,35 @@
 - context.ensure_global_prompt_loaded（context.py:20-44）确实无锁，if engine._global_prompt_loaded 后为同步段、无 await。多 worker 共享同一 ForFileMetaData 实例（LLMTranslate.py:1742 创建单实例），依赖"同步段内无 await 不切换协程"不变式。存量问题，非本次改动引入（context.py 既有）。
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
-- ~~请求最小间隔秒 (apiMinIntervalSec)似乎从未生效~~ **已完成**（根因：节流状态原挂引擎实例上，后处理每文件新建实例致首请求绕过+实例间互不约束，且旧实现并发下同睡同醒成簇；已改为 (endpoint,token) 维度进程级时隙预占，BaseEngine.py）
-- ~~添加mcp工具：用于给特定json条目标记为跳过检查、给特定json条目交换备选译文与当前译文、增删项目字典；mcp工具调用方式更改，不强制使用项目的绝对路径，也可以直接使用项目名称~~ **已完成**（新增写工具 `galtransl_mark_skip_check`/`galtransl_swap_alt_translation`，逐条改 skip_check 标志/交换 alt_dst 与 pre_dst，改前快照+按 /cache/save 同口径重检+与运行中翻译任务互斥；`write_glossary`/`read_glossary` 扩展 category=gpt/pre/post 覆盖译前/译后项目字典；全部工具的 project_dir 支持项目名称——后端经 `known_projects.json` 登记「打开过/创建过/跑过任务」的项目（`GalTransl/known_projects.py`），MCP 优先按登记表解析、回退工作区根扫描，不要求项目在工作区根下，mcp_tools.py）
+
+
 - 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示
 - 翻译控制台-当前提示词的状态指示灯中，黑色指示灯没有类似其他指示灯的“等待首字”“取消”的文字说明，需要显示为“已完成+耗时”
 - 结果预览的更新时机可能过于频繁（需先将上一条bug修好并测试后再确认这个问题是否真实存在）
+- **新增问题检测项：节奏单一**，针对部分句子换行符前后字数相等或相差不大的情况，句子节奏单一且大多是冗余的词语。（部分模型，有将换行符前后译文长度相等的倾向，dsv4.1最严重）
+- **新增mcp工具，让ai直接改动缓存文件**
 - [发布说明] d7a5833 后，以字面 <br> 为换行约定的项目行为有变化（缓存与输出现在是真实换行而非 <br>），建议写进更新日志。
 - MCP 的 list_projects 只枚举 workspace 根，建在自定义位置的项目不会出现在该 MCP 工具列表里（UI 不受影响）。
-- ~~双击 AI 建议没有让用户知道有这个功能的提示~~ **已完成**（首次进入校对页延时 toast 一次性提示，localStorage 标记只提示一次；校对指南篇同步说明该交互）
 - 各阶段的独立api页应该放在api设置页，独立api后的api检测可用性逻辑不完善
-- ~~新增：对于行数小于20的文件，不用处理元数据~~ **已完成**（新增 `internals.pipeline.metaMinLines`（默认 20，0=不跳过，前端「翻译后端-文件/批次元数据提取」组可调）：文件级与批次级元数据两阶段都跳过「非空行数 < 阈值」的文件——不调用 AI、不写 pass1/pass2 产物；口径复用 `metadata.count_nonempty_lines`（与进度分母同源），`_run_meta_worker_pool` 返回 `MetaPoolResult` 单独汇报小文件跳过数，四个调用点（流水线两阶段 + 独立后端两分支）改用「剔除跳过后的预期文件数」做交叉验证，避免误报缺失；文件进度面板按 `meta_min_lines` 把这类文件的 meta/batch 阶段判为已跳过（否则永远不亮绿灯）。既有产物不清理，forceRegen 也不使小文件复活）
-- 翻译控制台的文件进度显示不完善：当前阶段完成后且未完成所有翻译任务时，显示的是“排队中”，而不是“已完成某个阶段”
-- **设置界面新增mcp门禁设置** **已完成**（独立页面：设置页「AI API 调用接口相关」分区提示词模板下方留「MCP 服务与门禁 →」入口，标题栏「翻译」菜单同步加「MCP 设置」；页面含① MCP H 门禁开关（`app_settings.json` 的 `mcpHGateEnabled`，关闭后 `enforce_h_gate` 直接放行，SERVER_INSTRUCTIONS 第 4 条随开关改写为放行说明）；② MCP 工具逐个开关（`mcpDisabledTools` 黑名单，工具清单经新端点 `/api/mcp-tools` 下发供渲染；`tools/list`/调用分发/心跳均按启用集合过滤，调用被禁工具返回「已由用户禁用」，实时读设置无需重启；instructions/工具计数为 MCP 进程启动快照，重开 agent 会话刷新）。设置文件经 `resolve_app_dir()` 与打包版同目录，MCP 独立进程与后端读同一份；dsh 预设 persona 的 H 段同步改为条件式（以 MCP 服务说明为准，随门禁开关联动，未见到说明时保守按禁止处理），工具面段注明实际可用工具以会话挂载清单为准）
+
+# TODO
+
+## 后端（GalTransl/server_handlers_*）
+
+- [ ] **part2 路由委托后无条件再补一次 404**（`server_handlers_project.py:1499`）：`route_project_api_part2(...)` 无返回值，调用方紧接着无条件 `_send_json({"error": "not found"}, 404)`。凡由 part2 处理的路径（`/progress`、`/problems`、`/cache/search` 等）都会在正确响应体之后再写一段 404 响应体。当前之所以没暴露：默认协议为 HTTP/1.0（`Content-Length` 决定一次响应边界，客户端读完第一段即返回），且前端/测试都只读第一段。风险：一旦启用 HTTP/1.1 keep-alive、改用严格解析的客户端或代理，多出的响应体会被当成下一个请求的响应（串响应/协议错误）。建议让 `route_project_api_part2` 返回「是否已处理」布尔值，调用方据此决定是否发 404（对齐 `server_cache` 等模块已有的返回值风格）。
+- [ ] **`server_handlers_project2.py` import 块存在死导入**（AST 精确核对，仅出现在 import 行）：`unquote`、`_safe_project_dir`、`decode_project_dir`、`encode_project_dir`、`_deep_merge_defaults`、`_get_default_config`、`_REPLACE_FIELD_REJECTED_MSG`、`_build_cache_tree`、`_build_project_output`、`_cache_entry_key`、`_entry_modified`、`_fmt_indices`、`_list_dir_entries`、`_resolve_cache_h_ranges`。无行为影响，属拆分大文件时的残留；清理时顺带核对其它 `server_handlers_*` 拆分文件是否有同类残留（本次未逐个核查）。
+- [ ] **`/alt-translations` 未统一缓存文件枚举口径**（`server_handlers_project2.py:836`）：仍用裸 `os.walk` + `name.endswith(".json")`，与 `/problems`、`/progress`、`/runtime` 进度、全量重检已统一的 `_collect_cache_files` 不一致。当前实际影响近零（pass0 元数据/断点分片均为 dict 形状、快照为 `.bak`，`_collect_alt` 对非 list 提前返回），但建议后续一并改用 `_collect_cache_files`，避免再次出现「问题统计有、其它端点无」的漂移。
+
+## 前端（desktop/src/pages/review）
+
+- [ ] **cacheWatcher 自动刷新 effect 为死代码**（`ReviewPage.tsx` 约 909-922 行）：`reviewMode() === "translate"` 与 `modeInfoOf(file).mode !== "translate"` 两道守卫作用在同一 `activeFilePath` 上、语义矛盾，任何情况下都会在 `loadFile` 调用前 return——"外部改动自动刷新译文文件"从未生效（cacheVersion 轮询形同虚设，仅手动「刷新」按钮可用）。需排查是历史语义变更后的残留还是有意禁用，再决定删除或修正守卫。
+- [ ] **modeInfoOf 分类表不认识 `gendic_cache/`、`aftertrans_cache/` 等目录**（`ReviewPage.tsx` `modeInfoOf`）：这类目录下的单对象 JSON 文件会被默认判为 translate 模式，若出现在缓存树且可点击，会误入 `loadFile`，以字典形状 entries 触发 `snapshotKey` 的 `list.map` TypeError。可达性取决于 `/files` 的 cache_files 列举范围，待核实后在分类表中补充对应目录或对不可编辑目录做入口屏蔽。
+
+## 跨端（翻译后端展示元数据）
+
+- [ ] **翻译后端展示元数据收口到后端**：引擎的「中文短名 / 分组 / 组内顺序」目前散在前端两张表里——`desktop/src/lib/engineDisplay.ts`（ENGINE_LABELS / ENGINE_HINTS / ENGINE_GROUPS / ENGINE_ORDER）与 `desktop/src/pages/routeAgent/plan.ts` 的 `INSTRUCTIONS`（工作台指令标签，含「重生成路线图」等工作台专用措辞）。同一引擎两处叫法不一致（如 ForSemCheck：语义检测 vs 语义复核；ForJPResidue：残留日文修复 vs 残留修复），`/api/translators` 又只下发「引擎名 + 一段长描述」，前端拿到什么就只能显示什么。建议在 `GalTransl/__init__.py` 的 `TRANSLATOR_SUPPORTED` 每项补 `label`（中文短名）、`group`（分组）、`order`（组内顺序），经 `/api/translators`（`server_handlers_root.py`）下发；前端 `engineDisplay.ts` 只保留纯派生逻辑（过滤/分组/字段缺失回退），routeAgent 指令标签改为引用同一来源——新增引擎只改后端一处，对齐 pipeline_stages「后端唯一真源 + 前端派生」的既有做法。注意：新增字段是 `{name, description}` 的向后兼容增量，需同步 `desktop/src/lib/api/types.ts` 的 `TranslatorOption`、回退口径（字段缺失时仍回退引擎名 + 截断描述），并把两侧测试改为直接校验载荷（`desktop/src/__tests__/engineDisplay.test.ts`、`tests/test_engine_display_consistency.py` 现靠文本解析 TS 与硬编码隐藏清单，届时可一并简化）。
+- [ ] **隐藏引擎清单在后端与测试间重复**：`tests/test_engine_display_consistency.py` 的 `_HIDDEN_EXTRA` 与 `GalTransl/server_handlers_root.py` 中 `/api/translators` 的内联 `_hidden_translators` 是同一份口径的两处抄写（工具引擎已 import `UTILITY_ENGINES` 共用）。后端新增隐藏引擎时测试会误报「请给不展示的引擎补表」。建议把该集合提为后端常量（`GalTransl/__init__.py` 或 `UtilityEngines.py`）供两侧 import，顺带收进上一条的元数据下发改动里。
+
 
 # 未来的大更新项
 
@@ -75,7 +91,7 @@
 # 需修复的技术债务
 - `GalTransl/server.py:32` 的 `from GalTransl.AppSettings import load_app_settings, save_app_settings` 中 `save_app_settings` 已无使用（该名字在本文件全文仅此一处出现）；直接删掉即可，`load_app_settings` 的调用点不要动（`/api/app-settings` GET 与前端日志判定仍在用它）。
 - 后端文件存在冗余未复用代码和层次不清晰的代码。未来需要提取公用函数并重新划分层级
-- ~~后端退化读取的文件路径（如：项目根目录 `FileMetaData.json`、`gt_input/FileMetaData.json`）是修改架构不完全的产物，未及时删除~~ **0.4.6 已清理**（死注入链与 /files 兼容块已删；`get_file_list` 对残留文件的排除保留）
+**0.4.6 已清理**（死注入链与 /files 兼容块已删；`get_file_list` 对残留文件的排除保留）
 - 多个依赖存在不兼容（原项目就有，暂时无影响）：
   - Rust 侧：windows crate 0.58 与 0.61.3 双主版本并存
   - Rust 侧：HTML/CSS 解析栈新旧两代分裂
