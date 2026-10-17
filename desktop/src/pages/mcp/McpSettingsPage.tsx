@@ -97,7 +97,7 @@ export function McpSettingsPage() {
           <div class="settings-field settings-field--column" style="border-bottom:none">
             <span class="settings-label">
               MCP H 门禁
-              <span class="settings-hint-inline">（拦截外部 agent 经 MCP 把 H 内容写入路线图/元数据/项目字典）</span>
+              <span class="settings-hint-inline">（拦截外部 agent 经 MCP 把 H 内容写入路线图/元数据/项目字典/缓存条目译文字段）</span>
             </span>
             <label class="settings-toggle">
               <input
@@ -109,7 +109,7 @@ export function McpSettingsPage() {
               <span class="settings-toggle-knob" />
             </label>
             <p class="settings-hint">
-              关闭后，外部 agent 经 MCP 写入路线图/元数据/项目字典时不再拦截 H 内容；不影响翻译流程自身的 H 词过滤。
+              关闭后，外部 agent 经 MCP 写入路线图/元数据/项目字典/缓存条目译文字段时不再拦截 H 内容；不影响翻译流程自身的 H 词过滤。
               缓存条目的「标记跳过检查」「交换备选译文」只改标志位或对调既有译文、不写入新文本，任何情况下都不受本门禁约束。
               服务说明文本在 MCP 会话建立时下发，切换后建议重开 agent 会话。
             </p>

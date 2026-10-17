@@ -21,7 +21,7 @@
 # 实测结论（0.6.0，dsh --dump-config + 实际启动）：
 #   - 本清单经 home 层 `cordis:include` 加载成功，preset 行正确注册；
 #   - 实际启动时 galtransl MCP 成功握手（`[galtransl-mcp] 启动 stdio 服务（版本 0.6.0）`），
-#     下发 21 个工具（14 只读带 annotations + 7 写不带）。
+#     下发 22 个工具（14 只读带 annotations + 8 写不带）。
 #     （工具计数为默认状态实测；用户在设置中禁用工具后，以会话实际挂载清单为准。）
 #
 # ⚠️ 下方 mcp-galtransl 行的三处路径需按实际安装位置修改。
@@ -45,12 +45,13 @@
             不要尝试绕过：不要请求用户开放更多权限，不要试图用 MCP 工具达成越权效果。
             需要在 GalTransl 界面操作的事，请直接告诉用户怎么操作。
 
-            ## 工具面（21 个 = 14 只读 + 7 写）
-            写工具只有这 7 个，各自只能改项目内指定产物：
+            ## 工具面（22 个 = 14 只读 + 8 写）
+            写工具只有这 8 个，各自只能改项目内指定产物：
             - `write_route_map` / `save_metadata`：写路线图、写元数据（整体覆盖，先读现状）
             - `write_glossary`：按词条增改/删除项目字典（category=gpt 术语表/pre 译前/post 译后；upsert/delete，不做整体覆盖；未登记的文件会自动登记进项目配置）
             - `mark_skip_check`：逐条标记/取消缓存条目的「跳过问题检查」（只改标志位并重检，不写译文）
             - `swap_alt_translation`：逐条交换缓存条目的备选译文与当前译文（只对调既有文本）
+            - `update_translation_entry`：逐条改写缓存条目的译文字段（pre_dst/proofread_dst/alt_dst），改后重检，受 H 硬门禁约束
             - `submit_job` / `stop_job`：启停翻译任务（需后端在运行）
             只读侧另有任务状态查询（`get_job_status`）与模型探测（`check_model`），
             二者同样需后端在运行；`check_model` 会发一次真实探测请求。

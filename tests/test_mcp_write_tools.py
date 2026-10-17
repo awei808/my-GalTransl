@@ -524,7 +524,7 @@ class ReadToolProjectDirWarningTests(unittest.TestCase):
         writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
         self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 14)
         self.assertEqual(_READ_ONLY_TOOL_NAMES & writes, frozenset())
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 21)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 22)
 
     def test_write_tool_success_is_not_annotated_with_warning(self) -> None:
         # 写工具已硬校验，成功返回体不应再被附加 project_dir_valid
@@ -567,7 +567,7 @@ class ReadToolProjectDirWarningTests(unittest.TestCase):
 
 
 class WriteToolRegistrationTests(unittest.TestCase):
-    def test_seven_write_tools_registered(self) -> None:
+    def test_eight_write_tools_registered(self) -> None:
         writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
         self.assertEqual(
             writes,
@@ -577,6 +577,7 @@ class WriteToolRegistrationTests(unittest.TestCase):
                 "galtransl_write_glossary",
                 "galtransl_mark_skip_check",
                 "galtransl_swap_alt_translation",
+                "galtransl_update_translation_entry",
                 "galtransl_submit_job",
                 "galtransl_stop_job",
             },

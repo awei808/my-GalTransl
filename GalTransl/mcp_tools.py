@@ -2,7 +2,7 @@
 
 检索类与字典读取为纯读磁盘的纯函数风格；作业域工具（任务状态/模型探测、提交/停止任务）
 经 HTTP 回后端（JobRegistry 只存在于后端进程内，见 mcp_backend_client），
-路线图/元数据/项目字典写工具与缓存条目写工具（跳过检查标记、备选译文交换）在本地落盘。
+路线图/元数据/项目字典写工具与缓存条目写工具（跳过检查标记、备选译文交换、译文字段改写）在本地落盘。
 所有工具以显式 project_dir 为边界（绝对路径，或已登记/工作区根下的项目名称），写入范围仅限项目内
 指定产物，无任意路径写、无命令执行。
 本模块不依赖任何 MCP 传输实现，供独立 stdio server（run_mcp_server.py）与未来内置 agent 共用，
@@ -753,14 +753,18 @@ def _modify_cache_entry(
     project_dir: str,
     filename: str,
     index: Any,
-    mutate: Callable[[Dict[str, Any]], str],
+    mutate: Callable[[Dict[str, Any]], Optional[str]],
     action_label: str,
+    on_change: Optional[Callable[[Dict[str, Any], str], None]] = None,
 ) -> Dict[str, Any]:
     """定位缓存条目 → 原地修改 → 快照 → 落盘 → 按 /cache/save 同口径重建问题标注。
 
     mutate(entry) 返回操作描述文本；业务校验不过（如无备选译文）时在 mutate 内抛
     ValueError。重建复用 server_cache 的检测链路（依赖加载失败时保留原 problem，
     检测异常时不覆写已有 problem，与 /cache/save 的降级口径一致）。
+
+    on_change(target, rel) 在确认有实际变化后、快照/落盘前调用（用于 H 门禁等
+    写前校验）；抛异常即中止本次写入，磁盘保持原样。no-op 时不会调用。
     """
     # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
     validate_project_dir(project_dir)
@@ -845,6 +849,9 @@ def _modify_cache_entry(
             "recheck_note": "",
             "job_check": "ok" if backend_reachable else "backend_unreachable（无法确认是否有翻译任务在运行，请自行确认）",
         }
+
+    if on_change is not None:
+        on_change(target, rel)
 
     # 重建 problem / post_dst_preview / skip_check（整文件，与 /cache/save 保存后重建一致）
     recheck_note = ""
@@ -998,6 +1005,127 @@ def _tool_swap_alt_translation(arguments: Dict[str, Any]) -> Dict[str, Any]:
         project_dir,
         str(arguments.get("filename", "") or "").strip(),
         arguments.get("index"),
+    )
+
+
+# 缓存条目可写译文字段：与校对页 EDITABLE_FIELD_KEYS 同口径（其余字段只读）
+_CACHE_ENTRY_WRITABLE_FIELDS = ("pre_dst", "proofread_dst", "alt_dst")
+# 旧缓存兼容键：canonical 键缺失/None 时回退（与 Cache.py 的 _cache_get 对齐）；
+# server_cache/检索侧用 `or` 回退，故清空 canonical 时仍需同步删旧键
+_CACHE_ENTRY_LEGACY_FIELDS = {"pre_dst": "pre_zh", "proofread_dst": "proofread_zh"}
+
+
+def _enforce_cache_entry_h_gate(project_dir: str, rel: str, texts: List[str]) -> None:
+    """缓存条目改写前的 H 门禁：文件维度（rel 所在 H 区间）+ 本次新写入文本。"""
+    enforce_h_gate(project_dir, cache_filename=rel, texts=texts)
+
+
+def update_translation_entry(
+    project_dir: str,
+    filename: str,
+    index: Any,
+    fields: Dict[str, Any],
+) -> Dict[str, Any]:
+    """直接改写某条翻译缓存条目的可写译文字段。
+
+    可写字段与校对页一致：pre_dst（初译/主译文）、proofread_dst（校对译文）、
+    alt_dst（备选译文）。新值按真实换行（LF）归一；proofread_dst / alt_dst 传空串
+    表示移除该字段，pre_dst 传空串表示置为未翻译。改写后按 /cache/save 同口径
+    整文件重检 problem/post_dst_preview，并在写前做 H 硬门禁校验。
+
+    Raises:
+        ValueError: 字段不合法、条目不存在、翻译任务运行中/刚结束、命中 H 门禁。
+    """
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError(
+            "fields 必须是非空对象，至少包含 "
+            f"{'/'.join(_CACHE_ENTRY_WRITABLE_FIELDS)} 之一"
+        )
+    unknown = sorted(set(fields) - set(_CACHE_ENTRY_WRITABLE_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"不支持的字段: {', '.join(unknown)}；可写字段仅 "
+            f"{'/'.join(_CACHE_ENTRY_WRITABLE_FIELDS)}"
+        )
+    normalized: Dict[str, str] = {}
+    for key, value in fields.items():
+        if not isinstance(value, str):
+            raise ValueError(f"字段 {key} 的值必须是字符串（清空请传空串）")
+        normalized[key] = value.replace("\r\n", "\n").replace("\r", "\n")
+
+    def _current(entry: Dict[str, Any], key: str) -> str:
+        # canonical 键存在即以其为准（含空串，与 Cache.py 的 _cache_get 一致）；
+        # 仅在键缺失/为 None 时回退旧键
+        value = entry.get(key)
+        if value is None:
+            legacy = _CACHE_ENTRY_LEGACY_FIELDS.get(key)
+            value = entry.get(legacy) if legacy else None
+        return "" if value is None else str(value)
+
+    def _has_stale_legacy(entry: Dict[str, Any], key: str, value: str) -> bool:
+        """旧键仍在且值与目标不同：即使 canonical 已是目标值也要落盘清理，避免歧义。"""
+        legacy = _CACHE_ENTRY_LEGACY_FIELDS.get(key)
+        if not legacy:
+            return False
+        old = entry.get(legacy)
+        return old is not None and str(old) != value
+
+    changed_values: List[str] = []
+
+    def _mutate(entry: Dict[str, Any]) -> Optional[str]:
+        changed_keys = [
+            key
+            for key, value in normalized.items()
+            if _current(entry, key) != value or _has_stale_legacy(entry, key, value)
+        ]
+        if not changed_keys:
+            return None
+        value_changed = []
+        for key in changed_keys:
+            # 只有 canonical/有效值真的变化时才纳入 H 文本校验；
+            # 仅清理旧键不引入新文本，不必过文本维度
+            if _current(entry, key) != normalized[key]:
+                value_changed.append(key)
+                changed_values.append(normalized[key])
+            # 同步移除旧键别名（pre_zh/proofread_zh）：重检/检索侧会在新键为空时
+            # 用 `or` 回退旧键，不清掉会把刚清空的字段又读回来
+            legacy = _CACHE_ENTRY_LEGACY_FIELDS.get(key)
+            if legacy:
+                entry.pop(legacy, None)
+            # 可选译文清空时移除字段（校对页写空串，读取侧语义等价）；
+            # pre_dst 是主译文，空串表示未翻译，保留字段本身
+            if key != "pre_dst" and normalized[key] == "":
+                entry.pop(key, None)
+            else:
+                entry[key] = normalized[key]
+        cleanup_only = [key for key in changed_keys if key not in value_changed]
+        parts = []
+        if value_changed:
+            parts.append("已改写 " + "、".join(value_changed))
+        if cleanup_only:
+            parts.append("已清理旧键 " + "、".join(cleanup_only))
+        return "；".join(parts)
+
+    return _modify_cache_entry(
+        project_dir,
+        filename,
+        index,
+        _mutate,
+        "改写译文",
+        # 只校验本次新写入的文本；文件维度覆盖 target 所在的 H 区间
+        on_change=lambda _entry, rel: _enforce_cache_entry_h_gate(
+            project_dir, rel, changed_values
+        ),
+    )
+
+
+def _tool_update_translation_entry(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    project_dir = _require_write_project_dir(arguments)
+    return update_translation_entry(
+        project_dir,
+        str(arguments.get("filename", "") or "").strip(),
+        arguments.get("index"),
+        arguments.get("fields"),
     )
 
 
@@ -1193,12 +1321,25 @@ _H_DENY_MESSAGE = (
 def _entry_has_h(project_dir: str, filename: str) -> bool:
     """判断某个翻译缓存文件是否含 H 区间（复用校对界面同源判定）。
 
-    `_resolve_cache_h_ranges` 要求「pass3_cache 下真实存在的缓存相对路径」
-    （如 `pass3_cache/01.json`），裸文件名会一律判为不存在。故这里按
-    pass3_cache 下的缓存命名探测：先试 `{filename}.json`，再试分片形态；
-    另按 NFKC 归一追加候选（全角文件名 + agent 半角输入时解析到真实缓存），
-    原候选名保持优先探测。识别不了时返回 False——不因判定不了而阻断正常写入。
+    `_resolve_cache_h_ranges` 要求真实存在的缓存相对路径。缓存工具传入的
+    `pass3_cache/01.json` 等相对路径优先按原样判定；元数据工具传入的是输入名
+    （不带扩展名或含 .json），故再按 pass3_cache 下的缓存命名探测 `{filename}.json`
+    与分片形态，并按 NFKC 归一追加候选。识别不了时返回 False——不因判定不了而阻断正常写入。
     """
+    # 缓存工具传入的是相对 transl_cache 的路径（如 pass3_cache/01.json 或顶层 01.json）：
+    # 能按该路径直接命中文件时优先按缓存路径判定，避免被下面的「输入名」探测漏掉
+    norm = str(filename or "").replace("\\", "/").strip("/")
+    try:
+        from GalTransl.server_cache import _resolve_cache_h_ranges
+
+        parts = norm.split("/") if norm and not os.path.isabs(norm) else []
+        if parts and ".." not in parts and os.path.isfile(
+            os.path.join(project_dir, CACHE_FOLDERNAME, *parts)
+        ):
+            return bool(_resolve_cache_h_ranges(project_dir, norm).get("has_h"))
+    except Exception as exc:
+        LOGGER.debug(f"[mcp] H 区间判定失败，按非 H 处理：{exc}")
+
     # 两种候选：{输入名}.json（输入名不带扩展名的历史简写）与输入名本身
     # （meta 文件名 = 输入名 + .meta.json，输入名含 .json 时即缓存名），命中由文件存在性决定
     candidates = [f"{filename}.json", filename]
@@ -1209,8 +1350,6 @@ def _entry_has_h(project_dir: str, filename: str) -> bool:
         if hit and hit != cand and hit not in probe_names:
             probe_names.append(hit)
     try:
-        from GalTransl.server_cache import _resolve_cache_h_ranges
-
         for cand in probe_names:
             if _resolve_cache_h_ranges(project_dir, f"{PASS3_CACHE_DIR}/{cand}").get("has_h"):
                 return True
@@ -1259,8 +1398,8 @@ def _text_has_h(project_dir: str, *texts: str) -> bool:
 def enforce_h_gate(project_dir: str, *, cache_filename: str = "", texts: Optional[List[str]] = None) -> None:
     """H 硬门禁：命中即抛 ValueError，不落盘。
 
-    只由 3 个内容写入类写工具调用（路线图 / 元数据 / 项目字典）；缓存条目标记与备选交换
-    不引入新文本，不调用本函数（对调 H 区间条目的既有译文属允许操作）。
+    只由 4 个内容写入类写工具调用（路线图 / 元数据 / 项目字典 / 缓存条目译文字段改写）；
+    缓存条目标记与备选交换不引入新文本，不调用本函数（对调 H 区间条目的既有译文属允许操作）。
     两条判据任一成立即拒绝：(1) 目标缓存文件落在 H 区间；(2) 待写入文本命中 H 词库。
     元数据类写入（filemeta/batchmeta）本身不含对话原文，故主要靠文件维度判定。
     用户可在设置中关闭门禁（mcpHGateEnabled），关闭时直接放行。
@@ -1848,8 +1987,8 @@ def build_server_instructions(
     """按门禁开关与禁用工具黑名单构建下发说明。
 
     工具计数与写工具清单按启用集合计算；门禁关闭时第 4 条改写为放行说明，
-    开启时第 4 条按 `enforce_h_gate` 的实际覆盖面写明（仅 3 个内容写入类写工具受门禁，
-    缓存条目标记/交换不引入新文本故不受约束——写成全称会让 agent 以为任何写入都有 H 兜底）。
+    开启时第 4 条按 `enforce_h_gate` 的实际覆盖面写明（仅 4 个内容写入类写工具受门禁，
+    缓存条目标记/备选交换不引入新文本故不受约束——写成全称会让 agent 以为任何写入都有 H 兜底）。
     文本被金样本测试与打包冒烟锁定，改文案须同步 `tests/test_mcp_gate_settings.py`。
     """
     disabled = set(disabled_tools or ())
@@ -1866,7 +2005,7 @@ def build_server_instructions(
     if h_gate_enabled:
         # 门禁覆盖面按实现如实写（见 docstring）；写工具全禁用时不点名工具，避免与第 1 条自相矛盾
         gate_scope = (
-            "写工具中仅 write_route_map / save_metadata / write_glossary 带 H 硬门禁（命中即拒绝）；\n"
+            "写工具中 write_route_map / save_metadata / write_glossary / update_translation_entry 带 H 硬门禁（命中即拒绝）；\n"
             "   mark_skip_check / swap_alt_translation 只改标志位或对调既有译文、不引入新文本，故不受门禁约束。\n"
             if n_write
             else "本服务未开放任何写工具，不存在经 MCP 写入 H 内容的路径。\n"
@@ -2252,6 +2391,32 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
         kind="write",
     ),
     _def(
+        "galtransl_update_translation_entry",
+        "直接改写某条翻译缓存条目的可写译文字段，语义与校对页编辑并保存一致。"
+        "可写字段：pre_dst（初译/主译文）、proofread_dst（校对译文）、alt_dst（备选译文）；"
+        "值为字符串，新值按真实换行（LF）归一。proofread_dst/alt_dst 传空串表示清除该字段，"
+        "pre_dst 传空串表示置为未翻译；未列出的字段保持不变。"
+        "改写后按 /cache/save 同口径整份文件重检 problem/post_dst_preview；"
+        "受 H 硬门禁约束（目标缓存文件含 H 区间，或新译文命中 H 词库时拒绝），翻译任务运行中/刚结束时拒绝。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "filename": {"type": "string", "description": "相对 transl_cache 的缓存文件名（如 pass3_cache/xx.json）"},
+            "index": {"type": "integer", "description": "缓存条目 index"},
+            "fields": {
+                "type": "object",
+                "description": "要改写的字段对象，至少包含一项；值均为字符串",
+                "properties": {
+                    "pre_dst": {"type": "string", "description": "初译/主译文；空串=未翻译"},
+                    "proofread_dst": {"type": "string", "description": "校对译文；空串=清除"},
+                    "alt_dst": {"type": "string", "description": "备选译文；空串=清除"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        ["project_dir", "filename", "index", "fields"],
+        kind="write",
+    ),
+    _def(
         "galtransl_submit_job",
         "提交 GalTransl 翻译任务（会真实启动翻译、消耗 API 额度）。"
         "**仅在用户明确要求开始翻译时调用**；调用前应与用户确认项目与引擎。"
@@ -2304,6 +2469,7 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_write_glossary": _tool_write_glossary,
     "galtransl_mark_skip_check": _tool_mark_skip_check,
     "galtransl_swap_alt_translation": _tool_swap_alt_translation,
+    "galtransl_update_translation_entry": _tool_update_translation_entry,
     "galtransl_submit_job": _tool_submit_job,
     "galtransl_stop_job": _tool_stop_job,
 }

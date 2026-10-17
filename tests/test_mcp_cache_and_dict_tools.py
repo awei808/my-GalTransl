@@ -6,22 +6,27 @@
 2. galtransl_mark_skip_check：标记清除 problem、取消恢复、幂等 no-op、元数据文件拒绝、
    index 兜底（数字字符串/越界）、翻译任务运行中拒绝、后端不可达放行并注明；
 3. galtransl_swap_alt_translation：pre_dst/alt_dst 交换、无备选拒绝；
-4. write_glossary / read_glossary 的 category=gpt/pre/post：译前/译后字典 upsert+自动登记、
+4. galtransl_update_translation_entry：改写三个可写译文字段、空串清除、旧键同步清理、
+   换行归一、非法字段/类型拒绝、H 门禁（文本与 H 区间）拦截、运行中任务拒绝；
+5. write_glossary / read_glossary 的 category=gpt/pre/post：译前/译后字典 upsert+自动登记、
    条件行保留、mono/diag 保留字拒绝、跨类别文件拒绝、H 门禁同样生效、read 返回 row_type。
 """
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
 from unittest import mock
 
 from GalTransl.mcp_tools import (
+    _CACHE_ENTRY_WRITABLE_FIELDS,
     _H_DENY_MESSAGE,
     call_mcp_tool,
     mark_skip_check,
     read_glossary,
     swap_alt_translation,
+    update_translation_entry,
     write_glossary,
 )
 
@@ -337,6 +342,265 @@ class SwapAltTranslationTests(CacheWriteToolTestsBase):
             with self.assertRaises(ValueError) as ctx:
                 swap_alt_translation(self.project_dir, "pass3_cache/不存在.json", 1)
         self.assertIn("文件不存在", str(ctx.exception))
+
+
+class UpdateTranslationEntryTests(CacheWriteToolTestsBase):
+    """直接改写缓存条目可写译文字段（校对页同口径）。"""
+
+    def test_updates_pre_dst_and_rechecks_problem(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = update_translation_entry(
+                self.project_dir, self.rel, 1, {"pre_dst": "你好呀"}
+            )
+        self.assertTrue(result["success"])
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["problem_before"], "残留日文")
+        self.assertEqual(result["problem_after"], "")
+        entry = _read_cache(self.project_dir)[0]
+        self.assertEqual(entry["pre_dst"], "你好呀")
+        # 写前有快照
+        snap_dir = os.path.join(self.project_dir, "transl_cache", ".snapshots", "pass3_cache")
+        self.assertTrue(any(name.startswith("01.json.") for name in os.listdir(snap_dir)))
+
+    def test_updates_proofread_and_alt_fields(self) -> None:
+        update_translation_entry(
+            self.project_dir,
+            self.rel,
+            2,
+            {"proofread_dst": "校对后的再见", "alt_dst": "再会"},
+        )
+        entry = _read_cache(self.project_dir)[1]
+        self.assertEqual(entry["proofread_dst"], "校对后的再见")
+        self.assertEqual(entry["alt_dst"], "再会")
+
+    def test_empty_clears_optional_fields(self) -> None:
+        update_translation_entry(
+            self.project_dir,
+            self.rel,
+            2,
+            {"alt_dst": "", "proofread_dst": ""},
+        )
+        entry = _read_cache(self.project_dir)[1]
+        self.assertNotIn("alt_dst", entry)
+        self.assertNotIn("proofread_dst", entry)
+
+    def test_empty_pre_dst_is_untranslated_not_removed(self) -> None:
+        update_translation_entry(self.project_dir, self.rel, 1, {"pre_dst": ""})
+        entry = _read_cache(self.project_dir)[0]
+        self.assertIn("pre_dst", entry)
+        self.assertEqual(entry["pre_dst"], "")
+
+    def test_clears_legacy_alias_when_writing_canonical_field(self) -> None:
+        # 旧缓存仅有 pre_zh：写 pre_dst="" 必须同时清掉 pre_zh，否则读侧回退旧键
+        _write_cache(
+            self.project_dir,
+            [_ENTRIES[0], {**_ENTRIES[1], "pre_dst": "", "pre_zh": "旧译文"}],
+        )
+        result = update_translation_entry(self.project_dir, self.rel, 2, {"pre_dst": ""})
+        self.assertTrue(result["changed"])
+        self.assertIn("已清理旧键 pre_dst", result["detail"])
+        entry = _read_cache(self.project_dir)[1]
+        self.assertNotIn("pre_zh", entry)
+        self.assertEqual(entry["pre_dst"], "")
+
+    def test_empty_canonical_shadows_legacy_when_writing(self) -> None:
+        # canonical 键存在但为空：不能被旧键的相同值误判为 no-op；
+        # 写入目标值并清掉旧键，消除读侧口径歧义
+        _write_cache(
+            self.project_dir,
+            [_ENTRIES[0], {**_ENTRIES[1], "pre_dst": "", "pre_zh": "旧译文"}],
+        )
+        result = update_translation_entry(self.project_dir, self.rel, 2, {"pre_dst": "旧译文"})
+        self.assertTrue(result["changed"])
+        entry = _read_cache(self.project_dir)[1]
+        self.assertEqual(entry["pre_dst"], "旧译文")
+        self.assertNotIn("pre_zh", entry)
+
+    def test_proofread_legacy_key_is_cleared(self) -> None:
+        _write_cache(
+            self.project_dir,
+            [_ENTRIES[0], {**_ENTRIES[1], "proofread_zh": "旧校对"}],
+        )
+        update_translation_entry(
+            self.project_dir, self.rel, 2, {"proofread_dst": "新校对"}
+        )
+        entry = _read_cache(self.project_dir)[1]
+        self.assertEqual(entry["proofread_dst"], "新校对")
+        self.assertNotIn("proofread_zh", entry)
+
+    def test_noop_when_value_unchanged(self) -> None:
+        before = _read_cache(self.project_dir)
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = update_translation_entry(
+                self.project_dir, self.rel, 1, {"pre_dst": "你好"}
+            )
+        self.assertFalse(result["changed"])
+        self.assertIn("无变化", result["detail"])
+        self.assertEqual(_read_cache(self.project_dir), before)
+
+    def test_newlines_are_normalized_to_lf(self) -> None:
+        update_translation_entry(
+            self.project_dir, self.rel, 1, {"pre_dst": "第一行\r\n第二行\r第三行"}
+        )
+        self.assertEqual(_read_cache(self.project_dir)[0]["pre_dst"], "第一行\n第二行\n第三行")
+
+    def test_rejects_unknown_field_and_non_string_value(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            update_translation_entry(self.project_dir, self.rel, 1, {"name": "bob"})
+        self.assertIn("不支持的字段", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            update_translation_entry(self.project_dir, self.rel, 1, {"pre_dst": 123})
+        self.assertIn("必须是字符串", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            update_translation_entry(self.project_dir, self.rel, 1, {})
+
+    def test_h_gate_blocks_new_h_text(self) -> None:
+        project_dir = tempfile.mkdtemp(prefix="gt_cacheh_")
+        try:
+            _make_project(project_dir, h_words=["禁词"])
+            rel = _write_cache(project_dir, _ENTRIES)
+            with self.assertRaises(ValueError) as ctx:
+                update_translation_entry(project_dir, rel, 1, {"pre_dst": "这里写了禁词"})
+            self.assertEqual(str(ctx.exception), _H_DENY_MESSAGE)
+            self.assertEqual(_read_cache(project_dir)[0]["pre_dst"], "你好")
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_h_gate_blocks_entry_in_h_range(self) -> None:
+        project_dir = tempfile.mkdtemp(prefix="gt_cacherange_")
+        try:
+            _make_project(project_dir)
+            rel = _write_cache(project_dir, _ENTRIES)
+            batch_dir = os.path.join(project_dir, "transl_cache", "pass2_cache")
+            os.makedirs(batch_dir, exist_ok=True)
+            with open(os.path.join(batch_dir, "01.json.batch.json"), "w", encoding="utf-8") as f:
+                json.dump({"批次": [{"区间": [1, 1], "h": 0.9}]}, f, ensure_ascii=False)
+            with self.assertRaises(ValueError) as ctx:
+                update_translation_entry(project_dir, rel, 1, {"pre_dst": "新译文"})
+            self.assertEqual(str(ctx.exception), _H_DENY_MESSAGE)
+            self.assertEqual(_read_cache(project_dir)[0]["pre_dst"], "你好")
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_h_gate_off_allows_h_text_and_h_range_file(self) -> None:
+        project_dir = tempfile.mkdtemp(prefix="gt_cacheh_off_")
+        try:
+            _make_project(project_dir, h_words=["禁词"])
+            rel = _write_cache(project_dir, _ENTRIES)
+            batch_dir = os.path.join(project_dir, "transl_cache", "pass2_cache")
+            os.makedirs(batch_dir, exist_ok=True)
+            with open(os.path.join(batch_dir, "01.json.batch.json"), "w", encoding="utf-8") as f:
+                json.dump({"批次": [{"区间": [1, 1], "h": 0.9}]}, f, ensure_ascii=False)
+            with mock.patch(
+                "GalTransl.mcp_tools.load_app_settings",
+                return_value={"mcpHGateEnabled": False, "mcpDisabledTools": []},
+            ):
+                result = update_translation_entry(
+                    project_dir, rel, 1, {"pre_dst": "这里写了禁词"}
+                )
+            self.assertTrue(result["changed"])
+            self.assertEqual(_read_cache(project_dir)[0]["pre_dst"], "这里写了禁词")
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_noop_on_h_range_file_is_allowed(self) -> None:
+        # 没有实际改动就不写盘、也不必过门禁：值相同时返回 no-op 而非拒绝
+        project_dir = tempfile.mkdtemp(prefix="gt_cacherange_noop_")
+        try:
+            _make_project(project_dir)
+            rel = _write_cache(project_dir, _ENTRIES)
+            batch_dir = os.path.join(project_dir, "transl_cache", "pass2_cache")
+            os.makedirs(batch_dir, exist_ok=True)
+            with open(os.path.join(batch_dir, "01.json.batch.json"), "w", encoding="utf-8") as f:
+                json.dump({"批次": [{"区间": [1, 1], "h": 0.9}]}, f, ensure_ascii=False)
+            result = update_translation_entry(project_dir, rel, 1, {"pre_dst": "你好"})
+            self.assertFalse(result["changed"])
+            self.assertIn("无变化", result["detail"])
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_h_gate_blocks_top_level_legacy_cache(self) -> None:
+        project_dir = tempfile.mkdtemp(prefix="gt_cacheh_legacy_")
+        try:
+            _make_project(project_dir)
+            rel = _write_cache(project_dir, _ENTRIES, rel="01.json")
+            batch_dir = os.path.join(project_dir, "transl_cache", "pass2_cache")
+            os.makedirs(batch_dir, exist_ok=True)
+            with open(os.path.join(batch_dir, "01.json.batch.json"), "w", encoding="utf-8") as f:
+                json.dump({"批次": [{"区间": [1, 1], "h": 0.9}]}, f, ensure_ascii=False)
+            with self.assertRaises(ValueError) as ctx:
+                update_translation_entry(project_dir, rel, 1, {"pre_dst": "新译文"})
+            self.assertEqual(str(ctx.exception), _H_DENY_MESSAGE)
+            self.assertEqual(_read_cache(project_dir, rel)[0]["pre_dst"], "你好")
+            # 门禁拒绝发生在写前：不应产生快照
+            snap_dir = os.path.join(project_dir, "transl_cache", ".snapshots")
+            self.assertFalse(os.path.isdir(snap_dir))
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_mixed_fields_only_changed_fields_written(self) -> None:
+        result = update_translation_entry(
+            self.project_dir,
+            self.rel,
+            1,
+            {"pre_dst": "你好", "proofread_dst": "校对稿"},
+        )
+        self.assertTrue(result["changed"])
+        self.assertIn("proofread_dst", result["detail"])
+        self.assertNotIn("pre_dst", result["detail"])
+        self.assertEqual(_read_cache(self.project_dir)[0]["pre_dst"], "你好")
+
+    def test_backend_unreachable_proceeds_with_note(self) -> None:
+        with mock.patch(
+            "GalTransl.mcp_backend_client.get_json", side_effect=RuntimeError("无法连接 GalTransl 后端")
+        ):
+            result = update_translation_entry(
+                self.project_dir, self.rel, 1, {"pre_dst": "你好呀"}
+            )
+        self.assertTrue(result["changed"])
+        self.assertTrue(result["job_check"].startswith("backend_unreachable"))
+
+    def test_writable_fields_match_review_page_editable_fields(self) -> None:
+        # 跨端漂移守卫：MCP 可写字段必须与校对页 EDITABLE_FIELD_KEYS 一致
+        from GalTransl.mcp_tools import MCP_TOOL_DEFS
+
+        tool = next(
+            d for d in MCP_TOOL_DEFS if d["name"] == "galtransl_update_translation_entry"
+        )
+        mcp_fields = set(tool["input_schema"]["properties"]["fields"]["properties"])
+        self.assertEqual(set(_CACHE_ENTRY_WRITABLE_FIELDS), mcp_fields)
+        utils_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "desktop", "src", "pages", "review", "reviewUtils.ts",
+        )
+        with open(utils_path, encoding="utf-8") as f:
+            source = f.read()
+        match = re.search(r"EDITABLE_FIELD_KEYS[^=]*=\s*new Set\(\[([^\]]+)\]\)", source)
+        self.assertIsNotNone(match, "未解析到 reviewUtils.ts 的 EDITABLE_FIELD_KEYS")
+        review_fields = re.findall(r'"([^"]+)"', match.group(1))
+        self.assertEqual(mcp_fields, set(review_fields))
+
+    def test_running_job_rejects_write(self) -> None:
+        jobs = {"jobs": [{"project_dir": self.project_dir, "status": "running", "job_id": "j1", "translator": "x"}]}
+        with mock.patch("GalTransl.mcp_backend_client.get_json", return_value=jobs):
+            with self.assertRaises(ValueError) as ctx:
+                update_translation_entry(self.project_dir, self.rel, 1, {"pre_dst": "新译文"})
+        self.assertIn("翻译任务进行中", str(ctx.exception))
+        self.assertEqual(_read_cache(self.project_dir)[0]["pre_dst"], "你好")
+
+    def test_call_mcp_tool_dispatches(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = call_mcp_tool(
+                "galtransl_update_translation_entry",
+                {
+                    "project_dir": self.project_dir,
+                    "filename": self.rel,
+                    "index": 1,
+                    "fields": {"pre_dst": "你好呀"},
+                },
+            )
+        self.assertTrue(result["success"])
+        self.assertEqual(_read_cache(self.project_dir)[0]["pre_dst"], "你好呀")
 
 
 class WriteGlossaryPrePostTests(unittest.TestCase):

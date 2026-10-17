@@ -4,13 +4,13 @@ GalTransl 程序本体不内置 Agent，Agent 能力通过 **MCP**（Model Conte
 
 ## MCP 能做什么
 
-MCP 服务提供检索与受限写入两类工具：检索缓存译文、原文、字典与项目字典、元数据、任务状态等；写入限于剧情路线图、元数据、项目字典词条（`category` = gpt/pre/post，按词条增改 / 删除，不做整体覆盖）与缓存条目（逐条标记/取消跳过问题检查、交换备选译文），另有提交 / 停止翻译任务。写工具落盘前会校验目标确实是合法项目目录。完整工具清单见 MCP 服务下发的使用说明与程序目录 `skills/galtransl-mcp/SKILL.md`（接入 agent 的完整契约文档，随发布包分发）。
+MCP 服务提供检索与受限写入两类工具：检索缓存译文、原文、字典与项目字典、元数据、任务状态等；写入限于剧情路线图、元数据、项目字典词条（`category` = gpt/pre/post，按词条增改 / 删除，不做整体覆盖）与缓存条目（逐条标记/取消跳过问题检查、交换备选译文、直接改写 `pre_dst`/`proofread_dst`/`alt_dst` 译文字段），另有提交 / 停止翻译任务。写工具落盘前会校验目标确实是合法项目目录。完整工具清单见 MCP 服务下发的使用说明与程序目录 `skills/galtransl-mcp/SKILL.md`（接入 agent 的完整契约文档，随发布包分发）。
 
 ## H 门禁
 
-「MCP H 门禁」开关控制**内容写入类写工具**（`write_route_map` 路线图 / `save_metadata` 元数据 / `write_glossary` 项目字典）对 H（成人）内容的硬拦截：**开启时**，外部 Agent 无法经 MCP 把这些写入的文本落在 H 相关文件与区间（命中即拒绝并报错）；关闭后放行。MCP 服务说明中的门禁条款随开关联动。
+「MCP H 门禁」开关控制**内容写入类写工具**（`write_route_map` 路线图 / `save_metadata` 元数据 / `write_glossary` 项目字典 / `update_translation_entry` 缓存条目译文字段）对 H（成人）内容的硬拦截：**开启时**，外部 Agent 无法经 MCP 把这些写入的文本落在 H 相关文件与区间（命中即拒绝并报错）；关闭后放行。MCP 服务说明中的门禁条款随开关联动。
 
-另有两个缓存条目工具**不受门禁约束**：`mark_skip_check`（标记/取消跳过问题检查）只改标志位、`swap_alt_translation`（交换备选译文）只在两条已有译文之间对调，都不写入新文本——**H 区间的条目同样可以标记或交换备选**（交换既有 H 译文属允许操作）。作业域的 `submit_job` / `stop_job` 不写内容，也不涉及门禁。故门禁只覆盖 3 个工具，不能当作「任何 MCP 写入都有 H 兜底」；读取侧的 H 纪律由接入的 Agent 自行遵守（见 `skills/galtransl-mcp/SKILL.md` §1）。
+另有两个缓存条目工具**不受门禁约束**：`mark_skip_check`（标记/取消跳过问题检查）只改标志位、`swap_alt_translation`（交换备选译文）只在两条已有译文之间对调，都不写入新文本——**H 区间的条目同样可以标记或交换备选**（交换既有 H 译文属允许操作）。作业域的 `submit_job` / `stop_job` 不写内容，也不涉及门禁。故门禁覆盖 4 个工具，不能当作「任何 MCP 写入都有 H 兜底」；读取侧的 H 纪律由接入的 Agent 自行遵守（见 `skills/galtransl-mcp/SKILL.md` §1）。
 
 ## 工具开关
 
