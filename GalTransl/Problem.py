@@ -89,18 +89,39 @@ def describe_allowed_break_ends() -> str:
     )
 
 
-def _newline_count(s: str) -> int:
-    """统计换行次数：真实 \\r\\n/\\n/\\r 与字面转义（"\\r\\n"/"\\n"）均计为 1 次，CRLF 不重复计。"""
+def _normalize_newlines(s: str) -> str:
+    """把字面转义（"\\r\\n"/"\\n"）与真实 CRLF/CR 统一为单个 LF。
+
+    检测侧所有换行相关判定共用此入口，避免各处归一化顺序/范围不一致。
+    """
     norm = s.replace("\\r\\n", "\n").replace("\\n", "\n")
-    norm = norm.replace("\r\n", "\n").replace("\r", "\n")
-    return norm.count("\n")
+    return norm.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _newline_count(s: str) -> int:
+    """统计换行次数：真实与字面转义换行均计为 1 次，CRLF 不重复计。"""
+    return _normalize_newlines(s).count("\n")
 
 
 def _clean_text_len(s: str) -> int:
     """去除全部换行后的纯文本长度（与 _newline_count 归一化口径一致）。"""
-    norm = s.replace("\\r\\n", "\n").replace("\\n", "\n")
-    norm = norm.replace("\r\n", "\n").replace("\r", "\n")
+    norm = _normalize_newlines(s)
     return len(norm) - norm.count("\n")
+
+
+# 「节奏单一」阈值：仅比较都达到最小字数的相邻行（避免「嗯」「好」等短句误报）；
+# 字数差上限 = max(固定容差, 较短行 * 比例)，对应模型为对齐行宽而注水的典型形态。
+_RHYTHM_MIN_SEGMENT_LEN = 8
+_RHYTHM_MIN_LEN_DIFF = 2
+_RHYTHM_LEN_DIFF_PERCENT = 15
+
+
+def _rhythm_len_diff_limit(short_len: int) -> int:
+    """节奏单一的字数差上限：短行越长允许的差值略大，但至少 2 字。"""
+    # 用整数运算表达百分比，避免浮点表示带来的隐式取整歧义
+    return max(
+        _RHYTHM_MIN_LEN_DIFF, short_len * _RHYTHM_LEN_DIFF_PERCENT // 100
+    )
 
 
 def _hit_display_words(words: list, *texts: str) -> list:
@@ -286,9 +307,7 @@ def find_problems(
         if CProblemType.换行位置异常 in find_type:
             bad_lines = []
             # 归一化真实/字面换行为真实 \n 后按段检查换行前内容（标点/空格/Tab/emoji/颜文字）
-            _norm = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
-            _norm = _norm.replace("\r\n", "\n").replace("\r", "\n")
-            _segments = _norm.split("\n")
+            _segments = _normalize_newlines(post_dst).split("\n")
             for _i in range(1, len(_segments)):
                 _prev_seg = _segments[_i - 1]
                 if _prev_seg and not _is_break_position_ok(_prev_seg):
@@ -301,8 +320,7 @@ def find_problems(
         if CProblemType.频繁换行 in find_type:
             # 仅检测换行符：译文有效字符少却出现多次换行（真实/字面换行均归一化计入）
             if post_dst:
-                _clean = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
-                _clean = _clean.replace("\r\n", "\n").replace("\r", "\n")
+                _clean = _normalize_newlines(post_dst)
                 _newline = _clean.count("\n")
                 _valid_len = _clean_text_len(post_dst)
                 _hit = False
@@ -317,6 +335,63 @@ def find_problems(
                     LOGGER.debug(
                         f"频繁换行：index={tran.index}, 有效字符={_valid_len}, 换行={_newline}次"
                     )
+        if CProblemType.节奏单一 in find_type:
+            # 换行前后两行字数相等/接近：部分模型（如 dsv4.1）倾向把译文长度对齐到
+            # 行宽，常靠冗余措辞凑字，读起来节奏呆板。只比较相邻非空行；短行多为
+            # 语气词/拟声词/称呼，天然长度接近，不参与判定。
+            _segments = _normalize_newlines(post_dst).split("\n")
+            # 源文行宽本身也接近时，译文接近是忠实原文的正常结果，不算模型为对齐行宽
+            # 注水。按「非空行顺序」对齐：文本插件会把源文首尾换行移到对话符号周边，
+            # 两侧段数可能相差 1，但非空行仍一一对应。用 post_src（已过译前字典）而
+            # 不是 pre_src，与模型实际看到的源文行宽一致。
+            _src_lines = [
+                seg.strip()
+                for seg in _normalize_newlines(post_src).split("\n")
+                if seg.strip()
+            ]
+            _dst_nonempty = [
+                (idx, seg.strip())
+                for idx, seg in enumerate(_segments)
+                if seg.strip()
+            ]
+            _dst_ordinal = {idx: ord for ord, (idx, _) in enumerate(_dst_nonempty)}
+            _src_aligned = len(_src_lines) == len(_dst_nonempty)
+            _rhythm_hits = []
+            for _i in range(1, len(_segments)):
+                _prev = _segments[_i - 1].strip()
+                _cur = _segments[_i].strip()
+                if not _prev or not _cur:
+                    continue
+                _prev_len, _cur_len = len(_prev), len(_cur)
+                _short_len = min(_prev_len, _cur_len)
+                if _short_len < _RHYTHM_MIN_SEGMENT_LEN:
+                    continue
+                if _src_aligned:
+                    # 相邻两个非空段在非空行序中也相邻
+                    _src_ord = _dst_ordinal[_i - 1]
+                    _src_prev = _src_lines[_src_ord]
+                    _src_cur = _src_lines[_src_ord + 1]
+                    _src_short = min(len(_src_prev), len(_src_cur))
+                    if (
+                        _src_short >= _RHYTHM_MIN_SEGMENT_LEN
+                        and abs(len(_src_prev) - len(_src_cur))
+                        <= _rhythm_len_diff_limit(_src_short)
+                    ):
+                        continue
+                if abs(_prev_len - _cur_len) <= _rhythm_len_diff_limit(_short_len):
+                    _rhythm_hits.append(
+                        f"第{_i}、{_i + 1}行"
+                        + (
+                            f"各{_prev_len}字"
+                            if _prev_len == _cur_len
+                            else f"{_prev_len}/{_cur_len}字"
+                        )
+                    )
+            if _rhythm_hits:
+                problem_list.append("节奏单一：" + "；".join(_rhythm_hits))
+                LOGGER.debug(
+                    f"节奏单一：index={tran.index}, 命中行={_rhythm_hits}, 译文={post_dst}"
+                )
         if CProblemType.比日文长 in find_type or CProblemType.比日文长严格 in find_type:
             len_beta = 1.3
             min_diff=8
@@ -415,9 +490,7 @@ def find_problems(
                 attributive_max = projectConfig.getAttributiveMaxLength()
                 adverbial_max = projectConfig.getAdverbialMaxLength()
                 # 归一化真实/字面换行为真实 \n 后按行切分，避免跨字面转义行被贪婪吞并
-                _norm = post_dst.replace("\\r\\n", "\n").replace("\\n", "\n")
-                _norm = _norm.replace("\r\n", "\n").replace("\r", "\n")
-                for line in _norm.split("\n"):
+                for line in _normalize_newlines(post_dst).split("\n"):
                     if CProblemType.定语过长 in find_type:
                         # 「是……的」强调/定语结构，取中间定语长度（每条只报一次）
                         for m in re.finditer(r"是([^，。！？!?…\n]+?)的", line):

@@ -25,6 +25,7 @@ if ROOT not in sys.path:
 from GalTransl.CSentense import CSentense
 from GalTransl.ConfigHelper import CProblemType, CProjectConfig
 from GalTransl.Backend.BaseEngine import BaseEngine
+from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.Prompts import FORGAL_JSON_BRSTATION_PROMPT
 from GalTransl.Backend.ForFixRound import (
     ForProblemFixRound,
@@ -161,6 +162,11 @@ class BuildInstructionsTests(unittest.TestCase):
         self.assertIn("疑似错误", text)
         self.assertIn("保留原译文", text)
 
+    def test_rhythm_monotony_type_has_instruction(self) -> None:
+        text = build_fix_instructions([CProblemType.节奏单一])
+        self.assertIn("节奏单一", text)
+        self.assertIn("冗余", text)
+
 
 class CombinedFilterTests(unittest.TestCase):
     def test_hits_any_whitelist_type(self) -> None:
@@ -254,6 +260,21 @@ class SetFixParamsTests(unittest.TestCase):
         t = self._backend()
         t.set_fix_params([CProblemType.单句过长])
         self.assertFalse(t._include_src)
+
+    def test_rhythm_monotony_is_dst_only(self) -> None:
+        # 节奏单调的修复只依赖译文行长，不需要对照原文
+        t = self._backend()
+        t.set_fix_params([CProblemType.节奏单一])
+        self.assertFalse(t._include_src)
+        self.assertIn("节奏单一", t.trans_prompt)
+
+    def test_rhythm_detail_survives_problem_type_filter(self) -> None:
+        # 明细中的「、」「；」不是分隔符，过滤后应原样保留
+        problem = "节奏单一：第1、2行各9字；第2、3行各9字"
+        kept = ForGalJsonTranslate._filter_problem_by_types(
+            problem, [CProblemType.节奏单一]
+        )
+        self.assertEqual(kept, problem)
 
     def test_mixed_combination_with_src_required_type_includes_src(self) -> None:
         t = self._backend()

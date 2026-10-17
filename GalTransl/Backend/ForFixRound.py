@@ -76,6 +76,12 @@ _FIX_SPECS: dict = {
         instruction="合并 dst 碎片化短行，恢复合理行长度与断句。"
         "合并后该句最多保留 3 个 <br>（不超过 3 个断句片段），禁止出现 4 个及以上片段。",
     ),
+    CProblemType.节奏单一: FixSpec(
+        mode=MODE_DST_ONLY,
+        instruction="该句换行前后相邻两行字数过于接近，疑似为对齐行宽而添加了冗余措辞。"
+        "在不改变原意、不新增或删除 <br> 的前提下压缩/改写冗余表达，使各行长度自然、"
+        "节奏有变化；若译文本身明显刻意对仗/排比（整齐短语、叠句等），则保留原样。",
+    ),
     CProblemType.词频过高: FixSpec(
         mode=MODE_SRC_DST,
         instruction="将 problem 标注的高频词部分替换为同义表达；若重复源自 src 刻意修辞可保留。",

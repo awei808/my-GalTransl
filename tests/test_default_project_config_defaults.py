@@ -113,6 +113,7 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
                 "频繁换行",
                 "疑似错误",
                 "词语色彩不一致",
+                "节奏单一",
             ],
         )
 
