@@ -189,6 +189,8 @@ class RuntimeState:
     latest_prompt_preview: str = ""
     # 按 worker_id 隔离的最新译文预览快照（多 worker 并发时各占一个 key，覆盖式）
     translation_previews: dict[str, str] = field(default_factory=dict)
+    # 最后一次写入是「说明性预览」（0 命中/0 采纳）的 key：真实结果不被说明覆盖
+    preview_note_keys: set[str] = field(default_factory=set)
     # 按 worker_id 隔离的提示词快照（多 worker 并发时各占一个 key）
     prompt_previews: dict[str, WorkerPromptSnapshot] = field(default_factory=dict)
     # 按 worker_id 隔离的流式首字状态灯（多 worker 并发时各占一个 key，覆盖式）
@@ -270,6 +272,28 @@ class RuntimeRegistry:
             else:
                 state = RuntimeState(project_dir=project_dir)
             self._states[normalized] = state
+
+    def reset_previews(self, project_dir: str) -> None:
+        """清空预览类快照，仅保留进度相关数据（仅阶段切换/任务开始时调用）。
+
+        上一阶段的 worker 板块若残留，会遮蔽本阶段写入的公共 key "-1"，并使 worker
+        tab 显示陈旧内容。file_totals / progress_sealed / meta_min_lines 不动；
+        worker 空闲瞬间不得调用本方法，否则前端 tab 会闪断。
+        """
+        with self._lock:
+            state = self._states.get(_normalize_project_dir(project_dir))
+            if state is None:
+                return
+            state.translation_previews.clear()
+            state.preview_note_keys.clear()
+            state.prompt_previews.clear()
+            state.ttft_states.clear()
+            state.latest_prompt_preview = ""
+            state.updated_at = _utcnow_text()
+            LOGGER.debug(
+                f"[runtime] reset_previews 清空预览快照: stage={state.stage!r}, "
+                f"project_dir={project_dir!r}"
+            )
 
     def update_status(
         self,
@@ -550,6 +574,8 @@ def set_live_snippets(
     translation_preview: str = "",
     worker_id: str = "",
     filename: str = "",
+    note_only: bool = False,
+    force: bool = False,
 ) -> None:
     """在翻译循环中设置当前提示词和译文预览的实时快照。
 
@@ -561,6 +587,8 @@ def set_live_snippets(
     结果预览（translation_preview）：按 worker 覆盖式更新，单条封顶 10000 字符保留
     最新尾部，避免内存与接口传输无限增长；非 worker 上下文（元数据生成、全局分析等
     单上下文后端）写入公共 key "-1"，供前端在无 worker 分板块时展示。
+    note_only=True 表示说明性预览（0 命中/0 采纳/结果已丢弃）：已有真实结果时不覆盖。
+    force=True 与 note_only 配合：强制覆盖真实结果，但仍按说明性预览记账。
     """
     max_len = 8000  # 仅提示词预览限制长度
     max_translation_len = 10000  # 单 worker 译文预览封顶长度，保留最新尾部
@@ -597,11 +625,26 @@ def set_live_snippets(
             # 覆盖式替换该 worker 最新结果预览，而非跨批次累积；
             # 非 worker 上下文统一写入公共 key "-1"（如全局分析、GenDic 等单上下文后端）
             preview_key = worker_id if (worker_id and worker_id != "-1") else "-1"
-            preview_text = translation_preview
-            if len(preview_text) > max_translation_len:
-                preview_text = preview_text[-max_translation_len:]
-                LOGGER.debug(f"[prompt-preview] worker {preview_key} translation_preview 已封顶至最近 {max_translation_len} 字符")
-            state.translation_previews[preview_key] = preview_text
+            if (
+                note_only
+                and not force
+                and preview_key in state.translation_previews
+                and preview_key not in state.preview_note_keys
+            ):
+                # 已有真实结果：说明性预览让位，避免把低频命中的真实结果刷掉
+                LOGGER.debug(
+                    f"[prompt-preview] worker {preview_key} 已有真实结果预览，跳过说明性预览"
+                )
+            else:
+                preview_text = translation_preview
+                if len(preview_text) > max_translation_len:
+                    preview_text = preview_text[-max_translation_len:]
+                    LOGGER.debug(f"[prompt-preview] worker {preview_key} translation_preview 已封顶至最近 {max_translation_len} 字符")
+                state.translation_previews[preview_key] = preview_text
+                if note_only:
+                    state.preview_note_keys.add(preview_key)
+                else:
+                    state.preview_note_keys.discard(preview_key)
         state.updated_at = _utcnow_text()
 
 
@@ -1209,6 +1252,11 @@ RUNTIME_PROGRESS_CACHE = RuntimeProgressCache()
 def reset_runtime_project(project_dir: str) -> None:
     RUNTIME_REGISTRY.reset_project(project_dir)
     RUNTIME_PROGRESS_CACHE.reset_project(project_dir)
+
+
+def reset_runtime_previews(project_dir: str) -> None:
+    """清空该项目的预览快照（阶段切换时由流水线调用，避免跨阶段残留遮蔽新结果）。"""
+    RUNTIME_REGISTRY.reset_previews(project_dir)
 
 
 def update_runtime_status(

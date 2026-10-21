@@ -206,6 +206,8 @@ class ForSemCheck(BaseImproveRound):
                     # 模型整批回显（复制输入全部标错）：丢弃本批标记，重试一次
                     for t in batch:
                         t.suspected_error = ""
+                    # 面板上刚推的命中已被丢弃：强制覆盖，否则后续 0 命中说明让位、误导
+                    self._push_discarded_preview("本批判定为整批回显，命中已丢弃")
                     if not echo_retried:
                         LOGGER.warning(
                             f"{self._log_tag}[{filename}:{idx_tip}] 单批命中 "
@@ -296,6 +298,9 @@ class ForSemCheck(BaseImproveRound):
                 self.pj_config,
                 self._format_result_preview(hits, "suspected_error", "疑似错误"),
             )
+        else:
+            # 0 命中是有效结论，也推一条，避免面板停留在上一批的陈旧内容
+            self._push_no_hit_preview("本批未判定出疑似错误句")
         return hit_count, hit_count
 
     def _apply_better_result(

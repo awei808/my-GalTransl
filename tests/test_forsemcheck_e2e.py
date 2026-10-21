@@ -16,6 +16,8 @@ import unittest
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from unittest.mock import patch
+
 from GalTransl.CSentense import CSentense
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Problem import find_problems
@@ -209,6 +211,29 @@ class ForSemCheckE2ETests(unittest.IsolatedAsyncioTestCase):
             await api.shutdown()
         self.assertEqual(trans_list[0].suspected_error, "")  # 旧标记被清，未命中
         self.assertEqual(trans_list[1].suspected_error, "译文串行")
+
+    async def test_echo_discard_pushes_explanatory_preview(self) -> None:
+        """整批回显时命中已被丢弃：末条预览须是丢弃说明，不得停留在已作废的命中。"""
+        api = self._make_api(has_tokens=True)
+        calls: list = []
+        try:
+            with (
+                patch.object(ForSemCheck, "_is_echo_response", return_value=True),
+                patch(
+                    "GalTransl.Backend.BaseEngine.set_live_snippets",
+                    side_effect=lambda *a, **k: calls.append(k),
+                ),
+            ):
+                trans_list = [_make_trans(1, "正确译文一"), _make_trans(2, "译文二")]
+                await api.batch_translate("demo.json", "demo.json", trans_list, 10)
+        finally:
+            await api.shutdown()
+        self.assertTrue(calls)
+        self.assertIn("命中已丢弃", calls[-1]["translation_preview"])
+        # 说明性预览 + 强制覆盖：覆盖已作废命中，同时让位给后续批次的说明
+        self.assertTrue(calls[-1]["note_only"])
+        self.assertTrue(calls[-1]["force"])
+        self.assertEqual(trans_list[1].suspected_error, "")
 
     async def test_empty_main_token_pool_degrades_without_requests(self) -> None:
         api = self._make_api(has_tokens=False)

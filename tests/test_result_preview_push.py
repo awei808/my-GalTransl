@@ -4,7 +4,7 @@
   getProjectDir）、config 异常时静默、不显式传 worker_id（worker 归属由
   server_runtime.set_live_snippets 按 WORKER_ID_CTX 内部解析）；
 - BaseSparseFixRound._parse_fix_response：成功应用 better 后推送预览（含
-  Better 行），0 成功不推送；
+  Better 行）；0 采纳时推送说明性预览（避免面板停留在上一批的陈旧内容）；
 - ForSemCheck / ForToneCheck._parse_fix_response：命中句推送（含中文标签）；
 - ForSemCheckAgain / ForToneCheckAgain._parse_confirm_response：确认/撤销均推送；
 - ForPlotRouteMap._save_plot_route_map：落盘成功后推送产物 JSON。
@@ -52,7 +52,16 @@ class _SnippetRecorder:
     def __init__(self) -> None:
         self.calls = []
 
-    def __call__(self, project_dir, prompt_preview="", translation_preview="", worker_id="", filename=""):
+    def __call__(
+        self,
+        project_dir,
+        prompt_preview="",
+        translation_preview="",
+        worker_id="",
+        filename="",
+        note_only=False,
+        force=False,
+    ):
         self.calls.append(
             {
                 "project_dir": project_dir,
@@ -60,6 +69,8 @@ class _SnippetRecorder:
                 "translation_preview": translation_preview,
                 "worker_id": worker_id,
                 "filename": filename,
+                "note_only": note_only,
+                "force": force,
             }
         )
 
@@ -103,6 +114,16 @@ class PushResultPreviewEntryTests(unittest.TestCase):
         with patch(_SNIPPETS_TARGET, side_effect=rec):
             BaseEngine.push_result_preview(object(), "文本")
         self.assertEqual(rec.calls, [])
+
+    def test_note_only_flag_is_forwarded(self) -> None:
+        """说明性预览的 note_only 标记须透传到 set_live_snippets。"""
+        rec = _SnippetRecorder()
+        with patch(_SNIPPETS_TARGET, side_effect=rec):
+            BaseEngine.push_result_preview(
+                _PreviewConfig("/proj/dir"), "本批未采纳任何修改", note_only=True
+            )
+        self.assertTrue(rec.calls[0]["note_only"])
+        self.assertEqual(rec.calls[0]["translation_preview"], "本批未采纳任何修改")
 
     def test_snippet_failure_is_silent(self) -> None:
         with patch(_SNIPPETS_TARGET, side_effect=RuntimeError("boom")):
@@ -149,8 +170,11 @@ class SparseFixRoundPreviewTests(unittest.TestCase):
         self.assertIn("> Src: src1", texts[0])
         self.assertIn("> Dst: 旧译文", texts[0])
         self.assertIn("> Better: 新译文Y", texts[0])
+        # 真实结果：不带说明标记（说明性预览不得覆盖它）
+        self.assertFalse(rec.calls[0]["note_only"])
 
-    def test_zero_success_pushes_nothing(self) -> None:
+    def test_zero_success_pushes_explanatory_preview(self) -> None:
+        """0 采纳也推送说明：否则面板停留在上一批的陈旧译文，被误认为后端没跑。"""
         parser = _make_fix_parser(_PreviewConfig())
         t1 = CSentense("src1", index=1)
         t1.post_src = "原文AAA"
@@ -158,12 +182,37 @@ class SparseFixRoundPreviewTests(unittest.TestCase):
         t1.proofread_zh = ""
         rec = _SnippetRecorder()
         with patch(_SNIPPETS_TARGET, side_effect=rec):
-            # better 与原文相同（回显）被过滤：无成功句，不推送预览
+            # better 与原文相同（回显）被过滤：无成功句，但须推送说明性预览
             success, _found = parser._parse_fix_response(
                 '{"id": 1, "better": "原文AAA"}', [t1], ""
             )
         self.assertEqual(success, 0)
-        self.assertEqual(rec.translation_calls, [])
+        texts = [c["translation_preview"] for c in rec.translation_calls]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("未采纳任何修改", texts[0])
+        self.assertNotIn("> Better:", texts[0])
+        # 说明性预览：带 note_only 标记，已存在真实结果时由 server_runtime 让位
+        self.assertTrue(rec.calls[0]["note_only"])
+
+    def test_discarded_preview_forces_overwrite(self) -> None:
+        """回显丢弃：须强制覆盖已作废的命中，但仍按说明性预览记账（后续 note 可再覆盖）。"""
+        parser = _make_fix_parser(_PreviewConfig())
+        rec = _SnippetRecorder()
+        with patch(_SNIPPETS_TARGET, side_effect=rec):
+            parser._push_discarded_preview("本批判定为整批回显，命中已丢弃")
+        call = rec.calls[0]
+        self.assertTrue(call["note_only"])
+        self.assertTrue(call["force"])
+        self.assertIn("命中已丢弃", call["translation_preview"])
+
+    def test_empty_response_preview_mentions_empty_response(self) -> None:
+        """空响应与「有响应但全被过滤」措辞区分，便于判断模型是否真的没输出。"""
+        parser = _make_fix_parser(_PreviewConfig())
+        rec = _SnippetRecorder()
+        with patch(_SNIPPETS_TARGET, side_effect=rec):
+            success, found = parser._parse_fix_response("", [], "")
+        self.assertEqual((success, found), (0, 0))
+        self.assertIn("响应为空", rec.translation_calls[0]["translation_preview"])
 
     def test_preview_failure_does_not_break_parse(self) -> None:
         parser = _make_fix_parser(_PreviewConfig())
@@ -220,12 +269,15 @@ class SemCheckPreviewTests(unittest.TestCase):
         self.assertEqual(len(texts), 1)
         self.assertIn("> 疑似错误: 译文串行", texts[0])
 
-    def test_zero_hit_pushes_nothing(self) -> None:
+    def test_zero_hit_pushes_explanatory_preview(self) -> None:
+        """0 命中是有效结论，须推送说明，避免面板停留在上一批的陈旧内容。"""
         parser = _make_semcheck_parser(ForSemCheck, _PreviewConfig())
         rec = _SnippetRecorder()
         with patch(_SNIPPETS_TARGET, side_effect=rec):
             parser._parse_fix_response("", [], "\r\n")
-        self.assertEqual(rec.translation_calls, [])
+        texts = [c["translation_preview"] for c in rec.translation_calls]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("未判定出疑似错误句", texts[0])
 
 
 class SemCheckAgainPreviewTests(unittest.TestCase):
@@ -256,12 +308,14 @@ class SemCheckAgainPreviewTests(unittest.TestCase):
         self.assertIn("> 疑似错误: 人名错译", texts[0])
         self.assertIn("v--4（已撤销：可接受译文）", texts[0])
 
-    def test_empty_verdict_pushes_nothing(self) -> None:
+    def test_empty_verdict_pushes_explanatory_preview(self) -> None:
         parser = _make_semcheck_parser(ForSemCheckAgain, _PreviewConfig())
         rec = _SnippetRecorder()
         with patch(_SNIPPETS_TARGET, side_effect=rec):
             parser._parse_confirm_response("", [])
-        self.assertEqual(rec.translation_calls, [])
+        texts = [c["translation_preview"] for c in rec.translation_calls]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("无确认或撤销", texts[0])
 
 
 class ToneCheckPreviewTests(unittest.TestCase):
@@ -283,6 +337,24 @@ class ToneCheckPreviewTests(unittest.TestCase):
         self.assertEqual(trans.tone_issue, "过于书面")
         texts = [c["translation_preview"] for c in rec.translation_calls]
         self.assertIn("> 色彩不一致: 过于书面", texts[0])
+
+    def test_tonecheck_zero_hit_pushes_explanatory_preview(self) -> None:
+        parser = _make_semcheck_parser(ForToneCheck, _PreviewConfig())
+        rec = _SnippetRecorder()
+        with patch(_SNIPPETS_TARGET, side_effect=rec):
+            parser._parse_fix_response("", [], "\r\n")
+        texts = [c["translation_preview"] for c in rec.translation_calls]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("未判定出色彩不一致句", texts[0])
+
+    def test_tonecheckagain_empty_verdict_pushes_explanatory_preview(self) -> None:
+        parser = _make_semcheck_parser(ForToneCheckAgain, _PreviewConfig())
+        rec = _SnippetRecorder()
+        with patch(_SNIPPETS_TARGET, side_effect=rec):
+            parser._parse_confirm_response("", [])
+        texts = [c["translation_preview"] for c in rec.translation_calls]
+        self.assertEqual(len(texts), 1)
+        self.assertIn("无确认或撤销", texts[0])
 
     def test_tonecheckagain_confirm_and_dismiss_pushed(self) -> None:
         parser = _make_semcheck_parser(ForToneCheckAgain, _PreviewConfig())

@@ -920,17 +920,16 @@ class BaseEngine:
             pass
 
     @staticmethod
-    def push_result_preview(config: CProjectConfig, text: str) -> None:
+    def push_result_preview(
+        config: CProjectConfig,
+        text: str,
+        note_only: bool = False,
+        force: bool = False,
+    ) -> None:
         """推送结果预览到翻译控制台"结果预览"面板（统一入口，失败静默）。
 
-        各后端解析成功后调一处即可，无需关心 worker 归属：server_runtime 按
-        WORKER_ID_CTX 自动分板块写入，非 worker 上下文（元数据、全局分析等
-        单上下文后端）写公共 key "-1"。预览仅用于 UI 展示，任何异常都不影响
-        翻译主流程；超长文本由 server_runtime 侧封顶（保留尾部 10000 字符）。
-
-        Args:
-            config: 项目配置对象，用于定位 runtime_project_dir。
-            text: 结果预览文本；为空时跳过不写。
+        worker 归属由 server_runtime 按 WORKER_ID_CTX 解析（非 worker 上下文写公共
+        key "-1"）；note_only 表示说明性预览（已有真实结果时不覆盖），force 则强制覆盖。
         """
         if not text:
             return
@@ -940,7 +939,12 @@ class BaseEngine:
             )()
             if not runtime_dir:
                 return
-            set_live_snippets(runtime_dir, translation_preview=text)
+            set_live_snippets(
+                runtime_dir,
+                translation_preview=text,
+                note_only=note_only,
+                force=force,
+            )
         except Exception:
             pass
 

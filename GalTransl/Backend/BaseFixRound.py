@@ -356,7 +356,34 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             self.push_result_preview(
                 self.pj_config, self._format_result_preview(applied)
             )
+        else:
+            # 0 采纳也要推送：否则面板停留在上一批的陈旧内容，被误认为后端没跑；
+            # 空响应与「有响应但全被过滤」措辞区分，便于判断是模型没输出还是全被丢弃
+            note = (
+                "本批响应为空，无可采纳修改"
+                if not result_text.strip()
+                else f"本批未采纳任何修改（解析到 {found_count} 行）"
+            )
+            self._push_no_hit_preview(note)
         return success_count, found_count
+
+    def _push_no_hit_preview(self, note: str) -> None:
+        """推送一条说明性预览（0 命中/0 采纳时），避免面板停留在陈旧内容。
+
+        note_only=True：该板块已有真实结果时不覆盖，避免低频命中的真实结果被刷掉。
+        """
+        self.push_result_preview(
+            self.pj_config, f"{self._log_tag} {note}", note_only=True
+        )
+
+    def _push_discarded_preview(self, note: str) -> None:
+        """推送「本批结果已被丢弃」的说明：须覆盖真实结果（那些命中已作废）。
+
+        仍按说明性预览记账（note_only + force）：后续批次的 0 命中说明可以继续覆盖它。
+        """
+        self.push_result_preview(
+            self.pj_config, f"{self._log_tag} {note}", note_only=True, force=True
+        )
 
     def _is_echo_response(self, found_count: int, batch_size: int) -> bool:
         """整批回显（复制输入全部输出 better）判定。

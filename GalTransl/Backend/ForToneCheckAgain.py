@@ -340,6 +340,9 @@ class ForToneCheckAgain(ForToneCheck):
                     confirmed, "tone_issue", "色彩不一致", dismissed
                 ),
             )
+        else:
+            # 0 结论也要推送，避免面板停留在上一批的陈旧内容
+            self._push_no_hit_preview("本批复核无确认或撤销的命中句")
         if missing:
             LOGGER.warning(
                 f"{self._log_tag} 本批 {len(missing)} 句未获得复核判定"

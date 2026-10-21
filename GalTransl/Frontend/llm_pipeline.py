@@ -16,11 +16,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from GalTransl import LOGGER
 from GalTransl.ConfigHelper import CProjectConfig
-from GalTransl.server_runtime import record_runtime_notice
+from GalTransl.server_runtime import record_runtime_notice, reset_runtime_previews
 from GalTransl.Frontend.llm_runtime import (
     _build_meta_file_totals,
     _check_stop_requested,
     _run_meta_worker_pool,
+    _runtime_project_dir,
     _stage_pool,
     _update_runtime,
     ensure_model_available_if_needed,
@@ -48,9 +49,14 @@ def _stage_skip(projectConfig: CProjectConfig, stage_key: str, reason: str) -> N
 
 
 def _stage_begin(projectConfig: CProjectConfig, stage_key: str, runtime_stage: str) -> None:
-    """统一的阶段开始处理：写分隔日志 + 上报运行时阶段名。"""
+    """统一的阶段开始处理：写分隔日志 + 清上一阶段预览快照 + 上报运行时阶段名。
+
+    清理须早于阶段上报：非 worker 上下文的阶段（剧情路线图 / 全局分析）写公共
+    key "-1"，若上阶段的 worker 板块残留，前端会一直取 worker 预览而看不到本阶段结果。
+    """
     stage = STAGES_BY_KEY[stage_key]
     LOGGER.info(f"[流水线] {stage_display_label(stage)}")
+    reset_runtime_previews(_runtime_project_dir(projectConfig))
     _update_runtime(projectConfig, stage=runtime_stage)
 
 
@@ -680,9 +686,9 @@ async def _run_stage_translate(
     stage_ctx: dict,
 ) -> None:
     """阶段：翻译执行。复用 _run_translation_phase 的既有翻译流程。"""
-    LOGGER.info(f"[流水线] {stage_display_label(STAGES_BY_KEY['translate'])}")
+    # 走统一入口：阶段切换清上一阶段预览，避免残留板块被当成"首条"显示
+    _stage_begin(projectConfig, "translate", "翻译执行中")
     record_runtime_notice(projectConfig.getProjectDir(), "开始翻译")
-    _update_runtime(projectConfig, stage="翻译执行中")
 
     if not _stage_enabled(projectConfig, "translate"):
         _stage_skip(projectConfig, "translate", "已禁用（enableTranslate=false）")

@@ -19,6 +19,7 @@ import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize, fe
 import { decodeProjectDir } from "../../lib/api/client";
 import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload, getGitSuggestAcknowledged, setGitSuggestAcknowledged } from "../../lib/api/preferences";
 import { projectName } from "../home/homeUtils";
+import { pickTranslationPreview } from "../../lib/previewSelection";
 import { BackendPicker } from "../../components/BackendPicker";
 import { GuideLink } from "../../components/GuideLink";
 import type {
@@ -167,14 +168,10 @@ export function TranslateConsole() {
   // 多 worker 并发时按 worker_id 隔离的最新结果预览快照（key 为 worker 标识）；
   // 非 worker 上下文的后端（元数据、全局分析、GenDic 等）统一写入公共 key "-1"
   const translationPreviews = () => runtime()?.translation_previews ?? {};
-  const activeTranslationPreview = () => {
-    const previews = translationPreviews();
-    if (promptWorkerIds().length === 0) {
-      // 无 worker 分板块时展示公共结果预览，使所有后端都有结果输出可见
-      return previews["-1"] ?? Object.values(previews)[0] ?? "";
-    }
-    return previews[activePromptWorkerId()];
-  };
+  // 选中板块可能还没出结果，或本阶段后端根本不在 worker 上下文（写公共 key "-1"）：
+  // 依次回退，避免这类后端的结果被遮蔽（口径见 lib/previewSelection）
+  const activeTranslationPreview = () =>
+    pickTranslationPreview(translationPreviews(), activePromptWorkerId());
   // 多 worker 并发时，从各 worker 提示词快照聚合正在处理的文件（去重保序）
   const activeFiles = createMemo(() => {
     const seen = new Set<string>();
