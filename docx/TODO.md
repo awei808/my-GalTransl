@@ -56,9 +56,11 @@
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
 
-
-- 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示
+- 检测类后端新增，节奏冗长；
+- 检测类后端的每批固定次数可以改为读取批次表
+- 将单轮对话模式推广至所有后端，允许所有后端都可以启用单轮对话模式
 - 翻译控制台-当前提示词的状态指示灯中，黑色指示灯没有类似其他指示灯的“等待首字”“取消”的文字说明，需要显示为“已完成+耗时”
+- 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示
 - 结果预览的更新时机可能过于频繁（需先将上一条bug修好并测试后再确认这个问题是否真实存在）
 - ~~**新增问题检测项：节奏单一**，针对部分句子换行符前后字数相等或相差不大的情况，句子节奏单一且大多是冗余的词语。（部分模型，有将换行符前后译文长度相等的倾向，dsv4.1最严重）~~ **已完成**（`CProblemType.节奏单一`，默认加入 problemList；`Problem.find_problems` 归一化真实/字面换行后比较相邻非空行，两行均≥8字且差值≤max(2,较短行15%)即报，原文按非空行对齐后对应两行也均≥8字且行宽接近时不报，细节含行号与字数；统一修复后端补 dst-only 修复指令，不默认加入自动修复清单。问题类型目录与默认模板同步，后端测试覆盖；前端经 `/api/problem-types` 自动生效）
 - ~~**新增mcp工具，让ai能直接改动缓存文件条目的可读写字段**~~ **已完成**（新增 `galtransl_update_translation_entry`：逐条改写 `pre_dst`/`proofread_dst`/`alt_dst`，口径对齐校对页 `EDITABLE_FIELD_KEYS`。新值按 LF 归一；`proofread_dst`/`alt_dst` 空串删除字段、`pre_dst` 空串表示未翻译；写 canonical 键时同步清除旧键 `pre_zh`/`proofread_zh`（避免读侧回退旧值）。复用 `_modify_cache_entry`：项目白名单、运行中/刚结束任务互斥、写前快照、整文件按 `/cache/save` 同口径重检 `problem`/`post_dst_preview`；新增 `on_change` 写前钩子接入 `enforce_h_gate`（文件 H 区间 + 新文本 H 词库），故门禁覆盖面扩为 4 个内容写入工具，`_entry_has_h` 同时支持缓存相对路径。MCP 工具数 21→22（14 只读 + 8 写），instructions/金样本/门禁 AST 覆盖面测例、SKILL.md、MCP 接入指南、guides、README、dsh 预设与前端门禁说明同步。）
