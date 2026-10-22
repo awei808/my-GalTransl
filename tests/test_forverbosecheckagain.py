@@ -57,21 +57,48 @@ def _trans(
 
 class ParseConfirmResponseTests(unittest.TestCase):
     def test_confirm_keeps_mark_and_updates_reason(self) -> None:
+        # 复核轮同样要求片段证据（继承自 ForVerboseCheck 的 _reason_evidence_required）
         parser = _make_parser()
-        trans = _trans(3, verbose="旧原因")
+        trans = _trans(3, pre_dst="非常非常感谢你", verbose="旧原因")
         confirm, dismiss = parser._parse_confirm_response(
-            'tma|{"id": 3, "keep": true, "reason": "同义堆叠：非常非常"}', [trans]
+            'tma|{"id": 3, "keep": true, "reason": "同义堆叠：「非常」/「非常」"}',
+            [trans],
         )
         self.assertEqual((confirm, dismiss), (1, 0))
-        self.assertEqual(trans.verbose_issue, "同义堆叠：非常非常")
+        self.assertEqual(trans.verbose_issue, "同义堆叠：「非常」/「非常」")
 
     def test_confirm_reason_halfwidth_commas_normalized(self) -> None:
         parser = _make_parser()
-        trans = _trans(4, verbose="旧原因")
+        trans = _trans(4, pre_dst="其实说实话的话呢也就是说算了", verbose="旧原因")
         parser._parse_confirm_response(
-            'ab1|{"id": 4, "keep": true, "reason": "垫词多：的话呢,也就是说"}', [trans]
+            'ab1|{"id": 4, "keep": true, "reason": "垫词多：「的话呢,也就是说」"}',
+            [trans],
         )
-        self.assertEqual(trans.verbose_issue, "垫词多：的话呢，也就是说")
+        self.assertEqual(trans.verbose_issue, "垫词多：「的话呢，也就是说」")
+
+    def test_confirm_reason_without_evidence_keeps_old_mark(self) -> None:
+        # 新 reason 的片段在译文中找不到：不覆盖第一轮原因，保留既有标记
+        parser = _make_parser()
+        trans = _trans(12, pre_dst="一句很短的译文", verbose="旧原因")
+        confirm, dismiss = parser._parse_confirm_response(
+            'ab1|{"id": 12, "keep": true, "reason": "同义堆叠：「那些」/「那些」"}',
+            [trans],
+        )
+        self.assertEqual((confirm, dismiss), (1, 0))
+        self.assertEqual(trans.verbose_issue, "旧原因")
+
+    def test_echo_line_discarded_instead_of_missing_keep(self) -> None:
+        # 复核轮回显输入行：整行丢弃（否则会落到 keep 缺失分支，被当成「未获得判定」误报）
+        parser = _make_parser()
+        trans_list = [_trans(13, verbose="原因A"), _trans(14, verbose="原因B")]
+        confirm, dismiss = parser._parse_confirm_response(
+            'a1b|{"id": 13, "src": "原文", "dst": "译文"}\n'
+            'c2d|{"id": 14, "keep": false}',
+            trans_list,
+        )
+        self.assertEqual((confirm, dismiss), (0, 1))
+        self.assertEqual(trans_list[0].verbose_issue, "原因A")
+        self.assertEqual(trans_list[1].verbose_issue, "")
 
     def test_confirm_without_reason_keeps_old_mark(self) -> None:
         parser = _make_parser()

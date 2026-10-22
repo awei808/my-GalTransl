@@ -556,7 +556,7 @@ class SemcheckEchoBatchTests(unittest.IsolatedAsyncioTestCase):
         obj = await self._run([self._echo_resp(), self._echo_resp()])
         self.assertTrue(all(t.suspected_error == "" for t in obj._targets))
         self.assertEqual(len(obj._recorded_errors), 1)
-        self.assertIn("重试仍疑似整批回显", obj._recorded_errors[0][2])
+        self.assertIn("重试后仍异常", obj._recorded_errors[0][2])
         self.assertEqual(len(obj._llm_calls), 2)
 
     async def test_partial_hits_kept(self) -> None:

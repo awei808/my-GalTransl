@@ -68,42 +68,139 @@ def problem_types_of(problem: str) -> list:
 
 
 class ParseVerboseJsonlineTests(unittest.TestCase):
-    def test_hit_sets_verbose_issue_default_one(self) -> None:
+    """首轮稀疏解析：reason 必须带可在 dst 中核对的「…」片段（_reason_evidence_required）。
+
+    无片段证据的命中不写标记——前端会显示成「没有原因的节奏冗长」，无法人工复核。
+    """
+
+    def test_hit_without_reason_discarded(self) -> None:
+        # 旧口径会写哨兵 "1"；新口径丢弃，避免无头标记进入问题列表
         parser = _make_parser()
         trans = _trans(3)
-        parser._parse_fix_response('tma|{"id": 3}', [trans], "\r\n")
-        self.assertEqual(trans.verbose_issue, "1")
+        quality: dict = {}
+        hit, _ = parser._parse_fix_response('tma|{"id": 3}', [trans], "\r\n", quality)
+        self.assertEqual((hit, trans.verbose_issue), (0, ""))
+        self.assertEqual(quality.get("no_reason"), 1)
 
     def test_hit_keeps_specific_reason(self) -> None:
         parser = _make_parser()
-        trans = _trans(7)
+        trans = _trans(7, pre_dst="非常非常感谢你")
         parser._parse_fix_response(
-            'ab1|{"id": 7, "reason": "同义堆叠：非常非常"}', [trans], "\r\n"
+            'ab1|{"id": 7, "reason": "同义堆叠：「非常」/「非常」"}',
+            [trans],
+            "\r\n",
         )
-        self.assertEqual(trans.verbose_issue, "同义堆叠：非常非常")
+        self.assertEqual(trans.verbose_issue, "同义堆叠：「非常」/「非常」")
 
-    def test_placeholder_reason_normalized_to_one(self) -> None:
-        # 提示词禁止只写类型名，模型仍可能照抄 → 归一为哨兵 "1"
+    def test_placeholder_reason_discarded(self) -> None:
+        # 提示词禁止只写类型名，模型仍可能照抄 → 归一为空 → 无片段证据 → 丢弃
         parser = _make_parser()
         trans = _trans(4)
-        parser._parse_fix_response('1mj|{"id": 4, "reason": "节奏冗长"}', [trans], "\r\n")
-        self.assertEqual(trans.verbose_issue, "1")
+        quality: dict = {}
+        parser._parse_fix_response(
+            '1mj|{"id": 4, "reason": "节奏冗长"}', [trans], "\r\n", quality
+        )
+        self.assertEqual(trans.verbose_issue, "")
+        self.assertEqual(quality.get("no_reason"), 1)
 
     def test_reason_halfwidth_commas_normalized(self) -> None:
         parser = _make_parser()
-        trans = _trans(9)
+        trans = _trans(9, pre_dst="其实说实话的话呢也就是说算了")
         parser._parse_fix_response(
-            'cd2|{"id": 9, "reason": "垫词过多：的话呢,也就是说"}', [trans], "\r\n"
+            'cd2|{"id": 9, "reason": "垫词过多：「的话呢,也就是说」"}',
+            [trans],
+            "\r\n",
         )
-        self.assertEqual(trans.verbose_issue, "垫词过多：的话呢，也就是说")
+        self.assertEqual(trans.verbose_issue, "垫词过多：「的话呢，也就是说」")
+
+    def test_nested_brackets_are_stripped_from_fragments(self) -> None:
+        # 提示词格式本身就是嵌套写法「形态：「A」/「B」」，模型照抄整段时
+        # 外壳不能算进片段，否则合法命中会被误判为无证据
+        parser = _make_parser()
+        trans = _trans(8, pre_dst="非常非常感谢你")
+        parser._parse_fix_response(
+            'ab1|{"id": 8, "reason": "「同义堆叠：「非常」/「非常」」"}',
+            [trans],
+            "\r\n",
+        )
+        self.assertEqual(trans.verbose_issue, "「同义堆叠：「非常」/「非常」」")
+
+    def test_fragment_not_in_dst_discarded(self) -> None:
+        # 模型编造片段：dst 里根本没有，说明判定不可信
+        parser = _make_parser()
+        trans = _trans(5, pre_dst="一句很短的译文")
+        quality: dict = {}
+        hit, _ = parser._parse_fix_response(
+            'ab1|{"id": 5, "reason": "同义堆叠：「那些」/「那些」"}',
+            [trans],
+            "\r\n",
+            quality,
+        )
+        self.assertEqual((hit, trans.verbose_issue), (0, ""))
+        self.assertEqual(quality.get("no_reason"), 1)
+
+    def test_fragment_line_break_encoding_restored(self) -> None:
+        # 提示词口径把换行编成 <br>：比对前先还原，否则含换行的片段被误判为编造
+        parser = _make_parser()
+        trans = _trans(6, pre_dst="第一\n第二")
+        parser._parse_fix_response(
+            'ab1|{"id": 6, "reason": "重复陈述：「第一<br>第二」"}', [trans], "\r\n"
+        )
+        self.assertEqual(trans.verbose_issue, "重复陈述：「第一<br>第二」")
 
     def test_unknown_id_and_garbage_tolerated(self) -> None:
         parser = _make_parser()
-        trans = _trans(5)
+        trans = _trans(5, pre_dst="非常非常感谢你")
         parser._parse_fix_response(
-            '先思考一下…\nab1|{"id": 99}\nzz9|{"id": 5} 尾巴乱码', [trans], "\r\n"
+            '先思考一下…\nab1|{"id": 99}\n'
+            'zz9|{"id": 5, "reason": "同义堆叠：「非常」/「非常」"} 尾巴乱码',
+            [trans],
+            "\r\n",
         )
-        self.assertEqual(trans.verbose_issue, "1")
+        self.assertEqual(trans.verbose_issue, "同义堆叠：「非常」/「非常」")
+
+
+class EchoLineDefenseTests(unittest.TestCase):
+    """输出行带 src/dst（输入行才有的键）→ 模型回显输入，整行丢弃。"""
+
+    def test_echo_line_with_src_dst_discarded(self) -> None:
+        parser = _make_parser()
+        trans = _trans(1, pre_dst="译文")
+        quality: dict = {}
+        hit, _ = parser._parse_fix_response(
+            'x8n|{"id": 1, "src": "原文", "dst": "译文"}', [trans], "\r\n", quality
+        )
+        self.assertEqual((hit, trans.verbose_issue), (0, ""))
+        self.assertEqual(quality.get("echo_lines"), 1)
+
+    def test_echo_lines_only_leave_batch_unmarked(self) -> None:
+        # 推理正文被 preprocess 的签名定位误当结果时整片出现：整片丢弃，本批 0 命中
+        parser = _make_parser()
+        trans_list = [_trans(i) for i in range(1, 4)]
+        quality: dict = {}
+        resp = "\n".join(
+            f'a{i}b|{{"id": {i}, "name": "創", "src": "原文", "dst": "译文"}}'
+            for i in range(1, 4)
+        )
+        hit, _ = parser._parse_fix_response(resp, trans_list, "\r\n", quality)
+        self.assertEqual(hit, 0)
+        self.assertEqual(quality.get("echo_lines"), 3)
+        self.assertTrue(all(t.verbose_issue == "" for t in trans_list))
+
+    def test_echo_line_mixed_with_real_hit(self) -> None:
+        # 回显行与真实命中混排：只丢回显行
+        parser = _make_parser()
+        trans_list = [_trans(1), _trans(2, pre_dst="非常非常感谢你")]
+        quality: dict = {}
+        resp = (
+            'a1b|{"id": 1, "src": "原文", "dst": "译文"}\n'
+            'c2d|{"id": 2, "reason": "同义堆叠：「非常」/「非常」"}'
+        )
+        hit, _ = parser._parse_fix_response(resp, trans_list, "\r\n", quality)
+        self.assertEqual(hit, 1)
+        self.assertEqual(quality.get("echo_lines"), 1)
+        self.assertEqual(trans_list[0].verbose_issue, "")
+        self.assertEqual(trans_list[1].verbose_issue, "同义堆叠：「非常」/「非常」")
 
 
 class VerboseClaimTests(unittest.TestCase):
@@ -220,7 +317,9 @@ class BatchTranslateTests(unittest.IsolatedAsyncioTestCase, _VerboseCheckTestBas
         self.assertEqual(trans.verbose_issue, "旧标记")
 
     async def test_marks_written_and_cleared_idempotently(self) -> None:
-        obj = self._make_obj({}, llm_resp='ab1|{"id": 2, "reason": "重复陈述同一句"}')
+        obj = self._make_obj(
+            {}, llm_resp='ab1|{"id": 2, "reason": "重复陈述：「译文」/「译文」"}'
+        )
         trans_list = [_trans(i) for i in range(1, 4)]
         trans_list[0].verbose_issue = "旧标记"
         with patch.object(
@@ -228,13 +327,13 @@ class BatchTranslateTests(unittest.IsolatedAsyncioTestCase, _VerboseCheckTestBas
         ):
             await obj.batch_translate("f.json", "c.json", trans_list, 20)
         self.assertEqual(trans_list[0].verbose_issue, "")
-        self.assertEqual(trans_list[1].verbose_issue, "重复陈述同一句")
+        self.assertEqual(trans_list[1].verbose_issue, "重复陈述：「译文」/「译文」")
         self.assertEqual(trans_list[2].verbose_issue, "")
 
     async def test_prompt_injects_task_metadata_and_input_only(self) -> None:
         obj = self._make_obj(
             {},
-            llm_resp='ab1|{"id": 1, "reason": "垫词过多"}',
+            llm_resp='ab1|{"id": 1, "reason": "垫词过多：「译文」"}',
             metadata_block="\n<plot_metadata>\n角色: 創\n</plot_metadata>\n",
         )
         trans_list = [_trans(1)]
@@ -258,7 +357,10 @@ class BatchTranslateTests(unittest.IsolatedAsyncioTestCase, _VerboseCheckTestBas
     async def test_echo_response_retried_once_then_discarded(self) -> None:
         # 6 句整批回显（命中数达 _echo_min_hits）：首轮丢弃并追加纠正提示重试，
         # 重试仍回显 → 标记清空 + 记错误
-        resp = "\n".join(f'ab{i}|{{"id": {i}, "reason": "冗长"}}' for i in range(1, 7))
+        resp = "\n".join(
+            f'ab{i}|{{"id": {i}, "reason": "同义堆叠：「译文」/「译文」"}}'
+            for i in range(1, 7)
+        )
         obj = self._make_obj({}, llm_resp=resp)
         trans_list = [_trans(i) for i in range(1, 7)]
         with patch.object(
@@ -268,7 +370,75 @@ class BatchTranslateTests(unittest.IsolatedAsyncioTestCase, _VerboseCheckTestBas
         self.assertEqual(len(obj._llm_calls), 2)
         self.assertIn("整批回显", obj._llm_calls[1][-1]["content"])
         self.assertTrue(all(t.verbose_issue == "" for t in trans_list))
-        self.assertIn("重试仍疑似整批回显", obj._recorded_errors[0][2])
+        self.assertIn("重试后仍异常", obj._recorded_errors[0][2])
+
+    async def test_no_reason_ratio_discards_batch(self) -> None:
+        # 6 句命中全无片段证据（推理正文/空 reason 被当成结果）：本批作废 +
+        # 追加「没给片段」纠正提示重试一次，仍异常则记一次运行态错误
+        resp = "\n".join(f'ab{i}|{{"id": {i}}}' for i in range(1, 7))
+        obj = self._make_obj({}, llm_resp=resp)
+        trans_list = [_trans(i) for i in range(1, 7)]
+        with patch.object(
+            ForVerboseCheck, "_filter_target_translations", return_value=trans_list
+        ):
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertEqual(len(obj._llm_calls), 2)
+        self.assertIn("片段", obj._llm_calls[1][-1]["content"])
+        self.assertTrue(all(t.verbose_issue == "" for t in trans_list))
+        self.assertEqual(len(obj._recorded_errors), 1)
+        self.assertIn("无理由命中率过高", obj._recorded_errors[0][2])
+
+    async def test_low_no_reason_ratio_keeps_valid_hits(self) -> None:
+        # 12 句里 4 句命中、其中 1 句无证据：只逐条丢弃那 1 句，不整批作废（1/4 < 0.5）
+        lines = [
+            f'ab{i}|{{"id": {i}, "reason": "同义堆叠：「译文」/「译文」"}}'
+            for i in range(1, 4)
+        ]
+        lines.append('zz9|{"id": 4}')
+        obj = self._make_obj({}, llm_resp="\n".join(lines))
+        trans_list = [_trans(i) for i in range(1, 13)]
+        with patch.object(
+            ForVerboseCheck, "_filter_target_translations", return_value=trans_list
+        ):
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertEqual(len(obj._llm_calls), 1)  # 判定正常，不重试
+        self.assertEqual(obj._recorded_errors, [])
+        self.assertEqual(trans_list[0].verbose_issue, "同义堆叠：「译文」/「译文」")
+        self.assertEqual(trans_list[2].verbose_issue, "同义堆叠：「译文」/「译文」")
+        self.assertEqual(trans_list[3].verbose_issue, "")  # 无证据，逐条丢弃
+
+    async def test_echo_input_lines_discarded_batch_and_recorded(self) -> None:
+        # 模型把推理正文里的输入行回显成结果：整行丢弃 → 不产生无头标记，
+        # 且必须走「整批回显」链路（重试 + 记运行态错误），不能静默成「检测通过」
+        resp = "\n".join(
+            f'a{i}b|{{"id": {i}, "name": "創", "src": "原文", "dst": "译文"}}'
+            for i in range(1, 6)
+        )
+        obj = self._make_obj({}, llm_resp=resp)
+        trans_list = [_trans(i) for i in range(1, 6)]
+        with patch.object(
+            ForVerboseCheck, "_filter_target_translations", return_value=trans_list
+        ):
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertTrue(all(t.verbose_issue == "" for t in trans_list))
+        self.assertEqual(len(obj._llm_calls), 2)  # 整批回显 → 追加纠正提示重试一次
+        self.assertEqual(len(obj._recorded_errors), 1)
+        self.assertIn("回显输入行", obj._recorded_errors[0][2])
+
+    async def test_dropped_hits_summarized_in_round_log(self) -> None:
+        # 低于整批作废门槛的逐条丢弃不留明细日志，必须在轮次汇总里给出计数
+        lines = [
+            f'ab{i}|{{"id": {i}, "reason": "同义堆叠：「译文」/「译文」"}}'
+            for i in range(1, 3)
+        ]
+        lines.append('zz9|{"id": 3}')  # 无片段证据，逐条丢弃
+        obj = self._make_obj({}, llm_resp="\n".join(lines))
+        trans_list = [_trans(i) for i in range(1, 13)]
+        with patch.object(
+            ForVerboseCheck, "_filter_target_translations", return_value=trans_list
+        ), self.assertLogs("GalTransl", level="INFO") as cm:
+            await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        self.assertIn("1 句因原因缺少可核对片段被丢弃", "\n".join(cm.output))
 
     async def test_llm_failure_records_error_and_leaves_batch_unmarked(self) -> None:
         # 首轮进入即清旧标记，失败批次必然为空；「失败保留标记」的 fail-safe 语义属复核轮

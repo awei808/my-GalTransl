@@ -30,11 +30,17 @@ ForVerboseCheck 及各自 Again 复核轮）此前各自实现令牌池降级、
 单批上限 `internals.detect.batch_from_metadata_max_sentences`），区间外句子按
 固定句数切；无元数据、句子无行号或行号与区间不匹配时整体回退 `_batch_size_keys`
 固定句数。复核轮恒按固定句数（命中句稀疏，按区间分会炸出大量 1-2 句批）。
+
+异常输出防御（fail-safe，见 `_parse_fix_response` / `_detect_batch_anomaly`）：
+- 输出行带 `src`/`dst` 键 → 模型把输入行回显成了判定结果，整行丢弃；
+- 开启 `_reason_evidence_required` 的引擎，`reason` 为空或片段在译文中找不到 →
+  该条不写标记；本批「无理由命中率」超阈值 → 整批作废并记一次运行态错误。
 """
 
 import os
+import re
 import threading
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from GalTransl import LOGGER
 from GalTransl.COpenAI import COpenAITokenPool
@@ -52,6 +58,11 @@ from GalTransl.Backend.utils import (
     strip_chunk_suffix,
 )
 
+
+# reason 片段抽取：提示词口径「形态：「片段1」/「片段2」」。
+# 排除「」内的嵌套「：提示词自己的格式说明就是「形态：「A」/「B」」，模型照抄整段时
+# 会得到「同义堆叠：「A」，把外壳算进片段必然在译文中找不到 → 整条被误判为无证据。
+_FRAGMENT_RE = re.compile(r"「([^「」]*)」")
 
 # 退化日志节流键（(项目目录, 日志前缀)）：实例按文件重建，只能放在模块级
 _FALLBACK_LOG_KEYS: set = set()
@@ -84,6 +95,24 @@ class BaseDetectRound(BaseImproveRound):
     _clear_marker_before_round = True
     # 复核轮把第一轮原因注入输入行 problem 键所用的句属性名；空串=不注入
     _extra_problem_attr = ""
+
+    # ---- 异常输出防御（见 _parse_fix_response / _detect_batch_anomaly）----
+    # 输出行中只要出现这些键，即为模型回显输入行（输入行才有），整行丢弃
+    _echo_line_keys: Tuple[str, ...] = ("src", "dst")
+    # 命中 reason 是否必须携带可在译文中核对的「…」片段证据。
+    # 仅当提示词要求 reason 带片段时才开启（ForVerboseCheck）；未开启的引擎沿用
+    # 「无 reason → 写哨兵 _default_marker」旧口径，避免误杀无 reason 的旧缓存流程
+    _reason_evidence_required = False
+    # 本批「无片段证据命中数 / 模型输出命中行数」超过该比例 → 本批判为格式异常
+    _reason_anomaly_ratio = 0.5
+    # 判定格式异常的最小规模：低于该值只逐条丢弃，不整批作废（避免小批被一次误判清空）
+    _reason_anomaly_min_hits = 3
+    # 判为格式异常时重试追加的纠正提示；空串=不重试、直接作废本批
+    _reason_retry_hint = (
+        "注意：上一轮你输出的命中句多数没有给出可核对的具体原因。"
+        "请重新逐句判断，仅输出确实有问题的句子，并为每句写明具体原因；"
+        "若无问题，输出空代码块。"
+    )
 
     # 日志措辞：逐字对齐各后端原有文案
     _noun = "检测"
@@ -191,6 +220,7 @@ class BaseDetectRound(BaseImproveRound):
             "hit": 0,
             "confirm": 0,
             "dismiss": 0,
+            "dropped": 0,
             "total_batches": total_batches,
             "dispatched_batches": 0,
             "fallback_batches": 0,
@@ -249,10 +279,11 @@ class BaseDetectRound(BaseImproveRound):
     ) -> Optional[str]:
         """对单批调用 LLM 并应用结果；返回本批结论摘要，None 表示本批无结论。
 
-        整批回显（模型复制输入全部标错）丢弃本批标记并追加纠正提示重试一次，
-        重试仍回显则整批丢弃并记一次运行态错误（fail-safe，不写脏标记）。
+        本批输出被判为异常时（整批回显 / 无理由命中率过高）丢弃本批标记，并追加
+        对应纠正提示重试一次；重试仍异常则整批丢弃并记一次运行态错误
+        （fail-safe，不写脏标记）。每批最多重试一次。
         """
-        echo_retried = False
+        batch_retried = False
         while True:
             call_messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -279,32 +310,110 @@ class BaseDetectRound(BaseImproveRound):
                 stats["confirm"] += confirm
                 stats["dismiss"] += dismiss
                 return f"确认 {confirm} 句，撤销 {dismiss} 句"
-            hit, _ = self._parse_fix_response(result_text, batch, n_symbol)
-            if self._echo_retry_enabled and self._is_echo_response(hit, len(batch)):
-                # 模型整批回显（复制输入全部标错）：丢弃本批标记，必要时重试一次
+            quality: Dict[str, int] = {}
+            hit, _ = self._parse_fix_response(result_text, batch, n_symbol, quality)
+            anomaly = self._detect_batch_anomaly(hit, len(batch), quality)
+            if self._echo_retry_enabled and anomaly is not None:
+                # 异常输出（整批回显 / 无理由命中率过高）：丢弃本批标记，必要时重试一次
+                anomaly_kind, anomaly_desc = anomaly
                 for t in batch:
                     setattr(t, self._marker_attr, "")
                 # 面板上刚推的命中已被丢弃：强制覆盖，否则后续 0 命中说明让位、误导
-                self._push_discarded_preview("本批判定为整批回显，命中已丢弃")
-                if not echo_retried:
-                    LOGGER.warning(
-                        f"{self._log_tag}[{filename}:{idx_tip}] 单批命中 "
-                        f"{hit}/{len(batch)} 句（疑似模型整批回显输入），"
-                        f"追加纠正提示后重试一次"
-                    )
-                    user_content = user_content + "\n\n" + self._echo_retry_hint
-                    echo_retried = True
-                    continue
-                _echo_msg = (
-                    f"{self._log_tag}[{filename}:{idx_tip}] 重试仍疑似整批回显"
-                    f"（命中 {hit}/{len(batch)} 句），已丢弃本批全部"
-                    f"{self._issue_label}标记"
+                self._push_discarded_preview(f"本批判定为{anomaly_desc}，命中已丢弃")
+                retry_hint = (
+                    self._echo_retry_hint
+                    if anomaly_kind == "echo"
+                    else self._reason_retry_hint
                 )
-                LOGGER.warning(_echo_msg)
-                self._record_round_runtime_error(filename, idx_tip, _echo_msg, None)
+                if not batch_retried and retry_hint:
+                    LOGGER.warning(
+                        f"{self._log_tag}[{filename}:{idx_tip}] 本批输出异常："
+                        f"{anomaly_desc}，追加纠正提示后重试一次"
+                    )
+                    user_content = user_content + "\n\n" + retry_hint
+                    batch_retried = True
+                    continue
+                _anomaly_msg = (
+                    f"{self._log_tag}[{filename}:{idx_tip}] 本批输出异常且无法恢复："
+                    f"{anomaly_desc}，已丢弃本批全部{self._issue_label}标记"
+                    f"（{'未配置纠正提示' if not retry_hint else '重试后仍异常'}）"
+                )
+                LOGGER.warning(_anomaly_msg)
+                self._record_round_runtime_error(
+                    filename, idx_tip, _anomaly_msg, None
+                )
                 return None
             stats["hit"] += hit
+            stats["dropped"] += int(quality.get("no_reason", 0) or 0)
             return f"命中 {hit} 句"
+
+    def _detect_batch_anomaly(
+        self, hit: int, batch_size: int, quality: Dict[str, int]
+    ) -> Optional[Tuple[str, str]]:
+        """判定本批模型输出是否异常，返回 (异常类别, 描述)，正常时返回 None。
+
+        三类异常：
+        - `echo` 回显输入行：`quality["echo_lines"]`（带 src/dst 的输出行）达到
+          `_is_echo_response` 门槛——模型把推理正文里的输入行整片回显成了结果；
+        - `echo` 整批回显：命中率 ≥ `_echo_hit_ratio` 且命中数 ≥ `_echo_min_hits`；
+        - `reason`：「无片段证据命中数 / 模型输出命中行数」> `_reason_anomaly_ratio`
+          且规模 ≥ `_reason_anomaly_min_hits`——模型把推理过程或空 reason 当成了
+          判定结果，这类命中在前端显示为「没有原因的节奏冗长」，必须整批作废。
+
+        第一类的行已在解析时丢弃（不写标记），故必须在此单独判一次：否则整批
+        回显输入行会退化成「0 命中、不重试、不留痕」，把检测失败显示成检测通过。
+        """
+        echo_lines = int(quality.get("echo_lines", 0) or 0)
+        if self._is_echo_response(echo_lines, batch_size):
+            return ("echo", f"整批回显输入行（{echo_lines}/{batch_size} 行带 src/dst）")
+        if self._is_echo_response(hit, batch_size):
+            return ("echo", f"整批回显（命中 {hit}/{batch_size} 句）")
+        no_reason = int(quality.get("no_reason", 0) or 0)
+        raw_hit = hit + no_reason
+        if raw_hit < self._reason_anomaly_min_hits or raw_hit <= 0:
+            return None
+        if no_reason / raw_hit > self._reason_anomaly_ratio:
+            return (
+                "reason",
+                f"无理由命中率过高（{no_reason}/{raw_hit} 句缺少可核对的原因片段）",
+            )
+        return None
+
+    def _reason_has_evidence(self, reason_text: str, tran: CSentense) -> bool:
+        """判定命中 reason 是否携带可在译文中核对的片段证据。
+
+        要求：reason 非空、至少含一个「…」片段，且每个片段都能在当前译文中找到。
+        无片段证据的命中不写标记——前端会显示成「无头的原因」，无法人工复核。
+        """
+        if not reason_text:
+            return False
+        fragments = _FRAGMENT_RE.findall(reason_text)
+        if not fragments:
+            return False
+        dst = tran.proofread_zh or tran.pre_dst or ""
+        return all(self._fragment_in_dst(fragment, dst) for fragment in fragments)
+
+    @staticmethod
+    def _fragment_in_dst(fragment: str, dst: str) -> bool:
+        """片段能否在译文中找到：原样命中即通过，否则两级容错后再比。
+
+        两级容错对应提示词编码与标点漂移，都不放宽「片段必须来自译文」这条硬约束：
+        - 换行/制表符在提示词里编成 <br>/[t]，比对前还原；
+        - 半角/全角逗号不参与比对：模型常把 reason 的分隔符写进片段
+          （「的话呢,也就是说」），而译文中对应位置没有逗号，否则整条会被误判为编造。
+        """
+        text = fragment.strip()
+        if not text:
+            return False
+        if text in dst:
+            return True
+        restored = text.replace("<br>", "\n").replace("[t]", "\t")
+        if restored in dst:
+            return True
+        stripped = restored.replace(",", "").replace("，", "")
+        if not stripped:
+            return False
+        return stripped in dst.replace(",", "").replace("，", "")
 
     def _prepare_round(self, filename: str, trans_list: CTransList) -> list:
         """筛选本轮判定对象：首轮清旧标记后取有效译文；复核轮只取已标记的命中句。"""
@@ -601,23 +710,39 @@ class BaseDetectRound(BaseImproveRound):
                 f"撤销 {stats['dismiss']} 句{suffix}"
             )
             return
+        # 逐条丢弃（reason 无片段证据）只在 DEBUG 记明细，此处汇总一条 INFO：
+        # 否则「命中数莫名变少」无从排查，用户只会以为模型判定变严了
+        dropped = int(stats.get("dropped", 0) or 0)
+        dropped_note = f"（另有 {dropped} 句因原因缺少可核对片段被丢弃）" if dropped else ""
         if stats["hit"] > 0:
             LOGGER.info(
                 f"{self._log_tag} {filename} {self._done_noun}完成，"
-                f"共命中 {stats['hit']} 句{suffix}"
+                f"共命中 {stats['hit']} 句{dropped_note}{suffix}"
             )
             return
         LOGGER.info(
             f"{self._log_tag} {filename} {self._done_noun}完成，"
-            f"未发现{self._issue_label}{suffix}"
+            f"未发现{self._issue_label}{dropped_note}{suffix}"
         )
 
     def _parse_fix_response(
-        self, result_text: str, trans_list: CTransList, n_symbol: str
+        self,
+        result_text: str,
+        trans_list: CTransList,
+        n_symbol: str,
+        quality: Optional[Dict[str, int]] = None,
     ) -> Tuple[int, int]:
         """按 id 稀疏解析判定结果（仅取 id 与可选 reason），命中句置标记。
 
         返回 (hit_count, hit_count) 使基类进度计数一致。
+
+        两道 fail-safe，都是为了拦住「模型推理过程被当成判定结果」：
+        - 输出行带 `_echo_line_keys`（src/dst，输入行才有的键）→ 整行丢弃；
+        - `_reason_evidence_required` 时，reason 为空或「」片段在译文中找不到 →
+          该条不写标记，只计入质量统计。
+
+        quality 传入时回填本批质量计数（`echo_lines` / `no_reason`），供
+        `_detect_batch_anomaly` 判定本批是否整体作废。
         """
         id_map = {t.index: t for t in trans_list}
         hit_count = 0
@@ -636,6 +761,11 @@ class BaseDetectRound(BaseImproveRound):
             line_id = obj.get("id")
             if not isinstance(line_id, int):
                 continue
+            if any(key in obj for key in self._echo_line_keys):
+                # 模型回显输入行（推理正文中逐句抄输入时整片出现）：不是判定结果
+                if quality is not None:
+                    quality["echo_lines"] = quality.get("echo_lines", 0) + 1
+                continue
             tran = id_map.get(line_id)
             if tran is None:
                 continue
@@ -646,6 +776,17 @@ class BaseDetectRound(BaseImproveRound):
             reason_text = str(reason).strip() if isinstance(reason, str) else ""
             if reason_text in self._placeholder_reasons:
                 reason_text = ""
+            if self._reason_evidence_required and not self._reason_has_evidence(
+                reason_text, tran
+            ):
+                # 无片段证据：写哨兵只会产生「没有原因的节奏冗长」，丢弃本条
+                if quality is not None:
+                    quality["no_reason"] = quality.get("no_reason", 0) + 1
+                LOGGER.debug(
+                    f"{self._log_tag} 句子 {line_id} 的判定原因缺少可核对片段"
+                    f"（reason={reason_text!r}），已丢弃"
+                )
+                continue
             setattr(
                 tran,
                 self._marker_attr,
@@ -665,7 +806,12 @@ class BaseDetectRound(BaseImproveRound):
             )
         else:
             # 0 命中是有效结论，也推一条，避免面板停留在上一批的陈旧内容
-            self._push_no_hit_preview(f"本批未判定出{self._issue_label}句")
+            note = f"本批未判定出{self._issue_label}句"
+            if quality and quality.get("no_reason"):
+                note = (
+                    f"本批 {quality['no_reason']} 句命中缺少可核对的原因片段，已丢弃"
+                )
+            self._push_no_hit_preview(note)
         return hit_count, hit_count
 
     def _parse_confirm_response(
@@ -698,6 +844,10 @@ class BaseDetectRound(BaseImproveRound):
             line_id = obj.get("id")
             if not isinstance(line_id, int):
                 continue
+            if "keep" not in obj and any(key in obj for key in self._echo_line_keys):
+                # 模型回显输入行：不是复核结论（keep 缺失会落到下面的异常分支误报）。
+                # 行内带合法 keep 时按结论处理，避免回显行里夹着的撤销被一起丢掉
+                continue
             missing.discard(line_id)
             tran = id_map.get(line_id)
             if tran is None:
@@ -707,6 +857,17 @@ class BaseDetectRound(BaseImproveRound):
                 reason = obj.get("reason")
                 reason_text = reason.strip() if isinstance(reason, str) else ""
                 # 占位 reason（如模型照抄类型名）与乱码一律视为无新原因，保留原标记
+                if (
+                    self._reason_evidence_required
+                    and reason_text
+                    and not self._reason_has_evidence(reason_text, tran)
+                ):
+                    # 证据对不上：不覆盖第一轮原因，保留既有标记
+                    LOGGER.debug(
+                        f"{self._log_tag} 句子 {line_id} 的复核原因缺少可核对片段"
+                        f"（reason={reason_text!r}），保留第一轮原因"
+                    )
+                    reason_text = ""
                 if (
                     reason_text
                     and "\ufffd" not in reason_text
