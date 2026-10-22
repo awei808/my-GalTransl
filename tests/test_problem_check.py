@@ -798,7 +798,7 @@ class FrequentNewlineTests(_Base):
 
 
 class RhythmMonotonyTests(_Base):
-    """节奏单一：换行前后相邻两行字数相等/接近（均≥8字且差值≤max(2,较短行15%)）。"""
+    """节奏单一：换行前后相邻两行严格等长、均 >14 字且均不含中英文标点。"""
 
     def _check(self, pid: str, pre_dst: str, post_src: str = "原文"):
         entries = [
@@ -827,123 +827,105 @@ class RhythmMonotonyTests(_Base):
         self._disable_text_plugins(init["project_dir"])
         return self._check(init["project_id"], pre_dst, post_src)
 
-    def test_equal_line_lengths_trigger(self) -> None:
-        problem = self._check_rhythm(
-            "rhythm_eq", "第一行有十个字符。\n第二行有十个字符。"
-        )
-        self.assertIn("节奏单一：第1、2行各9字", problem)
+    def test_equal_long_lines_trigger(self) -> None:
+        # 15 字 vs 15 字、均无标点 → 命中
+        problem = self._check_rhythm("rhythm_eq", "甲" * 15 + "\n" + "乙" * 15)
+        self.assertIn("节奏单一：第1、2行各15字", problem)
 
-    def test_near_equal_line_lengths_trigger(self) -> None:
-        # 9 字 vs 10 字：差值 1 ≤ max(2, 1) → 命中
-        problem = self._check_rhythm(
-            "rhythm_near", "第一行有十个字符。\n第二行有十一个字符。"
-        )
-        self.assertIn("节奏单一：第1、2行9/10字", problem)
-
-    def test_large_length_gap_not_trigger(self) -> None:
-        problem = self._check_rhythm(
-            "rhythm_far",
-            "第一行有十个字符。\n这一行的字数明显比第一行多出不少。",
-        )
+    def test_unequal_lengths_not_trigger(self) -> None:
+        # 必须严格等长：15 vs 16 不再命中（旧口径按 15% 容差会报）
+        problem = self._check_rhythm("rhythm_diff", "甲" * 15 + "\n" + "乙" * 16)
         self.assertNotIn("节奏单一", problem)
 
-    def test_diff_at_limit_triggers(self) -> None:
-        # 20 vs 23：上限 max(2, int(20*0.15)=3)，差值 3 恰达上限 → 命中
-        problem = self._check_rhythm(
-            "rhythm_limit_ok", "甲" * 20 + "\n" + "甲" * 23
-        )
-        self.assertIn("节奏单一", problem)
-
-    def test_diff_over_limit_not_trigger(self) -> None:
-        # 20 vs 24：差值 4 > 3 → 不命中
-        problem = self._check_rhythm(
-            "rhythm_limit_over", "甲" * 20 + "\n" + "甲" * 24
-        )
-        self.assertNotIn("节奏单一", problem)
-
-    def test_min_length_boundary(self) -> None:
-        # 8 vs 8 命中；7 vs 7 因不足最小行长度不命中
-        hit = self._check_rhythm("rhythm_min_8", "甲" * 8 + "\n" + "乙" * 8)
-        miss = self._check_rhythm("rhythm_min_7", "甲" * 7 + "\n" + "乙" * 7)
-        self.assertIn("节奏单一", hit)
+    def test_length_boundary(self) -> None:
+        # 14 字不满足 >14；15 字命中
+        miss = self._check_rhythm("rhythm_len_14", "甲" * 14 + "\n" + "乙" * 14)
+        hit = self._check_rhythm("rhythm_len_15", "甲" * 15 + "\n" + "乙" * 15)
         self.assertNotIn("节奏单一", miss)
+        self.assertIn("节奏单一", hit)
 
-    def test_min_length_uses_absolute_diff_floor(self) -> None:
-        # 8 vs 10：相对 15% 只有 1 字，但固定下限 2 使其命中
+    def test_chinese_punctuation_not_trigger(self) -> None:
+        # 一侧含中文逗号（7+1+7=15 字，与另一行等长）→ 有标点，不命中
         problem = self._check_rhythm(
-            "rhythm_min_floor", "甲" * 8 + "\n" + "乙" * 10
+            "rhythm_zh_punct", "甲" * 7 + "，" + "乙" * 7 + "\n" + "丙" * 15
+        )
+        self.assertNotIn("节奏单一", problem)
+
+    def test_ascii_punctuation_not_trigger(self) -> None:
+        # 半角标点同样视为有标点
+        problem = self._check_rhythm(
+            "rhythm_ascii_punct", "甲" * 7 + "," + "乙" * 7 + "\n" + "丙" * 15
+        )
+        self.assertNotIn("节奏单一", problem)
+
+    def test_quote_and_bracket_not_trigger(self) -> None:
+        # 引号/括号也属标点
+        quoted = self._check_rhythm(
+            "rhythm_quote", "「" + "甲" * 14 + "\n" + "乙" * 15
+        )
+        bracketed = self._check_rhythm(
+            "rhythm_bracket", "（" + "甲" * 14 + "\n" + "乙" * 15
+        )
+        self.assertNotIn("节奏单一", quoted)
+        self.assertNotIn("节奏单一", bracketed)
+
+    def test_various_punctuation_not_trigger(self) -> None:
+        # 全角标点与日文标点（・/〜）同样视为有标点：各构造「7+1+7=15 字」等长样本
+        for name, punct in (
+            ("semicolon", "；"),
+            ("ellipsis", "…"),
+            ("dash", "—"),
+            ("fullwidth_quote", "“"),
+            ("katakana_middle_dot", "・"),
+            ("wave_dash", "〜"),
+            ("fullwidth_tilde", "～"),
+        ):
+            with self.subTest(punct=punct):
+                problem = self._check_rhythm(
+                    f"rhythm_punct_{name}",
+                    "甲" * 7 + punct + "乙" * 7 + "\n" + "丙" * 15,
+                )
+                self.assertNotIn("节奏单一", problem)
+
+    def test_inner_space_not_treated_as_punctuation(self) -> None:
+        # 空格不属于标点：含空格但等长的长句仍参与判定
+        problem = self._check_rhythm(
+            "rhythm_space", "甲" * 7 + " " + "乙" * 7 + "\n" + "丙" * 15
         )
         self.assertIn("节奏单一", problem)
 
-    def test_short_lines_not_trigger(self) -> None:
-        # 语气词短行天然长度接近，不参与判定
-        problem = self._check_rhythm("rhythm_short", "好的。\n走吧。")
+    def test_emoji_not_treated_as_punctuation(self) -> None:
+        # emoji（So 类）不属于标点：含 ♪ 的等长长句仍参与判定
+        problem = self._check_rhythm(
+            "rhythm_emoji", "甲" * 7 + "♪" + "乙" * 7 + "\n" + "丙" * 15
+        )
+        self.assertIn("节奏单一", problem)
+
+    def test_long_line_paired_with_short_not_trigger(self) -> None:
+        # 一长一短：字数不等，不命中
+        problem = self._check_rhythm("rhythm_mixed", "甲" * 15 + "\n" + "乙" * 30)
         self.assertNotIn("节奏单一", problem)
 
     def test_whitespace_only_line_skipped(self) -> None:
+        # 空行两侧没有可直接比较的文本，不按跨空行相邻判定
         problem = self._check_rhythm(
-            "rhythm_ws", "甲" * 9 + "\n   \n" + "乙" * 9
+            "rhythm_ws", "甲" * 15 + "\n   \n" + "乙" * 15
         )
         self.assertNotIn("节奏单一", problem)
 
-    def test_source_also_balanced_not_trigger(self) -> None:
-        # 源文相邻行本身也接近：译文接近是忠实原文，不算模型注水
+    def test_surrounding_whitespace_trimmed(self) -> None:
+        # 行首尾空格不计入字数：strip 后仍严格等长
         problem = self._check_rhythm(
-            "rhythm_src_bal",
-            "第一行有十个字符。\n第二行有十个字符。",
-            post_src="甲" * 9 + "\n" + "乙" * 9,
-        )
-        self.assertNotIn("节奏单一", problem)
-
-    def test_source_unbalanced_still_trigger(self) -> None:
-        # 源文两行长短悬殊、译文却被对齐 → 命中
-        problem = self._check_rhythm(
-            "rhythm_src_unbal",
-            "第一行有十个字符。\n第二行有十个字符。",
-            post_src="甲" * 9 + "\n" + "乙" * 20,
+            "rhythm_trim", "  " + "甲" * 15 + "  \n" + "乙" * 15
         )
         self.assertIn("节奏单一", problem)
 
-    def test_source_leading_newline_still_aligned(self) -> None:
-        # 文本插件会把源文首尾换行移到对话符号周边；按非空行顺序仍能对齐并抑制
+    def test_source_equal_does_not_suppress(self) -> None:
+        # 源文两行同样等长且无标点也不抑制：只按译文的三条件判定
         problem = self._check_rhythm(
-            "rhythm_src_lead",
-            "第一行有十个字符。\n第二行有十个字符。",
-            post_src="\n" + "甲" * 9 + "\n" + "乙" * 9,
-        )
-        self.assertNotIn("节奏单一", problem)
-
-    def test_source_crlf_balanced_not_trigger(self) -> None:
-        problem = self._check_rhythm(
-            "rhythm_src_crlf",
-            "第一行有十个字符。\n第二行有十个字符。",
-            post_src="甲" * 9 + "\r\n" + "乙" * 9,
-        )
-        self.assertNotIn("节奏单一", problem)
-
-    def test_source_literal_newline_balanced_not_trigger(self) -> None:
-        problem = self._check_rhythm(
-            "rhythm_src_literal",
-            "第一行有十个字符。\n第二行有十个字符。",
-            post_src="甲" * 9 + "\\n" + "乙" * 9,
-        )
-        self.assertNotIn("节奏单一", problem)
-
-    def test_source_balanced_but_short_still_trigger(self) -> None:
-        # 源文两行都 <8 字时不抑制：短源行本身无法证明译文没有注水
-        problem = self._check_rhythm(
-            "rhythm_src_short",
-            "第一行有十个字符。\n第二行有十个字符。",
-            post_src="甲" * 5 + "\n" + "乙" * 5,
-        )
-        self.assertIn("节奏单一", problem)
-
-    def test_source_balanced_but_line_count_differs_still_trigger(self) -> None:
-        # 源/译非空行数不同无法逐行对齐 → 不抑制
-        problem = self._check_rhythm(
-            "rhythm_src_count",
-            "甲" * 9 + "\n" + "乙" * 9 + "\n" + "丙" * 9,
-            post_src="甲" * 9 + "\n" + "乙" * 9,
+            "rhythm_src_equal",
+            "甲" * 15 + "\n" + "乙" * 15,
+            post_src="丙" * 15 + "\n" + "丁" * 15,
         )
         self.assertIn("节奏单一", problem)
 
@@ -954,35 +936,44 @@ class RhythmMonotonyTests(_Base):
     def test_literal_escape_newline_trigger(self) -> None:
         # 旧缓存/字面转义换行与真实换行同口径
         problem = self._check_rhythm(
-            "rhythm_literal", "第一行有十个字符。\\n第二行有十个字符。"
+            "rhythm_literal", "甲" * 15 + "\\n" + "乙" * 15
         )
         self.assertIn("节奏单一", problem)
 
     def test_crlf_newline_trigger(self) -> None:
         problem = self._check_rhythm(
-            "rhythm_crlf", "第一行有十个字符。\r\n第二行有十个字符。"
+            "rhythm_crlf", "甲" * 15 + "\r\n" + "乙" * 15
         )
         self.assertIn("节奏单一", problem)
 
     def test_blank_line_between_not_trigger(self) -> None:
         # 空行两侧没有可直接比较的文本，不按跨空行相邻判定
         problem = self._check_rhythm(
-            "rhythm_blank", "第一行有十个字符。\n\n第二行有十个字符。"
+            "rhythm_blank", "甲" * 15 + "\n\n" + "乙" * 15
         )
         self.assertNotIn("节奏单一", problem)
 
     def test_multiple_breaks_report_each_pair(self) -> None:
         problem = self._check_rhythm(
             "rhythm_multi",
-            "第一行有十个字符。\n第二行有十个字符。\n第三行有十个字符。",
+            "甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15,
         )
-        self.assertIn("第1、2行各9字", problem)
-        self.assertIn("第2、3行各9字", problem)
+        self.assertIn("第1、2行各15字", problem)
+        self.assertIn("第2、3行各15字", problem)
+
+    def test_only_matching_pair_reported(self) -> None:
+        # 三行 15/15/16：只报符合条件的前一对
+        problem = self._check_rhythm(
+            "rhythm_partial",
+            "甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 16,
+        )
+        self.assertIn("第1、2行各15字", problem)
+        self.assertNotIn("第2、3行", problem)
 
     def test_not_enabled_skips_detection(self) -> None:
         problem = self._check_rhythm(
             "rhythm_off",
-            "第一行有十个字符。\n第二行有十个字符。",
+            "甲" * 15 + "\n" + "乙" * 15,
             problems=["残留日文"],
         )
         self.assertNotIn("节奏单一", problem)

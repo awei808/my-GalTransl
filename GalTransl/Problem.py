@@ -2,8 +2,7 @@
 分析问题
 """
 
-import os
-import re
+import os, re, string, unicodedata
 
 from GalTransl import LOGGER
 from GalTransl.CSentense import CTransList
@@ -109,19 +108,32 @@ def _clean_text_len(s: str) -> int:
     return len(norm) - norm.count("\n")
 
 
-# 「节奏单一」阈值：仅比较都达到最小字数的相邻行（避免「嗯」「好」等短句误报）；
-# 字数差上限 = max(固定容差, 较短行 * 比例)，对应模型为对齐行宽而注水的典型形态。
-_RHYTHM_MIN_SEGMENT_LEN = 8
-_RHYTHM_MIN_LEN_DIFF = 2
-_RHYTHM_LEN_DIFF_PERCENT = 15
+# 「节奏单一」阈值：仅比较换行前后严格等长、均不少于该字数且均不含标点的长分句。
+# 短句天然长度接近，带标点的分句长度受内容影响大，等长多为巧合，均不参与判定。
+_RHYTHM_MIN_SEGMENT_LEN = 15  # 分句字数须 >14，即 ≥15
+
+# 非标点类别的全角符号：自然语言里常作标点用（如拖音「～」），类别为 Sm/Sc，需显式补充
+_EXTRA_PUNCT = frozenset("～＋＝＜＞｜＄")
+
+# ASCII 符号集合；Unicode 标点类 P*（含 Pi/Pf）覆盖中日文标点与全角形式
+_ASCII_PUNCT = frozenset(string.punctuation)
 
 
-def _rhythm_len_diff_limit(short_len: int) -> int:
-    """节奏单一的字数差上限：短行越长允许的差值略大，但至少 2 字。"""
-    # 用整数运算表达百分比，避免浮点表示带来的隐式取整歧义
-    return max(
-        _RHYTHM_MIN_LEN_DIFF, short_len * _RHYTHM_LEN_DIFF_PERCENT // 100
-    )
+def _contains_punctuation(text: str) -> bool:
+    """分句是否含标点：Unicode 标点类、ASCII 符号或全角符号任一命中即视为有标点。
+
+    空格（Zs）、emoji（So）等非标点字符不算；汉字/假名/字母/数字走 isalnum 快速路径。
+    """
+    for ch in text:
+        if ch.isalnum():
+            continue
+        if (
+            ch in _ASCII_PUNCT
+            or ch in _EXTRA_PUNCT
+            or unicodedata.category(ch).startswith("P")
+        ):
+            return True
+    return False
 
 
 def _hit_display_words(words: list, *texts: str) -> list:
@@ -354,57 +366,21 @@ def find_problems(
                         f"频繁换行：index={tran.index}, 有效字符={_valid_len}, 换行={_newline}次"
                     )
         if CProblemType.节奏单一 in find_type:
-            # 换行前后两行字数相等/接近：部分模型（如 dsv4.1）倾向把译文长度对齐到
-            # 行宽，常靠冗余措辞凑字，读起来节奏呆板。只比较相邻非空行；短行多为
-            # 语气词/拟声词/称呼，天然长度接近，不参与判定。
+            # 换行前后两行严格等长、均 >14 字且都不含标点时判定：部分模型（如 dsv4.1）
+            # 倾向把译文长度对齐到行宽，常靠冗余措辞凑字，读起来节奏呆板。带标点的
+            # 分句长度受内容影响大、短句天然接近，等长多为巧合，不参与判定。
             _segments = _normalize_newlines(post_dst).split("\n")
-            # 源文行宽本身也接近时，译文接近是忠实原文的正常结果，不算模型为对齐行宽
-            # 注水。按「非空行顺序」对齐：文本插件会把源文首尾换行移到对话符号周边，
-            # 两侧段数可能相差 1，但非空行仍一一对应。用 post_src（已过译前字典）而
-            # 不是 pre_src，与模型实际看到的源文行宽一致。
-            _src_lines = [
-                seg.strip()
-                for seg in _normalize_newlines(post_src).split("\n")
-                if seg.strip()
-            ]
-            _dst_nonempty = [
-                (idx, seg.strip())
-                for idx, seg in enumerate(_segments)
-                if seg.strip()
-            ]
-            _dst_ordinal = {idx: ord for ord, (idx, _) in enumerate(_dst_nonempty)}
-            _src_aligned = len(_src_lines) == len(_dst_nonempty)
             _rhythm_hits = []
             for _i in range(1, len(_segments)):
                 _prev = _segments[_i - 1].strip()
                 _cur = _segments[_i].strip()
                 if not _prev or not _cur:
                     continue
-                _prev_len, _cur_len = len(_prev), len(_cur)
-                _short_len = min(_prev_len, _cur_len)
-                if _short_len < _RHYTHM_MIN_SEGMENT_LEN:
+                if len(_prev) != len(_cur) or len(_prev) < _RHYTHM_MIN_SEGMENT_LEN:
                     continue
-                if _src_aligned:
-                    # 相邻两个非空段在非空行序中也相邻
-                    _src_ord = _dst_ordinal[_i - 1]
-                    _src_prev = _src_lines[_src_ord]
-                    _src_cur = _src_lines[_src_ord + 1]
-                    _src_short = min(len(_src_prev), len(_src_cur))
-                    if (
-                        _src_short >= _RHYTHM_MIN_SEGMENT_LEN
-                        and abs(len(_src_prev) - len(_src_cur))
-                        <= _rhythm_len_diff_limit(_src_short)
-                    ):
-                        continue
-                if abs(_prev_len - _cur_len) <= _rhythm_len_diff_limit(_short_len):
-                    _rhythm_hits.append(
-                        f"第{_i}、{_i + 1}行"
-                        + (
-                            f"各{_prev_len}字"
-                            if _prev_len == _cur_len
-                            else f"{_prev_len}/{_cur_len}字"
-                        )
-                    )
+                if _contains_punctuation(_prev) or _contains_punctuation(_cur):
+                    continue
+                _rhythm_hits.append(f"第{_i}、{_i + 1}行各{len(_prev)}字")
             if _rhythm_hits:
                 problem_list.append("节奏单一：" + "；".join(_rhythm_hits))
                 LOGGER.debug(

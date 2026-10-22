@@ -77,7 +77,7 @@ describe("applyProblemTypeFilter 多选 AND 过滤", () => {
  */
 describe("problemTypesOf 类型名解析", () => {
   it("节奏单一只按半角逗号切分，行号/分号明细不产生伪类型", () => {
-    expect(problemTypesOf("节奏单一：第1、2行各9字；第2、3行各9字")).toEqual([
+    expect(problemTypesOf("节奏单一：第1、2行各15字；第2、3行各15字")).toEqual([
       "节奏单一",
     ]);
   });
