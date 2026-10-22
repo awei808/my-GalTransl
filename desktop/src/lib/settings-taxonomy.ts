@@ -151,10 +151,13 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
       {
-        title: "语义差异检测/二次复核/色彩检查/色彩复核（ForSemCheck / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain）",
+        title: "语义差异检测/二次复核/色彩检查/色彩复核/冗长检测/冗长复核（ForSemCheck / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain / ForVerboseCheck / ForVerboseCheckAgain）",
         keys: [
           "common.gpt.numPerRequestSemCheck",
           "common.gpt.numPerRequestToneCheck",
+          "common.gpt.numPerRequestVerboseCheck",
+          "internals.detect.batch_from_metadata",
+          "internals.detect.batch_from_metadata_max_sentences",
         ],
       },
     ],

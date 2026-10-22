@@ -22,7 +22,7 @@ import {
 
 const opt = (name: string, description = ""): TranslatorOption => ({ name, description });
 
-/** /api/translators 实测返回（18 项，已排除 rebuildr/rebuilda/dump-name/show-plugs 与 3 个工具引擎） */
+/** /api/translators 实测返回（20 项，已排除 rebuildr/rebuilda/dump-name/show-plugs 与 3 个工具引擎） */
 const API_NAMES = [
   "ForGal-full-pipeline",
   "ForGlobalPrompt",
@@ -37,6 +37,8 @@ const API_NAMES = [
   "ForSemCheckAgain",
   "ForToneCheck",
   "ForToneCheckAgain",
+  "ForVerboseCheck",
+  "ForVerboseCheckAgain",
   "ForFixRound",
   "ForFileMetaData",
   "ForBatchMetaData",

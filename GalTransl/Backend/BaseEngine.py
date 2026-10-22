@@ -173,6 +173,17 @@ class RequestHealthMetrics:
             }
 
 
+class EmptyTokenPool:
+    """空令牌池占位：主 profile 不可用时保证 init_chatbot 不崩溃（不发任何请求）。
+
+    检测/复核轮与统一修复轮共用：未传 token_pool 且主 profile 构建失败时降级用它，
+    使「无可用端点」表现为跳过而非抛错。
+    """
+
+    def get_available_token(self) -> list:
+        return []
+
+
 # 引擎名 -> 后端模块路径。init_gptapi 依赖它惰性加载（importlib）目标模块：
 # 模块加载时 @register_engine 装饰器运行，把「name -> 构造工厂」写入 ENGINE_REGISTRY。
 ENGINE_MODULE_PATHS: dict[str, str] = {
@@ -191,6 +202,8 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForSemCheckAgain": "GalTransl.Backend.ForSemCheckAgain",
     "ForToneCheck": "GalTransl.Backend.ForToneCheck",
     "ForToneCheckAgain": "GalTransl.Backend.ForToneCheckAgain",
+    "ForVerboseCheck": "GalTransl.Backend.ForVerboseCheck",
+    "ForVerboseCheckAgain": "GalTransl.Backend.ForVerboseCheckAgain",
     "GenDic": "GalTransl.Backend.GenDic",
     "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
     "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",

@@ -9,13 +9,19 @@
  * 前后端解析口径一致（后端见 GalTransl/Frontend/LLMTranslate.py 的
  * _resolve_after_translation_order），避免显示与执行不一致。
  *
- * 分组仅为编辑器展示（四个 AI 初步处理子分组），不影响执行顺序：执行顺序仍由
- * 数字框（数组顺序）决定；新建项目默认顺序为 统一问题修复 → 语义差异检测（semcheck）
- * → 词语色彩检查（tonecheck），semcheck/tonecheck 仅打标记不改译文、互相无先后依赖。
+ * 分组仅为编辑器展示（五个 AI 初步处理子分组：基本问题处理/修正翻译风格/词语色彩一致性检查/
+ * 节奏冗长检测/标注疑似错误），不影响执行顺序：执行顺序仍由数字框（数组顺序）决定；
+ * 新建项目默认顺序为 统一问题修复 → 语义差异检测（semcheck）→ 词语色彩检查（tonecheck），
+ * semcheck/tonecheck 仅打标记不改译文、互相无先后依赖；节奏冗长检测默认不在链上。
  */
 
-/** AI 初步处理分组（仅编辑器分组展示用） */
-export type AfterTranslationGroup = "basic" | "style" | "tone" | "semcheck";
+/**
+ * AI 初步处理分组（仅编辑器分组展示用）
+ *
+ * verbose 组（节奏冗长检测/复核）为可选质检项：默认后处理链不启用（多一轮
+ * 全量 AI 判定等于额外成本），需要时在项目设置里勾选。
+ */
+export type AfterTranslationGroup = "basic" | "style" | "tone" | "verbose" | "semcheck";
 
 export interface AfterTranslationBackend {
   /** 配置数组元素值，与后端白名单 key 一致 */
@@ -37,6 +43,7 @@ export const AFTER_TRANSLATION_GROUPS: {
   { key: "basic", label: "基本问题处理", hint: "换行位置、残留日文、禁用词等基本问题修复。" },
   { key: "style", label: "修正翻译风格", hint: "整文件评估译文质量，对可改进句给出备选译文。" },
   { key: "tone", label: "词语色彩一致性检查", hint: "对照色彩基准（批次区间「用词色彩」标注优先，无标注时对照原文语气）检查译文，并可二次复核撤销误报。" },
+  { key: "verbose", label: "节奏冗长检测", hint: "AI 判定译文是否被同义重复、垫词堆砌或重复陈述撑大（信息量未增加），并可二次复核撤销误报。" },
   { key: "semcheck", label: "标注疑似错误", hint: "AI 判定错译/漏译/串行并标记，供人工复核。" },
 ];
 
@@ -82,6 +89,18 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
     label: "色彩命中句二次复核",
     group: "tone",
     hint: "对词语色彩检查标记的「词语色彩不一致」句子逐句二次复核，撤销可接受译文的误报标记（不改译文）。需先执行词语色彩一致性检查（tonecheck）产生标记，否则无待复核句。",
+  },
+  {
+    key: "verbosecheck",
+    label: "节奏冗长检测",
+    group: "verbose",
+    hint: "标记信息量未增加却被同义重复、垫词堆砌、重复陈述或过度解释撑大的句子（不改译文）。可选质检项：默认后处理链不启用。",
+  },
+  {
+    key: "verbosecheckagain",
+    label: "冗长命中句二次复核",
+    group: "verbose",
+    hint: "对节奏冗长检测标记的「节奏冗长」句子逐句二次复核，撤销可接受译文（必要补足、语气强化、原文本身铺陈）的误报标记（不改译文）。需先执行 verbosecheck 产生标记。",
   },
   {
     key: "semcheck",

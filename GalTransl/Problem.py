@@ -185,12 +185,30 @@ def normalize_problem_detail(text: str) -> str:
     """归一化并入 problem 的细节文本：半角逗号转全角，守住「半角逗号分隔类型」口径。
 
     problem 由 ", ".join(problem_list) 拼接，半角逗号是唯一分隔符；细节来自 AI 判定
-    文案（suspected_error / tone_issue）或用户字典词条，自带半角逗号会被前端
-    problemTypesOf 与后端 _filter_problem_by_types 的逗号切分当成第二个类型名
-    （统计里出现伪类型）。suspected_error / tone_issue 落盘时（ForSemCheck /
-    ForToneCheck 及各自复核轮）同样先经本函数，使缓存字段本身即合规。
+    文案（suspected_error / tone_issue / verbose_issue）或用户字典词条，自带半角
+    逗号会被前端 problemTypesOf 与后端 _filter_problem_by_types 的逗号切分当成
+    第二个类型名（统计里出现伪类型）。三个标记字段落盘时（ForSemCheck /
+    ForToneCheck / ForVerboseCheck 及各自复核轮）同样先经本函数，使缓存字段本身即合规。
     """
     return text.replace(",", "，")
+
+
+def _claim_ai_marker(
+    problem_list: list, tran, attr: str, type_name: str, placeholders: tuple
+) -> None:
+    """把 AI 判定标记并入 problem：字段非空即标类型，具体原因附在类型名之后。
+
+    非 str（手改缓存 null/数字）按「无原因」处理，避免 f-string 拼出 None；
+    placeholders 内的占位值同样不附原因（AI 照抄类型名或旧版固定文案）。
+    """
+    raw = getattr(tran, attr, "")
+    if raw == "":
+        return
+    text = str(raw) if isinstance(raw, str) else ""
+    if text and text not in placeholders:
+        problem_list.append(f"{type_name}：{text}")
+        return
+    problem_list.append(type_name)
 
 
 def find_problems(
@@ -464,25 +482,25 @@ def find_problems(
             problem_list.append("翻译失败")
 
         # AI 语义检测标记（ForSemCheck 产出）：suspected_error 非空即认领，problem 每次重检重新生成。
-        # 非 str（手改缓存 null/数字）str 收敛防崩；占位值（"1"/旧版"疑似错误"）不附原因，与色彩口径对齐。
+        # 占位值（"1"/旧版"疑似错误"）不附原因，与色彩/冗长口径对齐。
         if CProblemType.疑似错误 in find_type:
-            raw_suspected = getattr(tran, "suspected_error", "")
-            suspected_reason = str(raw_suspected) if isinstance(raw_suspected, str) else ""
-            if raw_suspected != "" and suspected_reason in ("", "1", "疑似错误"):
-                # null 等非 str 沿用"非空即标记"语义，只标纯类型名
-                problem_list.append("疑似错误")
-            elif suspected_reason:
-                problem_list.append("疑似错误：" + suspected_reason)
+            _claim_ai_marker(
+                problem_list, tran, "suspected_error", "疑似错误", ("1", "疑似错误")
+            )
 
-        # AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销）：字段非空即标"词语色彩不一致"。
-        # reason 非"1"时附进问题文案，供校对者与统一修复后端获知期望色彩方向。
+        # AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销）：
+        # 字段非空即标"词语色彩不一致"，reason 非哨兵时附进问题文案，供校对者与统一修复后端获知期望色彩方向。
         if CProblemType.词语色彩不一致 in find_type:
-            tone_issue = getattr(tran, "tone_issue", "")
-            if tone_issue != "":
-                if tone_issue != "1":
-                    problem_list.append(f"词语色彩不一致：{tone_issue}")
-                else:
-                    problem_list.append("词语色彩不一致")
+            _claim_ai_marker(
+                problem_list, tran, "tone_issue", "词语色彩不一致", ("1",)
+            )
+
+        # AI 节奏冗长检测标记（ForVerboseCheck 产出，ForVerboseCheckAgain 复核确认/撤销）：
+        # 字段非空即标「节奏冗长」，reason 非哨兵时附进问题文案，供校对者获知冗余形态。
+        if CProblemType.节奏冗长 in find_type:
+            _claim_ai_marker(
+                problem_list, tran, "verbose_issue", "节奏冗长", ("1", "节奏冗长")
+            )
 
         # 定语/状语过长：只检测最终成品 post_dst（无校对时即 pre_dst），与旧分支对齐避免重复
         if CProblemType.定语过长 in find_type or CProblemType.状语过长 in find_type:

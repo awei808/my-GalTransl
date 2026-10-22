@@ -44,8 +44,8 @@ class BaseSparseFixRound(ForGalJsonTranslate):
     _include_src = True
     # 响应非空但 0 个 better 时是否告警
     _warn_on_zero_found = True
-    # 整批回显判定阈值与重试提示（语义检测 ForSemCheck 等独立实现仍使用，
-    # 修复轮 batch_translate 已移除回显检测逻辑）
+    # 整批回显判定阈值与重试提示（修复轮 batch_translate 已移除回显检测逻辑；
+    # 检测/复核轮统一由 BaseDetectRound 使用这两个阈值）
     _echo_hit_ratio = 0.9
     _echo_min_hits = 5
     _echo_retry_hint = (
@@ -390,8 +390,8 @@ class BaseSparseFixRound(ForGalJsonTranslate):
 
         以解析到的 found_count（模型实际输出的行数）为基准：命中率 ≥
         self._echo_hit_ratio 且命中数 ≥ self._echo_min_hits 时判定为模型退化
-        输出；两阈值均可经类属性由子类覆盖。语义检测（ForSemCheck）正常输出
-        为稀疏命中，整批高命中基本可断定回显。
+        输出；两阈值均可经类属性由子类覆盖。检测轮正常输出为稀疏命中，整批高
+        命中基本可断定回显（复核轮每行必答 keep，不启用本判定）。
         """
         if batch_size <= 0 or found_count < self._echo_min_hits:
             return False

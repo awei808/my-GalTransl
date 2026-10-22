@@ -39,6 +39,8 @@ POSTPROCESS_ENGINES = {
     "ForSemCheckAgain",
     "ForToneCheck",
     "ForToneCheckAgain",
+    "ForVerboseCheck",
+    "ForVerboseCheckAgain",
     "ForFixRound",
 }
 NON_STANDALONE_ENGINES = {

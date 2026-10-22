@@ -50,6 +50,8 @@ export const ENGINE_LABELS: Record<string, string> = {
   ForSemCheckAgain: "语义复核",
   ForToneCheck: "色彩检测",
   ForToneCheckAgain: "色彩复核",
+  ForVerboseCheck: "冗长检测",
+  ForVerboseCheckAgain: "冗长复核",
 };
 
 /**
@@ -75,6 +77,8 @@ export const ENGINE_HINTS: Record<string, string> = {
   ForSemCheckAgain: "复核疑似错误标记，剔除误报",
   ForToneCheck: "标记用词色彩偏离基准的句子",
   ForToneCheckAgain: "复核色彩不一致标记，剔除误报",
+  ForVerboseCheck: "标记同义重复、垫词堆砌的冗长句",
+  ForVerboseCheckAgain: "复核节奏冗长标记，剔除误报",
 };
 
 /** 引擎 → 分组（未登记归 other） */
@@ -97,6 +101,8 @@ const ENGINE_GROUPS: Record<string, EngineGroupId> = {
   ForSemCheckAgain: "postprocess",
   ForToneCheck: "postprocess",
   ForToneCheckAgain: "postprocess",
+  ForVerboseCheck: "postprocess",
+  ForVerboseCheckAgain: "postprocess",
 };
 
 /**
@@ -129,6 +135,8 @@ const ENGINE_ORDER: Record<EngineGroupId, string[]> = {
     "ForSemCheckAgain",
     "ForToneCheck",
     "ForToneCheckAgain",
+    "ForVerboseCheck",
+    "ForVerboseCheckAgain",
   ],
   other: [],
 };

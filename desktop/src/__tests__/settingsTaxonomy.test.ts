@@ -111,6 +111,34 @@ describe("settings-taxonomy 元数据行数阈值组", () => {
   });
 });
 
+describe("settings-taxonomy 检测轮批次划分组", () => {
+  const DETECT_KEYS = [
+    "internals.detect.batch_from_metadata",
+    "internals.detect.batch_from_metadata_max_sentences",
+  ];
+
+  it("两个键已声明在检测类后端子组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-修复改进",
+    );
+    expect(section).toBeDefined();
+    const sub = (section?.subsections ?? []).find((x) =>
+      x.title.includes("语义差异检测"),
+    );
+    expect(sub).toBeDefined();
+    for (const key of DETECT_KEYS) {
+      expect(sub?.keys).toContain(key);
+    }
+  });
+
+  it("classifyKeys 不会把两键落到「其他设置」", () => {
+    const { unclassified } = classifyKeys(DETECT_KEYS);
+    for (const key of DETECT_KEYS) {
+      expect(unclassified).not.toContain(key);
+    }
+  });
+});
+
 describe("settings-taxonomy 提示词注入块组", () => {
   const BLOCK_KEYS = [
     "internals.promptBlocks.translationGuideline",

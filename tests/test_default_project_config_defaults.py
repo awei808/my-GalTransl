@@ -74,6 +74,16 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
         self.assertEqual(value, 20)
         self.assertNotIsInstance(value, bool)
 
+    def test_detect_batch_from_metadata_defaults(self) -> None:
+        """检测类后端默认按批次级元数据区间分批，单批句数不限制（0 是合法值）。
+
+        键名与 BaseDetectRound 读取的两个键逐字一致，防两端漂移。
+        """
+        detect = self.config["internals"]["detect"]
+        self.assertIs(detect["batch_from_metadata"], True)
+        self.assertEqual(detect["batch_from_metadata_max_sentences"], 0)
+        self.assertNotIsInstance(detect["batch_from_metadata_max_sentences"], bool)
+
     def test_problem_list_covers_default_fix_types(self) -> None:
         problem_list = self.config["problemAnalyze"]["problemList"]
         self.assertIsInstance(problem_list, list)
@@ -114,6 +124,7 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
                 "疑似错误",
                 "词语色彩不一致",
                 "节奏单一",
+                "节奏冗长",
             ],
         )
 

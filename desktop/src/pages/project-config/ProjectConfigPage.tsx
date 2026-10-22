@@ -107,6 +107,14 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "语义检测每批句数",
     hint: "单次语义判定请求发送的句子数，越小越稳但越慢，避免一次发送过多导致质量下降。",
   },
+  "internals.detect.batch_from_metadata": {
+    label: "检测轮按批次元数据分批",
+    hint: "开启后首轮检测（语义/色彩/冗长）按批次级元数据的剧情区间划分批次，每批不跨区间；无元数据、句子无行号或行号与区间不匹配时自动回退上方固定句数。复核轮始终按固定句数。",
+  },
+  "internals.detect.batch_from_metadata_max_sentences": {
+    label: "按区间分批的单批句数上限",
+    hint: "0 表示不限制（一个区间一批）；仅在上限大于 0 时对超长区间子切。区间外（无区间标注）的句子始终按上方固定句数切分。",
+  },
   "internals.pipeline.enableValidate": {
     label: "开启阶段 0：输入数据校验",
     hint: "关闭后跳过输入文件校验，直接进入下一阶段（不建议关闭）。",
@@ -1498,8 +1506,9 @@ export function ProjectConfigPage() {
             数字几就代表第几步执行，保存为有序数组（数组顺序即执行顺序）。关闭「阶段 8：
             修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
             ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
-            / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain 对已翻译文件手动执行
-            （后者依次为语义命中句二次复核、词语色彩命中句二次复核）。
+            / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain / ForVerboseCheck
+            / ForVerboseCheckAgain 对已翻译文件手动执行（后者依次为语义命中句二次复核、
+            词语色彩命中句二次复核、节奏冗长检测与冗长命中句二次复核）。
           </p>
           <AfterTranslationOrderEditor
             value={order()}

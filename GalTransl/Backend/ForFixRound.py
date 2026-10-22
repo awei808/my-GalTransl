@@ -22,7 +22,7 @@ from GalTransl.ConfigHelper import (
     CProxyPool,
     CProjectConfig,
 )
-from GalTransl.Backend.BaseEngine import register_engine
+from GalTransl.Backend.BaseEngine import EmptyTokenPool, register_engine
 from GalTransl.Backend.BaseFixRound import BaseImproveRound, BaseProblemFixRound
 from GalTransl.Backend.Prompts import FORFIXROUND_SYSTEM, build_fix_round_prompt
 
@@ -139,6 +139,12 @@ _FIX_SPECS: dict = {
         "其依据可能是批次区间的用词色彩标注或原文语气），"
         "调整译文措辞风格使其与该色彩一致；仅修改色彩明显不符的表达，不改变句意与信息量。",
     ),
+    CProblemType.节奏冗长: FixSpec(
+        mode=MODE_SRC_DST,
+        instruction="对照 src 压缩 dst 的冗余：删除同义重复、无信息量的垫词/语气词堆砌、"
+        "重复陈述同一信息与原文没有的过度解释；保留必要的主语/宾语补足与有意的语气强化，"
+        "不删有效信息、不改变句意与色彩。",
+    ),
 }
 
 
@@ -202,13 +208,6 @@ def build_br_issue_guide() -> str:
     )
 
 
-class _EmptyTokenPool:
-    """空令牌池占位：主 profile 不可用时保证基类 init_chatbot 不崩溃（不发任何请求）。"""
-
-    def get_available_token(self) -> list:
-        return []
-
-
 @register_engine("ForFixRound")
 class ForProblemFixRound(BaseProblemFixRound):
     """统一问题修复后端：按实例参数组合修复任意问题类型。
@@ -253,7 +252,7 @@ class ForProblemFixRound(BaseProblemFixRound):
                     f"{self._log_tag} 主翻译令牌池构建失败：{type(e).__name__}: {e}"
                 )
                 self._disabled_reason = "主翻译令牌池构建失败"
-                token_pool = _EmptyTokenPool()
+                token_pool = EmptyTokenPool()
         if not getattr(token_pool, "get_available_token", lambda: [])():
             # 空令牌池（无配置端点）与构建失败同口径：禁用并跳过请求，避免回退到本地端口默认值
             if not self._disabled_reason:

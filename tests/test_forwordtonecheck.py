@@ -329,8 +329,10 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase, _ToneCheckTestB
 class ToneCheckBatchSplitTests(unittest.IsolatedAsyncioTestCase, _ToneCheckTestBase):
     """验证分批优先级：numPerRequestToneCheck > numPerRequestSemCheck > numPerRequestBetter > 实参。"""
 
-    async def _run_split(self, values: dict, num_arg: int = 20, total: int = 5) -> list:
-        batches = [{"区间": [1, 100], "用词色彩": "口语"}]
+    async def _run_split(
+        self, values: dict, num_arg: int = 20, total: int = 5, batches=None
+    ) -> list:
+        # 默认无批次元数据：固定句数配置链只在退化路径生效（有元数据时按区间分批）
         obj = self._make_obj(values, batches=batches)
         targets = [_trans(i) for i in range(1, total + 1)]
         with patch.object(
@@ -371,6 +373,22 @@ class ToneCheckBatchSplitTests(unittest.IsolatedAsyncioTestCase, _ToneCheckTestB
     async def test_falls_back_to_argument(self) -> None:
         sizes = await self._run_split({}, num_arg=2)
         self.assertEqual(sizes, [2, 2, 1])
+
+    async def test_metadata_grouping_overrides_fixed_size(self) -> None:
+        # 有批次元数据：单区间整段一批，固定句数配置链不参与（默认开启）
+        sizes = await self._run_split(
+            {"gpt.numPerRequestToneCheck": 2},
+            batches=[{"区间": [1, 100], "用词色彩": "口语"}],
+        )
+        self.assertEqual(sizes, [5])
+
+    async def test_metadata_tail_group_split_by_fixed_size(self) -> None:
+        # 区间只覆盖 1-3，句 4-5 落尾组：尾组无色彩边界，按固定句数 2 切
+        sizes = await self._run_split(
+            {"gpt.numPerRequestToneCheck": 2},
+            batches=[{"区间": [1, 3], "用词色彩": "口语"}],
+        )
+        self.assertEqual(sizes, [3, 2])
 
 
 class ToneGuideFormatTests(unittest.TestCase):

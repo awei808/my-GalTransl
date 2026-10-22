@@ -56,8 +56,9 @@
 - 项目中不止一处有版本号，需统一控制。GalTransl/__init__.py、desktop/package.json、desktop/package-lock.json、desktop/src-tauri/tauri.conf.json、desktop/src-tauri/Cargo.toml
 
 
-- 检测类后端新增，节奏冗长；
-- 检测类后端的每批固定次数可以改为读取批次表
+- ~~检测类后端新增，节奏冗长；~~ **已完成**（新增 `GalTransl/Backend/BaseDetectRound.py` 收口检测/复核轮骨架：令牌池降级与提示词重放、单轮批次循环、稀疏命中解析、keep 复核解析、整批回显重试、预览推送、批次大小配置链全部只留一份；四个存量后端改为薄声明——ForSemCheck 311→93、ForSemCheckAgain 324→47、ForToneCheck 402→189、ForToneCheckAgain 358→145 行，新增检测后端从抄约 300 行降到约 50 行。顺序与文案逐字保留：原 `break` 与 `continue` 等价处统一走「本批无结论」返回，日志、预览、统计口径不变（存量 10 个测试文件全绿）。**并新增节奏冗长检测对**：`ForVerboseCheck`（标记 `verbose_issue`，问题类型 `节奏冗长`=22，find_problems 认领、缓存读写、默认 problemList 启用）与 `ForVerboseCheckAgain`（keep 确认/撤销，fail-safe 保留），`afterTranslation` 键 `verbosecheck`/`verbosecheckagain` + 批次配置 `gpt.numPerRequestVerboseCheck`（默认 20，缺失回退 numPerRequestSemCheck），CLI/独立执行/提示词模板/前端引擎表与后处理编辑器同步；**默认后处理链不启用**（多一轮全量 AI 判定等于给所有项目加成本），需在项目设置勾选。测例新增 `test_base_detect_round.py`（六引擎类属性金样本 + 批次配置链取值 + 首轮/复核筛选 + 摘要日志）与两个新后端测例。）
+- ~~检测类后端的每批固定次数可以改为读取批次表~~ **已完成**（新增 `internals.detect.batch_from_metadata`（默认开启）与 `batch_from_metadata_max_sentences`（默认 0=不限制）：`BaseDetectRound._split_into_batches` 首轮检测按 `pass2_cache` 批次级元数据区间切批，每批不跨区间，区间外句入尾批（超上限时子切）；复核轮、开关关闭、无元数据、句子无行号、行号与所有区间不匹配均回退原固定句数切片（`_batch_size_keys` 链不变）。文件口径兜底：原文件名 → basename → 还原 `-}` 的 basename（覆盖 `sub-}a.json` 与 `f_2` 分片），命中后登记到 `batch_metadata_map` 使 `_prepare_file_context`（色彩基准）同口径。日志：首个无元数据文件 INFO、后续 DEBUG（防默认开启后刷屏），行号异常 WARNING，每批区间 DEBUG。测例 `tests/test_detect_batch_metadata.py`（生效/退化/文件名口径/上限子切/半构造实例）与 `test_default_project_config_defaults` 的默认值契约断言，前端 `settingsTaxonomy` 归类断言。）
+- 问题复核类后端时注入问题句的上下文
 - 将单轮对话模式推广至所有后端，允许所有后端都可以启用单轮对话模式
 - 翻译控制台-当前提示词的状态指示灯中，黑色指示灯没有类似其他指示灯的“等待首字”“取消”的文字说明，需要显示为“已完成+耗时”
 - 后端对结果预览的支持不完善，一些后端的结果不会在结果预览中显示

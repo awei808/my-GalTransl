@@ -193,6 +193,7 @@ def _rebuild_trans_list_with_postprocess(
         s.skip_check = bool(e.get("skip_check", False))
         s.suspected_error = e.get("suspected_error", "")
         s.tone_issue = e.get("tone_issue", "")
+        s.verbose_issue = e.get("verbose_issue", "")
         trans_list.append(s)
 
     for i, s in enumerate(trans_list):

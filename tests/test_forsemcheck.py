@@ -251,14 +251,14 @@ class SemcheckPromptInjectionTests(unittest.TestCase):
 
     def test_injects_only_task_and_input(self) -> None:
         obj = self._make_obj()
-        prompt = obj._build_semcheck_user_content(input_src='#01|{"id":1}')
+        prompt = obj._build_detect_user_content(input_src='#01|{"id":1}')
         self.assertIn("### 任务", prompt)  # 任务说明注入
         self.assertIn("#01|{\"id\":1}", prompt)  # input 注入
         self.assertIn("Simplified_Chinese", prompt)  # 目标语言占位符已替换
 
     def test_no_glossary_or_batch_or_metadata(self) -> None:
         obj = self._make_obj()
-        prompt = obj._build_semcheck_user_content(input_src='#01|{"id":1}')
+        prompt = obj._build_detect_user_content(input_src='#01|{"id":1}')
         self.assertNotIn("[Glossary]", prompt)
         self.assertNotIn("[translation_guideline]", prompt)
         self.assertNotIn("[global_prompt]", prompt)
@@ -280,7 +280,7 @@ class SemcheckPromptInjectionTests(unittest.TestCase):
             "标签: 日常、H\n"
             "</plot_metadata>\n"
         )
-        prompt = obj._build_semcheck_user_content(
+        prompt = obj._build_detect_user_content(
             input_src='#01|{"id":1}', metadata_block=metadata_block
         )
         # 缓存头口径：固定的任务说明在最前，动态元数据块在其后、input 之前
@@ -295,7 +295,7 @@ class SemcheckPromptInjectionTests(unittest.TestCase):
 
     def test_metadata_block_empty_keeps_old_behavior(self) -> None:
         obj = self._make_obj()
-        prompt = obj._build_semcheck_user_content(
+        prompt = obj._build_detect_user_content(
             input_src='#01|{"id":1}', metadata_block=""
         )
         # 模板文字本身含 <plot_metadata> 字样，断言实际元数据内容不出现即可

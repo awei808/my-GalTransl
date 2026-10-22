@@ -22,7 +22,7 @@ from typing import List, Tuple
 
 import orjson
 
-FIELD_CHOICES = ("suspected_error", "alt_dst")
+FIELD_CHOICES = ("suspected_error", "tone_issue", "verbose_issue", "alt_dst")
 
 
 def collect_cache_files(project_dir: str, filename: str = "") -> List[str]:

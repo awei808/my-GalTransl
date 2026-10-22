@@ -116,6 +116,14 @@ TRANSLATOR_SUPPORTED = {
         "zh-cn": "对已标记为「词语色彩不一致」的句子逐句复核。",
         "en": "Second-pass confirmation for 'word-tone inconsistent' flags: re-checks each flagged sentence against the same tone reference and keeps only confirmed deviations, dismissing acceptable translations (false positives)."
     },
+    "ForVerboseCheck": {
+        "zh-cn": "节奏冗长检测：标记信息量未增加却被同义重复、垫词堆砌或过度解释撑大的句子（verbose_issue 标记，不改译文）。",
+        "en": "Verbosity check: flags sentences that grew longer without adding information (synonym stacking, filler words, repeated statements, over-explanation; verbose_issue flag, translation untouched)."
+    },
+    "ForVerboseCheckAgain": {
+        "zh-cn": "对已标记为「节奏冗长」的句子逐句复核，撤销误报。",
+        "en": "Second-pass confirmation for 'verbose rhythm' flags: re-checks each flagged sentence and keeps only confirmed redundancy, dismissing acceptable translations (false positives)."
+    },
     "ForFixRound": {
         "zh-cn": "统一问题修复：按所选问题类型组合修复译文（多类可并行处理），每类按对应修复指令生成备选译文；输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文）。",
         "en": "Unified problem fix: repairs translations by a configurable combination of problem types, each with its own fix instruction, generating alternative translations (alt_dst); input mode auto-derived from selected types (src+dst if any type needs source, else dst-only)."
@@ -176,7 +184,7 @@ TRANSLATOR_DEFAULT_ENGINE = {
     "ForPlotRouteMap": "deepseek-chat",
     "GenDic": "deepseek-chat",
 }
-NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForRouteAnalysis", "ForGlobalAnalysis", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForToneCheckAgain", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
+NEED_OpenAITokenPool=["ForGal-full-pipeline", "ForGlobalPrompt", "ForRouteAnalysis", "ForGlobalAnalysis", "ForGal-json-translate", "ForImproveTranslation", "ForBRStation", "ForJPResidue", "ForBanWordFix", "ForSemCheck", "ForSemCheckAgain", "ForToneCheck", "ForToneCheckAgain", "ForVerboseCheck", "ForVerboseCheckAgain", "ForFixRound", "GenDic", "ForFileMetaData", "ForBatchMetaData", "ForPlotRouteMap"]
 
 # 引擎名别名：引擎改名后的兼容映射，旧配置/旧任务提交旧名时解析到现行名
 TRANSLATOR_ALIASES = {
