@@ -499,8 +499,11 @@ if __name__ == "__main__":
 - 令牌池负载均衡：`tokenStrategy`（random 随机轮询；fallback 主备用切换）
 - 自适应并发：`autoAdjustWorkers: true` 按 429 比例与延迟动态调并发（信号量预占/释放实现，见 `set_effective_workers`）
 - 全局 RPM 限制：`globalRequestRPM`（进程级 `_GLOBAL_RPM_LOCK` 槽位）
+- 在途并发闸：`apiMaxInFlight`（默认 12，0 不限制）按 `(endpoint, token)` 进程级计数，只统计「已发出、响应未读完」的请求；40 worker 慢响应时不再把上游长连接打满。后处理阶段每文件新建引擎实例，只有进程级共享才管得住总在途量。**多 key 时上游总在途 = 上限 × key 数**，需按 1/N 折算；排队超 60s 打一条 WARNING，避免静默卡住。此处不用 `asyncio.Semaphore`：它绑定事件循环，无法跨 loop 共享配额，故改用 `threading.Lock` + 计数 + 50ms 轮询
+- 整请求墙钟超时：`apiWallTimeout`（默认 900s，0 不限制）覆盖「等待响应 + 流式消费」；流式下 `apiTimeout` 只约束分片间隔，长流可无限拖，故必须另有墙钟兜底。超时抛 `APIWallTimeoutError`（继承 `TimeoutError`），不触发客户端重建，也不计入熔断（衡量的是「太慢」而非「不可用」）。检查点为 0.5s 轮询/分片边界，属粗粒度兜底而非精确 SLA
+- 熔断：`apiBreakerThreshold`（默认 8，0 关闭）+ `apiBreakerCooldownSec`（默认 30s，按 1/2/4/8 倍阶梯，0 等价关闭）。按 endpoint 进程级共享，只统计服务端级错误（5xx / 连接中断 / `apiTimeout` 读超时），429 与业务错误不计；任意一次成功清零，冷却期内的旧账不再推高阶梯
 - 重试预算：`maxApiRetries`（默认 6 次尝试上限；429 退避不计入预算）
-- 客户端治理：HTTP 连接池有界 + 30s 空闲过期；客户端连续失败自动回收重建
+- 客户端治理：HTTP 连接池有界 + 30s 空闲过期；客户端连续失败自动回收重建（旧客户端退役不立即关闭，退役引用仅在 `shutdown()` 统一释放）
 - TTFT 上报：流式首字延迟状态上报至 `RuntimeState.ttft_states`（前端状态灯）
 - 停止取消：`threading.Event` stop_event，worker 循环/请求轮询/退避睡眠均检查，可中断流式响应
 - 测试隔离：`CSplitter` 用 `threading.local()` 隔离并发任务的块追踪状态

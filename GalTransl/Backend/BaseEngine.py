@@ -17,7 +17,13 @@ from GalTransl.ConfigHelper import (
 from GalTransl.Utils import load_guideline_file
 from GalTransl.Backend.utils import coerce_bool, coerce_positive_int_strict
 from GalTransl.TerminalOutput import should_print_translation_logs
-from openai import RateLimitError, AsyncOpenAI, APIConnectionError, APITimeoutError
+from openai import (
+    RateLimitError,
+    AsyncOpenAI,
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+)
 from openai import DefaultAioHttpClient
 from openai._types import NOT_GIVEN
 import json
@@ -88,6 +94,80 @@ def _get_min_interval_slot(domain: str, token: str) -> _MinIntervalSlotState:
         if state is None:
             state = _MinIntervalSlotState()
             _MIN_INTERVAL_SLOTS[key] = state
+        return state
+
+
+class APIWallTimeoutError(TimeoutError):
+    """整请求墙钟超时（含流式消费）。
+
+    与连接层超时区分：不得触发 API 客户端重建，否则慢后端会被反复新建连接池。
+    """
+
+
+class _InflightGateState:
+    """单个 (endpoint, token) 的在途请求计数（进程级共享）。
+
+    count 只统计「HTTP 请求已发出、响应未读完」的请求；等待节流/排队的协程不占名额。
+    """
+
+    __slots__ = ("lock", "count")
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.count = 0
+
+
+# (endpoint, token) -> 在途计数。后处理阶段每文件新建引擎实例，
+# 只有进程级共享才能约束住「N 个实例各自打满」的总在途量。
+_INFLIGHT_GATES: Dict[Tuple[str, str], _InflightGateState] = {}
+_INFLIGHT_GATES_LOCK = Lock()
+
+
+def _get_inflight_gate(domain: str, token: str) -> _InflightGateState:
+    """取（必要时创建）指定 (endpoint, token) 的在途计数状态。"""
+    key = (domain, token)
+    with _INFLIGHT_GATES_LOCK:
+        state = _INFLIGHT_GATES.get(key)
+        if state is None:
+            state = _InflightGateState()
+            _INFLIGHT_GATES[key] = state
+        return state
+
+
+class _CircuitBreakerState:
+    """单个 endpoint 的熔断状态（进程级共享）。
+
+    consecutive_failures 只累计「服务端不可用」类错误（5xx/连接中断/读超时），
+    429 限流与墙钟超时（太慢≠不可用）不计入；任一成功即清零并重置 trip_count。
+    """
+
+    __slots__ = ("lock", "consecutive_failures", "open_until_ts", "trip_count", "notified_until")
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.consecutive_failures = 0
+        self.open_until_ts = 0.0
+        self.trip_count = 0
+        # 同一段冷却只提示一次，避免 40 个 worker 各打一条 WARNING
+        self.notified_until = 0.0
+
+
+# endpoint(domain) -> 熔断状态。按服务端聚合：同域多 key 共用一个熔断器。
+_BREAKERS: Dict[str, _CircuitBreakerState] = {}
+_BREAKERS_LOCK = Lock()
+
+# (配置键, repr(原值)) -> 已提示过，避免多引擎实例重复刷同一条告警
+_GUARD_WARNED: set[tuple] = set()
+_GUARD_WARNED_LOCK = Lock()
+
+
+def _get_breaker(domain: str) -> _CircuitBreakerState:
+    """取（必要时创建）指定 endpoint 的熔断状态。"""
+    with _BREAKERS_LOCK:
+        state = _BREAKERS.get(domain)
+        if state is None:
+            state = _CircuitBreakerState()
+            _BREAKERS[domain] = state
         return state
 
 
@@ -415,6 +495,61 @@ class BaseEngine:
         return max(0.0, result)
 
     @staticmethod
+    def _coerce_bounded(value: Any, default: float, low: float, high: float) -> float:
+        """落 [low, high] 区间的数值；非数字/越界/NaN 回退 default。
+
+        安全类配置（在途上限、墙钟）越界必须回退安全默认，而不是夹成 0——
+        0 在这几个键上表示「不限制」，负值笔误会静默关掉防护。
+        """
+        if isinstance(value, bool):
+            return default
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        if result != result or result < low or result > high:
+            return default
+        return result
+
+    @classmethod
+    def _coerce_bounded_int(
+        cls, value: Any, default: float, low: float, high: float
+    ) -> int:
+        """整型安全配置：0 保留为「不限制」，非零小数至少取 1，越界回退默认。
+
+        直接用 int() 会把 0.5 截成 0——在这些键上 0 是「关闭防护」，
+        等于用笔误静默关掉在途闸/熔断；故非零值向上兜到 1。
+        """
+        result = cls._coerce_bounded(value, default, low, high)
+        if result <= 0:
+            return 0
+        return max(1, int(round(result)))
+
+    def _warn_if_guard_clamped(self, backend_cfg: dict) -> None:
+        """并发防护键与生效值不一致时提示实际值（进程级每键只提示一次）。
+
+        后处理阶段每文件新建引擎实例，不去重会让同一笔配置打印 N 条。
+        """
+        entries = (
+            ("apiMaxInFlight", backend_cfg.get("apiMaxInFlight", 12), self.api_max_in_flight),
+            ("apiWallTimeout", backend_cfg.get("apiWallTimeout", 900), self.api_wall_timeout),
+            ("apiBreakerThreshold", backend_cfg.get("apiBreakerThreshold", 8), self.api_breaker_threshold),
+            ("apiBreakerCooldownSec", backend_cfg.get("apiBreakerCooldownSec", 30), self.api_breaker_cooldown_sec),
+        )
+        for key, raw, effective in entries:
+            try:
+                if float(raw) == float(effective):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            token_key = (key, repr(raw))
+            with _GUARD_WARNED_LOCK:
+                if token_key in _GUARD_WARNED:
+                    continue
+                _GUARD_WARNED.add(token_key)
+            LOGGER.warning(f"[api] 配置 {key}={raw!r} 已按 {effective:g} 生效")
+
+    @staticmethod
     def _coerce_error_wait(value: Any) -> float:
         # API 错误重试等待(秒)："auto"/空/非法 -> -1（指数退避），数字 -> float（固定退避，支持亚秒）。
         # bool 是 int 的子类，显式拒绝，避免 True/False 被当作 1/0 秒。
@@ -497,6 +632,23 @@ class BaseEngine:
         self.api_max_error_rate = self._coerce_ratio(backend_cfg.get("apiMaxErrorRate", 0), 0)
         self.api_min_interval_sec = self._coerce_nonneg_float(backend_cfg.get("apiMinIntervalSec", 0), 0)
         self.api_max_requests = self._coerce_optional_int(backend_cfg.get("apiMaxRequests", 0), 0)
+        # 在途并发闸：只限制「已发出、响应未读完」的请求数，与发起间隔节流互补。
+        # 缺省 12 而非 0：单个中转/实例扛不住 worker 数级别的长连接（慢响应下恒定打满）。
+        self.api_max_in_flight = self._coerce_bounded_int(
+            backend_cfg.get("apiMaxInFlight", 12), 12, 0, 999
+        )
+        # 整请求墙钟超时：流式下 apiTimeout 只按 chunk 间隔生效，长流可无限延长
+        self.api_wall_timeout = self._coerce_bounded(
+            backend_cfg.get("apiWallTimeout", 900), 900, 0, 86400
+        )
+        # 熔断：连续服务端级失败后全局暂停，避免各 worker 各自重试持续打崩上游
+        self.api_breaker_threshold = self._coerce_bounded_int(
+            backend_cfg.get("apiBreakerThreshold", 8), 8, 0, 1000
+        )
+        self.api_breaker_cooldown_sec = self._coerce_bounded(
+            backend_cfg.get("apiBreakerCooldownSec", 30), 30, 0, 3600
+        )
+        self._warn_if_guard_clamped(backend_cfg)
         self._request_count = 0
         # 实例级节流状态仅作无 (endpoint, token) 键时的兜底；常规路径用进程级共享状态
         self._min_interval_state: Optional[_MinIntervalSlotState] = None
@@ -549,7 +701,15 @@ class BaseEngine:
             f"stream={self.stream} thinking_mode={self.thinking_mode} "
             f"reasoning_effort={self.reasoning_effort or '未设置'} "
             f"可用key数={len(self.client_list)} "
-            f"apiMinIntervalSec={self.api_min_interval_sec or '不限制'}"
+            f"apiMinIntervalSec={self.api_min_interval_sec or '不限制'} "
+            f"apiMaxInFlight={self.api_max_in_flight or '不限制'} "
+            f"apiWallTimeout={self.api_wall_timeout or '不限制'} "
+            f"熔断={self.api_breaker_threshold if self.api_breaker_threshold > 0 else '关闭'}"
+            + (
+                f"/{self.api_breaker_cooldown_sec:g}s"
+                if self.api_breaker_threshold > 0
+                else ""
+            )
         )
 
     @staticmethod
@@ -592,8 +752,11 @@ class BaseEngine:
     def _is_transport_error(error: BaseException) -> bool:
         """判断是否为连接层错误（可安全通过重建客户端恢复）。
 
-        5xx/429/认证等 API 状态错误不在此列，避免无意义的客户端重建。
+        5xx/429/认证等 API 状态错误不在此列，避免无意义的客户端重建；
+        墙钟超时属于「后端慢」而非连接池损坏，重建无益，故也排除。
         """
+        if isinstance(error, APIWallTimeoutError):
+            return False
         return isinstance(
             error,
             (
@@ -605,6 +768,25 @@ class BaseEngine:
                 OSError,
             ),
         )
+
+    @staticmethod
+    def _is_server_side_error(error: BaseException) -> bool:
+        """是否属于「服务端不可用」类错误，用于熔断计数。
+
+        429 限流是正常速率约束，不计；墙钟超时衡量的是「太慢」而非「不可用」，
+        也排除——否则默认阈值(8)小于在途上限(12)时，一批慢请求同时到点就会
+        把健康但慢的后端熔断掉。
+        """
+        if isinstance(error, RateLimitError):
+            return False
+        if isinstance(error, APIWallTimeoutError):
+            return False
+        if isinstance(error, (InternalServerError, APIConnectionError, APITimeoutError)):
+            return True
+        if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError, OSError)):
+            return True
+        status = getattr(error, "status_code", None)
+        return isinstance(status, int) and status >= 500
 
     async def _recycle_failed_client(
         self, failed_client: AsyncOpenAI, token: COpenAIToken
@@ -1050,6 +1232,23 @@ class BaseEngine:
         thinking_on = mode == "on"
         return extra, eff, thinking_on
 
+    def _peek_request_count_quota(self) -> None:
+        """只读预检：配额已用满时立刻终止，不必先拿到在途名额。
+
+        _check_request_count_quota 会先自增再判定，因此必须等到真正发请求前才调用；
+        若只在拿到名额后判定，上游挂住时终止会被排队拖到墙钟量级。
+        """
+        if self.api_max_requests <= 0:
+            return
+        with self._rate_lock:
+            count = self._request_count
+        if count >= self.api_max_requests:
+            from GalTransl.Service import JobCancelledError
+            LOGGER.error(
+                f"[{self.eng_type}] API 请求次数已达上限 {self.api_max_requests}，终止翻译流程"
+            )
+            raise JobCancelledError()
+
     def _check_request_count_quota(self) -> None:
         # 累计 API 请求次数达到上限则终止整个翻译流程（api_max_requests<=0 不限制）。
         if self.api_max_requests <= 0:
@@ -1091,6 +1290,104 @@ class BaseEngine:
         if wait > 0:
             LOGGER.debug(f"[{self.eng_type}] API 请求节流，等待 {wait:.2f}s")
             await asyncio.sleep(wait)
+
+    async def _acquire_inflight_slot(
+        self, domain: str, token: str
+    ) -> Optional[_InflightGateState]:
+        """占用一个在途请求名额（api_max_in_flight<=0 时返回 None 表示不限制）。
+
+        进程级按 (endpoint, token) 计数，跨引擎实例共享：后处理阶段每文件新建
+        引擎实例，实例内信号量管不住「N 个实例同时打满」的总在途量。
+        超额时轮询等待（50ms 粒度），不用 asyncio.Semaphore 以规避跨事件循环复用。
+        """
+        limit = getattr(self, "api_max_in_flight", 0)
+        if limit <= 0:
+            return None
+        gate = _get_inflight_gate(domain, token)
+        waited = 0.0
+        warned = False
+        while True:
+            with gate.lock:
+                if gate.count < limit:
+                    gate.count += 1
+                    if waited > 0:
+                        LOGGER.debug(
+                            f"[{self.eng_type}] 在途名额等待 {waited:.1f}s 后获得 "
+                            f"{domain}（上限 {limit}）"
+                        )
+                    return gate
+            if waited == 0.0:
+                LOGGER.debug(
+                    f"[{self.eng_type}] 在途请求已达上限 {limit}，排队等待 {domain}"
+                )
+            if waited >= 60.0 and not warned:
+                # 排队过久说明上游在压着不回包，打一条可见告警避免"静默卡住"
+                LOGGER.warning(
+                    f"[{self.eng_type}] 在途名额排队已 {waited:.0f}s（上限 {limit}，"
+                    f"{domain}），上游响应过慢或连接未释放"
+                )
+                warned = True
+            await self._interruptible_sleep(0.05)
+            waited += 0.05
+
+    @staticmethod
+    def _release_inflight_slot(gate: Optional[_InflightGateState]) -> None:
+        """归还在途名额；未启用闸门（None）时无事发生。"""
+        if gate is None:
+            return
+        with gate.lock:
+            if gate.count > 0:
+                gate.count -= 1
+
+    async def _wait_breaker_slot(self, domain: str) -> None:
+        """熔断冷却期内暂停发起请求（可被 stop_event 打断）。"""
+        if getattr(self, "api_breaker_threshold", 0) <= 0:
+            return
+        state = _get_breaker(domain)
+        with state.lock:
+            remain = state.open_until_ts - time.monotonic()
+            should_notify = state.open_until_ts > state.notified_until
+            if should_notify:
+                state.notified_until = state.open_until_ts
+        if remain <= 0:
+            return
+        if should_notify:
+            LOGGER.warning(f"[熔断] {domain} 冷却中，等待 {remain:.1f}s 后恢复请求")
+        else:
+            LOGGER.debug(f"[熔断] {domain} 冷却中，剩余 {remain:.1f}s")
+        await self._interruptible_sleep(remain)
+
+    def _record_breaker_result(self, domain: str, ok: bool) -> None:
+        """登记熔断结果：成功清零，连续服务端失败达阈值则开启冷却（阶梯翻倍，上限 8 倍）。"""
+        threshold = getattr(self, "api_breaker_threshold", 0)
+        if threshold <= 0:
+            return
+        cooldown = 0.0
+        trip = 0
+        state = _get_breaker(domain)
+        with state.lock:
+            if ok:
+                state.consecutive_failures = 0
+                state.trip_count = 0
+                return
+            if state.open_until_ts > time.monotonic():
+                # 冷却期内仍在途的旧请求会陆续失败，不让它们把阶梯继续推高
+                return
+            state.consecutive_failures += 1
+            if state.consecutive_failures < threshold:
+                return
+            state.consecutive_failures = 0
+            base = getattr(self, "api_breaker_cooldown_sec", 0)
+            if base > 0:
+                cooldown = base * min(2 ** min(state.trip_count, 3), 8)
+                state.open_until_ts = time.monotonic() + cooldown
+            state.trip_count += 1
+            trip = state.trip_count
+        if cooldown > 0:
+            LOGGER.warning(
+                f"[熔断] {domain} 连续 {threshold} 次服务端错误，"
+                f"暂停 {cooldown:g}s（第 {trip} 次触发）"
+            )
 
     # 错误率统计的最小样本量：样本过小（如仅 1~2 次请求）时错误率无统计意义，
     # 偶发网络抖动会导致早期误杀整个任务，故低于门槛时不判断。
@@ -1185,9 +1482,12 @@ class BaseEngine:
                 raise JobCancelledError()
 
             request_started = time.monotonic()
-            # except 路径引用这两个变量（tokenStrategy 非法等在赋值前抛出时不可未绑定）
+            # except/finally 路径引用这几个变量（赋值前抛出时不可未绑定）
             _call_trace = ""
             _pj_dir = ""
+            _inflight_gate: Optional[_InflightGateState] = None
+            _wall_started = request_started
+            _wall_limit = getattr(self, "api_wall_timeout", 0)
             try:
                 if self.tokenStrategy == "random":
                     if api_try_count % 2 == 0:
@@ -1224,11 +1524,20 @@ class BaseEngine:
                         prompt_preview=_prompt_snip,
                     )
 
+                # 后端级调用限制：预检配额 → 节流 → 在途闸 → 计数并判定。
+                # 预检放在熔断/节流之前：配额已满时不必等熔断冷却或排队就终止。
+                self._peek_request_count_quota()
+                # 熔断优先于节流：上游已不可用时先整体冷静，不占发起时隙
+                await self._wait_breaker_slot(token.domain)
                 await self._wait_for_global_rpm_slot()
 
-                # 后端级调用限制：先检查次数上限，再做最小间隔节流。
-                self._check_request_count_quota()
                 await self._throttle_request_rate((token.domain, token.token))
+                # 在途闸放在节流之后：排队等节流不算在途，只有真正发出去的请求占名额
+                _inflight_gate = await self._acquire_inflight_slot(
+                    token.domain, token.token
+                )
+                self._check_request_count_quota()
+                _wall_started = time.monotonic()
 
                 # Create the API call as a task so we can cancel it if
                 # the user requests a stop while the request is in-flight.
@@ -1277,6 +1586,26 @@ class BaseEngine:
                                 pass
                         from GalTransl.Service import JobCancelledError
                         raise JobCancelledError()
+                    if (
+                        _wall_limit > 0
+                        and time.monotonic() - _wall_started > _wall_limit
+                    ):
+                        # 墙钟兜底：流式 apiTimeout 只约束 chunk 间隔，长等待可无限拖
+                        api_task.cancel()
+                        with suppress(BaseException):
+                            try:
+                                await asyncio.wait_for(
+                                    asyncio.shield(api_task), timeout=2.0
+                                )
+                            except asyncio.TimeoutError:
+                                LOGGER.warning(
+                                    "墙钟超时后取消请求未在 2s 内完成，连接可能残留"
+                                )
+                            except asyncio.CancelledError:
+                                pass
+                        raise APIWallTimeoutError(
+                            f"请求墙钟超时 {_wall_limit:g}s（等待响应阶段）"
+                        )
                     done, _ = await asyncio.wait({api_task}, timeout=0.5)
                     if done:
                         break
@@ -1298,6 +1627,14 @@ class BaseEngine:
                                 stream_abort_requested = True
                                 from GalTransl.Service import JobCancelledError
                                 raise JobCancelledError()
+                            if (
+                                _wall_limit > 0
+                                and time.monotonic() - _wall_started > _wall_limit
+                            ):
+                                # finally 会 aclose 流，服务端能及时感知客户端离开
+                                raise APIWallTimeoutError(
+                                    f"请求墙钟超时 {_wall_limit:g}s（流式消费阶段）"
+                                )
                             if not chunk.choices:
                                 continue
                             if hasattr(chunk.choices[0].delta, "reasoning_content"):
@@ -1310,7 +1647,7 @@ class BaseEngine:
                                 content_piece = chunk.choices[0].delta.content or ""
                                 # 首个非空正文分片到达：记录 TTFT 并点亮首字灯
                                 if content_piece and _ttft_ms is None:
-                                    _ttft_ms = (time.monotonic() - request_started) * 1000
+                                    _ttft_ms = (time.monotonic() - _wall_started) * 1000
                                     try:
                                         if _pj_dir:
                                             set_ttft_state(
@@ -1376,7 +1713,7 @@ class BaseEngine:
                             "response.choices[0].message.content is empty"
                         )
                 self._record_request_health(
-                    time.monotonic() - request_started,
+                    time.monotonic() - _wall_started,
                     is_rate_limited=False,
                     ttft_seconds=(_ttft_ms / 1000.0) if _ttft_ms is not None else None,
                 )
@@ -1387,7 +1724,7 @@ class BaseEngine:
                 self._check_error_rate_quota()
                 # ── API 调用日志：成功 ──
                 if _call_trace:
-                    _lat = (time.monotonic() - request_started) * 1000
+                    _lat = (time.monotonic() - _wall_started) * 1000
                     _pt, _ct = 0, 0
                     try:
                         _usage = getattr(response, "usage", None)
@@ -1415,6 +1752,7 @@ class BaseEngine:
                 failure_counts = getattr(self, "_client_failure_counts", None)
                 if failure_counts is not None:
                     failure_counts.pop(client, None)
+                self._record_breaker_result(token.domain, True)
                 return result, token
             except Exception as e:
                 # 配额终止信号（次数/错误率超限）直接穿透，避免被当作失败重复记账。
@@ -1423,7 +1761,7 @@ class BaseEngine:
                 from GalTransl.Service import JobCancelledError
                 if isinstance(e, JobCancelledError):
                     if _call_trace:
-                        _lat = (time.monotonic() - request_started) * 1000
+                        _lat = (time.monotonic() - _wall_started) * 1000
                         api_logger.record(
                             _call_trace, status="cancelled", latency_ms=_lat,
                             retry_count=api_attempts, error=str(e),
@@ -1437,8 +1775,11 @@ class BaseEngine:
                         pass
                     raise
                 is_rate_limited = isinstance(e, RateLimitError)
+                # 熔断计数：只认服务端不可用（5xx/连接中断/墙钟超时），429 不计
+                if BaseEngine._is_server_side_error(e):
+                    self._record_breaker_result(token.domain, False)
                 self._record_request_health(
-                    time.monotonic() - request_started,
+                    time.monotonic() - _wall_started,
                     is_rate_limited=is_rate_limited,
                 )
                 with self._rate_lock:
@@ -1483,7 +1824,7 @@ class BaseEngine:
                     if max_retry_count is not None and api_attempts >= max_retry_count:
                         # ── API 调用日志：达到尝试上限 ──
                         if _call_trace:
-                            _lat = (time.monotonic() - request_started) * 1000
+                            _lat = (time.monotonic() - _wall_started) * 1000
                             api_logger.record(
                                 _call_trace, status="failed", latency_ms=_lat,
                                 retry_count=api_attempts, error=str(e),
@@ -1497,7 +1838,7 @@ class BaseEngine:
                 if "candidates" in str(e) and api_try_count > 1:
                     # ── API 调用日志：Gemini 空响应 ──
                     if _call_trace:
-                        _lat = (time.monotonic() - request_started) * 1000
+                        _lat = (time.monotonic() - _wall_started) * 1000
                         api_logger.record(
                             _call_trace, status="failed", latency_ms=_lat,
                             retry_count=api_attempts, error=str(e),
@@ -1557,7 +1898,7 @@ class BaseEngine:
                     message_text = f"{message_text} | sleeping {sleep_time:.3f}s"
                     # ── API 调用日志：可重试错误 ──
                     if _call_trace:
-                        _lat = (time.monotonic() - request_started) * 1000
+                        _lat = (time.monotonic() - _wall_started) * 1000
                         api_logger.record(
                             _call_trace, status="error", latency_ms=_lat,
                             retry_count=api_attempts,
@@ -1576,8 +1917,11 @@ class BaseEngine:
                         sleep_seconds=float(sleep_time),
                         level="warning",
                     )
+            finally:
+                # 请求已结束（成功/失败/取消）立即让出在途名额，退避等待期间不占用
+                self._release_inflight_slot(_inflight_gate)
 
-                await self._interruptible_sleep(sleep_time)
+            await self._interruptible_sleep(sleep_time)
 
     def clean_up(self) -> None:
         pass
