@@ -85,6 +85,17 @@ class ClassAttributeGoldenTests(unittest.TestCase):
             self.assertIn("[TargetLang]", trans_prompt, cls.__name__)
             self.assertIn("[Input]", trans_prompt, cls.__name__)
 
+    def test_reason_evidence_required_only_on_verbose_engines(self) -> None:
+        # 只有冗长检测系的提示词要求 reason 带「」片段；语义/色彩检测的 reason 是
+        # 自由文本（如「人名错译」），误开会让该引擎的命中被 100% 丢弃
+        verbose_engines = (ForVerboseCheck, ForVerboseCheckAgain)
+        for cls in ALL_ENGINES:
+            self.assertEqual(
+                cls._reason_evidence_required,
+                cls in verbose_engines,
+                cls.__name__,
+            )
+
     def test_review_rounds_disable_echo_retry_and_inject_reason(self) -> None:
         for cls in ALL_ENGINES:
             if cls._round_kind != "review":

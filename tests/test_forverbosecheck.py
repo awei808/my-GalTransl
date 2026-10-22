@@ -71,6 +71,8 @@ class ParseVerboseJsonlineTests(unittest.TestCase):
     """首轮稀疏解析：reason 必须带可在 dst 中核对的「…」片段（_reason_evidence_required）。
 
     无片段证据的命中不写标记——前端会显示成「没有原因的节奏冗长」，无法人工复核。
+    注意：本类的夹具只代表**解析层容错**，不代表提示词口径（提示词要求同义堆叠的
+    A、B 为两处不同文字），故「「非常」/「非常」」这类仍按解析层行为断言。
     """
 
     def test_hit_without_reason_discarded(self) -> None:
@@ -124,6 +126,36 @@ class ParseVerboseJsonlineTests(unittest.TestCase):
             "\r\n",
         )
         self.assertEqual(trans.verbose_issue, "「同义堆叠：「非常」/「非常」」")
+
+    def test_over_explain_single_adverb_discarded(self) -> None:
+        # 提示词明令「3 字以内一律不算过度解释」，此处机械兜底：
+        # 片段虽然在 dst 里存在，但单个副词属语气补足，不构成过度解释
+        parser = _make_parser()
+        trans = _trans(9, pre_dst="华恋那边也早已湿透了")
+        quality: dict = {}
+        hit, _ = parser._parse_fix_response(
+            'ab1|{"id": 9, "reason": "过度解释：「早已」"}', [trans], "\r\n", quality
+        )
+        self.assertEqual((hit, trans.verbose_issue), (0, ""))
+        self.assertEqual(quality.get("no_reason"), 1)
+
+    def test_over_explain_long_phrase_kept(self) -> None:
+        # 4 字以上的整块补白仍可判过度解释
+        parser = _make_parser()
+        trans = _trans(10, pre_dst="我一遍遍地看着她移不开目光")
+        parser._parse_fix_response(
+            'ab1|{"id": 10, "reason": "过度解释：「移不开目光」"}', [trans], "\r\n"
+        )
+        self.assertEqual(trans.verbose_issue, "过度解释：「移不开目光」")
+
+    def test_over_explain_threshold_does_not_affect_synonym(self) -> None:
+        # 幅度门槛只约束「过度解释」；同义堆叠的 2 字片段由提示词 A≠B 约束，解析层不管
+        parser = _make_parser()
+        trans = _trans(11, pre_dst="非常非常舒服")
+        parser._parse_fix_response(
+            'ab1|{"id": 11, "reason": "同义堆叠：「非常」/「非常」"}', [trans], "\r\n"
+        )
+        self.assertEqual(trans.verbose_issue, "同义堆叠：「非常」/「非常」")
 
     def test_fragment_not_in_dst_discarded(self) -> None:
         # 模型编造片段：dst 里根本没有，说明判定不可信
