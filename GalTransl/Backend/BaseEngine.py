@@ -104,36 +104,6 @@ class APIWallTimeoutError(TimeoutError):
     """
 
 
-class _InflightGateState:
-    """单个 (endpoint, token) 的在途请求计数（进程级共享）。
-
-    count 只统计「HTTP 请求已发出、响应未读完」的请求；等待节流/排队的协程不占名额。
-    """
-
-    __slots__ = ("lock", "count")
-
-    def __init__(self) -> None:
-        self.lock = Lock()
-        self.count = 0
-
-
-# (endpoint, token) -> 在途计数。后处理阶段每文件新建引擎实例，
-# 只有进程级共享才能约束住「N 个实例各自打满」的总在途量。
-_INFLIGHT_GATES: Dict[Tuple[str, str], _InflightGateState] = {}
-_INFLIGHT_GATES_LOCK = Lock()
-
-
-def _get_inflight_gate(domain: str, token: str) -> _InflightGateState:
-    """取（必要时创建）指定 (endpoint, token) 的在途计数状态。"""
-    key = (domain, token)
-    with _INFLIGHT_GATES_LOCK:
-        state = _INFLIGHT_GATES.get(key)
-        if state is None:
-            state = _InflightGateState()
-            _INFLIGHT_GATES[key] = state
-        return state
-
-
 class _CircuitBreakerState:
     """单个 endpoint 的熔断状态（进程级共享）。
 
@@ -531,9 +501,8 @@ class BaseEngine:
         后处理阶段每文件新建引擎实例，不去重会让同一笔配置打印 N 条。
         """
         entries = (
-            ("apiMaxInFlight", backend_cfg.get("apiMaxInFlight", 12), self.api_max_in_flight),
             ("apiWallTimeout", backend_cfg.get("apiWallTimeout", 900), self.api_wall_timeout),
-            ("apiBreakerThreshold", backend_cfg.get("apiBreakerThreshold", 8), self.api_breaker_threshold),
+            ("apiBreakerThreshold", backend_cfg.get("apiBreakerThreshold", 0), self.api_breaker_threshold),
             ("apiBreakerCooldownSec", backend_cfg.get("apiBreakerCooldownSec", 30), self.api_breaker_cooldown_sec),
         )
         for key, raw, effective in entries:
@@ -632,18 +601,14 @@ class BaseEngine:
         self.api_max_error_rate = self._coerce_ratio(backend_cfg.get("apiMaxErrorRate", 0), 0)
         self.api_min_interval_sec = self._coerce_nonneg_float(backend_cfg.get("apiMinIntervalSec", 0), 0)
         self.api_max_requests = self._coerce_optional_int(backend_cfg.get("apiMaxRequests", 0), 0)
-        # 在途并发闸：只限制「已发出、响应未读完」的请求数，与发起间隔节流互补。
-        # 缺省 12 而非 0：单个中转/实例扛不住 worker 数级别的长连接（慢响应下恒定打满）。
-        self.api_max_in_flight = self._coerce_bounded_int(
-            backend_cfg.get("apiMaxInFlight", 12), 12, 0, 999
-        )
         # 整请求墙钟超时：流式下 apiTimeout 只按 chunk 间隔生效，长流可无限延长
         self.api_wall_timeout = self._coerce_bounded(
             backend_cfg.get("apiWallTimeout", 900), 900, 0, 86400
         )
-        # 熔断：连续服务端级失败后全局暂停，避免各 worker 各自重试持续打崩上游
+        # 熔断：连续服务端级失败后全局暂停，避免各 worker 各自重试持续打崩上游。
+        # 缺省 0（关闭）：会主动暂停全部请求，属强干预，需用户显式配置才启用
         self.api_breaker_threshold = self._coerce_bounded_int(
-            backend_cfg.get("apiBreakerThreshold", 8), 8, 0, 1000
+            backend_cfg.get("apiBreakerThreshold", 0), 0, 0, 1000
         )
         self.api_breaker_cooldown_sec = self._coerce_bounded(
             backend_cfg.get("apiBreakerCooldownSec", 30), 30, 0, 3600
@@ -702,7 +667,6 @@ class BaseEngine:
             f"reasoning_effort={self.reasoning_effort or '未设置'} "
             f"可用key数={len(self.client_list)} "
             f"apiMinIntervalSec={self.api_min_interval_sec or '不限制'} "
-            f"apiMaxInFlight={self.api_max_in_flight or '不限制'} "
             f"apiWallTimeout={self.api_wall_timeout or '不限制'} "
             f"熔断={self.api_breaker_threshold if self.api_breaker_threshold > 0 else '关闭'}"
             + (
@@ -1291,54 +1255,6 @@ class BaseEngine:
             LOGGER.debug(f"[{self.eng_type}] API 请求节流，等待 {wait:.2f}s")
             await asyncio.sleep(wait)
 
-    async def _acquire_inflight_slot(
-        self, domain: str, token: str
-    ) -> Optional[_InflightGateState]:
-        """占用一个在途请求名额（api_max_in_flight<=0 时返回 None 表示不限制）。
-
-        进程级按 (endpoint, token) 计数，跨引擎实例共享：后处理阶段每文件新建
-        引擎实例，实例内信号量管不住「N 个实例同时打满」的总在途量。
-        超额时轮询等待（50ms 粒度），不用 asyncio.Semaphore 以规避跨事件循环复用。
-        """
-        limit = getattr(self, "api_max_in_flight", 0)
-        if limit <= 0:
-            return None
-        gate = _get_inflight_gate(domain, token)
-        waited = 0.0
-        warned = False
-        while True:
-            with gate.lock:
-                if gate.count < limit:
-                    gate.count += 1
-                    if waited > 0:
-                        LOGGER.debug(
-                            f"[{self.eng_type}] 在途名额等待 {waited:.1f}s 后获得 "
-                            f"{domain}（上限 {limit}）"
-                        )
-                    return gate
-            if waited == 0.0:
-                LOGGER.debug(
-                    f"[{self.eng_type}] 在途请求已达上限 {limit}，排队等待 {domain}"
-                )
-            if waited >= 60.0 and not warned:
-                # 排队过久说明上游在压着不回包，打一条可见告警避免"静默卡住"
-                LOGGER.warning(
-                    f"[{self.eng_type}] 在途名额排队已 {waited:.0f}s（上限 {limit}，"
-                    f"{domain}），上游响应过慢或连接未释放"
-                )
-                warned = True
-            await self._interruptible_sleep(0.05)
-            waited += 0.05
-
-    @staticmethod
-    def _release_inflight_slot(gate: Optional[_InflightGateState]) -> None:
-        """归还在途名额；未启用闸门（None）时无事发生。"""
-        if gate is None:
-            return
-        with gate.lock:
-            if gate.count > 0:
-                gate.count -= 1
-
     async def _wait_breaker_slot(self, domain: str) -> None:
         """熔断冷却期内暂停发起请求（可被 stop_event 打断）。"""
         if getattr(self, "api_breaker_threshold", 0) <= 0:
@@ -1482,10 +1398,9 @@ class BaseEngine:
                 raise JobCancelledError()
 
             request_started = time.monotonic()
-            # except/finally 路径引用这几个变量（赋值前抛出时不可未绑定）
+            # except 路径引用这几个变量（赋值前抛出时不可未绑定）
             _call_trace = ""
             _pj_dir = ""
-            _inflight_gate: Optional[_InflightGateState] = None
             _wall_started = request_started
             _wall_limit = getattr(self, "api_wall_timeout", 0)
             try:
@@ -1524,18 +1439,14 @@ class BaseEngine:
                         prompt_preview=_prompt_snip,
                     )
 
-                # 后端级调用限制：预检配额 → 节流 → 在途闸 → 计数并判定。
-                # 预检放在熔断/节流之前：配额已满时不必等熔断冷却或排队就终止。
+                # 后端级调用限制：预检配额 → 熔断 → RPM → 节流 → 计数并判定。
+                # 预检放在熔断/节流之前：配额已满时不必等熔断冷却或节流就终止。
                 self._peek_request_count_quota()
                 # 熔断优先于节流：上游已不可用时先整体冷静，不占发起时隙
                 await self._wait_breaker_slot(token.domain)
                 await self._wait_for_global_rpm_slot()
 
                 await self._throttle_request_rate((token.domain, token.token))
-                # 在途闸放在节流之后：排队等节流不算在途，只有真正发出去的请求占名额
-                _inflight_gate = await self._acquire_inflight_slot(
-                    token.domain, token.token
-                )
                 self._check_request_count_quota()
                 _wall_started = time.monotonic()
 
@@ -1917,9 +1828,6 @@ class BaseEngine:
                         sleep_seconds=float(sleep_time),
                         level="warning",
                     )
-            finally:
-                # 请求已结束（成功/失败/取消）立即让出在途名额，退避等待期间不占用
-                self._release_inflight_slot(_inflight_gate)
 
             await self._interruptible_sleep(sleep_time)
 

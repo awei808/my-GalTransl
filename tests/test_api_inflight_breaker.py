@@ -1,14 +1,12 @@
-"""API 并发防护测试：在途并发闸、整请求墙钟超时、熔断。
+"""API 请求防护测试：整请求墙钟超时、熔断。
 
-覆盖 GalTransl/Backend/BaseEngine.py 新增的三层防护：
-- apiMaxInFlight：按 (endpoint, token) 进程级计数，只统计「已发出、响应未读完」的请求；
-  超额排队等待，0 表示不限制；跨引擎实例共享（后处理阶段每文件新建实例）。
+覆盖 GalTransl/Backend/BaseEngine.py 的请求防护：
 - apiWallTimeout：抛 APIWallTimeoutError（继承 TimeoutError），但不得被
   _is_transport_error 判成连接层错误，否则慢后端会被反复重建连接池。
-- 熔断：连续 N 次服务端级错误后按阶梯冷却，任意一次成功清零；429 与普通业务错误不计。
+- 熔断（apiBreakerThreshold，默认 0 关闭）：显式配置后，连续 N 次服务端级
+  错误按阶梯冷却，任意一次成功清零；429 与普通业务错误不计。
 """
 import asyncio
-import threading
 import time
 import unittest
 from typing import List
@@ -20,9 +18,7 @@ from GalTransl.Backend.BaseEngine import (
     APIWallTimeoutError,
     BaseEngine,
     _BREAKERS,
-    _INFLIGHT_GATES,
     _get_breaker,
-    _get_inflight_gate,
 )
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Service import JobCancelledError
@@ -55,16 +51,14 @@ def _build_config(backend_specific: dict) -> CProjectConfig:
 
 def _make_engine(
     *,
-    max_in_flight: int = 12,
     wall_timeout: float = 900,
-    breaker_threshold: int = 8,
+    breaker_threshold: int = 0,
     breaker_cooldown: float = 30,
 ) -> BaseEngine:
-    """绕过重型 __init__，注入三层防护所需属性。"""
+    """绕过重型 __init__，注入请求防护所需属性。"""
     eng = BaseEngine.__new__(BaseEngine)
     eng.eng_type = "gpt35"
     eng.pj_config = _build_config({})
-    eng.api_max_in_flight = max_in_flight
     eng.api_wall_timeout = wall_timeout
     eng.api_breaker_threshold = breaker_threshold
     eng.api_breaker_cooldown_sec = breaker_cooldown
@@ -87,7 +81,6 @@ class InitChatbotReadsNewFieldsTests(unittest.TestCase):
     def test_reads_explicit_values(self) -> None:
         cfg = _build_config({
             "OpenAI-Compatible": {
-                "apiMaxInFlight": 5,
                 "apiWallTimeout": 120,
                 "apiBreakerThreshold": 3,
                 "apiBreakerCooldownSec": 7,
@@ -100,13 +93,12 @@ class InitChatbotReadsNewFieldsTests(unittest.TestCase):
         except Exception:
             # 后续依赖（令牌池/客户端）缺失会抛错，但 coerce 段已赋值
             pass
-        self.assertEqual(eng.api_max_in_flight, 5)
         self.assertEqual(eng.api_wall_timeout, 120.0)
         self.assertEqual(eng.api_breaker_threshold, 3)
         self.assertEqual(eng.api_breaker_cooldown_sec, 7.0)
 
     def test_defaults_when_fields_absent(self) -> None:
-        # 缺键取安全默认：在途 12、墙钟 900s、熔断 8 次/30s（profile 整段覆盖时也生效）
+        # 缺键取安全默认：墙钟 900s 生效，熔断默认关闭（profile 整段覆盖时也生效）
         cfg = _build_config({"OpenAI-Compatible": {}})
         eng = BaseEngine.__new__(BaseEngine)
         eng.trans_prompt = None
@@ -114,16 +106,14 @@ class InitChatbotReadsNewFieldsTests(unittest.TestCase):
             eng.init_chatbot("gpt35", cfg)
         except Exception:
             pass
-        self.assertEqual(eng.api_max_in_flight, 12)
         self.assertEqual(eng.api_wall_timeout, 900.0)
-        self.assertEqual(eng.api_breaker_threshold, 8)
+        self.assertEqual(eng.api_breaker_threshold, 0)
         self.assertEqual(eng.api_breaker_cooldown_sec, 30.0)
 
     def test_zero_keeps_unlimited(self) -> None:
         # 0 必须保留为「不限制」，不能被抬成默认值
         cfg = _build_config({
             "OpenAI-Compatible": {
-                "apiMaxInFlight": 0,
                 "apiWallTimeout": 0,
                 "apiBreakerThreshold": 0,
                 "apiBreakerCooldownSec": 0,
@@ -135,16 +125,14 @@ class InitChatbotReadsNewFieldsTests(unittest.TestCase):
             eng.init_chatbot("gpt35", cfg)
         except Exception:
             pass
-        self.assertEqual(eng.api_max_in_flight, 0)
         self.assertEqual(eng.api_wall_timeout, 0.0)
         self.assertEqual(eng.api_breaker_threshold, 0)
         self.assertEqual(eng.api_breaker_cooldown_sec, 0.0)
 
     def test_negative_and_overflow_fall_back_to_safe_default(self) -> None:
-        # 安全类键越界必须回退默认（12/900/8/30），不能夹成 0 静默关掉防护
+        # 安全类键越界必须回退默认（900/0/30），不能夹成意外值
         cfg = _build_config({
             "OpenAI-Compatible": {
-                "apiMaxInFlight": -1,
                 "apiWallTimeout": -5,
                 "apiBreakerThreshold": 100000,
                 "apiBreakerCooldownSec": -1,
@@ -156,16 +144,14 @@ class InitChatbotReadsNewFieldsTests(unittest.TestCase):
             eng.init_chatbot("gpt35", cfg)
         except Exception:
             pass
-        self.assertEqual(eng.api_max_in_flight, 12)
         self.assertEqual(eng.api_wall_timeout, 900.0)
-        self.assertEqual(eng.api_breaker_threshold, 8)
+        self.assertEqual(eng.api_breaker_threshold, 0)
         self.assertEqual(eng.api_breaker_cooldown_sec, 30.0)
 
     def test_fractional_int_keys_round_up_to_one(self) -> None:
-        # 0.5 若被 int() 截断成 0，等于静默关闭在途闸/熔断；非零小数必须兜到 1
+        # 0.4 若被 int() 截断成 0，等于静默关闭熔断；非零小数必须兜到 1
         cfg = _build_config({
             "OpenAI-Compatible": {
-                "apiMaxInFlight": 0.5,
                 "apiBreakerThreshold": 0.4,
             },
         })
@@ -175,132 +161,7 @@ class InitChatbotReadsNewFieldsTests(unittest.TestCase):
             eng.init_chatbot("gpt35", cfg)
         except Exception:
             pass
-        self.assertEqual(eng.api_max_in_flight, 1)
         self.assertEqual(eng.api_breaker_threshold, 1)
-
-
-class InflightGateTests(unittest.TestCase):
-    def test_zero_means_unlimited(self) -> None:
-        eng = _make_engine(max_in_flight=0)
-        domain, token = _unique_key("inflight-off")
-
-        async def run() -> None:
-            for _ in range(5):
-                gate = await eng._acquire_inflight_slot(domain, token)
-                self.assertIsNone(gate)  # 不计数、不排队
-
-        asyncio.run(run())
-
-    def test_limits_concurrent_inflight(self) -> None:
-        eng = _make_engine(max_in_flight=2)
-        domain, token = _unique_key("inflight-limit")
-        peak = 0
-
-        async def worker() -> None:
-            nonlocal peak
-            gate = await eng._acquire_inflight_slot(domain, token)
-            with gate.lock:
-                peak = max(peak, gate.count)
-            await asyncio.sleep(0.05)
-            eng._release_inflight_slot(gate)
-
-        async def run() -> None:
-            await asyncio.gather(*(worker() for _ in range(4)))
-
-        asyncio.run(run())
-        self.assertEqual(peak, 2)  # 4 个协程被压到 2 个在途
-
-    def test_release_allows_next_request(self) -> None:
-        eng = _make_engine(max_in_flight=1)
-        domain, token = _unique_key("inflight-release")
-
-        async def run() -> float:
-            first = await eng._acquire_inflight_slot(domain, token)
-            t0 = time.monotonic()
-
-            async def later() -> None:
-                # 第一次未释放，第二次必须排队；释放后才拿得到
-                await asyncio.sleep(0.1)
-                eng._release_inflight_slot(first)
-
-            asyncio.create_task(later())
-            second = await eng._acquire_inflight_slot(domain, token)
-            eng._release_inflight_slot(second)
-            return time.monotonic() - t0
-
-        self.assertGreaterEqual(asyncio.run(run()), 0.08)
-
-    def test_shared_across_engine_instances(self) -> None:
-        # 后处理阶段每文件新建引擎实例，跨实例必须共用同一份在途计数
-        eng_a = _make_engine(max_in_flight=1)
-        eng_b = _make_engine(max_in_flight=1)
-        domain, token = _unique_key("inflight-shared")
-
-        async def run() -> float:
-            gate_a = await eng_a._acquire_inflight_slot(domain, token)
-            t0 = time.monotonic()
-
-            async def release_later() -> None:
-                await asyncio.sleep(0.1)
-                eng_a._release_inflight_slot(gate_a)
-
-            asyncio.create_task(release_later())
-            gate_b = await eng_b._acquire_inflight_slot(domain, token)
-            eng_b._release_inflight_slot(gate_b)
-            return time.monotonic() - t0
-
-        self.assertGreaterEqual(asyncio.run(run()), 0.08)
-
-    def test_different_endpoints_do_not_block_each_other(self) -> None:
-        eng = _make_engine(max_in_flight=1)
-        domain_a, token_a = _unique_key("inflight-a")
-        domain_b, token_b = _unique_key("inflight-b")
-
-        async def run() -> float:
-            gate_a = await eng._acquire_inflight_slot(domain_a, token_a)
-            t0 = time.monotonic()
-            gate_b = await eng._acquire_inflight_slot(domain_b, token_b)
-            eng._release_inflight_slot(gate_b)
-            eng._release_inflight_slot(gate_a)
-            return time.monotonic() - t0
-
-        self.assertLess(asyncio.run(run()), 0.05)
-
-    def test_release_is_idempotent_safe(self) -> None:
-        # 防御性归还：未持有名额或重复归还不得把计数压成负数
-        eng = _make_engine(max_in_flight=2)
-        domain, token = _unique_key("inflight-idempotent")
-
-        async def run() -> int:
-            gate = await eng._acquire_inflight_slot(domain, token)
-            eng._release_inflight_slot(gate)
-            eng._release_inflight_slot(gate)
-            eng._release_inflight_slot(None)
-            return gate.count
-
-        self.assertEqual(asyncio.run(run()), 0)
-
-    def test_stop_event_interrupts_queued_waiter(self) -> None:
-        # 排队等待必须可被 stop_event 打断，且已占用的名额不能泄漏
-        eng = _make_engine(max_in_flight=1)
-        eng.pj_config.stop_event = threading.Event()
-        domain, token = _unique_key("inflight-cancel")
-
-        async def run() -> int:
-            gate = await eng._acquire_inflight_slot(domain, token)
-
-            async def stop_later() -> None:
-                await asyncio.sleep(0.1)
-                eng.pj_config.stop_event.set()
-
-            task = asyncio.create_task(stop_later())
-            with self.assertRaises(JobCancelledError):
-                await eng._acquire_inflight_slot(domain, token)
-            await task
-            eng._release_inflight_slot(gate)
-            return gate.count
-
-        self.assertEqual(asyncio.run(run()), 0)
 
 
 class WallTimeoutClassificationTests(unittest.TestCase):
@@ -310,8 +171,7 @@ class WallTimeoutClassificationTests(unittest.TestCase):
         self.assertIsInstance(APIWallTimeoutError("x"), TimeoutError)
 
     def test_wall_timeout_does_not_trip_breaker(self) -> None:
-        # 墙钟超时衡量「太慢」而非「不可用」：默认阈值 8 < 在途 12，
-        # 一批慢请求同时到点会把健康但慢的后端熔断，故不计入
+        # 墙钟超时衡量「太慢」而非「不可用」：慢后端不该被熔断，故不计入
         self.assertFalse(BaseEngine._is_server_side_error(APIWallTimeoutError("x")))
 
     def test_regular_timeout_still_transport_error(self) -> None:
@@ -454,9 +314,8 @@ class _StreamCompletions:
 
 
 def _flow_engine(completions=None):
-    """复用 test_client_recycle 的最小引擎桩，补上三层防护属性。"""
+    """复用 test_client_recycle 的最小引擎桩，补上请求防护属性。"""
     engine = _make_flow_engine()
-    engine.api_max_in_flight = 0
     engine.api_wall_timeout = 0
     engine.api_breaker_threshold = 8
     engine.api_breaker_cooldown_sec = 0
@@ -474,7 +333,6 @@ class WallTimeoutFlowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         # 进程级注册表跨用例存活，而 DummyToken 域名固定，先清避免串味
         _BREAKERS.clear()
-        _INFLIGHT_GATES.clear()
 
     async def test_wall_timeout_aborts_hung_request(self) -> None:
         # 上游永不返回时，墙钟超时必须把在途请求掐掉，而不是等 apiTimeout
@@ -515,24 +373,9 @@ class WallTimeoutFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, "ok")
 
-    async def test_inflight_slot_released_after_failure(self) -> None:
-        # 失败路径必须归还名额，否则后续 worker 会永久卡在排队
-        engine, token = _flow_engine()
-        engine.api_wall_timeout = 0.3
-        engine.api_max_in_flight = 1
-        with self.assertRaises(RuntimeError):
-            await engine.ask_chatbot(
-                messages=[{"role": "user", "content": "hi"}],
-                stream=False,
-                max_retry_count=1,
-            )
-        gate = _get_inflight_gate(token.domain, token.token)
-        self.assertEqual(gate.count, 0)
-
-    async def test_quota_exhaustion_terminates_without_leaking_slot(self) -> None:
-        # 配额已满必须在排队前终止（否则上游挂住时会拖到墙钟量级），且不泄漏名额
-        engine, token = _flow_engine(_FastCompletions())
-        engine.api_max_in_flight = 1
+    async def test_quota_exhaustion_terminates_before_request(self) -> None:
+        # 配额已满必须直接终止且不再发请求；预检只读不自增
+        engine, _token = _flow_engine(_FastCompletions())
         engine.api_max_requests = 1
         first, _ = await engine.ask_chatbot(
             messages=[{"role": "user", "content": "hi"}],
@@ -546,28 +389,7 @@ class WallTimeoutFlowTests(unittest.IsolatedAsyncioTestCase):
                 stream=False,
                 max_retry_count=1,
             )
-        self.assertEqual(_get_inflight_gate(token.domain, token.token).count, 0)
         self.assertEqual(engine._request_count, 1)  # 预检不自增
-
-    async def test_quota_check_precedes_inflight_queue(self) -> None:
-        # 名额被占满且配额已满时，必须在排队之前就终止（否则会被拖到墙钟量级）
-        engine, token = _flow_engine(_FastCompletions())
-        engine.api_max_in_flight = 1
-        engine.api_max_requests = 1
-        engine._request_count = 1
-        gate = await engine._acquire_inflight_slot(token.domain, token.token)
-        try:
-            t0 = time.monotonic()
-            with self.assertRaises(JobCancelledError):
-                await engine.ask_chatbot(
-                    messages=[{"role": "user", "content": "hi"}],
-                    stream=False,
-                    max_retry_count=1,
-                )
-            self.assertLess(time.monotonic() - t0, 0.5)
-        finally:
-            engine._release_inflight_slot(gate)
-
 
 if __name__ == "__main__":
     unittest.main()
