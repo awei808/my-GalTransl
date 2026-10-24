@@ -367,6 +367,15 @@ class ProjectReadToolTests(ProjectFixture):
         self.assertEqual(result["projects"], [])
 
     def test_get_project_overview(self) -> None:
+        # 断点分片/标记（dict 形状）不是翻译缓存，不得混入 agent 文件清单
+        _write_json(
+            os.path.join(self.project, "transl_cache", "gendic_cache", "seg_0.json"),
+            {"shards": []},
+        )
+        _write_json(
+            os.path.join(self.project, "transl_cache", "aftertrans_cache", "test.json"),
+            {"marker": True},
+        )
         result = self._call("galtransl_get_project_overview")
         self.assertTrue(result["config_exists"])
         self.assertEqual(result["config_file_name"], "config.yaml")
@@ -384,6 +393,8 @@ class ProjectReadToolTests(ProjectFixture):
         # 缓存清单含 pass0/pass1 子目录产物，read_translation_file 可据此拿 filename
         self.assertIn("test.json", result["cache_file_names"])
         self.assertIn(os.path.join("pass0_cache", "GlobalPrompt.json").replace("\\", "/"), result["cache_file_names"])
+        self.assertNotIn("gendic_cache/seg_0.json", result["cache_file_names"])
+        self.assertNotIn("aftertrans_cache/test.json", result["cache_file_names"])
         self.assertTrue(result["pipeline_stages"]["stages"])
 
     def test_overview_prefers_inc_config_variant(self) -> None:

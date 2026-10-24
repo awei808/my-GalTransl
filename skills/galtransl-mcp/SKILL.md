@@ -160,6 +160,41 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | `galtransl_submit_job` | 提交翻译任务（**需后端运行；消耗额度**） | `translator`（必填）、`config_file_name`、`backend_profile`、`file_filter` |
 | `galtransl_stop_job` | 停止项目当前任务（**需后端运行**） | — |
 
+## 缓存结构与项目阶段判定
+
+判断项目当前进展用证据说话，不要靠猜：
+
+1. 有翻译任务在跑时，`galtransl_get_job_status` 的 `stage`（阶段名）/ `stage_index`（0-8）最准。
+2. 否则看 `galtransl_get_project_overview` 的 `cache_file_names`（相对 `transl_cache/`，带目录前缀），
+   再抽查 `galtransl_read_translation_file` 的条目字段形态。
+
+`transl_cache/` 目录语义与阶段对应（阶段名与 `stage_index` 均按 `get_job_status` 口径）：
+
+| 目录 | 内容 | 阶段（stage_index） |
+|---|---|---|
+| `pass1_cache/*.meta.json` | 文件级元数据 | 3 生成文件级元数据 |
+| `pass0_cache/PlotRouteMap.json` | 剧情路线图 | 4 生成剧情路线图 |
+| `pass0_cache/GlobalPrompt.json`、`pass0_cache/route_analysis/*.json` | 全局分析与路线分析分片 | 5 生成全局游戏分析 |
+| `pass2_cache/*.batch.json` | 批次区间与用词色彩标注 | 6 划分翻译区间 |
+| `pass3_cache/*.json`（顶层旧布局 `*.json` 同义） | 翻译缓存 | 7 翻译执行中 |
+| `gendic_cache/`、`aftertrans_cache/`、`*.append.jsonl` | 术语表分片 / 后处理断点标记 / 增量合并日志，**不是翻译缓存** | — |
+
+翻译条目字段指纹：`pre_dst`+`trans_by` = 已翻译；`trans_by` 带 `(Failed)` = 翻译失败句；
+`problem` = 问题标注（阶段7 每个文件翻译完成时即写入，阶段8 与写工具重检会刷新，单凭它不能判定阶段8已跑）；
+`alt_dst` / `suspected_error` / `tone_issue` / `verbose_issue` = 阶段8（AI初步处理）校润产物；`proofread_dst` = 已校对。
+文件的**非空行数**低于 `metaMinLines`（默认 20）时不生成元数据，`pass1`/`pass2` 缺它属正常，不是丢失。
+
+分阶段策略：
+
+- **元数据阶段**（pass0-2 产物不全、pass3 尚无译文）：核对/补写文件元数据与批次区间（`save_metadata`）、
+  维护剧情路线图（`write_route_map`）、整理字典（`write_glossary`）；此时没有译文可改，不要碰译文改写工具。
+- **翻译阶段**：先 `get_job_status` 确认是否运行中；`mark_skip_check` / `swap_alt_translation` /
+  `update_translation_entry` 在任务运行中/刚结束（约 30 秒）会被拒绝（见注意事项末两条），缓存条目改动等任务结束；
+  字典/元数据写入虽不被拒绝，也建议等任务结束再改。
+- **校润阶段**（`alt_dst` / `suspected_error` 等阶段8标记已出现）：`list_problems` 定位 →
+  `update_translation_entry` 逐条改写或 `swap_alt_translation` 换备选，检测误报用 `mark_skip_check` 跳过；
+  `suspected_error` 只是「疑似」标记，改前先读上下文确认；写后按校对页同口径自动重检，无需手动重跑检测。
+
 ## 推荐工作流
 
 ### 1. 核查某术语的译法是否统一（最常用）

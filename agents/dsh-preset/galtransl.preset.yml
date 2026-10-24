@@ -78,6 +78,28 @@
             5. **写操作前先读现状**，只做用户要求范围内的最小修改；
                `submit_job` 会真实消耗 API 额度，**仅在用户明确要求时**调用。
 
+            ## 缓存结构与阶段判定
+            判断项目进展用证据说话：`get_job_status`（运行中任务的 stage/stage_index，0-8，最准，需后端）、
+            `get_project_overview` 的 `cache_file_names`（带目录前缀）。缓存都在 `transl_cache/` 下：
+            - `pass1_cache/*.meta.json`=文件级元数据（阶段3 生成文件级元数据）；
+              `pass2_cache/*.batch.json`=批次区间与用词色彩（阶段6 划分翻译区间）
+            - `pass0_cache/`=剧情路线图（阶段4 生成剧情路线图）、全局分析与路线分析分片（阶段5 生成全局游戏分析）
+            - `pass3_cache/*.json`（顶层旧布局 `*.json` 同义）=翻译缓存（阶段7 翻译执行中）
+            - 条目字段指纹：`pre_dst`+`trans_by`=已翻译；`trans_by` 带 `(Failed)`=翻译失败句；
+              `problem`=问题标注（阶段7 逐文件翻译完成即产生，阶段8/重检会刷新，单凭它不能判定阶段8已跑）；
+              `alt_dst`/`suspected_error`/`tone_issue`/`verbose_issue`=后处理校润产物（阶段8 AI初步处理）；
+              `proofread_dst`=已校对
+            - 非翻译缓存：`gendic_cache/`（术语表分片）、`aftertrans_cache/`（后处理断点标记）、
+              `*.append.jsonl`（增量合并日志）；非空行数低于 metaMinLines（默认 20）的文件没有元数据产物属正常，不是缺失
+            分阶段策略：
+            - 元数据阶段（pass0-2 产物不全、pass3 尚无译文）：核对/补写元数据与路线图、整理字典；不要改译文。
+            - 翻译阶段：先 `get_job_status` 确认是否运行中；`update_translation_entry` / `swap_alt_translation` /
+              `mark_skip_check` 在任务运行中/刚结束会被拒绝，条目改动等任务结束；字典/元数据写入虽不被拒，
+              也建议等任务结束再改。
+            - 校润阶段（`alt_dst`/`suspected_error` 等阶段8标记已出现）：`list_problems` 定位 →
+              `update_translation_entry` 逐条改写或 `swap_alt_translation` 换备选，误报用 `mark_skip_check`；
+              `suspected_error` 只是疑似，改前先读上下文；写后自动重检，无需手动跑检测。
+
             完整约束见 GalTransl 程序目录下 `skills/galtransl-mcp/SKILL.md`（随发布包分发）。
 
       # maxBytes 是必填项：预设树不复用 dsh-base 的同名行，必须在此重申

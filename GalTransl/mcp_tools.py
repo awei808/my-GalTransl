@@ -476,9 +476,14 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
     # 文件名清单一并返回：read_translation_file / read_source_script 都需要 filename，
     # 概览是 agent 拿到清单的主要入口（count 由清单派生，避免双重遍历）
     script_names = _list_files(input_dir, ".json") if os.path.isdir(input_dir) else []
-    # aftertrans_cache 为阶段 8 断点标记（dict 形状），不是翻译缓存，不进 agent 文件清单
+    # aftertrans_cache（阶段 8 断点标记）与 gendic_cache（阶段 2 术语表分片）均为 dict 形状的
+    # 断点产物，不是翻译缓存，不进 agent 文件清单（与 _is_translation_cache_rel 的排除口径一致）
     cache_names = (
-        [n for n in _list_files(cache_dir, ".json") if not n.startswith("aftertrans_cache/")]
+        [
+            n
+            for n in _list_files(cache_dir, ".json")
+            if not n.startswith(("aftertrans_cache/", "gendic_cache/"))
+        ]
         if os.path.isdir(cache_dir)
         else []
     )

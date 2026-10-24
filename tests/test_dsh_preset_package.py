@@ -9,6 +9,7 @@
 4. 预设只挂 4 个白名单行，**不含任何危险工具**（这是本预设的核心安全性质）。
 """
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -20,6 +21,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRESET_DIR = os.path.join(REPO_ROOT, "agents", "dsh-preset")
 SOURCE_PATH = os.path.join(PRESET_DIR, "galtransl.preset.yml")
 TARGET_PATH = os.path.join(PRESET_DIR, "cordis.patch.yml")
+MANIFEST_PATH = os.path.join(PRESET_DIR, "package.json")
+LOCALE_DIR = os.path.join(PRESET_DIR, "locale")
+ICON_PATH = os.path.join(PRESET_DIR, "icon.svg")
 BUILDER_PATH = os.path.join(REPO_ROOT, "tools", "build_dsh_preset.py")
 
 # dsh 0.2.0-rc.2 的 @deepseek-ai/dsh-agent-preset 只声明这 5 个字段
@@ -265,6 +269,57 @@ class GeneratedPatchSyncTests(unittest.TestCase):
                 builder.load_entries(pathlib.Path(path))
         finally:
             os.unlink(path)
+
+
+class BundleManifestTests(unittest.TestCase):
+    """`agents/dsh-preset` 同时是可直接 `plugin_manager install_bundle` 的 dsh bundle。
+
+    回归背景：此前只能走 home 层 `cordis:include`（需手工复制 + 改路径 + 重启），
+    dsh 桌面的 profile 由 Electron 独占、无法用 CLI 自检，安装成本高。补上
+    `package.json` 的 `dsh.bundle.patch` 后，该目录本身就是一个可安装 bundle，
+    行内容仍由 `cordis.patch.yml`（生成物）提供，不产生第三份副本。
+    """
+
+    def _manifest(self) -> dict:
+        with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_manifest_points_at_generated_patch(self) -> None:
+        # 指向生成物而非真相源：bundle patch 需要 `- insert:` 包裹，
+        # 真相源是裸条目清单（install_bundle 会按 patch 解析）
+        bundle = self._manifest()["dsh"]["bundle"]
+        self.assertEqual(bundle["patch"], "./cordis.patch.yml")
+        self.assertTrue(os.path.isfile(TARGET_PATH))
+
+    def test_manifest_declares_display_resources(self) -> None:
+        # dsh 的 plugin manager / settings 从导出资源读标题、描述与图标
+        manifest = self._manifest()
+        exports = manifest["exports"]
+        self.assertIn("./locale/*.json", exports)
+        self.assertEqual(exports["./icon"], "./icon.svg")
+        for required in ("cordis.patch.yml", "galtransl.preset.yml", "icon.svg"):
+            with self.subTest(required=required):
+                self.assertIn(required, manifest["files"])
+
+    def test_every_locale_has_meta_title_and_description(self) -> None:
+        locales = sorted(n for n in os.listdir(LOCALE_DIR) if n.endswith(".json"))
+        self.assertTrue(locales, "locale/ 下没有任何 JSON 资源")
+        for name in locales:
+            with self.subTest(locale=name):
+                with open(os.path.join(LOCALE_DIR, name), "r", encoding="utf-8") as f:
+                    meta = json.load(f).get("meta", {})
+                self.assertTrue(str(meta.get("title", "")).strip())
+                self.assertTrue(str(meta.get("description", "")).strip())
+
+    def test_icon_is_a_small_valid_svg(self) -> None:
+        # 仅凭扩展名不能证明字节可渲染；至少校验 SVG 根元素与 dsh 的 256 KiB 上限
+        size = os.path.getsize(ICON_PATH)
+        self.assertLess(size, 256 * 1024)
+        with open(ICON_PATH, "r", encoding="utf-8") as f:
+            svg = f.read()
+        self.assertTrue(svg.lstrip().startswith("<svg"))
+        self.assertIn("</svg>", svg)
+        self.assertIn("viewBox=\"0 0 64 64\"", svg)
 
 
 if __name__ == "__main__":

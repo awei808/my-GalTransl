@@ -36,10 +36,31 @@ GalTransl 本体不再内置 Agent，改为**只提供 MCP 连接与 MCP 工具*
 | 文件 | 作用 |
 |---|---|
 | `galtransl.preset.yml` | **唯一真相源**：预设声明本体，顶层是条目清单（`cordis:include` 的目标格式） |
-| `cordis.patch.yml` | 由上面那份**生成**的同内容 patch（带 `- insert:` 包裹），供不想用 include 的用户直接并入 profile。**请勿手改**，改真相源后重跑 `python tools/build_dsh_preset.py` |
+| `cordis.patch.yml` | 由上面那份**生成**的同内容 patch（带 `- insert:` 包裹），同时充当本 bundle 的 patch。**请勿手改**，改真相源后重跑 `python tools/build_dsh_preset.py` |
+| `package.json` | **bundle 清单**：`dsh.bundle.patch` 指向上面的生成物，使本目录可被 dsh 直接安装 |
+| `locale/en.json`、`locale/zh.json` | 插件管理器/设置里显示的标题与描述 |
+| `icon.svg` | 插件列表图标（原创几何图形，无第三方素材） |
 | `README.md` | 本文件 |
 
-## 安装（推荐：home 层 include）
+## 安装 A（推荐：dsh 桌面版，插件管理器一键装）
+
+本目录**本身就是一个 dsh bundle**（`package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`），
+不需要复制文件、不需要手工改 profile，也不用重启：
+
+1. dsh → 设置 → 插件 → 安装本地插件，选本目录；
+   或让 agent 执行 `plugin_manager` 的 `install_bundle`，`target` 指向本目录绝对路径。
+2. 安装返回 `application: applied` 后，Loader 中会出现 `preset-galtransl` 行，
+   插件管理器的 bundle 列表出现 `@local/dsh-galtransl-preset`。
+3. **新建会话**，在 Agent 预设选择器里选 `GalTransl`（预设每会话选择、首轮后锁定）。
+
+要点与边界：
+
+- **只对当前 profile 生效**（Desktop 是 `desktop`，CLI/Web 是 `web`）；换 profile 需重装。
+- 目录是 **link 安装**：改本目录即改已装 bundle；改完重跑生成脚本后，新会话即读到新内容。
+- bundle **不含任何 JS**，只声明预设行；能力仍只来自 `cordis.patch.yml` 里那 4 行。
+- 卸载：插件管理器里移除 `@local/dsh-galtransl-preset`（等价于删 profile 里的 bundle 行）。
+
+## 安装 B（备选：home 层 include，对所有 profile 生效）
 
 > **为什么是 home 层**：dsh 有两层用户可写的 patch，层叠顺序为
 > bundle 层 → profile 的 `cordis.patch.yml` → **`$DSH_HOME/cordis.patch.yml`（home 层）** → `--patch`。
@@ -102,16 +123,20 @@ dsh 的配置根 `$DSH_HOME` 在 Windows 默认是 `C:\Users\<你>\.dsh\`。
 
 ## 自检
 
-- `dsh --profile <name> --dump-config` 应能看到 `id: preset-galtransl` 行及其 4 个子行，
+- 安装 A：`plugin_manager` 的 `list_bundles` 应出现 `@local/dsh-galtransl-preset`；
+  `cordis_inspect_query`（Host `Config.listConfigs`，`name: @deepseek-ai/dsh-agent-preset`）
+  应出现 `patchId: preset-galtransl` 条目。MCP 是否真的连上，看程序目录 `mcp_status.json`：
+  `updated_at` 在 90 秒内且 `tools` 为实际启用数，即说明会话初始化时握手成功。
+- 安装 B：`dsh --profile <name> --dump-config` 应能看到 `id: preset-galtransl` 行及其 4 个子行，
   且该区块内**没有**任何 `tool-fs` / `tool-pwsh` 等危险工具，输出里应有
   `# == C:\Users\<你>\.dsh\cordis.patch.yml` 归属头。
 - ⚠️ **`--dump-config` 看不到 include 展开的内容**（它只渲染该 include 行本身）。
   要确认预设**真的被加载**，必须实际启动，看 stderr 有无 `failed to import`，
   并确认日志里出现 `[galtransl-mcp] 启动 stdio 服务`。
-- ⚠️ **`desktop` profile 不能这样自检**：它由 Electron 独占，CLI 会报
+- ⚠️ **`desktop` profile 不能用 CLI 自检**：它由 Electron 独占，CLI 会报
   `profile "desktop" is managed exclusively by the Electron application`。
-  桌面用户请改为在 dsh 里直接看 **Agent 预设选择器里有没有 `GalTransl`**——
-  预设注册成功就一定出现在列表里（没有「隐藏」开关字段）。
+  桌面用户走安装 A 的 `list_bundles` + 心跳两条，或直接看 **Agent 预设选择器里有没有 `GalTransl`**
+  （预设注册成功就一定出现在列表里，没有「隐藏」开关字段）。
 
 ## 必须改的路径
 
