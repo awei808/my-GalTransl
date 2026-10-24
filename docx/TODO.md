@@ -45,7 +45,6 @@
 - **命令行参数持续支持和完善**
 - **toast 提示覆盖不完全**（另见上一节「切回翻译控制台 toast 重复」）
 - 复核轮模板不使用文件元数据，使用批次元数据
-- **多轮对话中翻译：对 H 区间文本的冲击力要求更强，对非 H 区间文本的画面感要求更强**
 - **问题修复/复核轮注入问题句的上下文**（并新增配置：是否附带上下文）
 - `context.ensure_global_prompt_loaded`（context.py:20-44）无锁：if 后为同步段、无 await，多 worker 共享同一 ForFileMetaData 实例（LLMTranslate.py:1742 创建单实例），依赖「同步段内无 await 不切换协程」不变式。存量问题，非本次改动引入。
 - 项目中不止一处有版本号，需统一控制：`GalTransl/__init__.py`、`desktop/package.json`、`desktop/package-lock.json`、`desktop/src-tauri/tauri.conf.json`、`desktop/src-tauri/Cargo.toml`
