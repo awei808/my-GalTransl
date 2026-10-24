@@ -634,6 +634,7 @@ def _make_improve_inst(cls, h_scene: bool):
     inst.pj_config.getKey.return_value = None
     inst.pj_config.active_workers = 0  # 跳过单 worker 打印
     inst.eng_type = "test"
+    inst.chat_mode = "multi"
     inst.conversations = {}
     inst.last_file_name = ""
     inst._force_first_round_files = set()

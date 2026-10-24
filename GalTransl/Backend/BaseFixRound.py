@@ -108,6 +108,8 @@ class BaseSparseFixRound(ForGalJsonTranslate):
 
         translist_hit / translist_unhit 为历史遗留签名参数（兼容旧调用方），
         本入口以 trans_list 为准，不使用这两个参数。
+        对话模式（gpt.chatMode）：multi=文件级共用会话，仅首轮发完整模板；
+        single=每批独立完整请求（与多轮首轮同口径），不建立/不回写会话。
         """
         target_trans_list = self._filter_target_translations(trans_list)
         total = len(target_trans_list)
@@ -115,11 +117,13 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             LOGGER.info(f"{self._log_tag} {filename} 无可处理的问题译文，跳过")
             return trans_list
 
-        # 用原始文件名独立分桶，从首轮重建，不混用翻译轮历史
-        self.reset_conversation(filename)
-        self.conversations[filename] = [
-            {"role": "system", "content": self.system_prompt}
-        ]
+        use_single_round = self.chat_mode == "single"
+        if not use_single_round:
+            # 用原始文件名独立分桶，从首轮重建，不混用翻译轮历史
+            self.reset_conversation(filename)
+            self.conversations[filename] = [
+                {"role": "system", "content": self.system_prompt}
+            ]
 
         num_per_request = self._coerce_positive_int(
             self.pj_config.getKey("gpt.numPerRequestBetter"),
@@ -127,8 +131,9 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         )
         total_batches = (total + num_per_request - 1) // num_per_request
         fix_count = 0
+        _mode_note = "（单轮模式，每批独立完整请求）" if use_single_round else ""
         LOGGER.info(
-            f"{self._log_tag} {filename} 开始处理，共 {total} 句，"
+            f"{self._log_tag} {filename} 开始处理{_mode_note}，共 {total} 句，"
             f"{total_batches} 批"
         )
 
@@ -147,22 +152,36 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                 problem_types=self._effective_problem_types(),
                 include_src=self._include_src,
             )
-            conv = self._ensure_conversation(filename)
-            is_first_round = len(conv) <= 1
-            if is_first_round:
+            if use_single_round:
+                # 单轮模式：每批独立完整请求（与多轮首轮同口径），不带会话历史
+                is_first_round = True
                 user_content = self._build_first_round_content(
                     input_src, batch_gptdict, filename
                 )
+                call_messages = [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_content},
+                ]
             else:
-                user_content = (
-                    batch_gptdict + "\n以下是本批次待处理内容：\n" + input_src
-                    if batch_gptdict
-                    else input_src
-                )
-            call_messages = conv + [{"role": "user", "content": user_content}]
+                conv = self._ensure_conversation(filename)
+                is_first_round = len(conv) <= 1
+                if is_first_round:
+                    user_content = self._build_first_round_content(
+                        input_src, batch_gptdict, filename
+                    )
+                else:
+                    user_content = (
+                        batch_gptdict + "\n以下是本批次待处理内容：\n" + input_src
+                        if batch_gptdict
+                        else input_src
+                    )
+                call_messages = conv + [{"role": "user", "content": user_content}]
 
             if self.pj_config.active_workers == 1:
-                _round = "首轮" if is_first_round else "续轮"
+                _round = (
+                    "单轮" if use_single_round
+                    else "首轮" if is_first_round else "续轮"
+                )
                 LOGGER.info(
                     f"-> 修复输入[{_round}] | backend={self.eng_type} | "
                     f"sentences={len(batch)}"
@@ -183,7 +202,8 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                 self._record_round_runtime_error(
                     filename, idx_tip, f"{type(e).__name__}: {e}", None
                 )
-                self.reset_conversation(filename)
+                if not use_single_round:
+                    self.reset_conversation(filename)
                 LOGGER.warning(
                     f"{self._log_tag}[{filename}:{idx_tip}] 该批 {len(batch)} 句因 "
                     f"LLM 调用失败跳过"
@@ -204,15 +224,18 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                 self._record_round_runtime_error(filename, idx_tip, _warn_msg, None)
 
             # 整批回显退化：found_count > 0 但 success_count == 0，说明模型输出被逐句过滤
-            # 全部拦截（疑似整批回显），告警并重置对话，避免回显响应污染后续批次
+            # 全部拦截（疑似整批回显），告警；多轮模式再重置对话，避免回显响应污染
+            # 后续批次（单轮模式无会话状态，仅需告警）
             if found_count > 0 and success_count == 0:
                 _degrade_msg = (
                     f"{self._log_tag}[{filename}:{idx_tip}] 模型输出 {found_count} 条 better "
-                    f"但全部被过滤（疑似整批回显或退化输出），重置对话"
+                    f"但全部被过滤（疑似整批回显或退化输出）"
                 )
+                if not use_single_round:
+                    _degrade_msg += "，重置对话"
+                    self.reset_conversation(filename)
                 LOGGER.warning(_degrade_msg)
                 self._record_round_runtime_error(filename, idx_tip, _degrade_msg, None)
-                self.reset_conversation(filename)
                 fix_count += success_count
                 LOGGER.debug(
                     f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"
@@ -220,10 +243,11 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                 )
                 continue
 
-            # 追加 assistant 回复进对话，保持轮次交替
-            self.conversations[filename] = self._trim_conversation(
-                call_messages + [{"role": "assistant", "content": raw_resp or ""}]
-            )
+            if not use_single_round:
+                # 追加 assistant 回复进对话，保持轮次交替
+                self.conversations[filename] = self._trim_conversation(
+                    call_messages + [{"role": "assistant", "content": raw_resp or ""}]
+                )
             fix_count += success_count
             LOGGER.debug(
                 f"{self._log_tag} {filename} 批次 {batch_no}/{total_batches}"

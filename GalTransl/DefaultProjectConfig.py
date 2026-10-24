@@ -73,8 +73,8 @@ common:
 
   gpt.contextNum: 8 # restoreContextMode=lines 时每次请求附带的前文句数（句）；值越大上下文更强、成本更高（常用8）。[0-32]
   gpt.contextBatches: 1 # restoreContextMode=batches 时每次请求附带的历史批数（1批=一次请求的实际句数）；重启续跑时按前置已译句数近似。[1-8]
-  gpt.restoreContextMode: lines # 单轮模式(chatMode=single)的历史注入：none=不注入；lines=注入固定句数(gpt.contextNum)；batches=注入固定批数(gpt.contextBatches)整批历史。多轮模式忽略此键；旧布尔写法 true/false 等价 lines/none。[none/lines/batches]
-  gpt.chatMode: multi # 翻译后端对话模式：multi=多轮对话（历史由对话携带，token省）；single=单轮独立请求（每批携带全量提示词与历史上下文，token消耗更高）。[multi/single]
+  gpt.restoreContextMode: lines # 单轮模式(chatMode=single)下翻译轮的历史注入：none=不注入；lines=注入固定句数(gpt.contextNum)；batches=注入固定批数(gpt.contextBatches)整批历史。多轮模式忽略此键；旧布尔写法 true/false 等价 lines/none。[none/lines/batches]
+  gpt.chatMode: multi # 对话模式（翻译轮与修复/改进轮）：multi=多轮对话（历史由对话携带，token省）；single=单轮独立请求（每批携带全量提示词，token消耗更高）。检测轮恒为单轮逐批判定，元数据/词典类后端恒为单次请求，不受此键影响。[multi/single]
   # ForGal/ForGal-json/ForNovel
   gpt.translation_guideline: "Basic.md" # 使用的翻译规范文件名（位于translation_guidelines），会影响文风与措辞。
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]

@@ -272,7 +272,7 @@ if __name__ == "__main__":
 | `Frontend/LLMTranslate.py` | **主翻译编排器**：`doLLMTranslate()` 读文件 → 切 chunk → worker 协程池（队列+哨兵）→ 单 chunk 翻译 → 后处理合并输出；`doLLMTranslSingleChunk()`；完整流水线 `_run_full_pipeline()`；自适应并发（`autoAdjustWorkers`） |
 | `Backend/BaseEngine.py` | **所有 LLM 后端 API 客户端基类**：OpenAI 兼容客户端构建（多 token）、`ask_chatbot()`（流式/重试/429 退避/RPM 限制/API 调用日志）、`maxApiRetries` 尝试预算（默认 6，429 不计入）、思考参数路由、全局 RPM 限制、请求健康度统计；含引擎注册表 `ENGINE_REGISTRY`/`@register_engine`；结果预览统一入口 `push_result_preview(config, text)`（各后端解析成功后调一处，worker 归属由 server_runtime 按 WORKER_ID_CTX 解析；0 命中/0 采纳须经 `BaseSparseFixRound._push_no_hit_preview` 推一条说明（`note_only`，不覆盖真实结果），避免面板停留在上一批的陈旧内容；回显丢弃走 `_push_discarded_preview` 强制覆盖，避免已作废的命中留在面板） |
 | `Backend/BaseTranslate.py` | **翻译轮流水线基类**（继承 BaseEngine）：`batch_translate()`、`_batch_translate_common()`、切批/动态句数调节、上下文恢复（`restore_context`）、译文归一化与缓存落盘 |
-| `Backend/ForGalJsonTranslate.py` | **主翻译后端**（继承 BaseTranslate，混入 MultiRoundChatMixin）：对话模式可选（`gpt.chatMode`：multi 多轮对话 / single 单轮独立请求+`[history_result]` 上下文注入，单轮用专用提示词 `FORGAL_JSON_TRANS_PROMPT_SINGLE`）、注入 FileMetaData/BatchMetadata/GlobalPrompt、H 词过滤；引擎 ID `ForGal-json-translate`（旧名 `ForGal-json-multi-chat` 经 `TRANSLATOR_ALIASES` 兼容） |
+| `Backend/ForGalJsonTranslate.py` | **主翻译后端**（继承 BaseTranslate，混入 MultiRoundChatMixin）：对话模式可选（`gpt.chatMode`：multi 多轮对话 / single 单轮独立请求+`[history_result]` 上下文注入，单轮用专用提示词 `FORGAL_JSON_TRANS_PROMPT_SINGLE`；该键同时被修复/改进轮消费，见 `Backend/BaseFixRound.py` 行）、注入 FileMetaData/BatchMetadata/GlobalPrompt、H 词过滤；引擎 ID `ForGal-json-translate`（旧名 `ForGal-json-multi-chat` 经 `TRANSLATOR_ALIASES` 兼容） |
 | `Backend/Conversation.py` | 多轮对话状态管理 Mixin（`MultiRoundChatMixin`）：按文件隔离的 conversations、历史裁剪、失败强制首轮标记，与翻译流程解耦 |
 | `Backend/metadata.py` | 文件级/批次级元数据实体（`FileMetaData`/`BatchMetadata`）与缓存加载器 |
 | `Backend/utils.py` | 共享纯工具：换行符检测、区间解析、批次规整（`normalize_batch_intervals`）、分批后缀剥离 |
@@ -295,7 +295,7 @@ if __name__ == "__main__":
 | `Backend/ForVerboseCheck.py` | 节奏冗长检测：标记信息量未增加却被同义重复、垫词堆砌、重复陈述或过度解释撑大的句子（`verbose_issue`），不改译文；与「节奏单一」启发式互补 |
 | `Backend/ForVerboseCheckAgain.py` | 对已标记「节奏冗长」的句子逐句二次复核，剔除误报 |
 | `Backend/BaseDetectRound.py` | **检测/复核轮公共基类**：令牌池降级、单轮批次循环、稀疏命中解析、keep 复核解析、整批回显重试、预览推送、批次划分（首轮默认按 `pass2_cache` 批次级元数据区间分批，`internals.detect.batch_from_metadata` / `..._max_sentences`；无元数据、句子无行号或行号与区间不匹配时回退 `_batch_size_keys` 固定句数，复核轮恒固定句数；子目录扁平化名的 basename 兜底在此收口）与批次大小配置链全部收口于此。新增检测后端只需声明类属性（`_marker_attr`/`_issue_label`/`_prompt_pair`/`_batch_size_keys`/`_round_kind`/`_parse_mode`/`_placeholder_reasons` + 日志措辞；复核轮另需 `_echo_retry_enabled=False` 与 `_extra_problem_attr`）并按需覆盖 5 个钩子（`_prepare_round`/`_prepare_file_context`/`_build_batch_user_content`/`_log_batch_skipped`/`_summary_suffix`），勿再整段复制 batch_translate |
-| `Backend/BaseFixRound.py` | 问题修复轮基类：按问题类型组合生成备选译文的公共逻辑 |
+| `Backend/BaseFixRound.py` | 问题修复轮基类：按问题类型组合生成备选译文的公共逻辑；对话模式跟随 `gpt.chatMode`（multi=文件级共用会话仅首轮发完整模板，single=每批独立完整请求、不建立/不回写会话） |
 | `Backend/ForFixRound.py` | 统一问题修复：按所选问题类型组合修复译文（多类可并行），每类按对应修复指令生成备选译文；输入模式自动推导（含需对照原文的类型即用译文+原文，否则仅译文） |
 | `Backend/Prompts.py` | 所有提示词模板常量（翻译/校对/GenDic/FileMeta/BatchMeta/Global）与 H 词敏感词表 |
 | `COpenAI.py` | `COpenAIToken`（API 密钥+端点）、`COpenAITokenPool`（带延迟追踪的负载均衡池）；历史遗留的 Sakura 端点队列代码已不可达 |

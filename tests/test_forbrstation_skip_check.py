@@ -33,6 +33,7 @@ def make_translator():
     t.trans_prompt = "[translation_guideline]\n[Glossary]\n[plot_metadata]\n[Input]"
     t.source_lang = "Japanese"
     t.target_lang = "Simplified Chinese"
+    t.chat_mode = "multi"
     t.conversations = {}
     t._force_first_round_files = set()
     t.file_metadata_map = {}

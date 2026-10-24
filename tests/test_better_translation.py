@@ -46,6 +46,7 @@ def make_translator():
     t.trans_prompt = "质量改进评估\n[translation_guideline]\n[Glossary]\n[plot_metadata]\n[Input]"
     t.source_lang = "Japanese"
     t.target_lang = "Simplified Chinese"  # 中文目标语言，跳过英文单词检查
+    t.chat_mode = "multi"
     t.conversations = {}
     t._force_first_round_files = set()
     t.file_metadata_map = {}
