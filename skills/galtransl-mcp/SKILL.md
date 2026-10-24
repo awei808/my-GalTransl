@@ -127,8 +127,8 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 | 工具 | 用途 | 关键参数 |
 |---|---|---|
-| `galtransl_search_cache` | 检索**已入库译文**（原文/译文/问题/说话人） | `query`、`field`(all/src/dst/problem)、`regex` |
-| `galtransl_search_scripts` | 检索**原始脚本**（`gt_input`），未跑过翻译也能用 | `query`、`regex` |
+| `galtransl_search_cache` | 检索**已入库译文**（原文/译文/问题/说话人），可带前后文窗口 | `query`、`field`(all/src/dst/problem)、`regex`、`context`(命中前后各 N 条，≤20) |
+| `galtransl_search_scripts` | 检索**原始脚本**（`gt_input`），未跑过翻译也能用，可带前后文窗口 | `query`、`regex`、`context`(命中前后各 N 条，≤20) |
 | `galtransl_search_dict` | 检索**字典词条**（项目字典 + 公共 `Dict/`） | `query`、`direction`(any/jp2zh/zh2jp)、`include_common` |
 | `galtransl_lookup_name` | 查**角色名译名表**（`name替换表.csv/xlsx`） | `name`（传字符串，见注意事项） |
 | `galtransl_search_logs` | 按关键词检索**日志** | `keyword`、`source`(engine/frontend)、`tail` |
@@ -140,9 +140,9 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 |---|---|---|
 | `galtransl_list_projects` | 列出可用项目（已登记 + 工作区根下，拿到 `project_dir`） | `workspace_root`（可选） |
 | `galtransl_get_project_overview` | 项目概览：目标语言、每请求条数、注入块开关、文件清单、流水线阶段 | — |
-| `galtransl_read_translation_file` | 读取某个缓存文件的条目（分页） | `filename`、`offset`、`limit` |
-| `galtransl_read_source_script` | 读取某个原始脚本文件的条目（分页） | `filename`、`offset`、`limit` |
-| `galtransl_read_glossary` | 浏览项目字典词条（`category`=gpt 术语表/pre 译前/post 译后）：整表分页 / 按词筛选（原文/译名/解释任一列）；pre/post 下条件/场景行也返回（带 row_type） | `category`、`filename`（可选，限定单个字典文件）、`query`、`regex`、`offset`、`limit` |
+| `galtransl_read_translation_file` | 读取某个缓存文件的条目（分页；`offset` 负数=从末尾倒数） | `filename`、`offset`、`limit` |
+| `galtransl_read_source_script` | 读取某个原始脚本文件的条目（分页；`offset` 负数=从末尾倒数） | `filename`、`offset`、`limit` |
+| `galtransl_read_glossary` | 浏览项目字典词条（`category`=gpt 术语表/pre 译前/post 译后）：整表分页 / 按词筛选（原文/译名/解释任一列）；pre/post 下条件/场景行也返回（带 row_type） | `category`、`filename`（可选，限定单个字典文件）、`query`、`regex`、`offset`（负数=倒数）、`limit` |
 | `galtransl_get_project_metadata` | 读元数据：`globalprompt` / `plotroute` / `filemeta` / `batchmeta` / `routeanalysis` / `all` | `kind`、`filename` |
 | `galtransl_get_job_status` | 查**任务状态与实时进度**（阶段/百分比/worker/速度；**需后端**） | — |
 | `galtransl_check_model` | 校验模型/令牌可用性（**发一次真实探测请求；需后端**） | `translator`、`config_file_name`、`backend_profile` |
@@ -214,11 +214,11 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 1. `galtransl_list_problems` — 先看有哪些问题类型（返回 `available_problem_types`）与命中条数。
 2. 用 `problem_type` 收窄到某类问题。
-3. `galtransl_read_translation_file` 打开命中文件、用 `offset`/`limit` 翻到对应 index 附近，看上下文再给修改建议。
+3. 看上下文再给修改建议：优先用 `galtransl_search_cache` 传 `context`（如 2~5）直接带出命中前后的台词窗口；或 `galtransl_read_translation_file` 用 `offset`/`limit` 翻到对应条目附近（`offset` 支持负数从文件末尾倒数）。
 
 ### 4. 只想知道原文，不关心已有译文
 
-`galtransl_search_scripts` 直接搜 `gt_input` 原始脚本，不依赖缓存是否生成。命中结果里的 `index` 与缓存条目的 `index` 同源，可直接对照。
+`galtransl_search_scripts` 直接搜 `gt_input` 原始脚本，不依赖缓存是否生成。命中结果里的 `index` 与缓存条目的 `index` 同源，可直接对照；需要前后文时传 `context` 带出相邻原文窗口。
 
 ### 5. 修改剧情路线图（写）
 
@@ -255,7 +255,8 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - **作业域工具需后端**：`get_job_status` / `check_model` / `submit_job` / `stop_job` 需要 GalTransl 程序在运行；后端未启动时会返回「无法连接 GalTransl 后端」的中文错误，此时转告用户启动程序即可，不要反复重试。`check_model` 会向模型端点发起一次真实探测请求（消耗极小额度），不要在无谓的场景反复调用。
 - **结果上限**：搜索类工具默认最多返回 200 条（硬顶 2000），超出时返回体里 `truncated` 为 `true`，`total` 才是全部命中数。需要更多就加 `regex` 收窄检索词，或提高 `max_results`。
 - **正则**：`regex: true` 时检索词按正则解释；非法正则会返回参数错误。
-- **大文件**：`read_translation_file` / `read_source_script` 用 `offset`/`limit` 分页，默认每页 100 条（硬顶 1000），不要一次拉全文件。
+- **大文件**：`read_translation_file` / `read_source_script` 用 `offset`/`limit` 分页，默认每页 100 条（硬顶 1000），不要一次拉全文件。`offset` 传负数从文件末尾倒数（-1=最后一条，如取文件最后几句），返回体 `offset` 为换算后的正值。
+- **上下文窗口（`search_cache` / `search_scripts` 的 `context`）**：命中按文件合并成连续区间返回（相邻命中的邻域不重复）；窗口条目仅含 序号(`index`)/说话人/生效译文（脚本为原文 `message`）与 `is_hit` 标记，`index` 与命中结果同口径（条目自身 index 字段，缺失时回退数组下标）。全部窗口条目共享 1000 条预算，放不下时 `context_truncated=true`；`total`/`truncated` 仍只统计命中。上下文条目不占 `max_results`，开大 `context` 时应调小 `max_results`。注意缓存条目的 `index` 字段与 `read_*` 的 `offset`（数组下标）是两套定位符，index 有偏移的项目里不要互相换算。
 - **返回字段易误读**：`search_cache` 结果里的 `post_src` 实际装的是**页面可见原文**（`pre_src` 优先），`pre_dst` 装的是 `pre_dst`/`pre_zh`/`proofread_dst` 首个非空；这与 `read_translation_file` 返回的原始条目字段口径**不同**，不要混用。`search_dict` 结果的检索词/替换词键名是 `src`/`dst`，另有 `origin`（project/common）与 `category`（pre/gpth/gptnh/gpt/post/forbiddenh/forbiddennh）。
 - **`list_problems` 的 `problem_type` 是正则关键词**，不是枚举值（留空时用 `.+` 命中所有非空 `problem`）；完整枚举清单看返回体里的 `available_problem_types`。
 - **`lookup_name` 的 `name` 在 schema 里声明为 `string`**（实现虽容忍数组，但按 schema 校验的客户端会拒绝）：请传单个字符串、多次调用。

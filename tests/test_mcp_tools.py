@@ -93,6 +93,12 @@ class ToolDefinitionTests(unittest.TestCase):
                 with self.subTest(tool=item["name"]):
                     self.assertEqual(tool_annotations(item), {})
 
+    def test_search_tools_expose_optional_context_param(self) -> None:
+        for name in ("galtransl_search_cache", "galtransl_search_scripts"):
+            schema = next(d for d in MCP_TOOL_DEFS if d["name"] == name)["input_schema"]
+            self.assertIn("context", schema["properties"])
+            self.assertNotIn("context", schema["required"])
+
     def test_unknown_tool_raises_key_error(self) -> None:
         with self.assertRaises(KeyError):
             call_mcp_tool("galtransl_not_exist")
@@ -339,6 +345,32 @@ class SearchToolTests(ProjectFixture):
         self.assertEqual(result["total"], 1)
         self.assertTrue(result["available_problem_types"])
 
+    def test_search_cache_with_context_windows(self) -> None:
+        result = self._call("galtransl_search_cache", query="原文3", context=1)
+        self.assertEqual(result["context"], 1)
+        self.assertFalse(result["context_truncated"])
+        windows = result["context_windows"]
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows[0]["filename"], "test.json")
+        entries = windows[0]["entries"]
+        self.assertEqual([e["is_hit"] for e in entries], [False, True, False])
+        self.assertEqual([e["index"] for e in entries], [2, 3, 4])
+        self.assertEqual(entries[1]["dst"], "译文3")
+        self.assertEqual(set(entries[0]), {"index", "speaker", "dst", "is_hit"})
+
+    def test_search_cache_default_keeps_legacy_shape(self) -> None:
+        result = self._call("galtransl_search_cache", query="原文3")
+        self.assertNotIn("context", result)
+        self.assertNotIn("context_windows", result)
+        self.assertNotIn("context_truncated", result)
+
+    def test_search_scripts_with_context_windows(self) -> None:
+        result = self._call("galtransl_search_scripts", query="脚本行1", context=1)
+        entries = result["context_windows"][0]["entries"]
+        self.assertEqual([e["index"] for e in entries], [0, 1, 2])
+        self.assertEqual([e["is_hit"] for e in entries], [False, True, False])
+        self.assertEqual(entries[1]["message"], "脚本行1")
+
     def test_list_problems_with_type_filter(self) -> None:
         _write_json(
             os.path.join(self.project, "transl_cache", "b.json"),
@@ -348,6 +380,53 @@ class SearchToolTests(ProjectFixture):
             ],
         )
         self.assertEqual(self._call("galtransl_list_problems", problem_type="残留")["total"], 1)
+
+
+class PaginateNegativeOffsetTests(ProjectFixture):
+    """read_* 工具负数 offset：从文件末尾倒数（-1=最后一条）。"""
+
+    def test_read_translation_file_tail_offset(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_read_translation_file",
+            {"project_dir": self.project, "filename": "test.json", "offset": -2},
+        )
+        self.assertEqual(result["offset"], 3)
+        self.assertEqual(result["returned"], 2)
+        self.assertFalse(result["has_more"])
+        self.assertEqual(result["items"][0]["pre_dst"], "译文3")
+
+    def test_read_source_script_tail_offset(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_read_source_script",
+            {"project_dir": self.project, "filename": "a.txt.json", "offset": -1},
+        )
+        self.assertEqual(result["offset"], 2)
+        self.assertEqual(result["items"][0]["message"], "脚本行2")
+
+    def test_offset_beyond_head_clamps_to_zero(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_read_translation_file",
+            {"project_dir": self.project, "filename": "test.json", "offset": -99},
+        )
+        self.assertEqual(result["offset"], 0)
+        self.assertEqual(result["returned"], 5)
+
+    def test_positive_offset_unchanged(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_read_translation_file",
+            {"project_dir": self.project, "filename": "test.json", "offset": 4},
+        )
+        self.assertEqual(result["offset"], 4)
+        self.assertEqual(result["returned"], 1)
+
+    def test_read_glossary_tail_offset(self) -> None:
+        _write_text(
+            os.path.join(self.project, "项目字典_译前.txt"),
+            "こんにちは|你好\nさようなら|再见\nおはよう|早上好\n",
+        )
+        result = self._call("galtransl_read_glossary", category="pre", offset=-1)
+        self.assertEqual(result["offset"], 2)
+        self.assertEqual(result["entries"][0]["src"], "おはよう")
 
 
 class ProjectReadToolTests(ProjectFixture):

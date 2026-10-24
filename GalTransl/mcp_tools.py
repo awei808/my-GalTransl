@@ -251,9 +251,17 @@ def _clamp_page(value: Any, default: int, hard: int) -> int:
 
 
 def _paginate(entries: List[Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """按 offset/limit 对条目列表分页。"""
+    """按 offset/limit 对条目列表分页；offset 为负时从文件末尾倒数（-1=最后一条）。"""
     total = len(entries)
-    offset = _clamp_page(arguments.get("offset", 0), 0, total)
+    try:
+        raw_offset = int(arguments.get("offset", 0))
+    except (TypeError, ValueError):
+        raw_offset = 0
+    if raw_offset < 0:
+        # 负数 offset 从末尾倒数，换算为正值返回，便于调用方继续向后翻页
+        offset = max(total + raw_offset, 0)
+    else:
+        offset = min(raw_offset, total)
     limit = _clamp_page(arguments.get("limit", DEFAULT_PAGE_SIZE), DEFAULT_PAGE_SIZE, HARD_PAGE_SIZE)
     page = entries[offset:offset + limit] if limit > 0 else []
     return {
@@ -300,6 +308,7 @@ def _tool_search_cache(arguments: Dict[str, Any]) -> Dict[str, Any]:
         field=str(arguments.get("field", "all") or "all").strip(),
         use_regex=bool(arguments.get("regex", False)),
         max_results=arguments.get("max_results", DEFAULT_MAX_RESULTS),
+        context=arguments.get("context", 0),
     )
 
 
@@ -309,6 +318,7 @@ def _tool_search_scripts(arguments: Dict[str, Any]) -> Dict[str, Any]:
         arguments.get("query", ""),
         use_regex=bool(arguments.get("regex", False)),
         max_results=arguments.get("max_results", DEFAULT_MAX_RESULTS),
+        context=arguments.get("context", 0),
     )
 
 
@@ -2114,8 +2124,20 @@ _PROJECT_PROP = {
 _QUERY_PROP = {"type": "string", "description": "检索词"}
 _REGEX_PROP = {"type": "boolean", "description": "是否按正则解释检索词，默认 false"}
 _MAX_RESULTS_PROP = {"type": "integer", "description": f"返回条数上限，默认 {DEFAULT_MAX_RESULTS}"}
+_CONTEXT_PROP = {
+    "type": "integer",
+    "description": (
+        "附带命中前后各 N 条上下文（默认 0，上限 20）。上下文按文件内合并后的连续窗口返回，"
+        "条目仅含 序号(index)/说话人/生效译文（脚本为原文 message）与 is_hit 标记；"
+        "全部窗口条目共享总预算，放不下时 context_truncated=true。"
+        "使用较大 context 时建议调小 max_results。"
+    ),
+}
 _PAGE_PROPS = {
-    "offset": {"type": "integer", "description": "起始下标，默认 0"},
+    "offset": {
+        "type": "integer",
+        "description": "起始下标，默认 0；负数从文件末尾倒数（-1=最后一条），返回的 offset 为换算后的正值",
+    },
     "limit": {"type": "integer", "description": f"返回条数，默认 {DEFAULT_PAGE_SIZE}"},
 }
 
@@ -2129,6 +2151,7 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
             "field": {"type": "string", "enum": ["all", "src", "dst", "problem"], "description": "检索字段，默认 all"},
             "regex": _REGEX_PROP,
             "max_results": _MAX_RESULTS_PROP,
+            "context": _CONTEXT_PROP,
         },
         ["project_dir", "query"],
     ),
@@ -2140,6 +2163,7 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
             "query": _QUERY_PROP,
             "regex": _REGEX_PROP,
             "max_results": _MAX_RESULTS_PROP,
+            "context": _CONTEXT_PROP,
         },
         ["project_dir", "query"],
     ),

@@ -25,6 +25,11 @@ from GalTransl.server_dict import (
 DEFAULT_MAX_RESULTS = 200
 HARD_MAX_RESULTS = 2000
 
+# 上下文窗口：单命中可附带的邻域条数上限，与全部窗口条目共享的全局预算（防响应体积失控）。
+# 预算按"整窗放不下即放弃该窗及其后所有窗口"执行，不输出半截窗口。
+CONTEXT_MAX = 20
+CONTEXT_ENTRY_BUDGET = 1000
+
 # 字典载荷的列表键 -> parse_dict_line 类别（决定该文件行的解析分支）。
 # GPT 字典的 h/非h 细分必须先于 gpt_dict_files 登记，否则会被兜底映射成 "gpt" 而丢失粒度。
 _DICT_CATEGORY_BY_LIST = (
@@ -51,6 +56,17 @@ def _clamp_max_results(value: Any) -> int:
     if parsed < 0:
         return 0
     return min(parsed, HARD_MAX_RESULTS)
+
+
+def _clamp_context(value: Any) -> int:
+    """上下文条数收敛：非数值或 ≤0 回落 0（不带上下文），超上限截断到 CONTEXT_MAX。"""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if parsed <= 0:
+        return 0
+    return min(parsed, CONTEXT_MAX)
 
 
 def _make_matcher(query: str, use_regex: bool) -> Callable[[str], bool]:
@@ -80,12 +96,79 @@ def _speaker_of(raw_name: Any) -> str:
     return str(raw_name) if raw_name else ""
 
 
+def _build_context_windows(
+    filename: str,
+    entries: List[Any],
+    hit_positions: List[int],
+    context: int,
+    render: Callable[[int, Any, bool], Optional[Dict[str, Any]]],
+    budget: Dict[str, int],
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """把单文件内命中的邻域合并成连续上下文窗口。
+
+    区间按数组下标计算并合并（相邻/重叠归一，命中本身在窗口内带 is_hit=true）；
+    render 返回 None 的条目（非 dict 等）跳过。budget["left"] 为剩余窗口条目配额，
+    整窗放不下时放弃该窗及之后所有窗口（不输出半截窗口），返回值第二项表示是否因此截断。
+    """
+    hit_set = set(hit_positions)
+    spans: List[List[int]] = []
+    for pos in hit_positions:
+        start, end = max(0, pos - context), min(len(entries) - 1, pos + context)
+        if spans and start <= spans[-1][1] + 1:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    windows: List[Dict[str, Any]] = []
+    for start, end in spans:
+        rendered = []
+        for pos in range(start, end + 1):
+            item = render(pos, entries[pos], pos in hit_set)
+            if item is not None:
+                rendered.append(item)
+        if len(rendered) > budget["left"]:
+            return windows, True
+        budget["left"] -= len(rendered)
+        windows.append({"filename": filename, "entries": rendered})
+    return windows, False
+
+
+def _render_cache_context_entry(pos: int, entry: Any, is_hit: bool) -> Optional[Dict[str, Any]]:
+    """缓存窗口条目精简渲染：序号 / 说话人 / 当前生效译文（与检索结果可见译文同口径）。"""
+    if not isinstance(entry, dict):
+        return None
+    dst_text = (
+        entry.get("pre_dst", "")
+        or entry.get("pre_zh", "")
+        or entry.get("proofread_dst", "")
+        or entry.get("proofread_zh", "")
+    )
+    return {
+        "index": entry.get("index", pos),
+        "speaker": entry.get("name", "") or entry.get("names", ""),
+        "dst": dst_text,
+        "is_hit": is_hit,
+    }
+
+
+def _render_script_context_entry(pos: int, entry: Any, is_hit: bool) -> Optional[Dict[str, Any]]:
+    """脚本窗口条目精简渲染：序号 / 说话人 / 原文（脚本未翻译，message 即内容）。"""
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "index": entry.get("index", pos),
+        "speaker": entry.get("name", "") or entry.get("names", ""),
+        "message": str(entry.get("message", "") or ""),
+        "is_hit": is_hit,
+    }
+
+
 def search_cache_entries(
     project_dir: str,
     query: str,
     field: str = "all",
     use_regex: bool = False,
     max_results: Any = DEFAULT_MAX_RESULTS,
+    context: Any = 0,
 ) -> Dict[str, Any]:
     """跨文件检索已入库的翻译缓存条目。
 
@@ -99,15 +182,22 @@ def search_cache_entries(
         field: all / src / dst / problem 之一；all 时四类字段任一命中即计入。
         use_regex: True 时 query 按正则解释，编译失败抛 re.error。
         max_results: 返回条数上限，收敛到 [1, HARD_MAX_RESULTS]。
+        context: 每个命中附带前后各 N 条上下文窗口（收敛到 [0, CONTEXT_MAX]，默认 0）。
+            窗口按文件内合并后的连续区间返回，条目仅含 序号(index)/说话人/生效译文
+            与 is_hit 标记；全部窗口条目共享 CONTEXT_ENTRY_BUDGET 预算，超限截断。
+            上下文条目不计入 total/truncated（二者仍只统计命中）。
 
     Returns:
-        {"scope", "query", "results", "total", "truncated"}；total 为全部命中数，
-        results 最多 max_results 条，超出时 truncated 为 True。
+        {"scope", "query", "results", "total", "truncated", "skipped_files"}；total 为
+        全部命中数，results 最多 max_results 条，超出时 truncated 为 True。context>0 时
+        额外返回 context（生效值）/ context_windows / context_truncated 三个键
+        （query 为空的提前返回除外）。
     """
     query = str(query or "").strip()
     if not query:
         return _empty_result("cache", query)
     limit = _clamp_max_results(max_results)
+    ctx = _clamp_context(context)
     matcher = _make_matcher(query, use_regex)
     started = time.time()
 
@@ -115,6 +205,9 @@ def search_cache_entries(
     results: List[Dict[str, Any]] = []
     total = 0
     skipped = 0
+    context_budget = {"left": CONTEXT_ENTRY_BUDGET}
+    context_windows: List[Dict[str, Any]] = []
+    context_stopped = False
     if os.path.isdir(cache_dir):
         for rel in _collect_cache_files(cache_dir):
             file_path = os.path.join(cache_dir, rel)
@@ -124,7 +217,8 @@ def search_cache_entries(
                 skipped += 1
                 LOGGER.warning(f"search/cache 跳过无法解析的缓存文件 {rel}: {exc}")
                 continue
-            for entry in entries:
+            file_hit_positions: List[int] = []
+            for pos, entry in enumerate(entries):
                 if not isinstance(entry, dict):
                     continue
                 # 可见文本对齐页面渲染：原文行显示 pre_src（post_src 为更底层原文，页面不展示）
@@ -159,7 +253,7 @@ def search_cache_entries(
                 if len(results) < limit:
                     results.append({
                         "filename": rel,
-                        "index": entry.get("index", 0),
+                        "index": entry.get("index", pos),
                         "speaker": raw_name,
                         "post_src": src_text,
                         "pre_dst": dst_text,
@@ -170,12 +264,26 @@ def search_cache_entries(
                         "problem": entry.get("problem", ""),
                         "trans_by": entry.get("trans_by", ""),
                     })
+                # 命中位置全量收集（不随 max_results 截断）：窗口与 is_hit 须覆盖全部命中，
+                # 体积由 CONTEXT_ENTRY_BUDGET 整窗预算兜底
+                file_hit_positions.append(pos)
+            if ctx > 0 and file_hit_positions and not context_stopped:
+                windows, stopped = _build_context_windows(
+                    rel, entries, file_hit_positions, ctx, _render_cache_context_entry, context_budget,
+                )
+                context_windows.extend(windows)
+                context_stopped = stopped
     truncated = total > len(results)
     LOGGER.info(
         f"search/cache 完成: query={query!r} field={field} 命中 {total} 条"
         f"（返回 {len(results)} 条{'，已截断' if truncated else ''}，耗时 {time.time() - started:.2f}s）"
+        + (
+            f"，上下文窗口 {len(context_windows)} 个{'（预算截断）' if context_stopped else ''}"
+            if ctx > 0
+            else ""
+        )
     )
-    return {
+    result: Dict[str, Any] = {
         "scope": "cache",
         "query": query,
         "results": results,
@@ -183,6 +291,11 @@ def search_cache_entries(
         "truncated": truncated,
         "skipped_files": skipped,
     }
+    if ctx > 0:
+        result["context"] = ctx
+        result["context_windows"] = context_windows
+        result["context_truncated"] = context_stopped
+    return result
 
 
 def _iter_script_files(input_dir: str) -> List[str]:
@@ -201,20 +314,30 @@ def search_source_scripts(
     query: str,
     use_regex: bool = False,
     max_results: Any = DEFAULT_MAX_RESULTS,
+    context: Any = 0,
 ) -> Dict[str, Any]:
     """检索原始脚本（gt_input 下的 name-message JSON），不依赖是否已生成缓存。
 
     条目结构为 {"message": 原文, "name"/"names": 说话人可选}，index 即数组下标
     （与翻译缓存的 index 同源，可直接对照缓存条目）。
 
+    Args:
+        context: 每个命中附带前后各 N 条上下文窗口（收敛到 [0, CONTEXT_MAX]，默认 0）。
+            窗口按文件内合并后的连续区间返回，条目仅含 序号(index)/说话人/原文 与
+            is_hit 标记；全部窗口条目共享 CONTEXT_ENTRY_BUDGET 预算，超限截断。
+            上下文条目不计入 total/truncated（二者仍只统计命中）。
+
     Returns:
         {"scope", "query", "results", "total", "truncated"}；results 条目含
-        filename / index / speaker / message / match_speaker。
+        filename / index / speaker / message / match_speaker。context>0 时额外返回
+        context（生效值）/ context_windows / context_truncated 三个键
+        （query 为空的提前返回除外）。
     """
     query = str(query or "").strip()
     if not query:
         return _empty_result("script", query)
     limit = _clamp_max_results(max_results)
+    ctx = _clamp_context(context)
     matcher = _make_matcher(query, use_regex)
     started = time.time()
 
@@ -222,6 +345,9 @@ def search_source_scripts(
     results: List[Dict[str, Any]] = []
     total = 0
     skipped = 0
+    context_budget = {"left": CONTEXT_ENTRY_BUDGET}
+    context_windows: List[Dict[str, Any]] = []
+    context_stopped = False
     if os.path.isdir(input_dir):
         for rel in _iter_script_files(input_dir):
             file_path = os.path.join(input_dir, rel)
@@ -231,7 +357,8 @@ def search_source_scripts(
                 skipped += 1
                 LOGGER.warning(f"search/script 跳过无法解析的脚本文件 {rel}: {exc}")
                 continue
-            for index, entry in enumerate(entries):
+            file_hit_positions: List[int] = []
+            for pos, entry in enumerate(entries):
                 if not isinstance(entry, dict):
                     continue
                 message = str(entry.get("message", "") or "")
@@ -245,18 +372,30 @@ def search_source_scripts(
                 if len(results) < limit:
                     results.append({
                         "filename": rel,
-                        "index": entry.get("index", index),
+                        "index": entry.get("index", pos),
                         "speaker": raw_name,
                         "message": message,
                         "match_message": match_message,
                         "match_speaker": match_speaker,
                     })
+                    file_hit_positions.append(pos)
+            if ctx > 0 and file_hit_positions and not context_stopped:
+                windows, stopped = _build_context_windows(
+                    rel, entries, file_hit_positions, ctx, _render_script_context_entry, context_budget,
+                )
+                context_windows.extend(windows)
+                context_stopped = stopped
     truncated = total > len(results)
     LOGGER.info(
         f"search/script 完成: query={query!r} 命中 {total} 条"
         f"（返回 {len(results)} 条{'，已截断' if truncated else ''}，耗时 {time.time() - started:.2f}s）"
+        + (
+            f"，上下文窗口 {len(context_windows)} 个{'（预算截断）' if context_stopped else ''}"
+            if ctx > 0
+            else ""
+        )
     )
-    return {
+    result: Dict[str, Any] = {
         "scope": "script",
         "query": query,
         "results": results,
@@ -264,6 +403,11 @@ def search_source_scripts(
         "truncated": truncated,
         "skipped_files": skipped,
     }
+    if ctx > 0:
+        result["context"] = ctx
+        result["context_windows"] = context_windows
+        result["context_truncated"] = context_stopped
+    return result
 
 
 def _dict_file_categories(payload: Dict[str, Any]) -> Dict[str, str]:

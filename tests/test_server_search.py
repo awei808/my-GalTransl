@@ -4,8 +4,11 @@ import os
 import re
 import tempfile
 import unittest
+from unittest import mock
 
+from GalTransl import server_search as server_search_module
 from GalTransl.server_search import (
+    CONTEXT_MAX,
     DEFAULT_MAX_RESULTS,
     HARD_MAX_RESULTS,
     _clamp_max_results,
@@ -170,6 +173,132 @@ class SearchSourceScriptsTests(unittest.TestCase):
 
     def test_regex_mode(self) -> None:
         self.assertEqual(search_source_scripts(self.project, "^俺は", use_regex=True)["total"], 1)
+
+    def test_scripts_default_has_no_context_keys(self) -> None:
+        result = search_source_scripts(self.project, "テスト行")
+        self.assertNotIn("context", result)
+        self.assertNotIn("context_windows", result)
+        self.assertNotIn("context_truncated", result)
+
+    def test_context_windows_for_scripts(self) -> None:
+        result = search_source_scripts(self.project, "テスト行", context=1)
+        self.assertEqual(result["context"], 1)
+        self.assertFalse(result["context_truncated"])
+        windows = result["context_windows"]
+        # 命中在 pos2，context=1 → 窗口覆盖 [1,2]；脚本条目无 index 字段，序号回退数组下标
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows[0]["filename"], "00_01_導入.txt.json")
+        entries = windows[0]["entries"]
+        self.assertEqual([e["index"] for e in entries], [1, 2])
+        self.assertEqual([e["is_hit"] for e in entries], [False, True])
+        self.assertEqual(set(entries[0]), {"index", "speaker", "message", "is_hit"})
+        self.assertEqual(entries[0]["message"], "「クルト……いるんでしょ……？」")
+        self.assertEqual(entries[0]["speaker"], "創")
+        self.assertEqual(entries[1]["message"], "テスト行")
+
+
+class ContextWindowCacheTests(unittest.TestCase):
+    """缓存检索上下文窗口：合并区间 / 精简字段 / 钳制 / 预算截断。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = self._tmp.name
+        # index 字段与数组下标故意错位（+10）：窗口按数组下标切片，序号取条目自身 index 字段
+        entries = [
+            {"index": 10, "pre_src": "A", "pre_dst": "译A"},
+            {"index": 11, "pre_src": "目标B", "pre_dst": "译B", "name": "創"},
+            {"index": 12, "pre_src": "C", "pre_dst": "译C"},
+            {"index": 13, "pre_src": "目标D", "pre_dst": "译D"},
+            {"index": 14, "pre_src": "E", "pre_dst": "译E"},
+        ]
+        _write_json(os.path.join(self.project, "transl_cache", "a.json"), entries)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_default_response_has_no_context_keys(self) -> None:
+        result = search_cache_entries(self.project, "目标")
+        for key in ("context", "context_windows", "context_truncated"):
+            self.assertNotIn(key, result)
+
+    def test_windows_merge_and_lean_fields(self) -> None:
+        result = search_cache_entries(self.project, "目标", context=1)
+        self.assertEqual(result["context"], 1)
+        self.assertFalse(result["context_truncated"])
+        self.assertEqual(result["total"], 2)  # 命中统计不受上下文影响
+        windows = result["context_windows"]
+        # 两个命中（pos1、pos3）邻域 [0,2] 与 [2,4] 相邻 → 合并为一个连续窗口
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows[0]["filename"], "a.json")
+        entries = windows[0]["entries"]
+        self.assertEqual([e["index"] for e in entries], [10, 11, 12, 13, 14])
+        self.assertEqual([e["is_hit"] for e in entries], [False, True, False, True, False])
+        self.assertEqual(set(entries[0]), {"index", "speaker", "dst", "is_hit"})
+        self.assertEqual(entries[1]["speaker"], "創")
+        self.assertEqual(entries[1]["dst"], "译B")
+        self.assertEqual(entries[0]["dst"], "译A")
+
+    def test_context_clamped_to_max(self) -> None:
+        result = search_cache_entries(self.project, "目标", context=99)
+        self.assertEqual(result["context"], CONTEXT_MAX)
+        # 钳到上限后窗口覆盖全文件
+        self.assertEqual(len(result["context_windows"][0]["entries"]), 5)
+
+    def test_non_positive_context_ignored(self) -> None:
+        for bad in (0, -3, "abc", None):
+            result = search_cache_entries(self.project, "目标", context=bad)
+            self.assertNotIn("context_windows", result)
+
+    def test_no_hits_yields_empty_windows(self) -> None:
+        result = search_cache_entries(self.project, "不存在", context=2)
+        self.assertEqual(result["context_windows"], [])
+        self.assertFalse(result["context_truncated"])
+
+    def test_non_dict_neighbor_is_skipped(self) -> None:
+        _write_json(
+            os.path.join(self.project, "transl_cache", "b.json"),
+            [
+                "not-a-dict",
+                {"index": 1, "pre_src": "目标X", "pre_dst": "译X"},
+                {"index": 2, "pre_src": "Z", "pre_dst": "译Z"},
+            ],
+        )
+        result = search_cache_entries(self.project, "目标X", context=1)
+        entries = result["context_windows"][0]["entries"]
+        # pos0 的非 dict 条目在窗口内但被跳过，序号序列出现空洞属预期
+        self.assertEqual([e["index"] for e in entries], [1, 2])
+
+    def test_windows_cover_hits_beyond_max_results(self) -> None:
+        result = search_cache_entries(self.project, "目标", context=1, max_results=1)
+        self.assertEqual(result["total"], 2)
+        self.assertTrue(result["truncated"])
+        entries = result["context_windows"][0]["entries"]
+        # 窗口与 is_hit 覆盖全部命中：被 max_results 截掉的 pos3 命中同样标 is_hit=true
+        self.assertEqual([e["is_hit"] for e in entries], [False, True, False, True, False])
+
+    def test_windows_built_even_when_max_results_zero(self) -> None:
+        result = search_cache_entries(self.project, "目标", context=1, max_results=0)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(
+            [e["is_hit"] for e in result["context_windows"][0]["entries"]],
+            [False, True, False, True, False],
+        )
+
+    def test_budget_stops_before_partial_window(self) -> None:
+        _write_json(
+            os.path.join(self.project, "transl_cache", "c.json"),
+            [
+                {"index": 0, "pre_src": "第一", "pre_dst": "译1"},
+                {"index": 1, "pre_src": "目标Y", "pre_dst": "译Y"},
+                {"index": 2, "pre_src": "第三", "pre_dst": "译3"},
+            ],
+        )
+        # 文件按名排序 a → b → c；a.json 窗口 5 条占掉预算后剩 1，c.json 窗口 3 条放不下 → 整窗放弃并截断
+        with mock.patch.object(server_search_module, "CONTEXT_ENTRY_BUDGET", 6):
+            result = search_cache_entries(self.project, "目标", context=1)
+        self.assertEqual([w["filename"] for w in result["context_windows"]], ["a.json"])
+        self.assertTrue(result["context_truncated"])
 
 
 class SearchDictEntriesTests(unittest.TestCase):
