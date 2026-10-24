@@ -10,10 +10,16 @@
   - LLM 调用失败：记录错误并跳过本批，不中断整体
 """
 import asyncio
+import json
 import unittest
 from types import MethodType, SimpleNamespace
 
 from GalTransl.CSentense import CSentense
+from GalTransl.Backend.BaseFixRound import (
+    CONTEXT_BLOCK_FOOTER,
+    CONTEXT_BLOCK_HEADER,
+    MAX_FIX_CONTEXT_LINES,
+)
 from GalTransl.Backend.ForJPResidue import ForJPResidue
 from GalTransl.Backend.ForBRStation import ForBRStation
 from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
@@ -381,6 +387,193 @@ class EchoThresholdTests(unittest.TestCase):
         self.assertFalse(t._is_echo_response(36, 40))
         t._echo_hit_ratio = 0.5
         self.assertTrue(t._is_echo_response(20, 40))
+
+
+def make_linked_trans(count, problem_at=()):
+    """构建带前后句链接的句子列表（index 从 1 起）。"""
+    trans_list = []
+    for i in range(1, count + 1):
+        t = make_tran(
+            i,
+            "残留日文：です" if i in problem_at else "",
+            f"译{i}",
+            post_src=f"原文{i}",
+        )
+        if trans_list:
+            t.prev_tran = trans_list[-1]
+            trans_list[-1].next_tran = t
+        trans_list.append(t)
+    return trans_list
+
+
+def context_ids_of(block: str) -> list:
+    """解析上下文块的 JSON 行，返回 id 列表。"""
+    return [
+        json.loads(line)["id"] for line in block.splitlines()[1:-1]
+    ]
+
+
+class ResolveProblemContextLinesTests(unittest.TestCase):
+    """_resolve_problem_context_lines：开关/条数配置收敛口径。"""
+
+    def _translator(self, values: dict):
+        t = make_translator(ForJPResidue)
+        t.pj_config = SimpleNamespace(
+            active_workers=0,
+            stop_event=None,
+            translation_guideline="",
+            getProjectDir=lambda: "",
+            getKey=lambda key, default=None: values.get(key, default),
+        )
+        return t
+
+    def test_defaults_when_unconfigured(self) -> None:
+        # 缺省开、默认前后各 4 句（配置模板同口径）
+        self.assertEqual(self._translator({})._resolve_problem_context_lines(), 4)
+
+    def test_switch_disabled_returns_zero(self) -> None:
+        self.assertEqual(
+            self._translator(
+                {"gpt.fixIncludeContext": False}
+            )._resolve_problem_context_lines(),
+            0,
+        )
+
+    def test_lines_zero_disables(self) -> None:
+        self.assertEqual(
+            self._translator({"gpt.fixContextLines": 0})._resolve_problem_context_lines(),
+            0,
+        )
+
+    def test_lines_negative_clamped_to_zero(self) -> None:
+        self.assertEqual(
+            self._translator({"gpt.fixContextLines": -3})._resolve_problem_context_lines(),
+            0,
+        )
+
+    def test_lines_clamped_to_max(self) -> None:
+        self.assertEqual(
+            self._translator({"gpt.fixContextLines": 99})._resolve_problem_context_lines(),
+            MAX_FIX_CONTEXT_LINES,
+        )
+
+    def test_invalid_lines_falls_back_default(self) -> None:
+        self.assertEqual(
+            self._translator(
+                {"gpt.fixContextLines": "abc"}
+            )._resolve_problem_context_lines(),
+            4,
+        )
+
+
+class ProblemContextBlockTests(unittest.TestCase):
+    """_build_problem_context_block：前后邻居窗口、去重与字段口径。"""
+
+    def test_window_covers_both_sides_in_file_order(self) -> None:
+        t = make_translator(ForJPResidue)
+        trans_list = make_linked_trans(10, problem_at=(5,))
+        block = t._build_problem_context_block([trans_list[4]], "", True, 4)
+        lines = block.splitlines()
+        self.assertEqual(lines[0], CONTEXT_BLOCK_HEADER)
+        self.assertEqual(lines[-1], CONTEXT_BLOCK_FOOTER)
+        self.assertEqual(context_ids_of(block), [1, 2, 3, 4, 6, 7, 8, 9])
+        for obj in (json.loads(x) for x in lines[1:-1]):
+            self.assertIn("src", obj)
+            self.assertIn("dst", obj)
+            self.assertNotIn("name", obj)  # 无说话人时不注入 name
+
+    def test_adjacent_batch_sentences_dedup_without_recount(self) -> None:
+        # 相邻问题句互为批内句（跳过不占条数），窗口重叠部分去重，
+        # 每侧各取满 4 句而非把窗口越推越远
+        t = make_translator(ForJPResidue)
+        trans_list = make_linked_trans(14, problem_at=(5, 6))
+        batch = [trans_list[4], trans_list[5]]
+        block = t._build_problem_context_block(batch, "", True, 4)
+        self.assertEqual(context_ids_of(block), [1, 2, 3, 4, 7, 8, 9, 10])
+
+    def test_empty_neighbor_skipped_without_counting(self) -> None:
+        # 空文本句无上下文价值：跳过且不占窗口条数
+        t = make_translator(ForJPResidue)
+        trans_list = make_linked_trans(10, problem_at=(6,))
+        trans_list[4].post_src = ""
+        block = t._build_problem_context_block([trans_list[5]], "", True, 4)
+        self.assertEqual(context_ids_of(block), [1, 2, 3, 4, 7, 8, 9, 10])
+
+    def test_include_src_false_omits_src(self) -> None:
+        # 纯译文修复模式（如换行修复）：上下文同样不带 src
+        t = make_translator(ForBRStation)
+        trans_list = make_linked_trans(6, problem_at=(3,))
+        block = t._build_problem_context_block([trans_list[2]], "", False, 4)
+        for obj in (json.loads(x) for x in block.splitlines()[1:-1]):
+            self.assertNotIn("src", obj)
+            self.assertIn("dst", obj)
+
+    def test_zero_max_lines_returns_empty(self) -> None:
+        t = make_translator(ForJPResidue)
+        trans_list = make_linked_trans(3, problem_at=(2,))
+        self.assertEqual(
+            t._build_problem_context_block([trans_list[1]], "", True, 0), ""
+        )
+
+    def test_unlinked_sentences_return_empty(self) -> None:
+        t = make_translator(ForJPResidue)
+        trans_list = [make_tran(i, "残留日文：です", "译") for i in range(1, 4)]
+        self.assertEqual(
+            t._build_problem_context_block(trans_list, "", True, 4), ""
+        )
+
+
+class BatchTranslateContextInjectionTests(unittest.IsolatedAsyncioTestCase):
+    """batch_translate 集成：问题修复轮输入最前附带上下文，改进轮不附带。"""
+
+    async def _run(self, t, trans_list, llm_resp, num_per_request=100):
+        async def fake_call_llm(self, messages, filename, idx_tip, *_a, **_k):
+            return llm_resp, SimpleNamespace(model_name="m", domain="x")
+
+        t._call_llm = MethodType(fake_call_llm, t)
+        await t.batch_translate(
+            "f.json", "f.json", trans_list, num_per_request, gpt_dic=None
+        )
+        return t
+
+    async def test_fix_round_prepends_context(self) -> None:
+        t = make_translator(ForJPResidue)
+        trans_list = make_linked_trans(6, problem_at=(3,))
+        resp = 'a1b|{"id": 3, "better": "新译三"}'
+        await self._run(t, trans_list, resp)
+        self.assertIn(CONTEXT_BLOCK_HEADER, t._captured_input)
+        self.assertIn(CONTEXT_BLOCK_FOOTER, t._captured_input)
+        self.assertIn('"id": 4', t._captured_input)  # 上下文邻居行
+        # 上下文块位于批内带锚点行之前
+        self.assertLess(
+            t._captured_input.index(CONTEXT_BLOCK_FOOTER),
+            t._captured_input.index('"id": 3'),
+        )
+        # 上下文行不参与解析：命中句正常写 alt_dst
+        self.assertEqual(trans_list[2].alt_dst, "新译三")
+
+    async def test_fix_round_context_disabled(self) -> None:
+        t = make_translator(ForJPResidue)
+        t.pj_config = SimpleNamespace(
+            active_workers=0,
+            stop_event=None,
+            translation_guideline="",
+            getProjectDir=lambda: "",
+            getKey=lambda key, default=None: (
+                False if key == "gpt.fixIncludeContext" else default
+            ),
+        )
+        trans_list = make_linked_trans(6, problem_at=(3,))
+        resp = 'a1b|{"id": 3, "better": "新译三"}'
+        await self._run(t, trans_list, resp)
+        self.assertNotIn(CONTEXT_BLOCK_HEADER, t._captured_input)
+
+    async def test_improve_round_no_context(self) -> None:
+        t = make_translator(ForImproveTranslation)
+        trans_list = make_linked_trans(6)
+        resp = 'a1b|{"id": 3, "better": "新译三"}'
+        await self._run(t, trans_list, resp)
+        self.assertNotIn(CONTEXT_BLOCK_HEADER, t._captured_input)
 
 
 if __name__ == "__main__":

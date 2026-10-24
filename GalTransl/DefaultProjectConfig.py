@@ -94,6 +94,8 @@ common:
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
   gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
   gpt.swapFixToCurrent: true # 修复轮（brfix/jpfix/banfix/fix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
+  gpt.fixIncludeContext: true # 问题修复轮（fix/brfix/jpfix/banfix）与复核轮（semcheckagain/tonecheckagain/verbosecheckagain）是否在输入最前附带问题句的前后上下文，帮助 AI 理解剧情衔接与语气、降低误判。[True/False]
+  gpt.fixContextLines: 4 # 附带的上下文条数：每个问题句前后各取 N 句（相邻问题句不重复计入），0=不附带。[0-16]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
   gpt.numPerRequestVerboseCheck: 20 # 节奏冗长检测（ForVerboseCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]

@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from GalTransl.CSentense import CSentense
+from GalTransl.Backend.BaseFixRound import CONTEXT_BLOCK_FOOTER, CONTEXT_BLOCK_HEADER
 from GalTransl.Backend.Prompts import FORGAL_JSON_SEMCHECK_AGAIN_PROMPT
 from GalTransl.Backend.ForSemCheckAgain import ForSemCheckAgain
 
@@ -175,29 +176,34 @@ class ParseConfirmResponseTests(unittest.TestCase):
         self.assertEqual([t.suspected_error for t in trans_list], ["疑似错误", "", ""])
 
 
+def _make_batch_translate_obj(values: dict | None = None) -> ForSemCheckAgain:
+    """构建复核轮 batch_translate 测试对象（绕过重量级 __init__）。"""
+    obj = object.__new__(ForSemCheckAgain)
+    obj._log_tag = "[语义复核]"
+    obj._disabled_reason = ""
+    obj.pj_config = _FakeBatchConfig(values or {})
+    obj.system_prompt = "system"
+    obj.trans_prompt = FORGAL_JSON_SEMCHECK_AGAIN_PROMPT
+    obj.target_lang = "Simplified_Chinese"
+    obj.eng_type = "ForSemCheckAgain"
+    obj._recorded_errors = []
+    # 基类属性：_resolve_file_metadata 会访问 file_metadata_map / project_config
+    # 与惰性载入标志 _file_metadata_loaded / _file_metadata_by_file
+    obj.file_metadata_map = {}
+    obj.project_config = None
+    obj._file_metadata_loaded = True
+    obj._file_metadata_by_file = {}
+
+    def fake_record(filename, idx_tip, message, model):
+        obj._recorded_errors.append((filename, idx_tip, message, model))
+
+    obj._record_round_runtime_error = fake_record
+    return obj
+
+
 class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase):
     def _make_obj(self, values: dict | None = None) -> ForSemCheckAgain:
-        obj = object.__new__(ForSemCheckAgain)
-        obj._log_tag = "[语义复核]"
-        obj._disabled_reason = ""
-        obj.pj_config = _FakeBatchConfig(values or {})
-        obj.system_prompt = "system"
-        obj.trans_prompt = FORGAL_JSON_SEMCHECK_AGAIN_PROMPT
-        obj.target_lang = "Simplified_Chinese"
-        obj.eng_type = "ForSemCheckAgain"
-        obj._recorded_errors = []
-        # 基类属性：_resolve_file_metadata 会访问 file_metadata_map / project_config
-        # 与惰性载入标志 _file_metadata_loaded / _file_metadata_by_file
-        obj.file_metadata_map = {}
-        obj.project_config = None
-        obj._file_metadata_loaded = True
-        obj._file_metadata_by_file = {}
-
-        def fake_record(filename, idx_tip, message, model):
-            obj._recorded_errors.append((filename, idx_tip, message, model))
-
-        obj._record_round_runtime_error = fake_record
-        return obj
+        return _make_batch_translate_obj(values)
 
     async def test_no_flagged_sentences_skips_without_llm_call(self) -> None:
         obj = self._make_obj()
@@ -362,6 +368,50 @@ class BatchTranslateGuardTests(unittest.IsolatedAsyncioTestCase):
         await obj.batch_translate("f.json", "c.json", trans_list, 20)
         self.assertIn('"problem": "人名错译：華恋→华良"', captured["user"])
         self.assertNotIn('"problem": "1"', captured["user"])
+
+
+class ReviewContextInjectionTests(unittest.IsolatedAsyncioTestCase):
+    """复核轮输入最前附带命中句前后上下文（gpt.fixIncludeContext / fixContextLines）。"""
+
+    def _linked(self, count: int, flagged_at: tuple = ()) -> list:
+        trans_list = []
+        for i in range(1, count + 1):
+            t = _trans(i, f"译文{i}", "疑似错误" if i in flagged_at else "")
+            t.post_src = f"原文{i}"
+            if trans_list:
+                t.prev_tran = trans_list[-1]
+                trans_list[-1].next_tran = t
+            trans_list.append(t)
+        return trans_list
+
+    async def _capture_user(self, obj, trans_list) -> str:
+        captured = {}
+
+        async def fake_llm(messages, filename, idx_tip, cb):
+            captured["user"] = messages[1]["content"]
+            return "", None
+
+        obj._call_llm = fake_llm
+        await obj.batch_translate("f.json", "c.json", trans_list, 20)
+        return captured["user"]
+
+    async def test_review_prepends_context_to_input(self) -> None:
+        obj = _make_batch_translate_obj({})
+        trans_list = self._linked(6, flagged_at=(3,))
+        user = await self._capture_user(obj, trans_list)
+        self.assertIn(CONTEXT_BLOCK_HEADER, user)
+        self.assertIn(CONTEXT_BLOCK_FOOTER, user)
+        self.assertIn('"id": 1', user)  # 上下文邻居行
+        # 上下文块位于命中句带锚点行之前
+        self.assertLess(
+            user.index(CONTEXT_BLOCK_FOOTER), user.index('"id": 3')
+        )
+
+    async def test_review_context_disabled_by_switch(self) -> None:
+        obj = _make_batch_translate_obj({"gpt.fixIncludeContext": False})
+        trans_list = self._linked(6, flagged_at=(3,))
+        user = await self._capture_user(obj, trans_list)
+        self.assertNotIn(CONTEXT_BLOCK_HEADER, user)
 
 
 class InputProblemInjectionTests(unittest.TestCase):

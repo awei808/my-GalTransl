@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, List, Optional
 
 from GalTransl import LOGGER
@@ -19,10 +20,23 @@ from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate
 from GalTransl.Backend.Prompts import FAILED_PREFIX
 from GalTransl.Backend.utils import (
     canonicalize_newlines,
+    coerce_bool,
     decode_json_line_part,
+    encode_line_breaks_for_prompt,
     preprocess_jsonline_response,
     prompt_newline_key,
 )
+
+# 问题修复/复核轮附带的问题句上下文条数：默认值与上限（前后各 N 句）
+DEFAULT_FIX_CONTEXT_LINES = 4
+MAX_FIX_CONTEXT_LINES = 16
+
+# 上下文块的说明文案：置于注入块首尾，声明这些行仅供理解剧情、禁止对其输出
+CONTEXT_BLOCK_HEADER = (
+    "（以下为本批句子的前后上下文，仅供理解剧情衔接与说话人语气；"
+    "这些行没有哈希锚点，禁止对它们输出任何判定或修复结果）"
+)
+CONTEXT_BLOCK_FOOTER = "（上下文结束，以下是本批待处理句子）"
 
 
 class BaseSparseFixRound(ForGalJsonTranslate):
@@ -40,6 +54,8 @@ class BaseSparseFixRound(ForGalJsonTranslate):
     _problem_types: Optional[list] = None
     # 是否把 problem 注入输入 JSONL
     _inject_problem = False
+    # 是否在输入最前附带问题句前后上下文（问题修复轮开启；改进轮全量选句，不适用）
+    _include_problem_context = False
     # 输入 JSONL 是否携带 src 原文
     _include_src = True
     # 响应非空但 0 个 better 时是否告警
@@ -52,6 +68,77 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         "注意：上一轮你的输出疑似把整批输入全部回显（每句都输出了 better）。"
         "请重新逐句检查，仅输出确有需要修复/改进的句子；若本批无需处理，输出空代码块。"
     )
+
+    def _resolve_problem_context_lines(self) -> int:
+        """读取问题句上下文条数配置（前后各 N 句），0=不附带。
+
+        gpt.fixIncludeContext 默认开；gpt.fixContextLines 默认
+        DEFAULT_FIX_CONTEXT_LINES，非法值回退默认，收拢到 [0, MAX]。
+        getKey 统一单参调用（兼容测试替身的一参签名），缺省值在此收敛。
+        """
+        get_key = getattr(self.pj_config, "getKey", None)
+        if not callable(get_key):
+            return DEFAULT_FIX_CONTEXT_LINES
+        if not coerce_bool(get_key("gpt.fixIncludeContext"), True):
+            return 0
+        try:
+            lines = int(get_key("gpt.fixContextLines"))
+        except (TypeError, ValueError):
+            return DEFAULT_FIX_CONTEXT_LINES
+        return min(MAX_FIX_CONTEXT_LINES, max(0, lines))
+
+    def _build_problem_context_block(
+        self, batch: list, n_symbol: str, include_src: bool, max_lines: int
+    ) -> str:
+        """构建问题句前后上下文块（JSONL 文本，由调用方前置到批输入最前）。
+
+        沿 prev_tran/next_tran 链为批内每句各取前后 max_lines 句，排除批内
+        句子后按行号去重排序；空文本邻居不输出也不计数。字段口径与
+        _build_input_jsonlines 一致（说话人清洗、换行编码、dst 取校对优先），
+        但无哈希锚点与 sig——响应解析按 id 只认批内句子，模型对上下文行的
+        任何输出都会被安全丢弃。include_src=False（纯译文修复模式）时上下文
+        同样不带 src，维持「不向模型展示原文」的口径。
+
+        Returns:
+            上下文块文本；无可用邻居（max_lines<=0 / 链上无句）时返回空串。
+        """
+        if max_lines <= 0 or not batch:
+            return ""
+        batch_ids = {t.index for t in batch}
+        context: dict = {}
+        for tran in batch:
+            for direction in ("prev_tran", "next_tran"):
+                neighbor = getattr(tran, direction, None)
+                steps = 0
+                while neighbor is not None and steps < max_lines:
+                    if neighbor.post_src == "":
+                        # 空文本句无上下文价值：跳过且不占窗口条数
+                        neighbor = getattr(neighbor, direction, None)
+                        continue
+                    if neighbor.index not in batch_ids:
+                        # 批内句子本身已在输入中：跳过且不占条数；
+                        # 其余句入块并计数（含与其他批句窗口重叠的已收集句）
+                        context[neighbor.index] = neighbor
+                        steps += 1
+                    neighbor = getattr(neighbor, direction, None)
+        if not context:
+            return ""
+        lines = [CONTEXT_BLOCK_HEADER]
+        for idx in sorted(context):
+            tran = context[idx]
+            obj: dict = {"id": idx}
+            speaker = tran.get_speaker_name() or ""
+            speaker = speaker.replace("\r\n", "").replace("\t", "").replace("\n", "")
+            if speaker:
+                obj["name"] = speaker
+            if include_src:
+                obj["src"] = encode_line_breaks_for_prompt(tran.post_src, n_symbol)
+            dst_text = tran.proofread_zh or tran.pre_dst
+            if dst_text:
+                obj["dst"] = encode_line_breaks_for_prompt(dst_text, n_symbol)
+            lines.append(json.dumps(obj, ensure_ascii=False))
+        lines.append(CONTEXT_BLOCK_FOOTER)
+        return "\n".join(lines)
 
     def _has_target_problem(self, tran) -> bool:
         """按问题类型白名单 + 译文有效性过滤，统一各修复轮筛选口径。"""
@@ -129,6 +216,15 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             self.pj_config.getKey("gpt.numPerRequestBetter"),
             num_pre_request or 100,
         )
+        context_lines = (
+            self._resolve_problem_context_lines()
+            if self._include_problem_context
+            else 0
+        )
+        if context_lines > 0:
+            LOGGER.info(
+                f"{self._log_tag} {filename} 附带问题句上下文：前后各 {context_lines} 句"
+            )
         total_batches = (total + num_per_request - 1) // num_per_request
         fix_count = 0
         _mode_note = "（单轮模式，每批独立完整请求）" if use_single_round else ""
@@ -152,6 +248,12 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                 problem_types=self._effective_problem_types(),
                 include_src=self._include_src,
             )
+            if context_lines > 0:
+                context_block = self._build_problem_context_block(
+                    batch, n_symbol, self._include_src, context_lines
+                )
+                if context_block:
+                    input_src = context_block + "\n" + input_src
             if use_single_round:
                 # 单轮模式：每批独立完整请求（与多轮首轮同口径），不带会话历史
                 is_first_round = True
@@ -478,6 +580,7 @@ class BaseProblemFixRound(BaseSparseFixRound):
 
     _inject_problem = True
     _include_src = True
+    _include_problem_context = True
 
     def _apply_better_result(
         self, tran, current_dst: str, normalized: str, line_id: int

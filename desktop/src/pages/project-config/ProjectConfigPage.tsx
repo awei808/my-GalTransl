@@ -109,6 +109,14 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "修复轮结果自动交换当前译文",
     hint: "开启后，修复轮（brfix/jpfix）生成的备选译文会与当前译文交换属性：修复结果直接覆盖当前译文（校对结果优先，否则初译），原译文存入备选译文可在校对页回退。关闭时修复结果仅作为备选译文，需手动交换。",
   },
+  "common.gpt.fixIncludeContext": {
+    label: "修复/复核轮附带问题句上下文",
+    hint: "开启后，问题修复轮（fix/brfix/jpfix/banfix）与二次复核轮（semcheckagain/tonecheckagain/verbosecheckagain）在输入最前附带问题句的前后上下文（原文+译文；换行修复等纯译文修复模式下仅附译文），帮助 AI 理解剧情衔接与语气、降低误判。上下文行仅供理解，AI 不会对它们输出结果。",
+  },
+  "common.gpt.fixContextLines": {
+    label: "上下文条数",
+    hint: "每个问题句前后各取 N 句作为上下文；相邻问题句的上下文会去重合并、不重复计入。0 表示不附带。条数越大上下文越充分，但每次请求消耗的 token 也越多。",
+  },
   "common.gpt.numPerRequestSemCheck": {
     label: "语义检测每批句数",
     hint: "单次语义判定请求发送的句子数，越小越稳但越慢，避免一次发送过多导致质量下降。",

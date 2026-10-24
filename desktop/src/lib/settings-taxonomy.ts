@@ -151,6 +151,8 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.gpt.enableProblemInject",
           "common.gpt.problemInjectTypes",
           "common.gpt.swapFixToCurrent",
+          "common.gpt.fixIncludeContext",
+          "common.gpt.fixContextLines",
         ],
       },
       {

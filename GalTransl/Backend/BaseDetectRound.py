@@ -218,6 +218,17 @@ class BaseDetectRound(BaseImproveRound):
         batches, metadata_grouped = self._split_into_batches(
             filename, targets, num_per_request
         )
+        # 复核轮命中句稀疏、批次内不连续：按配置附带问题句前后上下文；
+        # 首轮批次按连续区间划分、上下文天然在场，不注入
+        context_lines = (
+            self._resolve_problem_context_lines()
+            if self._round_kind == "review"
+            else 0
+        )
+        if context_lines > 0:
+            LOGGER.info(
+                f"{self._log_tag} {filename} 复核输入附带上下文：前后各 {context_lines} 句"
+            )
         total_batches = len(batches)
         stats: dict = {
             "hit": 0,
@@ -249,6 +260,12 @@ class BaseDetectRound(BaseImproveRound):
                 include_src=True,
                 extra_problem_attr=self._extra_problem_attr,
             )
+            if context_lines > 0:
+                context_block = self._build_problem_context_block(
+                    batch, n_symbol, True, context_lines
+                )
+                if context_block:
+                    input_src = context_block + "\n" + input_src
             prepared = self._build_batch_user_content(batch, ctx, input_src, stats)
             if prepared is None:
                 self._log_batch_skipped(filename, batch, batch_no, total_batches)
