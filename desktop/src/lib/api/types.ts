@@ -389,7 +389,8 @@ export type TTFTStatus =
   | "WAITING"
   | "FIRST_TOKEN"
   | "RETRYING"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "COMPLETED";
 
 /** 单个 worker 当前请求的流式首字状态与首字响应时间 */
 export type TTFTPreview = {

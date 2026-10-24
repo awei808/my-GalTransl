@@ -115,6 +115,7 @@ class TTFTStatus:
     FIRST_TOKEN = "FIRST_TOKEN"  # 已收到首字（正文首片到达）
     RETRYING = "RETRYING"    # 限流/异常触发重试中
     CANCELLED = "CANCELLED"  # 任务整体取消
+    COMPLETED = "COMPLETED"  # 上一次请求成功完成（ttft_ms/model 保留供前端展示「已完成+耗时」）
 
 
 @dataclass(slots=True)
@@ -658,8 +659,8 @@ def set_ttft_state(
     """更新指定 worker 当前请求的流式首字状态灯。
 
     由 BaseEngine.ask_chatbot() 在流式生命周期关键点调用：
-    WAITING（发起请求）→ FIRST_TOKEN（首字到达，附 ttft_ms）→ RETRYING/CANCELLED，
-    成功后复位 IDLE（清空 ttft_ms 与 model）。非 worker 上下文（worker_id="-1"）不写入。
+    WAITING（发起请求）→ FIRST_TOKEN（首字到达，附 ttft_ms）→ COMPLETED（成功，保留 ttft_ms
+    与 model 供前端展示「已完成+耗时」）/ RETRYING / CANCELLED。非 worker 上下文（worker_id="-1"）不写入。
     """
     worker_id = worker_id or WORKER_ID_CTX.get()
     if not worker_id or worker_id == "-1":

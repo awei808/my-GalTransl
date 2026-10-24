@@ -26,6 +26,7 @@ import type {
   ModelCheckResult,
   ProjectRuntimeResponse,
   TranslatorOption,
+  TTFTPreview,
 } from "../../lib/api/types";
 
 /* ── 步骤指示器 ── */
@@ -163,6 +164,26 @@ export function TranslateConsole() {
         return "var(--ttft-cancel, #888)";
       default:
         return "var(--ttft-idle, #3a3f4b)";
+    }
+  };
+  // 状态灯文字（badge 正文与 tab 圆点 hover title 共用口径）；COMPLETED 为请求成功
+  // 完成态，ttft_ms 由后端保留。IDLE（尚无条目或任务结束清空后）表示无进行中的请求
+  const ttftText = (t: TTFTPreview | undefined): string => {
+    const status = t?.status ?? "IDLE";
+    const msText = t?.ttft_ms != null ? `首字 ${t.ttft_ms.toFixed(0)}ms` : "";
+    switch (status) {
+      case "WAITING":
+        return "等待首字…";
+      case "RETRYING":
+        return "重试中…";
+      case "FIRST_TOKEN":
+        return msText;
+      case "COMPLETED":
+        return msText ? `已完成 · ${msText}` : "已完成";
+      case "CANCELLED":
+        return "已取消";
+      default:
+        return "空闲";
     }
   };
   // 多 worker 并发时按 worker_id 隔离的最新结果预览快照（key 为 worker 标识）；
@@ -787,6 +808,7 @@ export function TranslateConsole() {
                     >
                       <span
                         class="ttft-dot"
+                        title={ttftText(ttftOf(wid))}
                         style={{ background: ttftColor(ttftOf(wid)?.status ?? "IDLE") }}
                       />
                       Worker {Number(wid) + 1}
@@ -803,20 +825,15 @@ export function TranslateConsole() {
                   {activePromptSnapshot()?.batch ? ` · 批次 ${activePromptSnapshot()?.batch}` : ""}
                   <Show when={ttftOf(activePromptWorkerId())} keyed>
                     {(t) => (
-                      <span class="ttft-badge" title="首字响应时间 Time To First Token">
+                      <span
+                        class="ttft-badge"
+                        title="首字响应时间 Time To First Token；完成后显示最近一次首字耗时"
+                      >
                         <span
                           class="ttft-dot ttft-dot--sm"
                           style={{ background: ttftColor(t.status) }}
                         />
-                        {t.status === "FIRST_TOKEN" && t.ttft_ms != null
-                          ? ` 首字 ${t.ttft_ms.toFixed(0)}ms`
-                          : t.status === "WAITING"
-                          ? " 等待首字…"
-                          : t.status === "RETRYING"
-                          ? " 重试中…"
-                          : t.status === "CANCELLED"
-                          ? " 已取消"
-                          : ""}
+                        {" "}{ttftText(t)}
                       </span>
                     )}
                   </Show>

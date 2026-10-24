@@ -1652,11 +1652,11 @@ class BaseEngine:
                         reasoning=reasoning_result,
                         ttft_ms=_ttft_ms,
                     )
-                # 请求成功返回：该 worker 当前无进行中请求，状态灯复位 IDLE（ttft_ms 清 None）
+                # 请求成功返回：进入完成态，ttft_ms/model 沿用继承逻辑保留，供前端展示「已完成 + 耗时」
                 try:
                     if _pj_dir:
                         set_ttft_state(
-                            _pj_dir, "IDLE", worker_id=WORKER_ID_CTX.get(),
+                            _pj_dir, "COMPLETED", worker_id=WORKER_ID_CTX.get(),
                         )
                 except Exception:
                     pass

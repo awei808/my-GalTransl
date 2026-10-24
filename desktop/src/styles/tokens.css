@@ -55,6 +55,12 @@
   --color-diff-added: rgba(16, 185, 129, 0.2);
   --color-diff-removed: rgba(239, 68, 68, 0.2);
   --color-diff-changed: rgba(245, 158, 11, 0.2);
+
+  /* --- TTFT 状态灯（翻译控制台提示词面板；浅色取值与组件内联 fallback 一致） --- */
+  --ttft-waiting: #f0a020;
+  --ttft-ok: #2ec26a;
+  --ttft-cancel: #888888;
+  --ttft-idle: #3a3f4b;
 }
 
 /* --- 深色模式 --- */
@@ -98,6 +104,12 @@
   --color-diff-added: rgba(52, 211, 153, 0.2);
   --color-diff-removed: rgba(248, 113, 113, 0.2);
   --color-diff-changed: rgba(251, 191, 36, 0.2);
+
+  /* --- TTFT 状态灯：灰系两档提亮保证深底可辨（waiting/ok 本身鲜艳，沿用浅色值） --- */
+  --ttft-waiting: #f0a020;
+  --ttft-ok: #2ec26a;
+  --ttft-cancel: #7d8590;
+  --ttft-idle: #9da7b5;
 }
 
 /* ==========================================
