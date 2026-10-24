@@ -58,7 +58,7 @@ export interface TaxonomySection {
  * 分区顺序（用户 2026-08-05 指定）：
  *   目标语言 → 翻译规范文件 → 翻译后端总设置 → 翻译后端-全局提示词（含游戏外部信息）
  *   → 翻译后端-文件/批次元数据提取 → 翻译后端-对话翻译（占位）
- *   → 翻译后端-修复改进 → 问题检测 → 代理 → 缓存与日志 → 字典 → 后端专属 → 其他设置
+ *   → 翻译后端-修复改进 → 问题检测 → 代理 → 缓存与重翻 → 字典 → 插件 → 其他设置
  */
 export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   {
@@ -75,7 +75,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端总设置",
-    desc: "翻译主流程的总开关：接口并发、提示词与规范、换行符等。",
+    desc: "翻译主流程的总开关：并发文件数、调度顺序与定时启动。",
     subsections: [
       {
         title: "",
@@ -83,7 +83,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.workersPerProject",
           "common.autoAdjustWorkers",
           "common.sortBy",
-          "common.linebreakSymbol",
+          "common.start_time",
         ],
       },
     ],
@@ -154,7 +154,8 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
       {
-        title: "语义差异检测/二次复核/色彩检查/色彩复核/冗长检测/冗长复核（ForSemCheck / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain / ForVerboseCheck / ForVerboseCheckAgain）",
+        // 覆盖 ForSemCheck/ForSemCheckAgain/ForToneCheck/ForToneCheckAgain/ForVerboseCheck/ForVerboseCheckAgain 六类检测轮
+        title: "检测轮分批（语义/色彩/冗长）",
         keys: [
           "common.gpt.numPerRequestSemCheck",
           "common.gpt.numPerRequestToneCheck",
@@ -167,16 +168,8 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-完整流水线",
-    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、翻译后处理后端、术语表生成与容错策略，以及各阶段独立开关。",
+    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、翻译后处理后端与各阶段独立开关。",
     subsections: [
-      {
-        title: "",
-        keys: [
-          "internals.pipeline.forceRegenDic",
-          "internals.pipeline.abortOnDicFailure",
-          "internals.pipeline.forceRegenPlotRoute",
-        ],
-      },
       {
         title: "全局分析（路线分片+汇总）",
         keys: [
@@ -184,6 +177,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.globalanalysis.maxRouteInputChars",
           "internals.globalanalysis.routeParallelism",
           "internals.globalanalysis.forceRegenRouteAnalysis",
+          "internals.pipeline.forceRegenGlobal",
         ],
       },
       {
@@ -216,6 +210,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.hLevels.tension",
           "internals.hLevels.intimate",
           "internals.hLevels.explicit",
+          "common.skipH",
           "internals.hForbiddenWords.enabled",
           "internals.hForbiddenWords.limit",
         ],
@@ -226,11 +221,13 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-术语表（GenDic）",
-    desc: "GPT 字典生成（GenDic 引擎）的参数：terms 词表模式的提取与翻译行为。",
+    desc: "GPT 字典生成（GenDic 引擎）的参数：terms 词表模式的提取与翻译行为，含强制重生与失败中止开关。",
     subsections: [
       {
         title: "",
         keys: [
+          "internals.pipeline.forceRegenDic",
+          "internals.pipeline.abortOnDicFailure",
           "internals.gendic.mode",
           "internals.gendic.llm_chunk_size",
           "internals.gendic.batch_size",
@@ -250,6 +247,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
       {
         title: "",
         keys: [
+          "internals.pipeline.forceRegenPlotRoute",
           "internals.plotroute.routeMode",
           "internals.plotroute.structureType",
           "internals.plotroute.userOutline",
@@ -274,19 +272,12 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
     ],
   },
   {
-    title: "缓存",
-    desc: "缓存节奏、日志级别与容错开关。",
+    title: "缓存与重翻",
+    desc: "缓存保存节奏与重启重翻控制。",
     subsections: [
       {
         title: "",
-        keys: [
-          "common.save_steps",
-          "common.start_time",
-          "common.retranslFail",
-          "common.retranslKey",
-          "common.skipH",
-          "common.smartRetry",
-        ],
+        keys: ["common.save_steps", "common.retranslFail", "common.retranslKey"],
       },
     ],
   },
@@ -301,6 +292,8 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "dictionary.preDict",
           "dictionary.postDict",
           "dictionary.gpt.dict",
+          "dictionary.forbiddenDictH",
+          "dictionary.forbiddenDictNonH",
           "dictionary.usePreDictInName",
           "dictionary.usePostDictInName",
           "dictionary.useGPTDictInName",
@@ -311,17 +304,13 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
     ],
   },
   {
-    title: "后端专属",
-    desc: "由程序全局「API 配置」统一管理的接口与插件。",
-    subsections: [
-      {
-        title: "插件",
-        keys: [
-          "plugin.filePlugin",
-          "plugin.textPlugins",
-          "plugin.file_galtransl_json.output_with_src",
-        ],
-      },
+    title: "插件",
+    desc: "文件/文本处理插件与输出选项。接口类配置由程序全局「API 配置」统一管理，不在此列。",
+    subsections: [],
+    keys: [
+      "plugin.filePlugin",
+      "plugin.textPlugins",
+      "plugin.file_galtransl_json.output_with_src",
     ],
   },
   // 显式「其他设置」：低频/历史遗留键的归置处（区别于 classifyKeys 对

@@ -63,9 +63,7 @@ common:
 
   save_steps: 1 # 每处理n个批次保存一次缓存；值越大保存更少、速度可能更快。[1-999]
   start_time: "" # 定时启动时间（24小时制，如00:30）；留空表示立即启动。[00:00-23:59]
-  linebreakSymbol: "auto" # JSON内换行符类型，供问题检测/自动修复使用，不改变翻译语义。
   skipH: false # 是否跳过可能触发敏感词检测的句子。[True/False]
-  smartRetry: True # 解析失败时自动缩小批次并重置上下文，减少无效重试。[True/False]
   retranslFail: false # 程序重启时是否自动重翻标记为"(Failed)"的句子。[True/False]
   retranslKey: # 在下方添加需要重翻的关键字，匹配原文/译文/problem 中的子串；留空不重翻。
     #- "翻译失败" # 启动时重翻命中“翻译失败”的句子
@@ -131,6 +129,7 @@ internals:
     enablePlotRoute: true         # 阶段4 剧情路线图 [True/False]
     forceRegenPlotRoute: false    # 是否强制重新生成剧情路线图（即使已存在）[True/False]
     enableGlobalPrompt: true      # 阶段5 全局游戏分析（路线分片汇总，无路线图时回退全文分析）[True/False]
+    forceRegenGlobal: false       # 是否强制重算全局分析（即使产物已存在也整体重新生成；globalanalysis.forceRegenRouteAnalysis 只重算分片）[True/False]
     enableBatchMeta: true         # 阶段6 批次级元数据 [True/False]
     enableTranslate: true         # 阶段7 翻译执行 [True/False]
     enableImprove: true           # 阶段8 修复和改进译文（后处理，按 gpt.afterTranslation 顺序执行）[True/False]

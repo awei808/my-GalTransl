@@ -123,7 +123,7 @@ describe("settings-taxonomy 检测轮批次划分组", () => {
     );
     expect(section).toBeDefined();
     const sub = (section?.subsections ?? []).find((x) =>
-      x.title.includes("语义差异检测"),
+      x.title.includes("检测轮"),
     );
     expect(sub).toBeDefined();
     for (const key of DETECT_KEYS) {
@@ -213,5 +213,169 @@ describe("settings-taxonomy 其他设置组", () => {
       ...s.subsections.flatMap((sub) => sub.keys),
     ]);
     expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+describe("settings-taxonomy 缓存与重翻组", () => {
+  it("save_steps/retranslFail/retranslKey 已声明在「缓存与重翻」组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "缓存与重翻",
+    );
+    expect(section).toBeDefined();
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    for (const key of [
+      "common.save_steps",
+      "common.retranslFail",
+      "common.retranslKey",
+    ]) {
+      expect(keys).toContain(key);
+    }
+  });
+
+  it("调度/敏感句/死键不再归入缓存组", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "缓存与重翻",
+    );
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    for (const key of ["common.start_time", "common.skipH", "common.smartRetry"]) {
+      expect(keys).not.toContain(key);
+    }
+  });
+});
+
+describe("settings-taxonomy 调度键归位", () => {
+  it("start_time 已声明在「翻译后端总设置」中，linebreakSymbol 不再声明", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端总设置",
+    );
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    expect(keys).toContain("common.start_time");
+    // linebreakSymbol 为死键（getlbSymbol 定义后全仓无调用），不声明、由隐藏清单接管
+    expect(keys).not.toContain("common.linebreakSymbol");
+  });
+
+  it("classifyKeys 将 start_time 归入总设置而非未归类设置", () => {
+    const { groups, unclassified } = classifyKeys(["common.start_time"]);
+    const group = groups.find((g) => g.section.title === "翻译后端总设置");
+    const keys = (group?.subsections ?? []).flatMap((s) => s.keys);
+    expect(keys).toContain("common.start_time");
+    expect(unclassified).not.toContain("common.start_time");
+  });
+});
+
+describe("settings-taxonomy H 档位组", () => {
+  it("skipH 已声明在「H 档位阈值与禁用词」子组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-完整流水线",
+    );
+    const sub = (section?.subsections ?? []).find((x) =>
+      x.title.includes("H 档位"),
+    );
+    expect(sub).toBeDefined();
+    expect(sub?.keys).toContain("common.skipH");
+  });
+
+  it("classifyKeys 将 skipH 归入完整流水线而非未归类设置", () => {
+    const { groups, unclassified } = classifyKeys(["common.skipH"]);
+    const group = groups.find(
+      (g) => g.section.title === "翻译后端-完整流水线",
+    );
+    const keys = (group?.subsections ?? []).flatMap((s) => s.keys);
+    expect(keys).toContain("common.skipH");
+    expect(unclassified).toEqual([]);
+  });
+});
+
+describe("settings-taxonomy 强制重生/中止键归位", () => {
+  it("forceRegenDic/abortOnDicFailure 已声明在「翻译后端-术语表（GenDic）」组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-术语表（GenDic）",
+    );
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    expect(keys).toContain("internals.pipeline.forceRegenDic");
+    expect(keys).toContain("internals.pipeline.abortOnDicFailure");
+  });
+
+  it("forceRegenPlotRoute 已声明在「翻译后端-剧情路线图」组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-剧情路线图",
+    );
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    expect(keys).toContain("internals.pipeline.forceRegenPlotRoute");
+  });
+
+  it("三个键不再出现在「翻译后端-完整流水线」", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-完整流水线",
+    );
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    expect(keys).not.toContain("internals.pipeline.forceRegenDic");
+    expect(keys).not.toContain("internals.pipeline.abortOnDicFailure");
+    expect(keys).not.toContain("internals.pipeline.forceRegenPlotRoute");
+  });
+
+  it("forceRegenGlobal 已声明在「全局分析（路线分片+汇总）」子组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端-完整流水线",
+    );
+    const sub = (section?.subsections ?? []).find(
+      (x) => x.title === "全局分析（路线分片+汇总）",
+    );
+    expect(sub?.keys).toContain("internals.pipeline.forceRegenGlobal");
+  });
+
+  it("classifyKeys 不会把四个键落到「未归类设置」", () => {
+    const { unclassified } = classifyKeys([
+      "internals.pipeline.forceRegenDic",
+      "internals.pipeline.abortOnDicFailure",
+      "internals.pipeline.forceRegenPlotRoute",
+      "internals.pipeline.forceRegenGlobal",
+    ]);
+    expect(unclassified).toEqual([]);
+  });
+});
+
+describe("settings-taxonomy 字典组禁用词键", () => {
+  it("forbiddenDictH/NonH 已声明在「字典」组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find((s) => s.title === "字典");
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    expect(keys).toContain("dictionary.forbiddenDictH");
+    expect(keys).toContain("dictionary.forbiddenDictNonH");
+  });
+
+  it("classifyKeys 将两键归入字典组而非未归类设置", () => {
+    const { groups, unclassified } = classifyKeys([
+      "dictionary.forbiddenDictH",
+      "dictionary.forbiddenDictNonH",
+    ]);
+    const group = groups.find((g) => g.section.title === "字典");
+    const keys = (group?.subsections ?? []).flatMap((s) => s.keys);
+    expect(keys).toContain("dictionary.forbiddenDictH");
+    expect(keys).toContain("dictionary.forbiddenDictNonH");
+    expect(unclassified).toEqual([]);
+  });
+});
+
+describe("settings-taxonomy 插件组", () => {
+  it("插件键已声明在「插件」组的 directKeys 中（原「后端专属」更名）", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find((s) => s.title === "插件");
+    expect(section).toBeDefined();
+    for (const key of [
+      "plugin.filePlugin",
+      "plugin.textPlugins",
+      "plugin.file_galtransl_json.output_with_src",
+    ]) {
+      expect(section?.keys).toContain(key);
+    }
+    expect(
+      PROJECT_SETTINGS_TAXONOMY.find((s) => s.title === "后端专属"),
+    ).toBeUndefined();
+  });
+
+  it("classifyKeys 将插件键归入插件组而非未归类设置", () => {
+    const { groups, unclassified } = classifyKeys(["plugin.filePlugin"]);
+    const group = groups.find((g) => g.section.title === "插件");
+    expect(group?.directKeys).toContain("plugin.filePlugin");
+    expect(unclassified).toEqual([]);
   });
 });

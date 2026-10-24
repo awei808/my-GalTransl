@@ -75,6 +75,10 @@ const HIDDEN_CONFIG_KEYS = new Set<string>([
   "common.gpt.enableBetterTranslation",
   // 翻译后处理后端：改为「翻译后端-完整流水线」区的数字框专用卡片（有序数组），不入通用列表
   "common.gpt.afterTranslation",
+  // 死键：后端已无任何消费方（smartRetry 消费代码已随 6a38089b 删除；linebreakSymbol
+  // 的 getlbSymbol() 定义后全仓无调用），不再展示；旧配置中的残留值原样保留不丢失
+  "common.smartRetry",
+  "common.linebreakSymbol",
 ]);
 // problemAnalyze 已移回项目设置「问题检测」专用卡片渲染（随保存配置按钮写回 YAML）。
 // 此处仅让该键不出现在通用列表里（避免与专用卡片重复），不再整体隐藏。
@@ -83,6 +87,8 @@ const LIST_OMITTED_KEYS = new Set<string>([
   // 阈值由「问题检测」固定卡片内专属输入框渲染，避免与通用列表重复显示
   "problemAnalyze.avgSentenceLengthThreshold",
   "problemAnalyze.avgSentenceLengthThresholdH",
+  "problemAnalyze.attributiveMaxLength",
+  "problemAnalyze.adverbialMaxLength",
 ]);
 // 暂不在前端暴露的键：gpt.semCheck.* 已随 ForSemCheck 跟随主翻译 profile 而废弃（旧配置残留键一并隐藏）。
 // gpt.contextNum 曾因多轮对话完整保留上下文而移除入口，现随 restoreContextMode=lines 模式恢复暴露。
@@ -232,8 +238,10 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "定时启动时间",
     hint: "留空表示立即启动，格式如 00:30（24 小时制）。",
   },
-  "common.skipH": { label: "跳过敏感句" },
-  "common.smartRetry": { label: "智能重试" },
+  "common.skipH": {
+    label: "跳过敏感句",
+    hint: "开启后翻译时跳过包含敏感词表（H 词表）词条的句子，不送入模型。",
+  },
   "common.retranslFail": { label: "重启时重翻失败句" },
   "common.gpt.contextNum": {
     label: "前文句数",
@@ -270,6 +278,10 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "internals.pipeline.forceRegenDic": { label: "强制重新生成术语表" },
   "internals.pipeline.abortOnDicFailure": { label: "术语表失败即中止" },
+  "internals.pipeline.forceRegenGlobal": {
+    label: "强制重算全局分析",
+    hint: "开启后每次运行都不读全局分析已有产物，整体重新生成（路线分片+汇总）；未开启时产物存在即跳过。",
+  },
   "internals.pipeline.metaMinLines": {
     label: "元数据行数阈值",
     hint: "文件的非空行数小于此值时，不生成文件级/批次级元数据（不调用 AI、不写 pass1/pass2 产物）。0 表示不跳过任何文件。",
@@ -306,6 +318,14 @@ const FIELD_UI: Record<string, FieldUI> = {
   "dictionary.defaultDictFolder": {
     label: "通用字典文件夹",
     hint: "相对于程序目录，也可填绝对路径。",
+  },
+  "dictionary.forbiddenDictH": {
+    label: "H 场景禁用词字典",
+    hint: "字典文件名列表；词库内容在「字典」页的「禁用词」标签页中编辑。",
+  },
+  "dictionary.forbiddenDictNonH": {
+    label: "非 H 场景禁用词字典",
+    hint: "字典文件名列表；词库内容在「字典」页的「禁用词」标签页中编辑。",
   },
   "dictionary.usePreDictInName": { label: "译前字典用于 name 字段" },
   "dictionary.usePostDictInName": { label: "译后字典用于 name 字段" },
@@ -536,9 +556,9 @@ const SECTION_ICONS: Record<string, string> = {
   "翻译后端-剧情路线图": "map",
   问题检测: "alert-triangle",
   代理: "shield",
-  缓存: "save",
+  缓存与重翻: "save",
   字典: "book",
-  后端专属: "cpu",
+  插件: "cpu",
   其他设置: "puzzle",
   未归类设置: "puzzle",
 };
@@ -637,7 +657,7 @@ export function ProjectConfigPage() {
   }
 
   // ── 大分组折叠状态（localStorage 持久化，版本化 key 便于后续增删分区自动失效） ──
-  const PC_COLLAPSE_STORAGE_KEY = "galtransl.project-config.collapse.v1";
+  const PC_COLLAPSE_STORAGE_KEY = "galtransl.project-config.collapse.v2";
 
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set<string>());
 
@@ -2122,8 +2142,8 @@ export function ProjectConfigPage() {
                         {/* 折叠展开由外层 pc-group--collapsed 驱动（grid rows 动画）；搜索态强制展开且不改折叠记录 */}
                         <div class="pc-group-body">
                           <div class="pc-group-body-inner">
-                            {/* 后端专属：OpenAI 兼容接口跳转到全局 API 配置 */}
-                            <Show when={title === "后端专属"}>
+                            {/* 插件组：OpenAI 兼容接口已移交全局 API 配置，提供跳转入口 */}
+                            <Show when={title === "插件"}>
                               <div class="pc-global-banner">
                                 <div class="pc-global-banner__text">
                                   <strong>OpenAI 兼容接口</strong> 的 API 令牌与连接参数已由程序全局「API 配置」统一管理，不再在项目设置中维护。

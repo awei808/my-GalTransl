@@ -162,7 +162,7 @@ describe("ProjectConfigPage 搜索过滤", () => {
     fireEvent.keyDown(title!, { key: "Enter" });
     // 折叠记录未被键盘操作写入
     const stored = JSON.parse(
-      localStorage.getItem("galtransl.project-config.collapse.v1") ?? "[]",
+      localStorage.getItem("galtransl.project-config.collapse.v2") ?? "[]",
     );
     expect(stored).toEqual([]);
     // 清空搜索后分组仍为展开
