@@ -301,6 +301,120 @@ class ContextWindowCacheTests(unittest.TestCase):
         self.assertTrue(result["context_truncated"])
 
 
+class AllFieldsSearchTests(unittest.TestCase):
+    """field=all_fields 全字段检索：内部布尔/字符串字段可搜、数值跳过、matched 封顶。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.project = self._tmp.name
+        entries = [
+            {"index": 0, "pre_src": "こんにちは", "pre_dst": "你好", "name": "創"},
+            {"index": 1, "pre_src": "さようなら", "pre_dst": "再见", "skip_check": True},
+            {"index": 2, "pre_src": "おはよう", "pre_dst": "早上好", "trans_by": "gpt(2)"},
+        ]
+        _write_json(os.path.join(self.project, "transl_cache", "test.json"), entries)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_boolean_field_searchable_as_true(self) -> None:
+        result = search_cache_entries(self.project, "true", field="all_fields")
+        self.assertEqual(result["total"], 1)
+        item = result["results"][0]
+        self.assertEqual(item["matched"][0]["field"], "skip_check")
+        self.assertEqual(item["matched"][0]["snippet"], "true")
+
+    def test_boolean_false_searchable(self) -> None:
+        _write_json(
+            os.path.join(self.project, "transl_cache", "false.json"),
+            [{"index": 0, "pre_src": "x", "skip_check": False}],
+        )
+        result = search_cache_entries(self.project, "false", field="all_fields")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["results"][0]["matched"][0]["field"], "skip_check")
+
+    def test_nested_boolean_field_searchable(self) -> None:
+        _write_json(
+            os.path.join(self.project, "transl_cache", "nested.json"),
+            [{"index": 0, "pre_src": "x", "extra": {"suspected_error": True}}],
+        )
+        result = search_cache_entries(self.project, "true", field="all_fields")
+        fields = {(r["filename"], m["field"]) for r in result["results"] for m in r["matched"]}
+        self.assertIn(("nested.json", "extra.suspected_error"), fields)
+
+    def test_dunder_internal_keys_are_skipped(self) -> None:
+        # 旧版主快照残留的 __cache_key 装着邻句三元组，不得经它误报命中
+        _write_json(
+            os.path.join(self.project, "transl_cache", "legacy.json"),
+            [{"index": 0, "pre_src": "无关文本", "__cache_key": ["隣句ユニーク", "本句", "下一句"]}],
+        )
+        result = search_cache_entries(self.project, "隣句ユニーク", field="all_fields")
+        self.assertEqual(result["total"], 0)
+
+    def test_internal_string_field_searchable(self) -> None:
+        result = search_cache_entries(self.project, "gpt(2)", field="all_fields")
+        self.assertEqual(result["total"], 1)
+        item = result["results"][0]
+        self.assertEqual(item["matched"][0]["field"], "trans_by")
+        self.assertIn("gpt(2)", item["matched"][0]["snippet"])
+        self.assertFalse(item["matched_truncated"])
+
+    def test_numeric_fields_are_skipped(self) -> None:
+        # index 数值不参与匹配，文本中也没有 "1" → 无命中
+        self.assertEqual(search_cache_entries(self.project, "1", field="all_fields")["total"], 0)
+
+    def test_visible_fields_still_match(self) -> None:
+        result = search_cache_entries(self.project, "こんにちは", field="all_fields")
+        self.assertEqual(result["total"], 1)
+        fields = [m["field"] for m in result["results"][0]["matched"]]
+        self.assertIn("pre_src", fields)
+
+    def test_all_fields_result_has_no_match_flags(self) -> None:
+        result = search_cache_entries(self.project, "こんにちは", field="all_fields")
+        item = result["results"][0]
+        for key in ("match_src", "match_dst", "match_problem", "match_speaker"):
+            self.assertNotIn(key, item)
+        self.assertEqual(set(item), {
+            "filename", "index", "speaker", "post_src", "pre_dst",
+            "problem", "trans_by", "matched", "matched_truncated",
+        })
+
+    def test_matched_capped_at_eight(self) -> None:
+        entry: dict = {"index": 0, "pre_src": "x"}
+        for i in range(10):
+            entry[f"note{i}"] = f"备注{i}"
+        _write_json(os.path.join(self.project, "transl_cache", "cap.json"), [entry])
+        result = search_cache_entries(self.project, "备注", field="all_fields")
+        item = result["results"][0]
+        self.assertEqual(len(item["matched"]), 8)
+        self.assertTrue(item["matched_truncated"])
+
+    def test_matched_exactly_at_cap_not_marked_truncated(self) -> None:
+        entry: dict = {"index": 0, "pre_src": "x"}
+        for i in range(8):
+            entry[f"note{i}"] = f"备注{i}"
+        _write_json(os.path.join(self.project, "transl_cache", "exact.json"), [entry])
+        result = search_cache_entries(self.project, "备注", field="all_fields")
+        item = result["results"][0]
+        self.assertEqual(len(item["matched"]), 8)
+        self.assertFalse(item["matched_truncated"])
+
+    def test_max_results_interplay_unchanged(self) -> None:
+        result = search_cache_entries(self.project, "true", field="all_fields", max_results=0)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["results"], [])
+
+    def test_context_windows_combine_with_all_fields(self) -> None:
+        result = search_cache_entries(self.project, "true", field="all_fields", context=1)
+        entries = result["context_windows"][0]["entries"]
+        self.assertEqual([e["is_hit"] for e in entries], [False, True, False])
+
+    def test_regex_mode_snippet(self) -> None:
+        result = search_cache_entries(self.project, r"gpt\(\d\)", field="all_fields", use_regex=True)
+        self.assertEqual(result["total"], 1)
+        self.assertIn("gpt(2)", result["results"][0]["matched"][0]["snippet"])
+
+
 class SearchDictEntriesTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

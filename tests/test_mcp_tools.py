@@ -99,6 +99,10 @@ class ToolDefinitionTests(unittest.TestCase):
             self.assertIn("context", schema["properties"])
             self.assertNotIn("context", schema["required"])
 
+    def test_search_cache_field_enum_includes_all_fields(self) -> None:
+        schema = next(d for d in MCP_TOOL_DEFS if d["name"] == "galtransl_search_cache")["input_schema"]
+        self.assertIn("all_fields", schema["properties"]["field"]["enum"])
+
     def test_unknown_tool_raises_key_error(self) -> None:
         with self.assertRaises(KeyError):
             call_mcp_tool("galtransl_not_exist")
@@ -363,6 +367,13 @@ class SearchToolTests(ProjectFixture):
         self.assertNotIn("context", result)
         self.assertNotIn("context_windows", result)
         self.assertNotIn("context_truncated", result)
+
+    def test_search_cache_all_fields_returns_matched(self) -> None:
+        result = self._call("galtransl_search_cache", query="原文3", field="all_fields")
+        item = result["results"][0]
+        self.assertEqual([m["field"] for m in item["matched"]], ["pre_src"])
+        self.assertIn("原文3", item["matched"][0]["snippet"])
+        self.assertFalse(item["matched_truncated"])
 
     def test_search_scripts_with_context_windows(self) -> None:
         result = self._call("galtransl_search_scripts", query="脚本行1", context=1)

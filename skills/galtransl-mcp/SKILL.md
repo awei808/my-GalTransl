@@ -109,6 +109,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 - 搜索类 `max_results` 默认 200、硬顶 2000；分页 `limit` 默认 100、硬顶 1000。
 - 禁止全量拉取（整文件、整项目、全部缓存）；禁止用空查询或 `regex: "."` 之类宽正则做枚举式扫描。
+- `field: all_fields` 检索条目全部内部字段，命中面比可见字段检索更广，更应收窄检索词再逐步放宽。
 - 交付给用户的应当是**结论 + 定位**（文件名 + index + 最短必要引文），不是原文/译文堆砌。
 
 ### 6. 前端绿灯 ≠ 授权
@@ -127,7 +128,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 | 工具 | 用途 | 关键参数 |
 |---|---|---|
-| `galtransl_search_cache` | 检索**已入库译文**（原文/译文/问题/说话人），可带前后文窗口 | `query`、`field`(all/src/dst/problem)、`regex`、`context`(命中前后各 N 条，≤20) |
+| `galtransl_search_cache` | 检索**已入库译文**（原文/译文/问题/说话人），可带前后文窗口；`field: all_fields` 可检索条目全部内部字段 | `query`、`field`(all/src/dst/problem/all_fields)、`regex`、`context`(命中前后各 N 条，≤20) |
 | `galtransl_search_scripts` | 检索**原始脚本**（`gt_input`），未跑过翻译也能用，可带前后文窗口 | `query`、`regex`、`context`(命中前后各 N 条，≤20) |
 | `galtransl_search_dict` | 检索**字典词条**（项目字典 + 公共 `Dict/`） | `query`、`direction`(any/jp2zh/zh2jp)、`include_common` |
 | `galtransl_lookup_name` | 查**角色名译名表**（`name替换表.csv/xlsx`） | `name`（传字符串，见注意事项） |
@@ -258,6 +259,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - **大文件**：`read_translation_file` / `read_source_script` 用 `offset`/`limit` 分页，默认每页 100 条（硬顶 1000），不要一次拉全文件。`offset` 传负数从文件末尾倒数（-1=最后一条，如取文件最后几句），返回体 `offset` 为换算后的正值。
 - **上下文窗口（`search_cache` / `search_scripts` 的 `context`）**：命中按文件合并成连续区间返回（相邻命中的邻域不重复）；窗口条目仅含 序号(`index`)/说话人/生效译文（脚本为原文 `message`）与 `is_hit` 标记，`index` 与命中结果同口径（条目自身 index 字段，缺失时回退数组下标）。全部窗口条目共享 1000 条预算，放不下时 `context_truncated=true`；`total`/`truncated` 仍只统计命中。上下文条目不占 `max_results`，开大 `context` 时应调小 `max_results`。注意缓存条目的 `index` 字段与 `read_*` 的 `offset`（数组下标）是两套定位符，index 有偏移的项目里不要互相换算。
 - **返回字段易误读**：`search_cache` 结果里的 `post_src` 实际装的是**页面可见原文**（`pre_src` 优先），`pre_dst` 装的是 `pre_dst`/`pre_zh`/`proofread_dst` 首个非空；这与 `read_translation_file` 返回的原始条目字段口径**不同**，不要混用。`search_dict` 结果的检索词/替换词键名是 `src`/`dst`，另有 `origin`（project/common）与 `category`（pre/gpth/gptnh/gpt/post/forbiddenh/forbiddennh）。
+- **`all_fields` 全字段检索**（`search_cache` 的 `field: "all_fields"`）：递归匹配条目全部文本字段与布尔标记（布尔按 `true`/`false` 小写匹配，如定位跳过检查的条目用 query `"true"`）；数值字段（`index`）与 `__` 开头的内部键（如旧快照残留的 `__cache_key`）不参与匹配。命中条目**不返回 `match_*` 标志**，改为 `matched`（字段路径 + 命中片段，封顶 8 个，超出时 `matched_truncated: true`）；可与其他取值一样组合 `context` 上下文窗口。检索范围含内部字段，H 纪律同 §1。
 - **`list_problems` 的 `problem_type` 是正则关键词**，不是枚举值（留空时用 `.+` 命中所有非空 `problem`）；完整枚举清单看返回体里的 `available_problem_types`。
 - **`lookup_name` 的 `name` 在 schema 里声明为 `string`**（实现虽容忍数组，但按 schema 校验的客户端会拒绝）：请传单个字符串、多次调用。
 - **`get_project_metadata` / `read_*` 的 `filename` 只传裸文件名**（不带路径、不带 `.meta.json`/`.batch.json` 后缀；`read_glossary` 的 `filename` 传字典文件名，如 `项目GPT字典.txt`）。`save_metadata` 的 `filename` 有穿越校验，但同样只应传裸文件名。

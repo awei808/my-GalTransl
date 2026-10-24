@@ -30,6 +30,9 @@ HARD_MAX_RESULTS = 2000
 CONTEXT_MAX = 20
 CONTEXT_ENTRY_BUDGET = 1000
 
+# field=all_fields 时单条命中最多返回的匹配字段数（超出置 matched_truncated，防宽查询点亮全部字段）
+_ALL_FIELDS_MATCH_CAP = 8
+
 # 字典载荷的列表键 -> parse_dict_line 类别（决定该文件行的解析分支）。
 # GPT 字典的 h/非h 细分必须先于 gpt_dict_files 登记，否则会被兜底映射成 "gpt" 而丢失粒度。
 _DICT_CATEGORY_BY_LIST = (
@@ -162,6 +165,33 @@ def _render_script_context_entry(pos: int, entry: Any, is_hit: bool) -> Optional
     }
 
 
+def _iter_entry_bool_fields(obj: Any, prefix: str = "") -> Iterator[Tuple[str, str]]:
+    """递归产出布尔字段（path, "true"/"false"）；`__` 开头的内部键（如 __cache_key）不参与检索。"""
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if str(key).startswith("__"):
+                continue
+            yield from _iter_entry_bool_fields(value, f"{prefix}.{key}" if prefix else str(key))
+    elif isinstance(obj, list):
+        for idx, value in enumerate(obj):
+            yield from _iter_entry_bool_fields(value, f"{prefix}.{idx}" if prefix else str(idx))
+    elif isinstance(obj, bool):
+        yield prefix, "true" if obj else "false"
+
+
+def _iter_entry_searchable_fields(entry: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
+    """条目全字段检索（field=all_fields）的可搜索字段：字符串字段（含列表内字符串）与布尔字段。
+
+    布尔按 "true"/"false" 小写参与匹配（skip_check=true 可直接搜）；数值字段
+    （如 index 定位符）跳过，避免纯数字查询造成全量噪音命中；`__` 开头的内部键
+    （如旧快照残留的 __cache_key）不参与检索，防止经邻句缓存键误报命中。
+    """
+    for path, text in _iter_text_fields(entry):
+        if not path.split(".", 1)[0].startswith("__"):
+            yield path, text
+    yield from _iter_entry_bool_fields(entry)
+
+
 def search_cache_entries(
     project_dir: str,
     query: str,
@@ -179,9 +209,11 @@ def search_cache_entries(
     Args:
         project_dir: 项目根目录绝对路径。
         query: 检索词（非空才检索）。
-        field: all / src / dst / problem 之一；all 时四类字段任一命中即计入。
+        field: all / src / dst / problem / all_fields 之一；all 时四类可见字段任一命中即计入。
+            all_fields 时递归检索条目 JSON 的全部文本字段与布尔标记（skip_check=true 可直接搜，
+            数值字段跳过），命中条目以 matched（字段路径+片段）替代 match_* 标志返回。
         use_regex: True 时 query 按正则解释，编译失败抛 re.error。
-        max_results: 返回条数上限，收敛到 [1, HARD_MAX_RESULTS]。
+        max_results: 返回条数上限，收敛到 [0, HARD_MAX_RESULTS]；0 表示不返回结果（total 照常统计）。
         context: 每个命中附带前后各 N 条上下文窗口（收敛到 [0, CONTEXT_MAX]，默认 0）。
             窗口按文件内合并后的连续区间返回，条目仅含 序号(index)/说话人/生效译文
             与 is_hit 标记；全部窗口条目共享 CONTEXT_ENTRY_BUDGET 预算，超限截断。
@@ -234,8 +266,36 @@ def search_cache_entries(
                     or entry.get("proofread_dst", "")
                     or entry.get("proofread_zh", "")
                 )
-                problem_text = entry.get("problem", "")
                 raw_name = entry.get("name", "") or entry.get("names", "")
+                if field == "all_fields":
+                    # 全字段检索：递归匹配文本与布尔标记；可见原文/译文仍随结果返回便于定位
+                    matched_items: List[Dict[str, Any]] = []
+                    matched_truncated = False
+                    for path, text in _iter_entry_searchable_fields(entry):
+                        if not matcher(text):
+                            continue
+                        if len(matched_items) >= _ALL_FIELDS_MATCH_CAP:
+                            matched_truncated = True
+                            break
+                        matched_items.append({"field": path, "snippet": _meta_snippet(text, query, use_regex)})
+                    if not matched_items:
+                        continue
+                    total += 1
+                    if len(results) < limit:
+                        results.append({
+                            "filename": rel,
+                            "index": entry.get("index", pos),
+                            "speaker": raw_name,
+                            "post_src": src_text,
+                            "pre_dst": dst_text,
+                            "problem": entry.get("problem", ""),
+                            "trans_by": entry.get("trans_by", ""),
+                            "matched": matched_items,
+                            "matched_truncated": matched_truncated,
+                        })
+                    file_hit_positions.append(pos)
+                    continue
+                problem_text = entry.get("problem", "")
                 speaker_text = _speaker_of(raw_name)
                 match_src = bool(matcher(src_text))
                 match_dst = bool(matcher(dst_text))

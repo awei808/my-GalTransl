@@ -2148,7 +2148,16 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
         {
             "project_dir": _PROJECT_PROP,
             "query": _QUERY_PROP,
-            "field": {"type": "string", "enum": ["all", "src", "dst", "problem"], "description": "检索字段，默认 all"},
+            "field": {
+                "type": "string",
+                "enum": ["all", "src", "dst", "problem", "all_fields"],
+                "description": (
+                    "检索字段，默认 all。all_fields=递归检索条目 JSON 的全部文本字段与布尔标记"
+                    "（含 skip_check/alt_dst/suspected_error/trans_by 等内部字段；布尔按 true/false 匹配，"
+                    "如搜 skip_check 用 query \"true\"；数值字段不参与匹配），命中条目以 matched"
+                    "（字段路径+命中片段）替代 match_* 标志。all_fields 含内部字段，H 纪律同 SKILL §1。"
+                ),
+            },
             "regex": _REGEX_PROP,
             "max_results": _MAX_RESULTS_PROP,
             "context": _CONTEXT_PROP,
