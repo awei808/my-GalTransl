@@ -992,7 +992,10 @@ export function TranslateConsole() {
               {/* 流程说明 */}
               <Match when={panelTab() === "flow"}>
                 <div class="panel-content panel-content--scroll flow-view">
-                  <p class="flow-intro">翻译项目全流程</p>
+                  <p class="flow-intro">
+                    翻译项目全流程
+                    <GuideLink guide="01-getting-started.md" label="详细操作见指南" />
+                  </p>
                   <ol class="flow-list">
                     <li><b>准备数据</b>：导入文件，本步在创建项目时已完成</li>
                     <li><b>压缩文本</b>：把 JSON 压缩成对话格式。本步在创建项目时已完成</li>
@@ -1002,7 +1005,18 @@ export function TranslateConsole() {
                     <li><b>划分区间</b>：把文件按剧情拆成几个批次并生成批次级提示词。跳过本步将按照项目设置的每次请求句数来进行下步。可使用后端ForBatchMetaData完成或人工创建</li>
                     <li><b>翻译执行</b>：逐文件、逐批次交给 AI 翻译，注入全局、文件级、批次级提示词提高翻译效果（若有）。使用后端ForGalJsonTranslate完成</li>
                     <li><b>翻译后处理（AI 初步批量处理）</b>：完整流水线翻译完成后，按项目设置「AI 初步处理后端」(gpt.afterTranslation，有序数组) 逐文件按顺序执行：基本问题处理（换行修复、残留日文修复、禁用词修复、统一问题修复）、修正翻译风格（改进轮，给出备选译文）、词语色彩一致性检查（tonecheck，对照色彩基准标记色彩不符句——优先批次区间「用词色彩」标注，无标注时对照原文语气，不改译文）与色彩命中句二次复核（tonecheckagain，撤销误报，需先执行 tonecheck 产生标记）、节奏冗长检测（verbosecheck，标记同义重复/垫词堆砌/重复陈述的冗长句，不改译文；可选，默认不启用）与冗长命中句二次复核（verbosecheckagain，撤销误报，需先执行 verbosecheck 产生标记）、标注疑似错误（semcheck，标记疑似错译/漏译/串行）与命中句二次复核（semcheckagain，撤销误报，需先执行 semcheck 产生标记）；也可直接选后端 ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain / ForVerboseCheck / ForVerboseCheckAgain 手动执行。元数据、翻译执行、AI 初步处理三个大阶段还可在项目设置中各自接入不同的 API 配置（common.stageBackends）。</li>
-                    <li><b>校对审核</b>：你在界面里逐条检查、修改译文。</li>
+                    <li>
+                      <b>校对审核</b>：在「校对审核」页面逐条检查、修改译文，常用三类手段：
+                      <ul>
+                        <li><b>格式与规则类问题</b>：用「只看问题句」筛出换行位置异常、单句过长等标记句逐条修正；也可再跑对应修复后端自动改（未在流水线启用时可单独运行）。</li>
+                        <li><b>单句问题 AI 判定与修正</b>：检查疑似错误（semcheck）、节奏冗长（verbosecheck）、用词色彩（tonecheck）等 AI 标记，结合备选译文一键交换，或用「AI 精修」（双击条目空白处）修正。</li>
+                        <li>
+                          <b>角色一致性核对</b>：人工或接入外置 Agent（dsh），对照元数据中的角色形象、语气、说话风格，检查同一角色前后语气是否统一并修正。
+                          <GuideLink guide="07-mcp.md" label="Agent 指南" />
+                        </li>
+                      </ul>
+                      <GuideLink guide="04-review.md" label="校对指南" />
+                    </li>
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>
                   <p class="flow-note">翻译完成后，到“校对审核”页面检查译文，改好后点“构建输出”即可。</p>

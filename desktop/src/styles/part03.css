@@ -95,6 +95,23 @@
 .flow-list li b {
   color: var(--color-brand-primary);
 }
+.flow-list ul {
+  margin: var(--space-1) 0 0;
+  padding-left: 1.3em;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.flow-list ul li {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+.flow-intro .guide-link,
+.flow-list .guide-link {
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
 .flow-note {
   margin: var(--space-3) 0 0;
   padding: var(--space-2) var(--space-3);
