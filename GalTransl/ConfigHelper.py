@@ -137,7 +137,7 @@ class CProblemType(Enum):
     疑似错误 = 19  # 本地/外部 AI 语义差异检测：原文与译文语义极大差异（疑似错译/漏译/串行）
     词语色彩不一致 = 20  # AI 词语色彩检查：译文用词色彩与色彩基准明显不符（基准优先为批次区间的用词色彩标注，无标注时对照原文语气；ForToneCheck 产出，ForToneCheckAgain 可复核）
     节奏单一 = 21  # 换行前后相邻两行严格等长、均 >14 字且均不含中英文标点（长句被等长拆开，疑似为对齐行宽注水；启发式，可能误检刻意对仗/排比）
-    节奏冗长 = 22  # AI 节奏冗长检测：译文信息量未增加却被同义重复、垫词堆砌、重复陈述或过度解释撑大，读起来拖沓（ForVerboseCheck 产出，ForVerboseCheckAgain 可复核）
+    节奏冗长 = 22  # AI 节奏冗长检测：译文信息量未增加却被同源二译、无源增补或跨行重复撑大，读起来拖沓（ForVerboseCheck 产出，ForVerboseCheckAgain 可复核）
 
 
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:

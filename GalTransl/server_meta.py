@@ -42,7 +42,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "疑似错误", "description": "AI 语义检测（ForSemCheck）判定原文与译文语义存在极大差异（疑似错译/漏译/译文串行），可由 ForSemCheckAgain 二次复核确认/撤销。"},
     {"name": "词语色彩不一致", "description": "AI 词语色彩检查（ForToneCheck）判定译文用词色彩与色彩基准明显不符（基准优先为批次区间的用词色彩标注，无批次元数据或该批无标注时对照原文语气），标记不改译文；可由 ForToneCheckAgain 二次复核确认/撤销，或由统一问题修复按该方向调整。"},
     {"name": "节奏单一", "description": "换行前后相邻两行严格等长、均超过 14 字且均不含中英文标点（长句被等长拆开，疑似为对齐行宽添加冗余措辞），断行节奏呆板。（启发式检测，可能误检刻意对仗/排比的句子）"},
-    {"name": "节奏冗长", "description": "AI 节奏冗长检测（ForVerboseCheck）判定译文信息量未增加，却被同义重复、无信息量的垫词、重复陈述或过度解释撑大，读起来拖沓；标记不改译文，可由 ForVerboseCheckAgain 二次复核确认/撤销。与「节奏单一」互补：后者按相邻行等长启发式判定。"},
+    {"name": "节奏冗长", "description": "AI 节奏冗长检测（ForVerboseCheck）判定译文信息量未增加，却被同源二译（同一原文成分被两处译出）、无源增补（原文没有的加料）或跨行重复撑大，读起来拖沓；标记不改译文，可由 ForVerboseCheckAgain 二次复核确认/撤销。与「节奏单一」互补：后者按相邻行等长启发式判定。"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)

@@ -2,7 +2,7 @@
 """ForVerboseCheck 节奏冗长检测的单元测试。
 
 覆盖：
-  - _parse_fix_response：按 id 稀疏解析（id/可选 reason），命中句置 verbose_issue（占位 reason 归一为 "1"）
+  - _parse_fix_response：按 id 稀疏解析（id/可选 reason），命中句置 verbose_issue（占位/无证据 reason 直接丢弃）
   - find_problems 认领：verbose_issue 非空 → 输出「节奏冗长」（reason 附带展示；半角逗号归一）
   - batch_translate：禁用降级跳过（保留旧标记）；启用时清旧标记（幂等）并写新标记
   - 分批：优先 gpt.numPerRequestVerboseCheck，回退 numPerRequestSemCheck / numPerRequestBetter / 实参
@@ -71,7 +71,7 @@ class ParseVerboseJsonlineTests(unittest.TestCase):
     """首轮稀疏解析：reason 必须带可在 dst 中核对的「…」片段（_reason_evidence_required）。
 
     无片段证据的命中不写标记——前端会显示成「没有原因的节奏冗长」，无法人工复核。
-    注意：本类的夹具只代表**解析层容错**，不代表提示词口径（提示词要求同义堆叠的
+    注意：本类的夹具只代表**解析层容错**，不代表提示词口径（提示词要求同源二译的
     A、B 为两处不同文字），故「「非常」/「非常」」这类仍按解析层行为断言。
     """
 
@@ -127,35 +127,63 @@ class ParseVerboseJsonlineTests(unittest.TestCase):
         )
         self.assertEqual(trans.verbose_issue, "「同义堆叠：「非常」/「非常」」")
 
-    def test_over_explain_single_adverb_discarded(self) -> None:
-        # 提示词明令「3 字以内一律不算过度解释」，此处机械兜底：
-        # 片段虽然在 dst 里存在，但单个副词属语气补足，不构成过度解释
+    def test_no_src_single_adverb_discarded(self) -> None:
+        # 提示词明令「X 取 4–12 字」不算单个副词，此处机械兜底：
+        # 片段虽然在 dst 里存在，但单个副词属语气补足，不构成无源增补
         parser = _make_parser()
         trans = _trans(9, pre_dst="华恋那边也早已湿透了")
         quality: dict = {}
         hit, _ = parser._parse_fix_response(
-            'ab1|{"id": 9, "reason": "过度解释：「早已」"}', [trans], "\r\n", quality
+            'ab1|{"id": 9, "reason": "无源增补：「早已」"}', [trans], "\r\n", quality
         )
         self.assertEqual((hit, trans.verbose_issue), (0, ""))
         self.assertEqual(quality.get("no_reason"), 1)
 
-    def test_over_explain_long_phrase_kept(self) -> None:
-        # 4 字以上的整块补白仍可判过度解释
+    def test_no_src_long_phrase_kept(self) -> None:
+        # 4 字以上的整块补白仍可判无源增补
         parser = _make_parser()
         trans = _trans(10, pre_dst="我一遍遍地看着她移不开目光")
         parser._parse_fix_response(
-            'ab1|{"id": 10, "reason": "过度解释：「移不开目光」"}', [trans], "\r\n"
+            'ab1|{"id": 10, "reason": "无源增补：「移不开目光」"}', [trans], "\r\n"
         )
-        self.assertEqual(trans.verbose_issue, "过度解释：「移不开目光」")
+        self.assertEqual(trans.verbose_issue, "无源增补：「移不开目光」")
 
-    def test_over_explain_threshold_does_not_affect_synonym(self) -> None:
-        # 幅度门槛只约束「过度解释」；同义堆叠的 2 字片段由提示词 A≠B 约束，解析层不管
+    def test_no_src_threshold_does_not_affect_same_src_pair(self) -> None:
+        # 幅度门槛只约束「无源增补」；同源二译的 2 字片段由提示词 A≠B 约束，解析层不管
         parser = _make_parser()
         trans = _trans(11, pre_dst="非常非常舒服")
         parser._parse_fix_response(
-            'ab1|{"id": 11, "reason": "同义堆叠：「非常」/「非常」"}', [trans], "\r\n"
+            'ab1|{"id": 11, "reason": "同源二译：「非常」/「非常」"}', [trans], "\r\n"
         )
-        self.assertEqual(trans.verbose_issue, "同义堆叠：「非常」/「非常」")
+        self.assertEqual(trans.verbose_issue, "同源二译：「非常」/「非常」")
+
+    def test_src_ref_outside_brackets_passes(self) -> None:
+        # (src:…) 源成分标注在「」外：不参与片段校验，合法命中不被误杀
+        parser = _make_parser()
+        trans = _trans(14, pre_dst="床单的被单瞬间湿透")
+        parser._parse_fix_response(
+            'ab1|{"id": 14, "reason": "同源二译：「床单」/「被单」(src:シーツ)"}',
+            [trans],
+            "\r\n",
+        )
+        self.assertEqual(
+            trans.verbose_issue, "同源二译：「床单」/「被单」(src:シーツ)"
+        )
+
+    def test_src_ref_wrapped_in_brackets_discarded(self) -> None:
+        # 模型把 src 原文也写进「」（照抄格式的常见行为）：日文片段在 dst 中找不到，
+        # 按无证据丢弃（fail-safe 方向）；提示词已明令 (src:…) 内不加「」
+        parser = _make_parser()
+        trans = _trans(15, pre_dst="床单的被单瞬间湿透")
+        quality: dict = {}
+        hit, _ = parser._parse_fix_response(
+            'ab1|{"id": 15, "reason": "同源二译：「床单」/「被单」(src:「シーツ」)"}',
+            [trans],
+            "\r\n",
+            quality,
+        )
+        self.assertEqual((hit, trans.verbose_issue), (0, ""))
+        self.assertEqual(quality.get("no_reason"), 1)
 
     def test_fragment_not_in_dst_discarded(self) -> None:
         # 模型编造片段：dst 里根本没有，说明判定不可信
@@ -275,7 +303,7 @@ class FixSpecTests(unittest.TestCase):
         spec = _FIX_SPECS.get(CProblemType.节奏冗长)
         self.assertIsNotNone(spec)
         self.assertEqual(spec.mode, MODE_SRC_DST)
-        self.assertIn("同义重复", spec.instruction)
+        self.assertIn("同源二译", spec.instruction)
 
 
 class CacheRoundTripTests(unittest.TestCase):

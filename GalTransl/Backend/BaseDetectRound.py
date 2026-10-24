@@ -59,9 +59,9 @@ from GalTransl.Backend.utils import (
 )
 
 
-# reason 片段抽取：提示词口径「形态：「片段1」/「片段2」」。
-# 排除「」内的嵌套「：提示词自己的格式说明就是「形态：「A」/「B」」，模型照抄整段时
-# 会得到「同义堆叠：「A」，把外壳算进片段必然在译文中找不到 → 整条被误判为无证据。
+# reason 片段抽取：提示词口径「类目：「片段1」/「片段2」」。
+# 排除「」内的嵌套「：提示词自己的格式说明就是「同源二译：「A」/「B」」，模型照抄
+# 整段时会得到「同源二译：「A」，把外壳算进片段必然在译文中找不到 → 整条被误判为无证据。
 _FRAGMENT_RE = re.compile(r"「([^「」]*)」")
 
 # 退化日志节流键（(项目目录, 日志前缀)）：实例按文件重建，只能放在模块级
@@ -107,8 +107,9 @@ class BaseDetectRound(BaseImproveRound):
     _reason_anomaly_ratio = 0.5
     # 判定格式异常的最小规模：低于该值只逐条丢弃，不整批作废（避免小批被一次误判清空）
     _reason_anomaly_min_hits = 3
-    # 「过度解释」类片段的最短长度：单个副词/连词/程度词属语气补足，不构成过度解释。
-    # 提示词已明令「3 字以内一律不算」，此处是同一口径的机械兜底（模型常仍写「早已」）
+    # 「无源增补」类（单片段）reason 的最短长度：单个副词/连词/程度词属语气补足，
+    # 不构成加料。提示词已明令「X 取 4–12 字」，此处是同一口径的机械兜底（模型常仍写「早已」）；
+    # 旧类目「过度解释」同门槛：复核轮对旧缓存可能沿用旧类目输出，不能留逃逸窗口
     _over_explain_min_fragment = 4
     # 判为格式异常时重试追加的纠正提示；空串=不重试、直接作废本批
     _reason_retry_hint = (
@@ -405,7 +406,7 @@ class BaseDetectRound(BaseImproveRound):
         要求：reason 非空、至少含一个「…」片段，且每个片段都能在当前译文中找到。
         无片段证据的命中不写标记——前端会显示成「无头的原因」，无法人工复核。
 
-        另外按提示词口径卡一道幅度门槛：「过度解释」的片段必须 ≥
+        另外按提示词口径卡一道幅度门槛：「无源增补」的片段必须 ≥
         `_over_explain_min_fragment` 字。单个副词/连词（「早已」「慢慢」）删掉确实
         不损信息，但那是中文自然表达，提示词已明令不算；模型仍常这么写，需机械兜底。
         """
@@ -414,7 +415,7 @@ class BaseDetectRound(BaseImproveRound):
         fragments = _FRAGMENT_RE.findall(reason_text)
         if not fragments:
             return False
-        if reason_text.startswith("过度解释") and any(
+        if reason_text.startswith(("无源增补", "过度解释")) and any(
             len(fragment.strip()) < self._over_explain_min_fragment
             for fragment in fragments
         ):

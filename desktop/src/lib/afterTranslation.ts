@@ -43,7 +43,7 @@ export const AFTER_TRANSLATION_GROUPS: {
   { key: "basic", label: "基本问题处理", hint: "换行位置、残留日文、禁用词等基本问题修复。" },
   { key: "style", label: "修正翻译风格", hint: "整文件评估译文质量，对可改进句给出备选译文。" },
   { key: "tone", label: "词语色彩一致性检查", hint: "对照色彩基准（批次区间「用词色彩」标注优先，无标注时对照原文语气）检查译文，并可二次复核撤销误报。" },
-  { key: "verbose", label: "节奏冗长检测", hint: "AI 判定译文是否被同义重复、垫词堆砌或重复陈述撑大（信息量未增加），并可二次复核撤销误报。" },
+  { key: "verbose", label: "节奏冗长检测", hint: "AI 判定译文是否被同源二译或无源增补撑大（信息量未增加），并可二次复核撤销误报。" },
   { key: "semcheck", label: "标注疑似错误", hint: "AI 判定错译/漏译/串行并标记，供人工复核。" },
 ];
 
@@ -94,7 +94,7 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
     key: "verbosecheck",
     label: "节奏冗长检测",
     group: "verbose",
-    hint: "标记信息量未增加却被同义重复、垫词堆砌、重复陈述或过度解释撑大的句子（不改译文）。可选质检项：默认后处理链不启用。",
+    hint: "标记信息量未增加却被同源二译、无源增补或跨行重复撑大的句子（不改译文）。可选质检项：默认后处理链不启用。",
   },
   {
     key: "verbosecheckagain",

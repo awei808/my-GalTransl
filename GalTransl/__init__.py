@@ -117,8 +117,8 @@ TRANSLATOR_SUPPORTED = {
         "en": "Second-pass confirmation for 'word-tone inconsistent' flags: re-checks each flagged sentence against the same tone reference and keeps only confirmed deviations, dismissing acceptable translations (false positives)."
     },
     "ForVerboseCheck": {
-        "zh-cn": "节奏冗长检测：标记信息量未增加却被同义重复、垫词堆砌或过度解释撑大的句子（verbose_issue 标记，不改译文）。",
-        "en": "Verbosity check: flags sentences that grew longer without adding information (synonym stacking, filler words, repeated statements, over-explanation; verbose_issue flag, translation untouched)."
+        "zh-cn": "节奏冗长检测：标记信息量未增加却被同源二译（同一原文成分被两处译出）或无源增补（原文没有的加料）撑大的句子（verbose_issue 标记，不改译文）。",
+        "en": "Verbosity check: flags sentences that grew longer without adding information (same-source double translation or source-less additions; verbose_issue flag, translation untouched)."
     },
     "ForVerboseCheckAgain": {
         "zh-cn": "对已标记为「节奏冗长」的句子逐句复核，撤销误报。",

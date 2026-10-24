@@ -77,7 +77,7 @@ export const ENGINE_HINTS: Record<string, string> = {
   ForSemCheckAgain: "复核疑似错误标记，剔除误报",
   ForToneCheck: "标记用词色彩偏离基准的句子",
   ForToneCheckAgain: "复核色彩不一致标记，剔除误报",
-  ForVerboseCheck: "标记同义重复、垫词堆砌的冗长句",
+  ForVerboseCheck: "标记同源二译、无源增补的冗长句",
   ForVerboseCheckAgain: "复核节奏冗长标记，剔除误报",
 };
 

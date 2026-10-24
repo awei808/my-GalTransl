@@ -87,6 +87,31 @@ class ParseConfirmResponseTests(unittest.TestCase):
         self.assertEqual((confirm, dismiss), (1, 0))
         self.assertEqual(trans.verbose_issue, "旧原因")
 
+    def test_confirm_reason_with_src_ref_updates_mark(self) -> None:
+        # (src:…) 源成分标注在「」外：不参与片段校验，确认后整体覆盖第一轮原因
+        parser = _make_parser()
+        trans = _trans(15, pre_dst="床单的被单瞬间湿透", verbose="旧原因")
+        confirm, dismiss = parser._parse_confirm_response(
+            'ab1|{"id": 15, "keep": true, "reason": "同源二译：「床单」/「被单」(src:シーツ)"}',
+            [trans],
+        )
+        self.assertEqual((confirm, dismiss), (1, 0))
+        self.assertEqual(
+            trans.verbose_issue, "同源二译：「床单」/「被单」(src:シーツ)"
+        )
+
+    def test_no_src_short_fragment_keeps_first_round_reason(self) -> None:
+        # 无源增补片段不足 4 字（单个副词）：证据校验不过 → 不覆盖第一轮原因，
+        # 但复核结论仍按确认计数（fail-safe 保留标记）
+        parser = _make_parser()
+        trans = _trans(16, pre_dst="华恋那边也早已湿透了", verbose="旧原因")
+        confirm, dismiss = parser._parse_confirm_response(
+            'ab1|{"id": 16, "keep": true, "reason": "无源增补：「早已」(类别：时机)"}',
+            [trans],
+        )
+        self.assertEqual((confirm, dismiss), (1, 0))
+        self.assertEqual(trans.verbose_issue, "旧原因")
+
     def test_echo_line_discarded_instead_of_missing_keep(self) -> None:
         # 复核轮回显输入行：整行丢弃（否则会落到 keep 缺失分支，被当成「未获得判定」误报）
         parser = _make_parser()
