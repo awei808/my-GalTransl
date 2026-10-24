@@ -243,14 +243,17 @@ const FIELD_UI: Record<string, FieldUI> = {
     label: "翻译规范文件",
     hint: "位于 translation_guidelines 目录，影响文风与措辞。",
   },
-  "common.gpt.enhance_jailbreak": { label: "抗拒答增强" },
+  "common.gpt.enhance_jailbreak": {
+    label: "抗拒答增强",
+    hint: "通常用不到：预防性措施，开启后翻译请求（含校对）会在消息末尾预置 assistant「```jsonline」引导输出格式；修复/检测轮不消费此项。",
+  },
   "common.gpt.chatMode": {
     label: "对话模式",
-    hint: "multi=多轮对话（默认，历史由对话携带）；single=单轮独立请求（每批携带全量提示词与历史上下文，token 消耗更高）。",
+    hint: "作用于翻译轮与修复/改进轮：multi=多轮对话（默认，历史由对话携带）；single=单轮独立请求（每批携带全量提示词，token 消耗更高）。检测轮恒为单轮、元数据类后端恒为单次请求，不受此键影响。",
   },
   "common.gpt.restoreContextMode": {
     label: "单轮历史注入模式",
-    hint: "仅单轮模式(chatMode=single)生效：none=不注入历史；lines=注入固定句数历史（gpt.contextNum）；batches=注入固定批数整批历史（gpt.contextBatches，1批=一次请求的实际句数）。多轮模式忽略此键。",
+    hint: "仅单轮模式(chatMode=single)下的翻译轮生效：none=不注入历史；lines=注入固定句数历史（gpt.contextNum）；batches=注入固定批数整批历史（gpt.contextBatches，1批=一次请求的实际句数）。多轮模式忽略此键。",
   },
   "common.gpt.contextBatches": {
     label: "历史批数",
@@ -518,7 +521,7 @@ const TODO_CONFIG_KEYS: Record<string, string> = {};
 
 /**
  * 大分区图标（与 settings-taxonomy 的 section.title 对应）。
- * 未命中（含漏归的「其他设置」）回退 settings 齿轮。
+ * 未命中回退 settings 齿轮。
  */
 const SECTION_ICONS: Record<string, string> = {
   目标语言: "globe",
@@ -537,6 +540,7 @@ const SECTION_ICONS: Record<string, string> = {
   字典: "book",
   后端专属: "cpu",
   其他设置: "puzzle",
+  未归类设置: "puzzle",
 };
 
 function sectionIcon(title: string): string {
@@ -1136,7 +1140,7 @@ export function ProjectConfigPage() {
     }
     walk(c, "");
 
-    // 2) 按 taxonomy 显式归类（未声明键自动归入「其他设置」并告警）
+    // 2) 按 taxonomy 显式归类（未声明键自动归入「未归类设置」并告警）
     const { groups, unclassified } = classifyKeys([...flatItemByKey.keys()]);
 
     // 3) 把 taxonomy 的 key 列表映射回展平元组

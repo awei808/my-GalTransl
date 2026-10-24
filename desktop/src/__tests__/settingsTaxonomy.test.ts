@@ -1,7 +1,7 @@
 /**
  * settings-taxonomy 分类表测试：验证字典组收录 0.4.6 新增的
  * dictionary.skipOverlapCheck，以及「翻译后端-对话翻译」组收录 0.4.9 新增的
- * gpt.chatMode，防止新键漏归「其他设置」。
+ * gpt.chatMode，防止新键漏归「未归类设置」。
  */
 import { describe, it, expect } from "vitest";
 import { classifyKeys, PROJECT_SETTINGS_TAXONOMY } from "../lib/settings-taxonomy";
@@ -14,7 +14,7 @@ describe("settings-taxonomy 字典组", () => {
     expect(keys).toContain("dictionary.skipOverlapCheck");
   });
 
-  it("classifyKeys 将 skipOverlapCheck 归入字典组而非其他设置", () => {
+  it("classifyKeys 将 skipOverlapCheck 归入字典组而非未归类设置", () => {
     const { groups, unclassified } = classifyKeys([
       "dictionary.sortDict",
       "dictionary.skipOverlapCheck",
@@ -37,7 +37,7 @@ describe("settings-taxonomy 对话翻译组", () => {
     expect(keys).toContain("common.gpt.chatMode");
   });
 
-  it("classifyKeys 将 chatMode 归入对话翻译组而非其他设置", () => {
+  it("classifyKeys 将 chatMode 归入对话翻译组而非未归类设置", () => {
     const { groups, unclassified } = classifyKeys(["common.gpt.chatMode"]);
     const group = groups.find((g) => g.section.title === "翻译后端-对话翻译");
     const keys = (group?.subsections ?? []).flatMap((s) => s.keys);
@@ -68,7 +68,7 @@ describe("settings-taxonomy 全局分析（路线分片+汇总）组", () => {
     }
   });
 
-  it("classifyKeys 不会把任一键落到「其他设置」", () => {
+  it("classifyKeys 不会把任一键落到「未归类设置」", () => {
     const { unclassified } = classifyKeys(SCOPE_KEYS);
     for (const key of SCOPE_KEYS) {
       expect(unclassified).not.toContain(key);
@@ -88,7 +88,7 @@ describe("settings-taxonomy 全局分析（路线分片+汇总）组", () => {
 });
 
 describe("settings-taxonomy 元数据行数阈值组", () => {
-  // 行数不足 metaMinLines 的文件不生成元数据：新键须归入元数据提取组而非「其他设置」
+  // 行数不足 metaMinLines 的文件不生成元数据：新键须归入元数据提取组而非「未归类设置」
   it("metaMinLines 已声明在「翻译后端-文件/批次元数据提取」组中", () => {
     const section = PROJECT_SETTINGS_TAXONOMY.find(
       (s) => s.title === "翻译后端-文件/批次元数据提取",
@@ -131,7 +131,7 @@ describe("settings-taxonomy 检测轮批次划分组", () => {
     }
   });
 
-  it("classifyKeys 不会把两键落到「其他设置」", () => {
+  it("classifyKeys 不会把两键落到「未归类设置」", () => {
     const { unclassified } = classifyKeys(DETECT_KEYS);
     for (const key of DETECT_KEYS) {
       expect(unclassified).not.toContain(key);
@@ -162,10 +162,56 @@ describe("settings-taxonomy 提示词注入块组", () => {
     }
   });
 
-  it("classifyKeys 不会把五键落到「其他设置」", () => {
+  it("classifyKeys 不会把五键落到「未归类设置」", () => {
     const { unclassified } = classifyKeys(BLOCK_KEYS);
     for (const key of BLOCK_KEYS) {
       expect(unclassified).not.toContain(key);
     }
+  });
+});
+
+describe("settings-taxonomy 其他设置组", () => {
+  // 低频/历史遗留键显式归置到「其他设置」（2026-10 移组），防止漂移回功能组
+  const PARKED_KEYS = [
+    "common.gpt.enhance_jailbreak",
+    "common.gpt.change_prompt",
+    "common.gpt.prompt_content",
+  ];
+
+  it("三个低频键已声明在「其他设置」组中", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "其他设置",
+    );
+    expect(section).toBeDefined();
+    for (const key of PARKED_KEYS) {
+      expect(section?.keys).toContain(key);
+    }
+  });
+
+  it("classifyKeys 将三个低频键归入「其他设置」组而非漏归兜底", () => {
+    const { groups, unclassified } = classifyKeys(PARKED_KEYS);
+    const group = groups.find((g) => g.section.title === "其他设置");
+    for (const key of PARKED_KEYS) {
+      expect(group?.directKeys).toContain(key);
+    }
+    expect(unclassified).toEqual([]);
+  });
+
+  it("三个低频键不再出现在「翻译后端总设置」", () => {
+    const section = PROJECT_SETTINGS_TAXONOMY.find(
+      (s) => s.title === "翻译后端总设置",
+    );
+    const keys = (section?.subsections ?? []).flatMap((sub) => sub.keys);
+    for (const key of PARKED_KEYS) {
+      expect(keys).not.toContain(key);
+    }
+  });
+
+  it("taxonomy 全表每个键只声明一次（防双渲染）", () => {
+    const all = PROJECT_SETTINGS_TAXONOMY.flatMap((s) => [
+      ...(s.keys ?? []),
+      ...s.subsections.flatMap((sub) => sub.keys),
+    ]);
+    expect(new Set(all).size).toBe(all.length);
   });
 });

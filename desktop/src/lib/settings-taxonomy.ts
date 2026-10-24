@@ -9,7 +9,7 @@
  * 两页共用：项目设置页（PROJECT_SETTINGS_TAXONOMY）与程序设置页（APP_SETTINGS_TAXONOMY）
  * 均由此模块定义，保证命名与层级一致。
  *
- * 漏归告警：classifyKeys 会把任何未出现在表内的键归入「其他设置」section，
+ * 漏归告警：classifyKeys 会把任何未出现在表内的键归入「未归类设置」section，
  * 并在控制台以 warn 级输出，避免字段静默丢失。
  */
 
@@ -83,9 +83,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "common.workersPerProject",
           "common.autoAdjustWorkers",
           "common.sortBy",
-          "common.gpt.enhance_jailbreak",
-          "common.gpt.change_prompt",
-          "common.gpt.prompt_content",
+          "common.linebreakSymbol",
         ],
       },
     ],
@@ -128,11 +126,16 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   {
     // 翻译后端对话模式：多轮/单轮选择
     title: "翻译后端-对话翻译",
-    desc: "翻译后端的对话模式（多轮/单轮对话可选）。",
+    desc: "翻译后端的对话模式（多轮/单轮对话可选）与单轮历史注入参数。",
     subsections: [
       {
         title: "",
-        keys: ["common.gpt.chatMode"],
+        keys: [
+          "common.gpt.chatMode",
+          "common.gpt.restoreContextMode",
+          "common.gpt.contextNum",
+          "common.gpt.contextBatches",
+        ],
       },
     ],
     alwaysShow: true,
@@ -266,7 +269,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
     subsections: [
       {
         title: "",
-        keys: ["proxy.enableProxy"],
+        keys: ["proxy.enableProxy", "proxy.proxies"],
       },
     ],
   },
@@ -295,6 +298,9 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         title: "",
         keys: [
           "dictionary.defaultDictFolder",
+          "dictionary.preDict",
+          "dictionary.postDict",
+          "dictionary.gpt.dict",
           "dictionary.usePreDictInName",
           "dictionary.usePostDictInName",
           "dictionary.useGPTDictInName",
@@ -312,9 +318,22 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         title: "插件",
         keys: [
           "plugin.filePlugin",
+          "plugin.textPlugins",
           "plugin.file_galtransl_json.output_with_src",
         ],
       },
+    ],
+  },
+  // 显式「其他设置」：低频/历史遗留键的归置处（区别于 classifyKeys 对
+  // 未声明键的漏归兜底组——那些键不在本表内且会触发漏归告警）
+  {
+    title: "其他设置",
+    desc: "历史遗留或通常用不到的配置项，日常翻译无需改动。",
+    subsections: [],
+    keys: [
+      "common.gpt.enhance_jailbreak",
+      "common.gpt.change_prompt",
+      "common.gpt.prompt_content",
     ],
   },
 ];
@@ -374,11 +393,11 @@ export function classifyKeys(
 ): { groups: ClassifiedGroup[]; unclassified: string[] } {
   const present = new Set(existingKeys);
 
-  // 漏归检测：配置里有、但 taxonomy 没声明的键 → 进「其他设置」
+  // 漏归检测：配置里有、但 taxonomy 没声明的键 → 进「未归类设置」
   const unclassified = existingKeys.filter((k) => !declaredKeys.has(k));
   if (unclassified.length > 0) {
     console.warn(
-      "[ProjectConfig] 以下配置键未归入分类表（已自动放入「其他设置」）：\n" +
+      "[ProjectConfig] 以下配置键未归入分类表（已自动放入「未归类设置」）：\n" +
         unclassified.join("\n"),
     );
   }
@@ -403,10 +422,11 @@ export function classifyKeys(
     }
   }
 
-  // 「其他设置」：漏归键单独成组（永远在最后）
+  // 「未归类设置」：漏归键单独成组（永远在最后）。刻意不与显式「其他设置」
+  // 同名，避免同名双卡导致导航跳转与折叠状态互相串扰
   if (unclassified.length > 0) {
     groups.push({
-      section: { title: "其他设置", desc: "未分类的配置项，大多是原项目遗留，这些配置项的改动可能无法生效。", subsections: [] },
+      section: { title: "未归类设置", desc: "未分类的配置项，大多是原项目遗留，这些配置项的改动可能无法生效。", subsections: [] },
       directKeys: unclassified,
       subsections: [],
       fixedCards: [],
