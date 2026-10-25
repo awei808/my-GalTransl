@@ -1,17 +1,23 @@
 # GalTransl Agent 预设（dsh）
 
-给 **DeepSeek Harness（dsh）** 用的 GalTransl 专用 Agent 预设：只挂载 GalTransl 的 MCP 工具，
-**不挂载** 文件读写、Shell、子代理、网页抓取等原生工具。
+给 **DeepSeek Harness（dsh）** 用的 GalTransl 专用 Agent 预设：挂载 GalTransl 的 MCP 工具与子代理，
+**不挂载** 文件读写、Shell、网页抓取等原生工具。子代理**继承本预设**——工具面与父会话完全相同，
+因此它放大的是并发度与上下文容量，不是权限面。
 
 ## 这个预设解决什么问题
 
 GalTransl 本体不再内置 Agent，改为**只提供 MCP 连接与 MCP 工具**；dsh 作为官方外置 Agent。
-本预设把 dsh 的工具面收窄到「只有 GalTransl MCP 工具」这一件事上。
+本预设把 dsh 的工具面收窄到「只有 GalTransl MCP 工具（外加继承同一工具面的子代理）」这一件事上，
+并允许 agent 派子代理并行读写。
 
 **安全边界（重要）**：dsh 的顶层工具目录**没有** allow/deny 过滤器——`ctx.tools.restrict()`
 拒绝 context-global 作用域。因此唯一可靠的收窄机制是**不挂载那些工具所属的 bundle**。
-本预设里没有注册 `tool-fs` / `tool-pwsh` / `tool-bash` / `tool-web` / 子代理等行，
+本预设里没有注册 `tool-fs` / `tool-pwsh` / `tool-bash` / `tool-web` 等行，
 所以**即使把会话权限切到「完全访问」（danger-full-access），也没有可提权的工具存在**。
+
+子代理不是例外：`tool-subagent` 用的是 `spawn` 后端，子代理**不单独选预设**（未配置
+`agentPreset` / `allowedAgentPresets`），因此继承父会话的 GalTransl 预设，拿到的仍是同一批
+MCP 工具，同样没有文件/Shell/网页能力；`maxDepth: 1` 让它不能再派生下一级。
 
 沙箱与审批策略只是默认值、可被会话覆盖，本预设**不依赖**它们做安全保证。
 
@@ -57,7 +63,7 @@ GalTransl 本体不再内置 Agent，改为**只提供 MCP 连接与 MCP 工具*
 
 - **只对当前 profile 生效**（Desktop 是 `desktop`，CLI/Web 是 `web`）；换 profile 需重装。
 - 目录是 **link 安装**：改本目录即改已装 bundle；改完重跑生成脚本后，新会话即读到新内容。
-- bundle **不含任何 JS**，只声明预设行；能力仍只来自 `cordis.patch.yml` 里那 4 行。
+- bundle **不含任何 JS**，只声明预设行；能力仍只来自 `cordis.patch.yml` 里的预设行。
 - 卸载：插件管理器里移除 `@local/dsh-galtransl-preset`（等价于删 profile 里的 bundle 行）。
 
 ## 安装 B（备选：home 层 include，对所有 profile 生效）
@@ -127,7 +133,7 @@ dsh 的配置根 `$DSH_HOME` 在 Windows 默认是 `C:\Users\<你>\.dsh\`。
   `cordis_inspect_query`（Host `Config.listConfigs`，`name: @deepseek-ai/dsh-agent-preset`）
   应出现 `patchId: preset-galtransl` 条目。MCP 是否真的连上，看程序目录 `mcp_status.json`：
   `updated_at` 在 90 秒内且 `tools` 为实际启用数，即说明会话初始化时握手成功。
-- 安装 B：`dsh --profile <name> --dump-config` 应能看到 `id: preset-galtransl` 行及其 4 个子行，
+- 安装 B：`dsh --profile <name> --dump-config` 应能看到 `id: preset-galtransl` 行及其全部子行，
   且该区块内**没有**任何 `tool-fs` / `tool-pwsh` 等危险工具，输出里应有
   `# == C:\Users\<你>\.dsh\cordis.patch.yml` 归属头。
 - ⚠️ **`--dump-config` 看不到 include 展开的内容**（它只渲染该 include 行本身）。
@@ -157,19 +163,21 @@ dsh 的配置根 `$DSH_HOME` 在 Windows 默认是 `C:\Users\<你>\.dsh\`。
 | `persona` | `@deepseek-ai/dsh-persona` | 系统提示词（GalTransl 硬性契约）。字段是 `prefix`，**不是** `text` |
 | `agent-instructions` | `@deepseek-ai/dsh-agent-instructions` | AGENTS.md 发现（`maxBytes` 必须重申） |
 | `mcp-galtransl` | `@deepseek-ai/dsh-mcp-client` | 连 GalTransl MCP（stdio） |
-| `tool-ask-user` | `@deepseek-ai/dsh-tool-ask-user` | 向用户提问（唯一保留的交互工具） |
+| `tool-ask-user` | `@deepseek-ai/dsh-tool-ask-user` | 向用户提问（唯一面向用户的交互工具） |
+| `tool-subagent` | `@deepseek-ai/dsh-tool-subagent` | `subagent`：`spawn` 后端派后台子代理，`maxDepth: 1`（子代理不能再派生）。子代理不单独选预设 → 继承本预设，工具面与父会话相同 |
+| `tool-subagent-control` | `@deepseek-ai/dsh-tool-subagent-control` | `send_message` / `interrupt_agent`：子代理回报结果、父会话追加指令或叫停 |
 
 **刻意不挂载**（下列均为**行 id**）：`tool-fs`、`tool-fs-search`、`tool-bash`、`tool-pwsh`、
 `tool-jobs`、`tool-web`、`tool-skill`、`skill-filesystem`、`tool-goal`、`tool-todo`、
 `tool-present`、`tool-str-replace-editor`、`tool-cordis`、`planning`（plan-mode）、
 `compaction`（compaction-basic / command-compact / tool-result-pruner）、
-`delegation`（tool-subagent-control / tool-subagent / tool-subagent-fork /
-tool-subagent-list-agents / tool-agent-team / tool-workflow / tool-ralph）、
+`tool-subagent-fork`（fork 后端会把当前对话前缀喂给子代理，本预设只用 `spawn`）、
+`tool-subagent-list-agents`、`tool-agent-team` / `tool-workflow` / `tool-ralph`（多代理编排）、
 `tool-plugin-manager`（此行的 bundle 是 `@deepseek-ai/dsh-plugin-manager/tools`，
 与其他行的 `dsh-tool-*` 命名不同）。
 
 > 这份清单不必手动维护完整：回归测试用的是**白名单**
-> （`ALLOWED_PLUGIN_BUNDLES`，只允许上面那 4 个 bundle），
+> （`ALLOWED_PLUGIN_BUNDLES`，只允许上面列出的 bundle），
 > 所以 dsh 将来新增任何工具都不会让测试静默失效。
 
 有回归测试锁定这份清单：`tests/test_dsh_preset_package.py`。
@@ -194,6 +202,13 @@ python tools/build_dsh_preset.py --check  # 校验两者是否同步
   预设不拥有它。装完仍需在 profile/设置里配好模型。
 - **不兼容 built-in `standard`**：本预设是独立预设，不覆写 `standard`。
   若你想要「GalTransl 工具 + 通用编码能力」的混合体，请用 dsh 的新增预设功能自行编写。
+- **子代理的写边界是约定，不是硬机制**：子代理继承本预设，因此同样持有 8 个写工具，
+  dsh 侧没有「按工具名禁用」的能力（`tool-subagent` 的 `toolFilter` 已废弃，改由预设决定）。
+  「一个 index 区间只派一个子代理」「`submit_job` 只由主会话调」写在 persona 里，靠模型遵守。
+  需要强隔离时，可另建一个只连 MCP、不挂子代理的预设；若要让子代理改走那个预设，
+  需同时加 `agentPreset` 与 `allowedAgentPresets`（`agentPreset` 必须在允许列表内，
+  否则预设行激活报错），并同步放宽 `tests/test_dsh_preset_package.py` 里禁止这两个键的安全断言。
+  本预设默认不做这一步。
 - **home 层对所有 profile 生效**：若你已在用 home 层，需自行把 include 行合并进去。
 
 ## 卸载

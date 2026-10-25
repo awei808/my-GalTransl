@@ -165,8 +165,9 @@ DATA_FILE_EXTS = {".json", ".yaml", ".yml", ".txt", ".xlsx", ".csv", ".xml"}
 
 # 冒烟测试：后端启动就绪等待超时（秒）
 BACKEND_BOOT_TIMEOUT = 30
-# MCP 冒烟：initialize 握手应答通常 < 5s，超时即判失败
-MCP_SMOKE_TIMEOUT = 20
+# MCP 冒烟：initialize 握手单次预算。全新 exe 首次运行含 onefile 解压与 Defender
+# 首扫，实测可超 20s（热启动 ~7s），故单次放宽到 60s，超时后热启动重试一次
+MCP_SMOKE_TIMEOUT = 60
 
 
 def get_version() -> str:
@@ -447,7 +448,9 @@ def build_backend(no_deps_cache: bool = False):
         # 下 pip 默认以 GBK 读取会触发 UnicodeDecodeError，强制 UTF-8 模式可根治。
         utf8_env = {"PYTHONUTF8": "1"}
         log_info("安装构建工具 (PyInstaller)...")
-        run([str(venv_pip), "install", "pyinstaller"], env=utf8_env)
+        # typer 是 mcp 的可选依赖：build_mcp 的 --collect-submodules=mcp 会导入
+        # mcp.cli，其顶层 import typer；裸装 mcp 时缺失会导致 MCP exe 打包失败
+        run([str(venv_pip), "install", "pyinstaller", "typer"], env=utf8_env)
         log_info("安装全量运行时依赖 (requirements.txt)...")
         run([str(venv_pip), "install", "-r", str(ROOT / "requirements.txt")], env=utf8_env)
         VENV_DIR.mkdir(exist_ok=True)
@@ -831,6 +834,8 @@ def smoke_test_mcp() -> bool:
 
     写入请求后主动关闭 stdin：stdio 传输以 EOF 表示会话结束，服务端处理完队列中的
     请求即退出，故可直接用 communicate 收集响应（无需读线程 + 超时兜底）。
+    握手超时按热启动重试一次：首次运行含 onefile 解压与 Defender 首扫开销
+    （理由详见 MCP_SMOKE_TIMEOUT 注释）。
     """
     log_info("═══ MCP 服务冒烟测试 ═══")
     exe = BUILD_DIR / "backend" / mcp_exe_name()
@@ -849,22 +854,36 @@ def smoke_test_mcp() -> bool:
         },
     }) + "\n"
     proc = None
+    out = ""
     try:
-        proc = subprocess.Popen(
-            [str(exe)],
-            cwd=str(BUILD_DIR),  # 与后端一致：以发布根目录为 cwd 验证资源定位
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        proc.stdin.write(request)
-        proc.stdin.flush()
-        time.sleep(0.3)  # 给服务端读取的时间，避免关闭 stdin 过快导致请求丢失
-        proc.stdin.close()
-        out, _ = proc.communicate(timeout=MCP_SMOKE_TIMEOUT)
+        for attempt in (1, 2):
+            proc = subprocess.Popen(
+                [str(exe)],
+                cwd=str(BUILD_DIR),  # 与后端一致：以发布根目录为 cwd 验证资源定位
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            try:
+                proc.stdin.write(request)
+                proc.stdin.flush()
+                time.sleep(0.3)  # 给服务端读取的时间，避免关闭 stdin 过快导致请求丢失
+                proc.stdin.close()
+                out, _ = proc.communicate(timeout=MCP_SMOKE_TIMEOUT)
+                break
+            except subprocess.TimeoutExpired:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()  # 回收子进程，避免残留
+                if attempt == 1:
+                    # 系统级开销导致的误报，热启动重试排除
+                    log_warn("MCP 冒烟首次超时（疑似新 exe 解压/首扫开销），热启动重试一次")
+                    continue
+                log_err("MCP 冒烟失败：热启动重试后握手仍超时")
+                return False
         lines = (out or "").strip().splitlines()
         if not lines:
             log_err("MCP 冒烟失败：无响应输出")

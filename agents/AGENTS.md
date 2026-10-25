@@ -4,7 +4,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `agents/dsh-preset/galtransl.preset.yml` | **唯一真相源**：dsh Agent 预设声明本体，顶层为条目清单（`cordis:include` 的目标格式）。只挂 `persona` / `agent-instructions` / `mcp-galtransl` / `tool-ask-user` 四行——文件、Shell、子代理、网页工具**根本不挂载**，这是 dsh 侧唯一可靠的收窄机制（顶层工具目录没有 allow/deny 过滤器） |
+| `agents/dsh-preset/galtransl.preset.yml` | **唯一真相源**：dsh Agent 预设声明本体，顶层为条目清单（`cordis:include` 的目标格式）。只挂 `persona` / `agent-instructions` / `mcp-galtransl` / `tool-ask-user` / `tool-subagent` / `tool-subagent-control` 这几行——文件、Shell、网页工具**根本不挂载**，这是 dsh 侧唯一可靠的收窄机制（顶层工具目录没有 allow/deny 过滤器）。子代理用 `spawn` 后端且不单独选预设，继承本预设的同一 MCP 工具面，`maxDepth: 1` 不能再派生 |
 | `agents/dsh-preset/cordis.patch.yml` | 由上面那份**生成**的同内容 patch（带 `- insert:` 包裹），同时充当 bundle patch。**请勿手改** |
 | `agents/dsh-preset/package.json` | **bundle 清单**：`dsh.bundle.patch` 指向生成物，使本目录可被 dsh 插件管理器直接安装（桌面版一键装，无需复制文件/重启） |
 | `agents/dsh-preset/locale/*.json`、`icon.svg` | 插件管理器与设置里显示的标题/描述/图标（显示资源清单见 dsh `host-plugin` 规范） |

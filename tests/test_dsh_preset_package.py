@@ -4,9 +4,11 @@
 `presets/galtransl.patch.yml`），审查时发现 persona 提示词已经不一致。
 现改为单一真相源 `galtransl.preset.yml` + 生成脚本。本文件锁定：
 1. 生成物与真相源语义等价（防再次漂移）；
-2. 预设声明的必填字段与形状正确（照 dsh 0.2.0-rc.2 的 schema）；
+2. 预设声明的必填字段与形状正确（照 @deepseek-ai/dsh-agent-preset 的 schema）；
 3. `persona` 用的是 `prefix` 而非 `text`（`text` 会让整个预设行激活失败）；
-4. 预设只挂 4 个白名单行，**不含任何危险工具**（这是本预设的核心安全性质）。
+4. 预设只挂白名单内的行，**不含任何危险工具**（这是本预设的核心安全性质）；
+5. 子代理能力是「同工具面的并行分身」：`spawn` 后端、不单独选预设（继承本预设）、
+   `maxDepth: 1`（不能再派生），且不得引入 fork / 多代理编排行。
 """
 import importlib.util
 import json
@@ -26,22 +28,34 @@ LOCALE_DIR = os.path.join(PRESET_DIR, "locale")
 ICON_PATH = os.path.join(PRESET_DIR, "icon.svg")
 BUILDER_PATH = os.path.join(REPO_ROOT, "tools", "build_dsh_preset.py")
 
-# dsh 0.2.0-rc.2 的 @deepseek-ai/dsh-agent-preset 只声明这 5 个字段
+# @deepseek-ai/dsh-agent-preset 只声明这 5 个字段
 ALLOWED_PRESET_FIELDS = {"id", "name", "description", "order", "plugins"}
 
 # 预设刻意**只**挂这些行；出现其它行即视为安全回归
-EXPECTED_PLUGIN_IDS = ["persona", "agent-instructions", "mcp-galtransl", "tool-ask-user"]
+EXPECTED_PLUGIN_IDS = [
+    "persona",
+    "agent-instructions",
+    "mcp-galtransl",
+    "tool-ask-user",
+    "tool-subagent",
+    "tool-subagent-control",
+]
 
 # 允许出现的 bundle（**白名单**）。预设的安全性质是「危险工具根本不存在」，
-# 用黑名单会漏——实测 dsh 0.2.0-rc.2 共有 24 个 tool-* 行 id，其中
+# 用黑名单会漏——dsh 的 tool-* 行里有这类不在直觉黑名单里的能力：
 # tool-str-replace-editor（文件写入）、tool-cordis（改 loader 配置）、
-# tool-agent-team / tool-workflow / tool-ralph（子代理编排）都不在直觉黑名单里。
+# tool-agent-team / tool-workflow / tool-ralph（子代理编排）。
 # 白名单是唯一不会随 dsh 新增工具而失效的写法。
 ALLOWED_PLUGIN_BUNDLES = {
     "@deepseek-ai/dsh-persona",
     "@deepseek-ai/dsh-agent-instructions",
     "@deepseek-ai/dsh-mcp-client",
     "@deepseek-ai/dsh-tool-ask-user",
+    # 子代理：task 工具本身 + send_message/interrupt_agent 控制面。
+    # 两者提供的都是「派生子代理/与子代理通话」，不引入文件/Shell/网页能力；
+    # 子代理继承本预设，因此拿到的 MCP 工具面与父会话相同。
+    "@deepseek-ai/dsh-tool-subagent",
+    "@deepseek-ai/dsh-tool-subagent-control",
 }
 
 
@@ -117,6 +131,63 @@ class PresetSafetyTests(unittest.TestCase):
                 self.assertNotIn("disabled:", blob)
                 self.assertNotIn("!!js", blob)
                 self.assertNotIn("dshHomePath", blob)
+
+
+class SubagentCapabilityTests(unittest.TestCase):
+    """子代理是「同工具面的并行分身」，不是权限放大器。
+
+    回归背景：预设原先刻意不挂子代理。放开这一能力时，安全性质必须仍然成立——
+    子代理不能拿到父会话没有的文件/Shell/网页工具，也不能无限递归派生。
+    """
+
+    def _plugin(self, plugin_id: str) -> dict:
+        return next(p for p in _source_entries()[0]["config"]["plugins"] if p["id"] == plugin_id)
+
+    def test_subagent_uses_spawn_backend(self) -> None:
+        # 只用 spawn：fork 后端会把当前对话前缀喂给子代理，与本预设
+        # 「子代理拿不到父会话历史、任务说明必须自包含」的约定冲突。
+        config = self._plugin("tool-subagent")["config"]
+        self.assertEqual(config["provider"], "spawn")
+        self.assertEqual(config["toolName"], "subagent")
+        # dsh 已删除 persona / toolFilter 两个键，带上它们会让整条预设行激活失败；
+        # 白名单式断言保证将来加字段必须显式改测试。
+        self.assertLessEqual(set(config), {"provider", "toolName", "maxDepth"})
+
+    def test_subagent_cannot_delegate_further(self) -> None:
+        # maxDepth 写死 1：子代理不能再派生，避免递归放大并发数与 API 成本
+        self.assertEqual(self._plugin("tool-subagent")["config"]["maxDepth"], 1)
+
+    def test_subagent_inherits_parent_preset(self) -> None:
+        # 省略 agentPreset / allowedAgentPresets ⇒ 继承父会话预设 ⇒ 子代理工具面
+        # 与父会话完全相同（只有 MCP 工具）。一旦有人加上这两项，子代理就可能
+        # 被指到别的预设（例如内置 standard），安全性质即被破坏。
+        config = self._plugin("tool-subagent")["config"]
+        self.assertNotIn("agentPreset", config)
+        self.assertNotIn("allowedAgentPresets", config)
+        # 子代理没有额外的工具来源：预设里只有一处 MCP 客户端，
+        # 不会再给子代理挂第二个 MCP 服务。
+        mcp_rows = [p for p in _source_entries()[0]["config"]["plugins"] if p.get("name") == "@deepseek-ai/dsh-mcp-client"]
+        self.assertEqual(len(mcp_rows), 1)
+
+    def test_control_surface_present(self) -> None:
+        # spawn 子代理是 continuable 的，靠 send_message 回报结论、靠
+        # interrupt_agent 叫停；缺这行父会话只能等它自己结束。
+        row = self._plugin("tool-subagent-control")
+        self.assertEqual(row["name"], "@deepseek-ai/dsh-tool-subagent-control")
+
+    def test_no_fork_or_orchestration_rows(self) -> None:
+        # 只要一层子代理，不引入 fork / 列表 / 多代理编排（它们是另一套能力面）
+        ids = {p["id"] for p in _source_entries()[0]["config"]["plugins"]}
+        for forbidden in (
+            "tool-subagent-fork",
+            "tool-subagent-list-agents",
+            "tool-agent-team",
+            "tool-workflow",
+            "workflow-ptc",
+            "tool-ralph",
+        ):
+            with self.subTest(row=forbidden):
+                self.assertNotIn(forbidden, ids)
 
 
 class PersonaFieldTests(unittest.TestCase):
@@ -197,6 +268,28 @@ class PersonaFieldTests(unittest.TestCase):
     def test_persona_requires_explicit_user_request_for_submit(self) -> None:
         # submit_job 真实消耗 API 额度，措辞与 MCP 工具描述保持一致
         self.assertIn("用户明确要求", self._persona_prefix())
+
+    def test_persona_documents_subagent_boundary(self) -> None:
+        # 放开子代理后，提示词必须同步：①不再声称「没有子代理」；
+        # ②写清子代理继承同一工具面、深度上限 1、写范围要划分、任务说明自包含。
+        prefix = self._persona_prefix()
+        for stale in ("没有**文件读写、Shell、子代理", "无文件/Shell/子代理"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, prefix)
+        for expected in (
+            "继承本预设",
+            "深度上限 1",
+            "不能再派生",
+            "读不到本会话的历史",
+            "send_message",
+            "interrupt_agent",
+            # 写边界是 persona 唯一的防线（dsh 侧没有按工具名禁用），
+            # 这两条约定丢了就等于没有并发保护，必须逐字锁住。
+            "一个 index 区间只派给一个子代理",
+            "不要启停任务",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, prefix)
 
     def test_agent_instructions_restates_max_bytes(self) -> None:
         # 预设树不复用 dsh-base 的同名行，maxBytes 必须重申
