@@ -194,6 +194,7 @@ def _rebuild_trans_list_with_postprocess(
         s.suspected_error = e.get("suspected_error", "")
         s.tone_issue = e.get("tone_issue", "")
         s.verbose_issue = e.get("verbose_issue", "")
+        s.fluency_issue = e.get("fluency_issue", "")
         trans_list.append(s)
 
     for i, s in enumerate(trans_list):

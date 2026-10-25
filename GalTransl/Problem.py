@@ -478,6 +478,14 @@ def find_problems(
                 problem_list, tran, "verbose_issue", "节奏冗长", ("1", "节奏冗长")
             )
 
+        # AI 中文通顺检测标记（ForFluencyCheck 产出，ForFluencyCheckAgain 复核确认/撤销）：
+        # 字段非空即标「中文不顺」，reason 非哨兵时附进问题文案（含「原片段」→「建议片段」
+        # 替换建议），供校对者参考；建议不自动应用，不写 alt_dst。
+        if CProblemType.中文不顺 in find_type:
+            _claim_ai_marker(
+                problem_list, tran, "fluency_issue", "中文不顺", ("1", "中文不顺")
+            )
+
         # 定语/状语过长：只检测最终成品 post_dst（无校对时即 pre_dst），与旧分支对齐避免重复
         if CProblemType.定语过长 in find_type or CProblemType.状语过长 in find_type:
             if post_dst:

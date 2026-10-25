@@ -254,6 +254,8 @@ ENGINE_MODULE_PATHS: dict[str, str] = {
     "ForToneCheckAgain": "GalTransl.Backend.ForToneCheckAgain",
     "ForVerboseCheck": "GalTransl.Backend.ForVerboseCheck",
     "ForVerboseCheckAgain": "GalTransl.Backend.ForVerboseCheckAgain",
+    "ForFluencyCheck": "GalTransl.Backend.ForFluencyCheck",
+    "ForFluencyCheckAgain": "GalTransl.Backend.ForFluencyCheckAgain",
     "GenDic": "GalTransl.Backend.GenDic",
     "ForFileMetaData": "GalTransl.Backend.ForFileMetaData",
     "ForBatchMetaData": "GalTransl.Backend.ForBatchMetaData",

@@ -223,12 +223,13 @@ class ForGalJsonTranslate(MultiRoundChatMixin, BaseTranslate):
     def _issue_reason_of(tran: CSentense, attr: str) -> str:
         """读取第一轮判定原因文本：非 str 收敛为空串，占位哨兵（无原因）返回空串。
 
-        口径与 Problem.py 认领分支一致（""/"1"/"疑似错误"/"节奏冗长" 均视为无原因，
-        后两者是各检测类型名本身的占位写法），供复核轮注入 problem 字段与注入句数统计共用。
+        口径与 Problem.py 认领分支一致（""/"1"/"疑似错误"/"节奏冗长"/"中文不顺"
+        均视为无原因，后三者是各检测类型名本身的占位写法），供复核轮注入 problem
+        字段与注入句数统计共用。
         """
         raw = getattr(tran, attr, "")
         text = str(raw).strip() if isinstance(raw, str) else ""
-        return "" if text in ("1", "疑似错误", "节奏冗长") else text
+        return "" if text in ("1", "疑似错误", "节奏冗长", "中文不顺") else text
 
     def _build_input_jsonlines(
         self,

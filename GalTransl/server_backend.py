@@ -56,6 +56,10 @@ from GalTransl.Backend.Prompts import (
     FORGAL_JSON_VERBOSECHECK_PROMPT,
     FORVERBOSE_AGAIN_SYSTEM,
     FORGAL_JSON_VERBOSECHECK_AGAIN_PROMPT,
+    FORFLUENCY_SYSTEM,
+    FORGAL_JSON_FLUENCYCHECK_PROMPT,
+    FORFLUENCY_AGAIN_SYSTEM,
+    FORGAL_JSON_FLUENCYCHECK_AGAIN_PROMPT,
     build_fix_round_prompt,
     GENDIC_PROMPT,
     GENDIC_SYSTEM,
@@ -503,6 +507,14 @@ _DEFAULT_TRANSLATOR_PROMPTS: dict[str, dict[str, str]] = {
     "ForVerboseCheckAgain": {
         "system_prompt": FORVERBOSE_AGAIN_SYSTEM,
         "user_prompt": FORGAL_JSON_VERBOSECHECK_AGAIN_PROMPT,
+    },
+    "ForFluencyCheck": {
+        "system_prompt": FORFLUENCY_SYSTEM,
+        "user_prompt": FORGAL_JSON_FLUENCYCHECK_PROMPT,
+    },
+    "ForFluencyCheckAgain": {
+        "system_prompt": FORFLUENCY_AGAIN_SYSTEM,
+        "user_prompt": FORGAL_JSON_FLUENCYCHECK_AGAIN_PROMPT,
     },
     "ForPlotRouteMap": {
         "system_prompt": FORPLOTROUTE_SYSTEM,

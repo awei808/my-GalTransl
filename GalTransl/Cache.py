@@ -220,6 +220,9 @@ def _build_cache_obj(tran: CSentense, post_save: bool = False) -> Optional[dict]
     # AI 节奏冗长检测标记（ForVerboseCheck 产出，ForVerboseCheckAgain 复核撤销）：非空即写入
     if tran.verbose_issue != "":
         cache_obj["verbose_issue"] = tran.verbose_issue
+    # AI 中文通顺检测标记（ForFluencyCheck 产出，ForFluencyCheckAgain 复核撤销）：非空即写入
+    if tran.fluency_issue != "":
+        cache_obj["fluency_issue"] = tran.fluency_issue
     if post_save:
         cache_obj["post_dst_preview"] = tran.post_dst
 
@@ -602,6 +605,8 @@ async def get_transCache_from_json(
             tran.tone_issue = cache_dict[cache_key]["tone_issue"]
         if "verbose_issue" in cache_dict[cache_key]:
             tran.verbose_issue = cache_dict[cache_key]["verbose_issue"]
+        if "fluency_issue" in cache_dict[cache_key]:
+            tran.fluency_issue = cache_dict[cache_key]["fluency_issue"]
         if "skip_check" in cache_dict[cache_key]:
             # bool 归一化：手改/旧版缓存可能存 1/"false" 等值，"false" 字符串
             # 会被当真值导致误跳过检查

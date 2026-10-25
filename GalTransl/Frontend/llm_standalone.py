@@ -70,6 +70,8 @@ STANDALONE_BACKENDS: Dict[str, StandaloneBackendSpec] = {
     "ForToneCheckAgain": StandaloneBackendSpec("[色彩复核]", "词语色彩复核"),
     "ForVerboseCheck": StandaloneBackendSpec("[冗长检测]", "节奏冗长检测"),
     "ForVerboseCheckAgain": StandaloneBackendSpec("[冗长复核]", "节奏冗长复核"),
+    "ForFluencyCheck": StandaloneBackendSpec("[通顺检测]", "中文通顺检测"),
+    "ForFluencyCheckAgain": StandaloneBackendSpec("[通顺复核]", "中文通顺复核"),
     "ForFixRound": StandaloneBackendSpec(
         "[问题修复]", "统一问题修复", needs_fix_params=True
     ),
