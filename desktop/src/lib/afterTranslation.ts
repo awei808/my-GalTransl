@@ -6,7 +6,8 @@
  * 统一问题修复后端（ForFixRound）使用对象条目：{"fix": {"types": [...], "injectProblem": true}}，
  * 输入模式由所选问题类型自动推导（见 ForProblemFixRound.set_fix_params），types 为空时
  * 后端运行直接跳过且不执行（见 LLMTranslate._run_after_trans_single_file）。
- * 前后端解析口径一致（后端见 GalTransl/Frontend/LLMTranslate.py 的
+ * 同一后端允许多次出现（fix 可配置多条不同类型组合，按数组顺序依次执行），不去重。
+ * 前后端解析口径一致（后端见 GalTransl/Frontend/llm_postprocess.py 的
  * _resolve_after_translation_order），避免显示与执行不一致。
  *
  * 分组仅为编辑器展示（五个 AI 初步处理子分组：基本问题处理/修正翻译风格/词语色彩一致性检查/
@@ -118,8 +119,12 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
 
 /** 统一修复后端参数（对应后端 ForFixRound）；type 而非 interface：需赋给 ConfigValue 的索引签名分支 */
 export type FixConfig = {
-  /** 组合修复的问题类型白名单（problemAnalyze.problemList 同款类型名）；空数组 = 运行跳过 */
-  types: string[];
+  /**
+   * 组合修复的问题类型白名单：类型名（problemAnalyze.problemList 同款）或序号
+   * （1-N，按「问题检测类型」清单顺序，后端经 PROBLEM_TYPE_CATALOG_ORDER 解析）；
+   * 手写序号在编辑器中不显示为勾选，但原样保留不丢失；空数组 = 运行跳过
+   */
+  types: (string | number)[];
   /** 是否把 problem 注入输入 JSONL（默认 true） */
   injectProblem: boolean;
 };
@@ -173,12 +178,17 @@ export function createDefaultAfterTranslation(): AfterTranslationEntry[] {
   ];
 }
 
-/** 归一化 fix 条目（防御外部配置字段缺省/类型异常；残留 mode 字段直接忽略） */
+/** 归一化 fix 条目（防御外部配置字段缺省/类型异常；残留 mode 字段直接忽略）。
+ *  types 保留类型名与有限数字（序号写法），其余条目丢弃——序号若被滤掉，
+ *  UI 一旦编辑保存就会静默清空后端合法配置。 */
 export function normalizeFixEntry(fix: unknown): FixConfig {
   const cfg = (typeof fix === "object" && fix !== null ? fix : {}) as Record<string, unknown>;
   return {
     types: Array.isArray(cfg.types)
-      ? cfg.types.filter((t): t is string => typeof t === "string")
+      ? cfg.types.filter(
+          (t): t is string | number =>
+            typeof t === "string" || (typeof t === "number" && Number.isFinite(t)),
+        )
       : [],
     injectProblem: cfg.injectProblem !== false,
   };
@@ -186,8 +196,8 @@ export function normalizeFixEntry(fix: unknown): FixConfig {
 
 /**
  * 解析配置值（有序数组或旧字符串 none/improve+brfix）为有序后端条目数组。
- * 数组元素仅保留字符串（白名单内）与 fix 对象条目；同 key 去重保序；
- * "none" 哨兵值忽略。
+ * 数组元素仅保留字符串（白名单内）与 fix 对象条目；同一后端允许多次出现
+ * （不去重，数组顺序即执行顺序）；"none" 哨兵值忽略。
  */
 export function parseAfterTranslation(value: unknown): AfterTranslationEntry[] {
   if (Array.isArray(value)) {
@@ -202,22 +212,16 @@ export function parseAfterTranslation(value: unknown): AfterTranslationEntry[] {
 }
 
 function filterOrder(parts: unknown[]): AfterTranslationEntry[] {
-  const seen = new Set<string>();
   const result: AfterTranslationEntry[] = [];
   for (const part of parts) {
     if (typeof part === "string") {
       const p = part.trim().toLowerCase();
       if (p === "none") continue;
-      if (isAfterTranslationBackend(p) && !seen.has(p)) {
-        seen.add(p);
-        result.push(p);
-      }
+      // 裸 "fix" 字符串无效：fix 必须是 {fix: {types, ...}} 对象条目（与后端口径一致）
+      if (p !== "fix" && isAfterTranslationBackend(p)) result.push(p);
       continue;
     }
-    if (isFixEntry(part) && isAfterTranslationBackend("fix") && !seen.has("fix")) {
-      seen.add("fix");
-      result.push({ fix: normalizeFixEntry(part.fix) });
-    }
+    if (isFixEntry(part)) result.push({ fix: normalizeFixEntry(part.fix) });
   }
   return result;
 }

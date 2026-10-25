@@ -75,15 +75,18 @@ describe("settings-taxonomy 全局分析（路线分片+汇总）组", () => {
     }
   });
 
-  it("阶段开关子组不受影响", () => {
+  it("阶段开关键已移入 pipelineSteps 固定卡片，不再入通用子组", () => {
     const section = PROJECT_SETTINGS_TAXONOMY.find(
       (s) => s.title === "翻译后端-完整流水线",
     );
-    const toggleSub = (section?.subsections ?? []).find(
-      (x) => x.title === "流水线阶段开关",
-    );
-    expect(toggleSub?.keys).toContain("internals.pipeline.enableGlobalPrompt");
-    expect(toggleSub?.keys).not.toContain("internals.globalanalysis.maxRoutes");
+    expect(section).toBeDefined();
+    expect(section?.fixedCards).toContain("pipelineSteps");
+    const keys = (section?.subsections ?? []).flatMap((x) => x.keys);
+    // 开关键由固定卡片按步骤同口径同步写回，不出现（也不应出现）在通用列表
+    expect(keys).not.toContain("internals.pipeline.enableGlobalPrompt");
+    expect(keys).not.toContain("internals.pipeline.steps");
+    // 全局分析参数仍在通用子组（仅开关键移出）
+    expect(keys).toContain("internals.globalanalysis.maxRoutes");
   });
 });
 

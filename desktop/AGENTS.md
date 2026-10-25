@@ -13,7 +13,8 @@
 | `src/lib/cacheWatcher.ts` | 缓存文件夹轮询监控（3s），驱动文件树/问题侧栏刷新 |
 | `src/lib/replaceEntries.ts` | 缓存查找替换的前端字段口径（`dst`/`all`）与替换逻辑 |
 | `src/lib/settings-taxonomy.ts` | 设置页统一分类表：项目设置（`PROJECT_SETTINGS_TAXONOMY`）与程序设置（`APP_SETTINGS_TAXONOMY`）的一二级分组真源，声明顺序即渲染顺序，漏归键落「未归类设置」兜底组并 console.warn；归组正确性由 `__tests__/settingsTaxonomy.test.ts` 锁定 |
-| `src/lib/afterTranslation.ts` + `src/components/AfterTranslationOrderEditor.tsx` | 阶段 8 后处理有序数组的类型/编辑逻辑与项目配置页顺序编辑器 |
+| `src/lib/afterTranslation.ts` + `src/components/AfterTranslationOrderEditor.tsx` | 阶段 8 后处理有序数组的类型/编辑逻辑与项目配置页顺序编辑器；同一后端允许多次出现（多个 fix 实例各有独立问题类型组合，「＋ 再添加」追加） |
+| `src/lib/pipelineSteps.ts` + `src/lib/orderedEntryList.ts` + `src/components/PipelineStepsEditor.tsx` | 完整流水线自定义步骤（`internals.pipeline.steps` 有序列表）的解析/校验/开关键同步、数字框交互公共实现（两编辑器共用）与阶段顺序编辑器（项目设置页固定卡片 + 新建向导；手写译后步骤只展示可排序/移除） |
 | `src/lib/engineDisplay.ts` + `src/components/BackendPicker.tsx` | 翻译后端下拉的展示元数据（中文短名/短说明/分组/组内顺序）与过滤、分组纯函数；`BackendPicker` 是控制台后端选择器的交互封装（搜索 + 分组 + 键盘）。选项值始终是引擎名，不改变提交任务与模型检测的口径。后端清单覆盖度由 `__tests__/engineDisplay.test.ts` 与根目录 `tests/test_engine_display_consistency.py` 双向锁定 |
 | `src/lib/previewSelection.ts` | 翻译控制台「结果预览」的选取口径（纯函数）：选中 worker 板块优先 → 公共 key "-1"（非 worker 上下文后端）→ 首条可用预览 |
 | `src/lib/usePageAutosave.ts` | 页面卸载自动保存统一骨架 |

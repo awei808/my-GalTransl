@@ -704,6 +704,22 @@ a:hover {
   border-color: var(--color-border-hover);
 }
 
+/* 「＋ 再添加」链接式按钮：为统一问题修复追加下一个实例（多实例重复执行） */
+.after-trans-add {
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-xs);
+  padding: 2px 2px 4px 52px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.after-trans-add:hover {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+}
+
 /* ── 向导：剧情路线图设置 ── */
 .plotroute-config {
   display: flex;

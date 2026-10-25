@@ -3,8 +3,9 @@
 
 验证：
   - _resolve_after_translation_order：接受有序数组（[improve, brfix]）与旧字符串
-    （none / improve+brfix 组合），统一返回白名单内的有序 key 列表（保序、去重）；
-    缺省回退 enableBetterTranslation（true→[improve]）、非法值回退空列表。
+    （none / improve+brfix 组合），统一返回白名单内的有序 key 列表（保序、
+    允许同一后端多次出现）；缺省回退 enableBetterTranslation（true→[improve]）、
+    非法值回退空列表。
   - _run_after_trans_single_file：按 mode 实例化正确后端、调用 batch_translate、
     finally 内 shutdown；异常不泄漏连接。
 """
@@ -89,12 +90,13 @@ class ResolveOrderTests(unittest.TestCase):
             ["brfix", "improve"],
         )
 
-    def test_array_deduplicates_keeping_first(self):
+    def test_array_keeps_repeated_entries_in_order(self):
+        # 同一后端允许多次出现（数组顺序即执行顺序，不去重）
         self.assertEqual(
             _resolve_after_translation_order(
                 _make_projectConfig(after=["improve", "improve", "brfix"])
             ),
-            ["improve", "brfix"],
+            ["improve", "improve", "brfix"],
         )
 
     def test_array_ignores_none_sentinel(self):
@@ -103,6 +105,17 @@ class ResolveOrderTests(unittest.TestCase):
                 _make_projectConfig(after=["none", "improve"])
             ),
             ["improve"],
+        )
+
+    def test_array_rejects_bare_fix_string(self):
+        # 裸 "fix" 字符串无效：fix 必须是 {fix: {types, ...}} 对象条目
+        # （与流水线步骤侧 resolve_pipeline_steps 口径一致，运行时本就无该分支）
+        entry = {"fix": {"types": ["残留日文"]}}
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _make_projectConfig(after=["fix", entry, "fix"])
+            ),
+            [entry],
         )
 
     def test_array_ignores_non_string_items(self):
@@ -178,14 +191,15 @@ class ResolveOrderTests(unittest.TestCase):
             ["improve", entry],
         )
 
-    def test_array_fix_duplicated_keeps_first(self):
+    def test_array_fix_duplicated_keeps_both(self):
+        # 多个 fix 条目（不同类型组合）都保留，按数组顺序依次执行
         first = {"fix": {"types": ["残留日文"]}}
         second = {"fix": {"types": ["用词不当"]}}
         self.assertEqual(
             _resolve_after_translation_order(
                 _make_projectConfig(after=[first, second])
             ),
-            [first],
+            [first, second],
         )
 
     def test_array_fix_entry_with_empty_types_kept_for_runtime_check(self):

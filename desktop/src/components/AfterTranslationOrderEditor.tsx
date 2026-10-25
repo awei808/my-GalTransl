@@ -8,6 +8,7 @@ import {
   createFixEntry,
   isFixEntry,
 } from "../lib/afterTranslation";
+import { insertNewAt, moveOrRemoveAt } from "../lib/orderedEntryList";
 import { fetchProblemTypes } from "../lib/api/general";
 
 interface AfterTranslationOrderEditorProps {
@@ -23,12 +24,13 @@ interface AfterTranslationOrderEditorProps {
  * 分组仅为视觉分区，跨组编号连续、数组顺序即执行顺序。
  *
  * 交互约定（与需求确认一致）：
- * - 点击（聚焦）数字框：若该后端未入选，追加到末尾（数组始终紧凑无空洞，
+ * - 点击（聚焦）占位数字框：追加该后端到末尾（数组始终紧凑无空洞，
  *   故追加即分配当前最小的可用序号）。
- * - 手动输入数字：把该后端移到对应执行位（越界自动夹取到首/尾）。
- * - 清空 / 输入非法值：移除该后端，其余自动紧凑重排（序号始终连续 1..N）。
- * - 统一问题修复（fix）为对象条目，入选后可展开编辑问题类型组合
- *   （输入模式由所选问题类型自动推导）；问题类型为空时 toast 告警（运行时会跳过且不执行）。
+ * - 手动输入数字：把该条目移到对应执行位（越界自动夹取到首/尾）。
+ * - 清空 / 输入非法值：移除该条目，其余自动紧凑重排（序号始终连续 1..N）。
+ * - 同一后端允许多次出现：统一问题修复（fix）为对象条目，实例行下方可展开编辑
+ *   该实例的问题类型组合（输入模式由所选问题类型自动推导）；问题类型为空时
+ *   toast 告警（运行时会跳过且不执行）。「＋ 再添加」追加下一个 fix 实例。
  */
 export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorProps) {
   const [problemTypes, setProblemTypes] = createSignal<string[]>([]);
@@ -69,47 +71,43 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
   const entryKey = (entry: AfterTranslationEntry): string =>
     typeof entry === "string" ? entry : "fix";
 
-  const orderIndex = (key: string) => {
-    const idx = props.value.findIndex((entry) => entryKey(entry) === key);
-    return idx;
-  };
+  /** 该后端在数组中的全部位置（索引升序）；多实例（重复条目）各占一行 */
+  const occurrencesOf = (key: string): number[] =>
+    props.value.reduce<number[]>((acc, entry, i) => {
+      if (entryKey(entry) === key) acc.push(i);
+      return acc;
+    }, []);
 
-  function handleFocus(key: string) {
-    if (orderIndex(key) >= 0) return;
+  /** 移动/移除数组中第 idx 个条目：清空或非法值=移除，数字=移到对应执行位 */
+  function handleInputAt(idx: number, raw: string) {
+    props.onChange(moveOrRemoveAt(props.value, idx, raw));
+  }
+
+  /** 未入选时聚焦占位框：追加一个实例到末尾（数组紧凑，追加即分配最小可用序号） */
+  function handleFocusAppend(key: string) {
     props.onChange(
       key === "fix" ? [...props.value, createFixEntry()] : [...props.value, key],
     );
   }
 
-  function handleInput(key: string, raw: string) {
-    const n = Number(raw);
-    if (raw.trim() === "" || !Number.isFinite(n) || n < 1) {
-      // 清空 / 非法值 → 移除该后端，其余保持顺序自动紧凑
-      props.onChange(props.value.filter((entry) => entryKey(entry) !== key));
-      return;
-    }
-    // 移动前先取出该后端现有条目：fix 条目需复用其已勾选的问题类型组合，
-    // 否则重插 createFixEntry() 会静默清空用户已勾选的问题类型
-    const existing = props.value.find((entry) => entryKey(entry) === key);
-    const rest = props.value.filter((entry) => entryKey(entry) !== key);
-    const pos = Math.min(Math.max(Math.floor(n), 1), rest.length + 1);
-    const next = [...rest];
-    next.splice(pos - 1, 0, existing ?? (key === "fix" ? createFixEntry() : key));
-    props.onChange(next);
+  /** 占位框输入兜底：聚焦未及追加时的极速输入（onFocus 先触发，通常不会走到） */
+  function handlePlaceholderInput(key: string, raw: string) {
+    if (occurrencesOf(key).length > 0) return;
+    const entry = key === "fix" ? createFixEntry() : key;
+    props.onChange(insertNewAt(props.value, entry, raw));
   }
 
-  // fix 条目唯一：直接命中 isFixEntry 即可。父组件每次重渲染会用 parseAfterTranslation
-  // 重建数组与 fix 对象引用，故不能用 entry === target 引用比较（必然为 false 导致改动丢失）。
-  function updateFixEntry(mutate: (cfg: FixConfig) => FixConfig) {
+  /** 按索引修改某个 fix 实例的参数（多实例下不能 map 全体 fix 条目） */
+  function updateFixEntryAt(idx: number, mutate: (cfg: FixConfig) => FixConfig) {
     props.onChange(
-      props.value.map((entry) =>
-        isFixEntry(entry) ? { fix: mutate(entry.fix) } : entry,
+      props.value.map((entry, i) =>
+        i === idx && isFixEntry(entry) ? { fix: mutate(entry.fix) } : entry,
       ),
     );
   }
 
-  function handleTypeToggle(name: string, checked: boolean) {
-    updateFixEntry((cfg) => {
+  function handleTypeToggle(idx: number, name: string, checked: boolean) {
+    updateFixEntryAt(idx, (cfg) => {
       const types = checked
         ? [...cfg.types, name]
         : cfg.types.filter((t) => t !== name);
@@ -132,10 +130,8 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
       {AFTER_TRANSLATION_BACKENDS.map((b, i) => {
         const prev = i > 0 ? AFTER_TRANSLATION_BACKENDS[i - 1] : undefined;
         const groupHead = prev === undefined || prev.group !== b.group;
-        const idx = orderIndex(b.key);
-        const entry = idx >= 0 ? props.value[idx] : undefined;
-        const fixEntry = entry !== undefined && isFixEntry(entry) ? entry : undefined;
         const groupMeta = AFTER_TRANSLATION_GROUPS.find((g) => g.key === b.group);
+        const occs = occurrencesOf(b.key);
         return (
           <div>
             {groupHead && groupMeta && (
@@ -144,56 +140,97 @@ export function AfterTranslationOrderEditor(props: AfterTranslationOrderEditorPr
                 <span class="after-trans-group-head__hint">{groupMeta.hint}</span>
               </div>
             )}
-            <div class="pipeline-stage-item after-trans-item">
-              <div class="after-trans-item__num-wrap">
-                <input
-                  type="number"
-                  min={1}
-                  max={Math.max(props.value.length, 1)}
-                  class="after-trans-item__num"
-                  value={idx >= 0 ? idx + 1 : ""}
-                  placeholder="—"
-                  onFocus={() => handleFocus(b.key)}
-                  onInput={(e) => handleInput(b.key, e.currentTarget.value)}
-                />
-              </div>
-              <div class="pipeline-stage-item__body after-trans-item__body">
-                <span class="pipeline-stage-item__label">{b.label}</span>
-                <span class="pipeline-stage-item__hint">{b.hint}</span>
-              </div>
-            </div>
-            {fixEntry !== undefined && (
-              <div class="after-trans-fix-config">
-                <div class="after-trans-fix-config__row">
-                  <span class="after-trans-fix-config__label">问题类型</span>
-                  <div class="after-trans-fix-config__types">
-                    {problemTypes().length === 0 &&
-                      (problemTypesError() ? (
-                        <button
-                          type="button"
-                          class="after-trans-fix-config__retry"
-                          onClick={loadProblemTypes}
-                        >
-                          加载问题类型失败，点击重试
-                        </button>
-                      ) : (
-                        <span class="after-trans-fix-config__empty">加载中…</span>
-                      ))}
-                    {problemTypes().map((name) => (
-                      <label class="after-trans-fix-config__check">
-                        <input
-                          type="checkbox"
-                          checked={fixEntry.fix.types.includes(name)}
-                          onChange={(e) =>
-                            handleTypeToggle(name, e.currentTarget.checked)
-                          }
-                        />
-                        {name}
-                      </label>
-                    ))}
-                  </div>
+            {occs.length === 0 ? (
+              <div class="pipeline-stage-item after-trans-item">
+                <div class="after-trans-item__num-wrap">
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(props.value.length, 1)}
+                    class="after-trans-item__num"
+                    value=""
+                    placeholder="—"
+                    onFocus={() => handleFocusAppend(b.key)}
+                    onInput={(e) => handlePlaceholderInput(b.key, e.currentTarget.value)}
+                  />
+                </div>
+                <div class="pipeline-stage-item__body after-trans-item__body">
+                  <span class="pipeline-stage-item__label">{b.label}</span>
+                  <span class="pipeline-stage-item__hint">{b.hint}</span>
                 </div>
               </div>
+            ) : (
+              occs.map((idx, n) => {
+                const entry = props.value[idx];
+                return (
+                  <div>
+                    <div class="pipeline-stage-item after-trans-item">
+                      <div class="after-trans-item__num-wrap">
+                        <input
+                          type="number"
+                          min={1}
+                          max={Math.max(props.value.length, 1)}
+                          class="after-trans-item__num"
+                          value={idx + 1}
+                          placeholder="—"
+                          onInput={(e) => handleInputAt(idx, e.currentTarget.value)}
+                        />
+                      </div>
+                      <div class="pipeline-stage-item__body after-trans-item__body">
+                        <span class="pipeline-stage-item__label">
+                          {b.label}
+                          {n > 0 ? `（第 ${n + 1} 处）` : ""}
+                        </span>
+                        {n === 0 && (
+                          <span class="pipeline-stage-item__hint">{b.hint}</span>
+                        )}
+                      </div>
+                    </div>
+                    {isFixEntry(entry) && (
+                      <div class="after-trans-fix-config">
+                        <div class="after-trans-fix-config__row">
+                          <span class="after-trans-fix-config__label">问题类型</span>
+                          <div class="after-trans-fix-config__types">
+                            {problemTypes().length === 0 &&
+                              (problemTypesError() ? (
+                                <button
+                                  type="button"
+                                  class="after-trans-fix-config__retry"
+                                  onClick={loadProblemTypes}
+                                >
+                                  加载问题类型失败，点击重试
+                                </button>
+                              ) : (
+                                <span class="after-trans-fix-config__empty">加载中…</span>
+                              ))}
+                            {problemTypes().map((name) => (
+                              <label class="after-trans-fix-config__check">
+                                <input
+                                  type="checkbox"
+                                  checked={entry.fix.types.includes(name)}
+                                  onChange={(e) =>
+                                    handleTypeToggle(idx, name, e.currentTarget.checked)
+                                  }
+                                />
+                                {name}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+            {b.key === "fix" && occs.length > 0 && (
+              <button
+                type="button"
+                class="after-trans-add"
+                onClick={() => handleFocusAppend("fix")}
+              >
+                ＋ 再添加一个统一问题修复
+              </button>
             )}
           </div>
         );

@@ -152,7 +152,7 @@ export type ConfigSchemaResponse = {
 export type ProjectConfigUpdatePayload = {
   config: Record<string, unknown>;
   config_file_name: string;
-  /** 向导保存时携带的流水线阶段开关（值为 false 的阶段不执行） */
+  /** 兼容字段：后端 PUT /config 不消费（仅 /api/projects/init 消费同名可选字段） */
   pipeline?: Record<string, boolean>;
   /** 向导保存时携带的「生成示例文件」阶段键集合（独立于禁用阶段） */
   sample_stages?: string[];
@@ -735,6 +735,8 @@ export type PipelineStagesResponse = {
   stages: PipelineStageInfo[];
   /** 支持「生成示例文件」的阶段：缓存产物名 -> 阶段 key */
   sample_products: Record<string, string>;
+  /** 默认流水线步骤顺序（internals.pipeline.steps 未配置时的等价清单，阶段 key 有序） */
+  default_steps?: string[];
 };
 
 // ---- Backend Profiles API types ----

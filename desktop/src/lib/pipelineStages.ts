@@ -137,10 +137,10 @@ export function stageToggleName(stage: PipelineStageInfo): string {
   return parts[parts.length - 1];
 }
 
+/** 由开关短名（enableXxx）反查阶段 key（如 enableFileMeta -> file_meta） */
+export function stageKeyOfToggle(shortName: string): string | undefined {
+  return FALLBACK_STAGES.find((s) => stageToggleName(s) === shortName)?.key;
+}
+
 /** 阶段开关短名列表（如 ["enableValidate", ...]），顺序与清单一致 */
 export const DEFAULT_STAGE_ENABLED_KEYS: string[] = FALLBACK_STAGES.map(stageToggleName);
-
-/** 阶段开关的默认值（全部开启） */
-export const DEFAULT_STAGE_ENABLED: Record<string, boolean> = Object.fromEntries(
-  DEFAULT_STAGE_ENABLED_KEYS.map((k) => [k, true]),
-);

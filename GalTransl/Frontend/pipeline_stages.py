@@ -1,4 +1,4 @@
-"""流水线阶段清单（唯一真源）。
+"""流水线阶段清单与自定义步骤解析（唯一真源）。
 
 完整流水线的阶段顺序、配置开关、后端槽位与依赖关系集中定义在此，
 供三处复用：
@@ -6,13 +6,18 @@
 2. 服务端接口（`GET /api/pipeline-stages`）——向任意客户端暴露同一份清单；
 3. 前端设置界面（项目设置页 / 新建向导）——渲染阶段开关，不再各自硬编码。
 
+自定义流水线（`internals.pipeline.steps` 低代码有序列表）的词表、解析与校验
+（`resolve_pipeline_steps`）也收口在此：列表存在即权威（enable* 开关不再生效），
+支持 AI 初步处理后端作为顶层步骤、同一后端多次出现。
+
 约束：本模块**不得**导入重依赖（后端引擎、CProjectConfig 等），
 只依赖标准库，以便服务端与测试轻量引用。
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -226,4 +231,160 @@ def to_payload() -> Dict[str, object]:
             for s in PIPELINE_STAGES
         ],
         "sample_products": dict(SAMPLE_PRODUCTS),
+        "default_steps": list(DEFAULT_PIPELINE_STEPS),
     }
+
+
+# —— 自定义流水线步骤（低代码列表）——
+# internals.pipeline.steps：有序步骤列表，存在即权威（各阶段 enable* 开关不再生效，
+# 缺省时不读取本列表、维持 enable* 开关语义）。条目两类：
+# 1. 阶段 key 字符串（上方 PIPELINE_STAGES 的 key，improve 为宏：展开 gpt.afterTranslation 链）；
+# 2. AI 初步处理后端条目（与 gpt.afterTranslation 条目同构：字符串 key 或
+#    {"fix": {"types": [...], "injectProblem": ...}} 对象，types 支持类型名或
+#    序号——1 起，按 /api/problem-types 目录顺序，见 PROBLEM_TYPE_CATALOG_ORDER）。
+# 同一后端允许多次出现（如两个不同类型组合的 fix 依次执行）。
+
+# 可作为顶层步骤出现的 AI 初步处理后端 key（improve 除外——它在步骤列表中是阶段宏）
+AFTER_TRANS_STEP_KEYS: Tuple[str, ...] = (
+    "brfix", "jpfix", "banfix", "fix",
+    "semcheck", "semcheckagain", "tonecheck", "tonecheckagain",
+    "verbosecheck", "verbosecheckagain",
+)
+
+# 默认步骤顺序（未配置 steps 时的等价清单；实际执行仍走各阶段 enable* 开关）
+DEFAULT_PIPELINE_STAGES: Tuple[str, ...] = tuple(s.key for s in PIPELINE_STAGES)
+DEFAULT_PIPELINE_STEPS: Tuple[str, ...] = DEFAULT_PIPELINE_STAGES
+
+# 重复出现大概率是配置失误的阶段（有「已存在即跳过」护栏，重复执行无意义且耗时；
+# improve 宏重复等于整条 afterTranslation 链跑两遍，也计入）
+_EXPENSIVE_STAGE_KEYS = frozenset(
+    (
+        "validate", "compress", "gen_dic", "file_meta", "plot_route",
+        "global_analysis", "batch_meta", "translate", "improve",
+    )
+)
+
+# 自定义步骤的配置键
+PIPELINE_STEPS_KEY = "internals.pipeline.steps"
+
+
+def _is_aftertrans_entry(entry: object) -> bool:
+    """判定条目是否为合法的 AI 初步处理步骤（字符串 key 或 fix 对象条目）。
+
+    注意裸字符串 "fix" 不算：fix 必须是 {fix: {types, ...}} 对象条目（无参数的
+    fix 无意义），由 resolve_pipeline_steps 单独拒收并告警。
+    """
+    if isinstance(entry, str):
+        p = entry.strip().lower()
+        return p in AFTER_TRANS_STEP_KEYS and p != "fix"
+    if isinstance(entry, dict):
+        return isinstance(entry.get("fix"), dict)
+    return False
+
+
+def _aftertrans_canonical(entry: object) -> str:
+    """译后条目的规范化键：完全相同的条目共享断点分组，重复出现只执行一遍。"""
+    if isinstance(entry, str):
+        return entry.strip().lower()
+    fix_cfg = (entry or {}).get("fix") or {}
+    return json.dumps(
+        {
+            "fix": {
+                "types": list(fix_cfg.get("types") or []),
+                "injectProblem": bool(fix_cfg.get("injectProblem", True)),
+            }
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def resolve_pipeline_steps(projectConfig: Any) -> Tuple[List[object], List[str], bool]:
+    """解析自定义流水线步骤配置（internals.pipeline.steps）。
+
+    Args:
+        projectConfig: 项目配置对象（仅用 getKey，避免本模块依赖 CProjectConfig）。
+
+    Returns:
+        (steps, warnings, custom)：steps 为有序步骤列表（阶段 key 字符串与 AI
+        初步处理条目混排，字符串条目规范化为小写去空白，重复允许）；warnings 为
+        需调用方落日志/用户提示的中文告警；custom 表示 steps 配置**有效生效**
+        （权威模式，enable* 开关不再参与判定）——配置缺省或非法回退默认顺序时
+        为 False，此时各阶段仍走 enable* 开关（与旧版行为一致）。
+    """
+    raw = projectConfig.getKey(PIPELINE_STEPS_KEY)
+    if raw is None:
+        return list(DEFAULT_PIPELINE_STEPS), [], False
+    if not isinstance(raw, list):
+        return list(DEFAULT_PIPELINE_STEPS), [
+            f"{PIPELINE_STEPS_KEY} 不是列表（{type(raw).__name__}），已回退默认阶段顺序"
+        ], False
+
+    steps: List[object] = []
+    warnings: List[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            p = item.strip().lower()
+            if p in STAGES_BY_KEY or p in AFTER_TRANS_STEP_KEYS:
+                if p == "fix":
+                    warnings.append(
+                        "流水线步骤忽略条目 'fix'：统一问题修复须写成 "
+                        "{fix: {types: [...], injectProblem: ...}} 对象条目"
+                    )
+                    continue
+                steps.append(p)
+                continue
+            warnings.append(f"流水线步骤忽略未知条目：{item!r}")
+        elif isinstance(item, dict) and isinstance(item.get("fix"), dict):
+            steps.append({"fix": item["fix"]})
+        else:
+            warnings.append(f"流水线步骤忽略未知条目：{item!r}")
+
+    if not steps:
+        return list(DEFAULT_PIPELINE_STEPS), warnings + [
+            f"{PIPELINE_STEPS_KEY} 未包含任何有效步骤，已回退默认阶段顺序"
+        ], False
+
+    # 译后步骤在翻译前执行没有输入（problem 字段为空、无译文），提示但不阻断；
+    # 无翻译阶段的流水线同样适用（译后步骤永远无输入）
+    translate_seen = False
+    aftertrans_seen_canonicals: set = set()
+    for step in steps:
+        if step == "translate":
+            translate_seen = True
+            continue
+        if _is_aftertrans_entry(step):
+            if not translate_seen:
+                label = step if isinstance(step, str) else "fix"
+                warnings.append(
+                    f"流水线步骤「{label}」位于翻译执行之前（或本流水线无翻译阶段）："
+                    f"此时无译文与问题标注，该步骤将检测不到任何待处理句"
+                )
+            canon = _aftertrans_canonical(step)
+            if canon in aftertrans_seen_canonicals:
+                warnings.append(
+                    "流水线步骤存在完全相同的译后条目重复出现：断点标记按条目内容分组，"
+                    "第二次出现将被直接跳过（如需再次执行请调整类型组合）"
+                )
+            aftertrans_seen_canonicals.add(canon)
+
+    # 高成本阶段重复执行大概率是配置失误（多数有已存在即跳过护栏，少数会真重跑）
+    counts: Dict[str, int] = {}
+    for step in steps:
+        if isinstance(step, str):
+            counts[step] = counts.get(step, 0) + 1
+    for key, n in counts.items():
+        if n > 1 and key in _EXPENSIVE_STAGE_KEYS:
+            warnings.append(
+                f"流水线步骤「{key}」出现 {n} 次：该阶段重复执行通常无意义，请确认配置"
+            )
+
+    # steps 有效时即权威：显式关闭的 enable* 开关会被忽略，提示避免用户困惑
+    for stage in PIPELINE_STAGES:
+        if projectConfig.getKey(stage.enabled_key, True) is False:
+            warnings.append(
+                f"已配置 {PIPELINE_STEPS_KEY}，阶段开关 {stage.enabled_key} 不再生效"
+                f"（以步骤列表为准）"
+            )
+            break
+    return steps, warnings, True

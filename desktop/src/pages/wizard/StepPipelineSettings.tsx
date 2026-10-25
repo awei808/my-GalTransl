@@ -1,21 +1,42 @@
-import { createResource, For, Show } from "solid-js";
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
-import { fetchPipelineStages } from "../../lib/api/general";
-import { FALLBACK_STAGES, stageToggleName } from "../../lib/pipelineStages";
+import { PipelineStepsEditor } from "../../components/PipelineStepsEditor";
 import type { AfterTranslationEntry } from "../../lib/afterTranslation";
+import type { PipelineStep } from "../../lib/pipelineSteps";
 
-/** 阶段说明文案（后端清单不含 hint，前端按 key 补充） */
-const STAGE_HINTS: Record<string, string> = {
-  validate: "校验输入文件的 message 与 name 完整性。关闭后跳过校验直接进入下一阶段（不建议关闭）。",
-  compress: "压缩全文供全局分析使用。关闭后全局分析阶段因无压缩文本将自动跳过。",
-  global_analysis: "先按剧情路线图逐路线分析，再融合为全局档案（GlobalPrompt.json）；无路线图时回退为全文分析。",
-  gen_dic: "提取项目术语生成 GPT 字典。该阶段未优化，运行效果较差，不建议启用。",
-  file_meta: "为每个文件生成剧情背景（FileMetaData）。",
-  plot_route: "基于各文件的剧情摘要生成剧情路线图（PlotRouteMap.json），并标记每个文件所属路线。",
-  batch_meta: "按剧情分段划分翻译区间。",
-  translate: "调用 AI 翻译。关闭后流水线只执行前置分析阶段，不进行翻译。",
-  improve: "翻译完成后逐文件执行下方「修复和改进译文」中选中的后端（按数字顺序）。关闭后整个阶段跳过。",
-};
+interface StepPipelineSettingsProps {
+  gameInfo: string;
+  /** 完整流水线步骤：有序数组（阶段 key 与译后条目混排，数组顺序即执行顺序） */
+  pipelineSteps: PipelineStep[];
+  /** 勾选了「生成示例文件」的阶段键集合（enableXxx 短名） */
+  sampleStages: Set<string>;
+  /** 剧情路线图：结构类型与用户大纲（纯文本） */
+  plotStructureType: string;
+  plotOutline: string;
+  /** 修复和改进译文（阶段 8）后处理顺序：有序后端条目数组（字符串 key 或 fix 对象条目） */
+  afterTranslationOrder: AfterTranslationEntry[];
+  onGameInfoChange: (v: string) => void;
+  onPipelineStepsChange: (steps: PipelineStep[]) => void;
+  onSampleToggle: (key: string, checked: boolean) => void;
+  onPlotStructureTypeChange: (v: string) => void;
+  onPlotOutlineChange: (v: string) => void;
+  onAfterTranslationOrderChange: (order: AfterTranslationEntry[]) => void;
+}
+
+/**
+ * 受控 textarea 的 Enter 换行处理：preventDefault 后手动在光标处插入换行，
+ * 避免受控 value 覆盖浏览器默认换行（方案与项目设置页一致）。
+ */
+function handleTextareaEnter(e: KeyboardEvent, onChange: (v: string) => void) {
+  if (e.key !== "Enter" || e.isComposing) return;
+  e.preventDefault();
+  const ta = e.currentTarget as HTMLTextAreaElement;
+  const pos = ta.selectionStart;
+  const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
+  onChange(newVal);
+  requestAnimationFrame(() => {
+    ta.selectionStart = ta.selectionEnd = pos + 1;
+  });
+}
 
 // 剧情路线图的结构类型（含专业术语通俗说明）
 const PLOT_STRUCTURE_TYPES = [
@@ -46,57 +67,12 @@ const PLOT_STRUCTURE_TYPES = [
   },
 ] as const;
 
-interface StepPipelineSettingsProps {
-  gameInfo: string;
-  stageEnabled: Record<string, boolean>;
-  /** 勾选了「生成示例文件」的阶段键集合 */
-  sampleStages: Set<string>;
-  /** 剧情路线图：结构类型与用户大纲（纯文本） */
-  plotStructureType: string;
-  plotOutline: string;
-  /** 修复和改进译文（阶段 8）后处理顺序：有序后端条目数组（字符串 key 或 fix 对象条目） */
-  afterTranslationOrder: AfterTranslationEntry[];
-  onGameInfoChange: (v: string) => void;
-  onStageToggle: (key: string, enabled: boolean) => void;
-  onSampleToggle: (key: string, checked: boolean) => void;
-  onPlotStructureTypeChange: (v: string) => void;
-  onPlotOutlineChange: (v: string) => void;
-  onAfterTranslationOrderChange: (order: AfterTranslationEntry[]) => void;
-}
-
-/**
- * 受控 textarea 的 Enter 换行处理：preventDefault 后手动在光标处插入换行，
- * 避免受控 value 覆盖浏览器默认换行（方案与项目设置页一致）。
- */
-function handleTextareaEnter(e: KeyboardEvent, onChange: (v: string) => void) {
-  if (e.key !== "Enter" || e.isComposing) return;
-  e.preventDefault();
-  const ta = e.currentTarget as HTMLTextAreaElement;
-  const pos = ta.selectionStart;
-  const newVal = ta.value.slice(0, pos) + "\n" + ta.value.slice(ta.selectionEnd);
-  onChange(newVal);
-  requestAnimationFrame(() => {
-    ta.selectionStart = ta.selectionEnd = pos + 1;
-  });
-}
-
 export function StepPipelineSettings(props: StepPipelineSettingsProps) {
-  // 阶段清单以后端为准（唯一真源），后端不可用时回退到内置同名清单
-  const [stagesResource] = createResource(async () => {
-    try {
-      const resp = await fetchPipelineStages();
-      return resp.stages?.length ? resp.stages : FALLBACK_STAGES;
-    } catch {
-      return FALLBACK_STAGES;
-    }
-  });
-  const stages = () => stagesResource() ?? FALLBACK_STAGES;
-
   return (
     <div class="wizard-panel">
       <h3 class="wizard-panel-title">流水线与全局设置</h3>
       <p class="wizard-panel-desc">
-        设置全局游戏分析的外部信息，并可选择跳过流水线中的某些阶段，或为该阶段生成示例文件（正式命名，填写后直接生效）。
+        设置全局游戏分析的外部信息，按数字调整流水线各阶段的执行顺序（留空则不执行），或为阶段生成示例文件（正式命名，填写后直接生效）。
       </p>
       <div class="wizard-settings-grid">
         <div class="field wizard-settings-grid__full">
@@ -104,7 +80,7 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
           <div class="pc-external-info">
             <textarea
               class="pc-external-info__textarea"
-              placeholder={"可选。提供给全局游戏分析（阶段 5）的外部剧情信息，如游戏简介、世界观说明等。\n留空则由 AI 根据游戏文本自行推断。"}
+              placeholder={"可选。提供给全局分析的外部剧情信息，如游戏简介、世界观说明等。\n留空则由 AI 根据游戏文本自行推断。"}
               value={props.gameInfo}
               onInput={(e) => props.onGameInfoChange(e.currentTarget.value)}
               onKeyDown={(e) => handleTextareaEnter(e, props.onGameInfoChange)}
@@ -115,43 +91,19 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
           </span>
         </div>
         <div class="field wizard-settings-grid__full">
-          <span class="field__label">流水线阶段</span>
-          <div class="pipeline-stage-list">
-            <For each={stages()}>
-              {(s) => {
-                const toggleKey = stageToggleName(s);
-                return (
-                  <div class="pipeline-stage-item">
-                    <label class="pipeline-stage-item__row">
-                      <input
-                        type="checkbox"
-                        checked={props.stageEnabled[toggleKey] ?? true}
-                        onChange={(e) => props.onStageToggle(toggleKey, e.currentTarget.checked)}
-                      />
-                      <div class="pipeline-stage-item__body">
-                        <span class="pipeline-stage-item__label">{s.display_label}</span>
-                        <span class="pipeline-stage-item__hint">{STAGE_HINTS[s.key] ?? ""}</span>
-                      </div>
-                    </label>
-                    <Show when={s.sample_key}>
-                      <label class="pipeline-stage-item__sample">
-                        <input
-                          type="checkbox"
-                          checked={props.sampleStages.has(toggleKey)}
-                          onChange={(e) => props.onSampleToggle(toggleKey, e.currentTarget.checked)}
-                        />
-                        <span>生成示例文件</span>
-                      </label>
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
+          <span class="field__label">流水线阶段顺序</span>
+          <PipelineStepsEditor
+            value={props.pipelineSteps}
+            onChange={props.onPipelineStepsChange}
+            sampleKeys={props.sampleStages}
+            onSampleToggle={props.onSampleToggle}
+          />
           <span class="field__hint">
-            阶段开关控制该阶段是否在流水线中执行。「生成示例文件」独立于开关：勾选后会在对应缓存目录生成
-            GlobalPrompt.json / PlotRouteMap.json / {"文件名.meta.json"} / {"文件名.batch.json"}，
-            并自动禁用该阶段（空模板需跳过生成）。填写完示例内容后，请到「后端设置」中重新开启对应阶段。
+            在数字框中填入数字表示该阶段第几个执行（留空则不执行）。点击数字框自动分配当前最小可用序号，
+            清空后其余阶段自动紧凑重排。顺序写入 config.yaml 的 internals.pipeline.steps（有序数组）。
+            「生成示例文件」独立于顺序：勾选后会在对应缓存目录生成 GlobalPrompt.json / PlotRouteMap.json /
+            {"文件名.meta.json"} / {"文件名.batch.json"}，并把该阶段移出流水线（空模板需跳过生成）。
+            填写完示例内容后，请回到此处把该阶段重新排回流水线。
           </span>
         </div>
         <div class="field wizard-settings-grid__full">
@@ -162,8 +114,9 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
           />
           <span class="field__hint">
             在数字框中填入数字表示该后端在阶段 8 中的执行顺序（数字几就第几步执行）；留空则不执行。
-            点击数字框自动分配当前最小可用序号，清空后其余后端自动紧凑重排。顺序写入
-            config.yaml 的 common.gpt.afterTranslation（有序数组）；关闭「阶段 8」开关后此处不生效。
+            点击数字框自动分配当前最小可用序号，清空后其余后端自动紧凑重排。「统一问题修复」可添加多个实例
+            （每个实例勾选不同的问题类型组合，按顺序依次执行）。顺序写入
+            config.yaml 的 common.gpt.afterTranslation（有序数组）；把「修复和改进译文」阶段移出流水线后此处不生效。
           </span>
         </div>
         <div class="field wizard-settings-grid__full">
@@ -194,7 +147,7 @@ export function StepPipelineSettings(props: StepPipelineSettingsProps) {
                 onKeyDown={(e) => handleTextareaEnter(e, props.onPlotOutlineChange)}
               />
               <span class="field__hint">
-                作为「阶段 4 剧情路线图」生成的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
+                作为「剧情路线图」阶段的强先验，供 AI 把每个文件填充到对应路线；写入 config.yaml 的 internals.plotroute.userOutline。
               </span>
             </div>
           </div>

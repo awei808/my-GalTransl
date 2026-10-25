@@ -269,7 +269,7 @@ if __name__ == "__main__":
 | `Service.py` | 任务调度服务层：`JobSpec`/`JobState` 数据类、`run_job_async()`/`run_job()`、取消（`JobCancelledError`）、错误日志（`error.log`，1MB 上限截断）、backend profile / prompt 覆盖注入 |
 | `Runner.py` | 翻译运行编排器：`run_galtransl()` 挂载 job 日志 handler（线程过滤防并发重复）、插件加载（yapsy）、代理池/令牌池/分割器初始化、`start_time` 定时启动 |
 | `plugin_loader.py` | 文本插件装载（服务端非任务路径复用）：`get_plugin_info_path()` 插件清单路径解析（与 Runner 共用）、`load_text_plugins()` 定位→装载→`gtp_init`（只文本插件、不调 `gtp_final`），按「项目目录 + 插件名单 + 配置文件/插件清单 mtime」进程级缓存。缓存重建/问题重检/构建输出据此与流水线同口径（缺插件会让检测跑在未规整文本上而虚报换行/标点类问题） |
-| `Frontend/LLMTranslate.py` | **主翻译编排器**：`doLLMTranslate()` 读文件 → 切 chunk → worker 协程池（队列+哨兵）→ 单 chunk 翻译 → 后处理合并输出；`doLLMTranslSingleChunk()`；完整流水线 `_run_full_pipeline()`；自适应并发（`autoAdjustWorkers`） |
+| `Frontend/LLMTranslate.py` | **主翻译编排器**：`doLLMTranslate()` 读文件 → 切 chunk → worker 协程池（队列+哨兵）→ 单 chunk 翻译 → 后处理合并输出；`doLLMTranslSingleChunk()`；完整流水线入口（`llm_pipeline._run_full_pipeline`，支持 `internals.pipeline.steps` 自定义步骤，见「核心流水线」节）；自适应并发（`autoAdjustWorkers`） |
 | `Backend/BaseEngine.py` | **所有 LLM 后端 API 客户端基类**：OpenAI 兼容客户端构建（多 token）、`ask_chatbot()`（流式/重试/429 退避/RPM 限制/API 调用日志）、`maxApiRetries` 尝试预算（默认 6，429 不计入）、思考参数路由、全局 RPM 限制、请求健康度统计；含引擎注册表 `ENGINE_REGISTRY`/`@register_engine`；结果预览统一入口 `push_result_preview(config, text)`（各后端解析成功后调一处，worker 归属由 server_runtime 按 WORKER_ID_CTX 解析；0 命中/0 采纳须经 `BaseSparseFixRound._push_no_hit_preview` 推一条说明（`note_only`，不覆盖真实结果），避免面板停留在上一批的陈旧内容；回显丢弃走 `_push_discarded_preview` 强制覆盖，避免已作废的命中留在面板） |
 | `Backend/BaseTranslate.py` | **翻译轮流水线基类**（继承 BaseEngine）：`batch_translate()`、`_batch_translate_common()`、切批/动态句数调节、上下文恢复（`restore_context`）、译文归一化与缓存落盘 |
 | `Backend/ForGalJsonTranslate.py` | **主翻译后端**（继承 BaseTranslate，混入 MultiRoundChatMixin）：对话模式可选（`gpt.chatMode`：multi 多轮对话 / single 单轮独立请求+`[history_result]` 上下文注入，单轮用专用提示词 `FORGAL_JSON_TRANS_PROMPT_SINGLE`；该键同时被修复/改进轮消费，见 `Backend/BaseFixRound.py` 行）、注入 FileMetaData/BatchMetadata/GlobalPrompt、H 词过滤；引擎 ID `ForGal-json-translate`（旧名 `ForGal-json-multi-chat` 经 `TRANSLATOR_ALIASES` 兼容） |
@@ -334,9 +334,20 @@ if __name__ == "__main__":
 | 5 | 生成全局游戏分析 | **路线分片汇总**：`ForRouteAnalysis` 按「文件归属」逐路线分析（分片可复用，并行 `internals.globalanalysis.routeParallelism`）→ `ForGlobalAnalysis` 融合分片产出全量分析；路线图缺失/mermaid 为空/划分不出任何可分析路线时回退 `ForGlobalPrompt` 全文分析；覆盖缺口（未归属文件）合成为「未归属文件」独立分片继续分片汇总，路线数超 `internals.globalanalysis.maxRoutes` 仅软告警不阻断 | `pass0_cache/route_analysis/*.json` 分片 + `pass0_cache/GlobalPrompt.json` |
 | 6 | 划分翻译区间 | `ForBatchMetaData` 批次+视角/氛围/H（0-1 浮点强度）标注；行数阈值同阶段 3 | `transl_cache/pass2_cache/*.batch.json` |
 | 7 | 翻译执行 | `ForGalJsonTranslate` 翻译（对话模式 `gpt.chatMode`：multi 多轮 / single 单轮） | `transl_cache/pass3_cache/*.json` → `gt_output/` |
-| 8 | 译文质量改进 | 按 `common.gpt.afterTranslation` **有序数组**依次执行后处理项：improve / brfix / jpfix / banfix / semcheck / semcheckagain / tonecheck / tonecheckagain / verbosecheck / verbosecheckagain / fix（fix 为 `{fix: {types: [...], injectProblem}}` 对象条目；旧 improve/brfix 字符串格式仍兼容；tonecheck/tonecheckagain 的色彩基准为**软依赖**——优先批次区间「用词色彩」标注，无批次元数据/区间不相交/色彩字段全空时回退对照 `src` 原文语气，不再跳过；verbosecheck/verbosecheckagain 为可选冗长质检，默认链不启用），逐文件生成备选译文或疑似错误/色彩/冗长标记 | `transl_cache/*.json` 的 `alt_dst` / `suspected_error` / `tone_issue` / `verbose_issue` 字段 |
+| 8 | 译文质量改进 | 按 `common.gpt.afterTranslation` **有序数组**依次执行后处理项：improve / brfix / jpfix / banfix / semcheck / semcheckagain / tonecheck / tonecheckagain / verbosecheck / verbosecheckagain / fix（fix 为 `{fix: {types: [...], injectProblem}}` 对象条目；types 支持问题类型名或序号（1-N，与 `/api/problem-types` 目录顺序一致）；旧 improve/brfix 字符串格式仍兼容；tonecheck/tonecheckagain 的色彩基准为**软依赖**——优先批次区间「用词色彩」标注，无批次元数据/区间不相交/色彩字段全空时回退对照 `src` 原文语气，不再跳过；verbosecheck/verbosecheckagain 为可选冗长质检，默认链不启用），同一后端允许多次出现（不去重，如多个不同类型组合的 fix 依次执行），逐文件生成备选译文或疑似错误/色彩/冗长标记 | `transl_cache/*.json` 的 `alt_dst` / `suspected_error` / `tone_issue` / `verbose_issue` 字段 |
 
 各阶段均可按缓存产物是否已存在而跳过（`internals.pipeline.forceRegen*` 与 `internals.globalanalysis.forceRegenRouteAnalysis` 可强制重生成）。元数据两阶段（3/6）另有行数阈值跳过：非空行数 < `internals.pipeline.metaMinLines`（默认 20）的文件不调用 AI、不写元数据产物，判定口径为 `metadata.count_nonempty_lines`（与前端进度分母同口径）；后端 `_run_meta_worker_pool` 返回 `MetaPoolResult` 单独汇报该类跳过，交叉验证与前端文件进度面板（`meta_min_lines`）按「已跳过」处理，避免误报缺失。独立引擎（`ForGlobalPrompt`/`ForRouteAnalysis`/`ForGlobalAnalysis`/`ForPlotRouteMap`/`GenDic`/`ForFileMetaData`/`ForBatchMetaData`/`ForImproveTranslation`/`ForBRStation`/`ForJPResidue`/`ForBanWordFix`/`ForSemCheck`/`ForSemCheckAgain`/`ForToneCheck`/`ForToneCheckAgain`/`ForVerboseCheck`/`ForVerboseCheckAgain`/`ForFixRound`/`dump-name`/`show-plugs`）也可单独作为 `translator` 运行。
+
+### 自定义流水线步骤（internals.pipeline.steps，低代码有序列表）
+
+- **权威性**：配置**有效**（解析出 ≥1 个有效步骤）即权威——完全决定阶段组成与执行顺序，各 `enable*` 开关不再生效（两者并存时 resolve 阶段 WARNING + runtime notice）；配置缺省、非列表或无有效条目时回退默认阶段顺序，`enable*` 开关照旧生效（旧项目零迁移；权威标志由 `_run_full_pipeline` 解析一次挂 `projectConfig.pipeline_steps_custom`）。
+- **条目语法**（与 `gpt.afterTranslation` 条目同构，解析收口在 `pipeline_stages.resolve_pipeline_steps`，字符串条目规范化为小写去空白；裸字符串 `fix` 无效，须为对象条目）：阶段 key 字符串（`improve` 为宏=展开 `gpt.afterTranslation` 链执行）；或 AI 初步处理后端条目（字符串 key 或 `{fix: {types, injectProblem}}` 对象，作为**顶层步骤**在指定位置执行，复用 `run_improve_stage` 机制、令牌池走 afterTrans 槽位）。同一后端允许多次出现（如两个不同类型组合的 fix；完全相同的译后条目重复出现会告警——断点分组相同，第二遍被标记直接跳过）。
+- **断点标记分组**：顶层译后步骤按条目规范化键（`_aftertrans_canonical`）短哈希独立分组（`aftertrans_cache/<文件名>.<group_id>.json`），不同 fix 组合的标记互不冲突；improve 宏保持旧版标记文件名（`<文件名>.json`），既有项目断点续跑不受影响。
+- **校验告警**（不阻断）：译后步骤位于 translate 之前或本流水线无翻译阶段（无译文/problem 可处理）、高成本阶段（含 improve 宏）重复出现、完全相同译后条目重复出现、`steps` 有效但存在显式 `false` 的 `enable*`。
+- **依赖判定**：`plot_route` 依赖改为查运行期 `executed` 集合（而非 enable 开关），兼容自定义顺序下 `file_meta` 被移出的场景。
+- **前端**：项目设置页「翻译后端-完整流水线」的「流水线阶段顺序」卡片与新建向导用数字框编辑器（`PipelineStepsEditor`）编辑，保存时写 `steps` 并同口径同步 `enable*` 键（旧版本程序回滚兼容）；「自定义 AI 初步处理步骤」分组仅展示/排序/移除配置文件手写的译后步骤，不在 UI 新增。
+- **fix 的 types 序号**：问题类型支持名称或序号（1 起，按 `/api/problem-types` 目录顺序，真源 `ConfigHelper.PROBLEM_TYPE_CATALOG_ORDER`，与枚举 value 在部分类型处不同）。
+- `/api/pipeline-stages` payload 增量含 `default_steps`（默认顺序，供客户端兜底）；`server_runtime.PIPELINE_STAGE_NAMES` 9 格仍为前端「流程完成情况」的逻辑格（译后步骤上报 `AI初步处理-xxx` 前缀映射到第 9 格）。
 
 ## 关键依赖项（Python）
 

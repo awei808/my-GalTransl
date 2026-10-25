@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, List, Optional, Tuple
 
 from GalTransl import LOGGER
@@ -30,12 +31,21 @@ from GalTransl.Frontend.llm_prepost import _has_nonempty_gpt_dict
 from GalTransl.Frontend.pipeline_stages import (
     PIPELINE_STAGES,
     STAGES_BY_KEY,
+    resolve_pipeline_steps,
     stage_display_label,
 )
 
 
 def _stage_enabled(projectConfig: CProjectConfig, stage_key: str) -> bool:
-    """按阶段清单判定该阶段是否启用（缺省 True，保持与历史行为一致）。"""
+    """按阶段清单判定该阶段是否启用（缺省 True，保持与历史行为一致）。
+
+    internals.pipeline.steps **有效生效**时步骤列表即权威：进入调度即视为启用，
+    enable* 开关不再生效。生效标志由 _run_full_pipeline 解析一次后挂在
+    projectConfig.pipeline_steps_custom（非法 steps 回退默认时不置位，enable*
+    开关照旧生效，两端口径与 resolve_pipeline_steps 一致）。
+    """
+    if getattr(projectConfig, "pipeline_steps_custom", False):
+        return True
     stage = STAGES_BY_KEY[stage_key]
     return bool(projectConfig.getKey(stage.enabled_key, True))
 
@@ -538,10 +548,11 @@ async def _run_stage_plot_route(
     if not _stage_enabled(projectConfig, "plot_route"):
         _stage_skip(projectConfig, "plot_route", "已禁用（enablePlotRoute=false）")
         return
-    if not _stage_enabled(projectConfig, "file_meta"):
-        # 依赖文件级元数据：阶段被禁用时自动跳过（无剧情摘要可输入）
+    if "file_meta" not in stage_ctx.get("executed", set()):
+        # 依赖文件级元数据：该阶段未执行（被禁用/不在自定义步骤中）时自动跳过
+        # （无剧情摘要可输入）；用 executed 集合而非 enable 开关，兼容自定义步骤列表
         _stage_skip(
-            projectConfig, "plot_route", "依赖的文件级元数据阶段已禁用，无剧情摘要可输入"
+            projectConfig, "plot_route", "依赖的文件级元数据未执行，无剧情摘要可输入"
         )
         return
 
@@ -672,7 +683,7 @@ async def _run_stage_batch_meta(
             )
         if bm_result.skipped_existing:
             LOGGER.info(
-                f"[流水线] 跳过 {processed_bm.skipped_existing} 个已存在批次级元数据的文件"
+                f"[流水线] 跳过 {bm_result.skipped_existing} 个已存在批次级元数据的文件"
             )
     finally:
         if hasattr(gptapi_batchmeta, "shutdown"):
@@ -736,6 +747,51 @@ async def _run_stage_improve(
     await _llm_postprocess_mod.run_improve_stage(projectConfig, file_chunks, order)
 
 
+def _aftertrans_group_id(entry: Any) -> str:
+    """译后步骤的断点标记分组 id：条目规范化键的短哈希。
+
+    自定义流水线中每个顶层译后步骤独立分组，避免不同 fix 类型组合的标记互相
+    覆盖/误命中（improve 宏不走此处，沿用空分组即旧版标记文件名）。
+    规范化逻辑复用 pipeline_stages._aftertrans_canonical（完全相同条目共享分组）。
+    """
+    from GalTransl.Frontend.pipeline_stages import _aftertrans_canonical
+
+    return hashlib.sha1(_aftertrans_canonical(entry).encode("utf-8")).hexdigest()[:8]
+
+
+async def _run_aftertrans_step(
+    projectConfig: CProjectConfig,
+    entry: Any,
+    stage_ctx: dict,
+) -> None:
+    """顶层 AI 初步处理步骤：单条目复用 run_improve_stage 机制（独立断点分组）。"""
+    from GalTransl.Frontend import llm_postprocess as _llm_postprocess_mod
+    from GalTransl.Frontend.pipeline_stages import _is_aftertrans_entry
+
+    if not _is_aftertrans_entry(entry):
+        LOGGER.warning(f"[流水线] 忽略未知的译后步骤条目：{entry!r}")
+        return
+
+    label = _llm_postprocess_mod._aftertrans_entry_label(entry)
+    LOGGER.info(f"[流水线] AI 初步处理步骤：{label}")
+    # 与阶段切换同口径：清上一阶段预览，避免残留板块遮蔽本步骤的 "-1" 公共预览
+    reset_runtime_previews(_runtime_project_dir(projectConfig))
+    _update_runtime(projectConfig, stage=f"AI初步处理-{label}")
+
+    file_chunks = stage_ctx.get("file_chunks") or {}
+    if not file_chunks:
+        reason = "翻译阶段未执行或未产出结果，无译文可供处理"
+        LOGGER.warning(f"[流水线] AI 初步处理步骤「{label}」跳过：{reason}")
+        record_runtime_notice(
+            projectConfig.getProjectDir(), f"AI初步处理-{label}：{reason}"
+        )
+        return
+
+    await _llm_postprocess_mod.run_improve_stage(
+        projectConfig, file_chunks, [entry], group_id=_aftertrans_group_id(entry),
+    )
+
+
 # 阶段 key -> 处理函数（与 PIPELINE_STAGES 的 key 一一对应）
 _STAGE_HANDLERS = {
     "validate": _run_stage_validate,
@@ -760,25 +816,48 @@ async def _run_full_pipeline(
     file_json_lists: dict,  # {file_path: json_list}
     file_list: list,
 ) -> None:
-    """完整翻译流水线：按阶段清单顺序执行，每阶段输出校验后才进入下一阶段。
+    """完整翻译流水线：按步骤清单顺序执行，每阶段输出校验后才进入下一阶段。
 
-    阶段清单的唯一真源是 `Frontend/pipeline_stages.py` 的 PIPELINE_STAGES；
+    步骤来源（`pipeline_stages.resolve_pipeline_steps` 唯一真源）：
+    - 未配置 internals.pipeline.steps：按 PIPELINE_STAGES 默认顺序执行，
+      各阶段 enable* 开关照旧生效（与历史行为一致）；
+    - 已配置 steps：列表即权威（enable* 不再生效），条目可为阶段 key 或
+      AI 初步处理后端条目（与 gpt.afterTranslation 同构，同一后端可多次出现，
+      每个译后步骤独立断点分组执行）。
     本函数只负责遍历调度与阶段间状态传递（通过 stage_ctx），
-    单阶段逻辑见 `_run_stage_*`。阶段开关、依赖关系均取自清单定义，
-    不再在此处硬编码 if 串。
+    单阶段逻辑见 `_run_stage_*`、译后步骤见 `_run_aftertrans_step`。
     """
     _check_stop_requested(projectConfig)
     _update_runtime(projectConfig, stage="完整流水线启动")
 
-    # 阶段间共享状态：compressed_texts（供全局分析）、total_files（供元数据阶段）
-    stage_ctx: dict = {"compressed_texts": {}, "total_files": len(file_json_lists)}
+    # 阶段间共享状态：compressed_texts（供全局分析）、total_files（供元数据阶段）、
+    # executed（已执行且启用的阶段 key 集合，供依赖判定）
+    stage_ctx: dict = {
+        "compressed_texts": {},
+        "total_files": len(file_json_lists),
+        "executed": set(),
+    }
 
-    for stage in PIPELINE_STAGES:
-        handler = _STAGE_HANDLERS.get(stage.key)
-        if handler is None:
-            continue  # 无独立处理函数的阶段跳过（见 _UNHANDLED_STAGE_KEYS）
+    steps, step_warnings, steps_custom = resolve_pipeline_steps(projectConfig)
+    # 权威模式标志挂到配置对象：_stage_enabled 只读此标志，避免每阶段重复解析
+    # 或与 resolver 的「非法回退」判定漂移
+    projectConfig.pipeline_steps_custom = steps_custom
+    for w in step_warnings:
+        LOGGER.warning(f"[流水线] {w}")
+        record_runtime_notice(projectConfig.getProjectDir(), w)
+
+    for step in steps:
         _check_stop_requested(projectConfig)
-        await handler(projectConfig, file_json_lists, file_list, stage_ctx)
+        if isinstance(step, str) and step in _STAGE_HANDLERS:
+            handler = _STAGE_HANDLERS[step]
+            await handler(projectConfig, file_json_lists, file_list, stage_ctx)
+            # 仅当阶段确实启用才计入 executed（译后步骤不产出阶段级依赖，不计入）
+            if _stage_enabled(projectConfig, step):
+                stage_ctx["executed"].add(step)
+        elif isinstance(step, str) and step in _UNHANDLED_STAGE_KEYS:
+            continue  # 无独立处理函数的阶段跳过（见 _UNHANDLED_STAGE_KEYS）
+        else:
+            await _run_aftertrans_step(projectConfig, step, stage_ctx)
 
     LOGGER.info("=" * 50)
     LOGGER.info("[流水线] 全部阶段执行完毕")

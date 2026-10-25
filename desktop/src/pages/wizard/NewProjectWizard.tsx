@@ -30,7 +30,13 @@ import {
 import type { AfterTranslationEntry } from "../../lib/afterTranslation";
 import { setSelectedBackendProfile } from "../../lib/api/preferences";
 import type { PluginInfo, Job } from "../../lib/api/types";
-import { DEFAULT_STAGE_ENABLED, DEFAULT_STAGE_ENABLED_KEYS } from "../../lib/pipelineStages";
+import { DEFAULT_STAGE_ENABLED_KEYS, stageKeyOfToggle } from "../../lib/pipelineStages";
+import {
+  PIPELINE_STAGE_STEP_KEYS,
+  PipelineStep,
+  stageEnableSync,
+  validatePipelineSteps,
+} from "../../lib/pipelineSteps";
 import { StepProjectInfo } from "./StepProjectInfo";
 import { StepImportFiles } from "./StepImportFiles";
 import { StepBackendSelect } from "./StepBackendSelect";
@@ -107,11 +113,12 @@ export function NewProjectWizard() {
   const [guidelines, setGuidelines] = createSignal<string[]>([]);
   const [translationGuideline, setTranslationGuideline] = createSignal("");
 
-  // Step 5：外部信息、流水线阶段开关与「生成示例文件」勾选
+  // Step 5：外部信息、流水线步骤顺序与「生成示例文件」勾选
   const [gameInfo, setGameInfo] = createSignal("");
-  const [stageEnabled, setStageEnabled] = createSignal<Record<string, boolean>>({
-    ...DEFAULT_STAGE_ENABLED,
-  });
+  // 完整流水线步骤（有序，写入 internals.pipeline.steps；默认全阶段按标准顺序执行）
+  const [pipelineSteps, setPipelineSteps] = createSignal<PipelineStep[]>([
+    ...PIPELINE_STAGE_STEP_KEYS,
+  ]);
   const [sampleStages, setSampleStages] = createSignal<Set<string>>(new Set());
   // 剧情路线图：结构类型（默认树）与用户大纲（纯文本）
   const [plotStructureType, setPlotStructureType] = createSignal("树");
@@ -305,7 +312,7 @@ export function NewProjectWizard() {
       language: language(),
       guideline: translationGuideline(),
       gameInfo: gameInfo(),
-      stageEnabled: stageEnabled(),
+      pipelineSteps: pipelineSteps(),
       sampleStages: [...sampleStages()].sort(),
       plotStructureType: plotStructureType(),
       plotOutline: plotOutline(),
@@ -410,14 +417,18 @@ export function NewProjectWizard() {
         else config.externals = ext;
       }
 
-      // 流水线阶段开关写入 config 的 internals.pipeline 段：
-      // 显式写全量阶段键，覆盖历史上已写入的 enableXxx=false，
-      // 避免用户重新勾选全部阶段后旧禁用配置残留导致阶段仍被跳过
-      const stages = stageEnabled();
+      // 流水线步骤顺序写入 internals.pipeline.steps（有序列表，配置存在即权威）：
+      // 同时按步骤同口径写全量 enableXxx 键——兼容旧版本程序回滚（旧版只认 enable* 开关），
+      // 也覆盖历史上已写入的 enableXxx=false 残留
+      const steps = pipelineSteps();
+      const stepWarnings = validatePipelineSteps(steps);
+      for (const w of stepWarnings) toast.warning(w);
       const internals = (config.internals as Record<string, unknown>) || {};
       const pipeline = (internals.pipeline as Record<string, unknown>) || {};
+      pipeline.steps = steps;
+      const enableSync = stageEnableSync(steps);
       for (const k of DEFAULT_STAGE_ENABLED_KEYS) {
-        pipeline[k] = stages[k] ?? true;
+        pipeline[k] = enableSync[k] ?? true;
       }
       internals.pipeline = pipeline;
       config.internals = internals;
@@ -434,8 +445,7 @@ export function NewProjectWizard() {
       await updateProjectConfig(pid, {
         config,
         config_file_name: "config.yaml",
-        // 后端据此生成用户勾选的示例 JSON 模板（独立于禁用阶段）
-        pipeline: stages,
+        // 后端据此生成用户勾选的示例 JSON 模板（独立于步骤顺序/禁用阶段）
         sample_stages: [...sampleStages()],
       });
       setSelectedBackendProfile(dir, selectedBackend());
@@ -659,20 +669,21 @@ export function NewProjectWizard() {
           {currentStep() === 4 && (
             <StepPipelineSettings
               gameInfo={gameInfo()}
-              stageEnabled={stageEnabled()}
+              pipelineSteps={pipelineSteps()}
               sampleStages={sampleStages()}
               plotStructureType={plotStructureType()}
               plotOutline={plotOutline()}
               afterTranslationOrder={afterTranslationOrder()}
               onGameInfoChange={setGameInfo}
-              onStageToggle={(key, enabled) =>
-                setStageEnabled((prev) => ({ ...prev, [key]: enabled }))
-              }
+              onPipelineStepsChange={setPipelineSteps}
               onSampleToggle={(key, checked) => {
-                // 勾选「生成示例文件」时联动禁用该阶段：空模板需跳过生成，
-                // 待用户填好内容后在设置页重新开启该阶段
+                // 勾选「生成示例文件」时联动把该阶段移出流水线：空模板需跳过生成，
+                // 待用户填好内容后在设置页把该阶段重新排回流水线
                 if (checked) {
-                  setStageEnabled((prev) => ({ ...prev, [key]: false }));
+                  const stageKey = stageKeyOfToggle(key);
+                  if (stageKey) {
+                    setPipelineSteps((prev) => prev.filter((s) => s !== stageKey));
+                  }
                 }
                 setSampleStages((prev) => {
                   const next = new Set(prev);

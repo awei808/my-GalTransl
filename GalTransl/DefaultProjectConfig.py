@@ -123,7 +123,25 @@ internals:
     forceRegenDic: false          # 是否强制重新生成术语表（即使已存在，同时忽略 gendic_cache 断点分片缓存重算）[True/False]
     abortOnDicFailure: false      # 是否在术语表生成失败时中止流水线 [True/False]
     metaMinLines: 20              # 元数据阶段行数阈值：文件的非空行数小于此值时，不生成文件级/批次级元数据（不调用 AI、不写 pass1/pass2 产物）。0 表示不跳过任何文件。[0-1000]
-    # === 流水线阶段开关（false 则跳过该阶段）===
+    # === 流水线阶段开关（false 则跳过该阶段；配置下方 steps 列表后本组开关不再生效）===
+    # === 自定义流水线步骤（可选，低代码有序列表；不配置则按上方开关执行默认 9 阶段）===
+    # steps 条目：阶段 key（validate/compress/gen_dic/file_meta/plot_route/global_analysis/
+    # batch_meta/translate/improve，improve 为宏=按 gpt.afterTranslation 链执行），
+    # 或 AI 初步处理后端（brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/
+    # verbosecheck/verbosecheckagain，或 {fix: {types: [问题类型名或序号（1 起，按「问题检测类型」
+    # 清单顺序）], injectProblem: true}}）。
+    # 列表顺序即执行顺序，同一后端可多次出现（如两个不同类型组合的 fix）。
+    # steps:
+    #   - validate
+    #   - compress
+    #   - file_meta
+    #   - plot_route
+    #   - global_analysis
+    #   - batch_meta
+    #   - translate
+    #   - fix: {types: [残留日文, 换行位置异常], injectProblem: true}
+    #   - semcheck
+    #   - fix: {types: [单句过长, 频繁换行]}
     enableValidate: true          # 阶段0 输入数据校验 [True/False]
     enableCompress: true          # 阶段1 文本无损压缩（全局分析需要）[True/False]
     enableGenDic: true            # 阶段2 术语表构建 [True/False]

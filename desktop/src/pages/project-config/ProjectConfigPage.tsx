@@ -17,8 +17,16 @@ import type { ProblemTypeInfo, PipelineStageInfo } from "../../lib/api/types";
 import { classifyKeys } from "../../lib/settings-taxonomy";
 import type { FixedCardKind } from "../../lib/settings-taxonomy";
 import { parseAfterTranslation, validateAfterTranslation } from "../../lib/afterTranslation";
+import {
+  parsePipelineSteps,
+  stageEnableSync,
+  validatePipelineSteps,
+} from "../../lib/pipelineSteps";
+import type { PipelineStep } from "../../lib/pipelineSteps";
+import { FALLBACK_STAGES } from "../../lib/pipelineStages";
 import { buildStageBackendFields } from "../../lib/stageBackendFields";
 import { AfterTranslationOrderEditor } from "../../components/AfterTranslationOrderEditor";
+import { PipelineStepsEditor } from "../../components/PipelineStepsEditor";
 import { Icon } from "../../components/icons";
 
 /** 配置文件中任意 JSON 值（递归类型，代替 any） */
@@ -75,6 +83,18 @@ const HIDDEN_CONFIG_KEYS = new Set<string>([
   "common.gpt.enableBetterTranslation",
   // 翻译后处理后端：改为「翻译后端-完整流水线」区的数字框专用卡片（有序数组），不入通用列表
   "common.gpt.afterTranslation",
+  // 流水线阶段顺序：改为「翻译后端-完整流水线」区的数字框专用卡片（internals.pipeline.steps），
+  // enable* 开关键由该卡片按步骤同口径同步写回（旧版本程序回滚兼容），均不入通用列表
+  "internals.pipeline.steps",
+  "internals.pipeline.enableValidate",
+  "internals.pipeline.enableCompress",
+  "internals.pipeline.enableGlobalPrompt",
+  "internals.pipeline.enableGenDic",
+  "internals.pipeline.enableFileMeta",
+  "internals.pipeline.enablePlotRoute",
+  "internals.pipeline.enableBatchMeta",
+  "internals.pipeline.enableTranslate",
+  "internals.pipeline.enableImprove",
   // 死键：后端已无任何消费方（smartRetry 消费代码已随 6a38089b 删除；linebreakSymbol
   // 的 getlbSymbol() 定义后全仓无调用），不再展示；旧配置中的残留值原样保留不丢失
   "common.smartRetry",
@@ -128,42 +148,6 @@ const FIELD_UI: Record<string, FieldUI> = {
   "internals.detect.batch_from_metadata_max_sentences": {
     label: "按区间分批的单批句数上限",
     hint: "0 表示不限制（一个区间一批）；仅在上限大于 0 时对超长区间子切。区间外（无区间标注）的句子始终按上方固定句数切分。",
-  },
-  "internals.pipeline.enableValidate": {
-    label: "开启阶段 0：输入数据校验",
-    hint: "关闭后跳过输入文件校验，直接进入下一阶段（不建议关闭）。",
-  },
-  "internals.pipeline.enableCompress": {
-    label: "开启阶段 1：文本无损压缩",
-    hint: "压缩全文供全局分析使用；关闭后阶段 5（全局分析）因无压缩文本将自动跳过。",
-  },
-  "internals.pipeline.enableGlobalPrompt": {
-    label: "开启阶段 5：全局游戏分析",
-    hint: "先按剧情路线图逐路线分析再融合为全局档案；无路线图时回退全文分析。关闭后文件级/批次级元数据与翻译将缺少全局上下文（提示词块为空，仍可继续）。",
-  },
-  "internals.pipeline.enableGenDic": {
-    label: "开启阶段 2：术语表构建",
-    hint: "关闭后不生成/不更新 GPT 字典，翻译时无项目术语表。",
-  },
-  "internals.pipeline.enableFileMeta": {
-    label: "开启阶段 3：文件级元数据",
-    hint: "关闭后不生成/不更新文件级元数据（pass1_cache），翻译时无文件级剧情背景。",
-  },
-  "internals.pipeline.enablePlotRoute": {
-    label: "开启阶段 4：剧情路线图",
-    hint: "关闭后不生成剧情路线图（PlotRouteMap.json），全局分析将回退为全文分析。",
-  },
-  "internals.pipeline.enableBatchMeta": {
-    label: "开启阶段 6：批次级元数据",
-    hint: "关闭后不划分翻译区间，翻译按每次请求句数直接分块进行。",
-  },
-  "internals.pipeline.enableTranslate": {
-    label: "开启阶段 7：翻译执行",
-    hint: "关闭后流水线只执行前置分析阶段，不进行翻译。",
-  },
-  "internals.pipeline.enableImprove": {
-    label: "开启阶段 8：修复和改进译文",
-    hint: "关闭后翻译完成后不执行 gpt.afterTranslation 中选中的后处理。",
   },
   "backendSpecific.OpenAI-Compatible.tokenStrategy": {
     label: "令牌轮询策略",
@@ -583,6 +567,8 @@ const FIXED_CARD_SEARCH_TEXT: Record<FixedCardKind, string> = {
     "游戏外部信息 externals.gameInfo 全局分析 ForGlobalPrompt 外部背景资料 游戏名称 简介制作公司 世界观 角色 ExternalInfo",
   translationGuideline:
     "翻译规范文件 common.gpt.translation_guideline translation_guidelines 文风 措辞 提示词注入 注入翻译提示词",
+  pipelineSteps:
+    "流水线阶段顺序 internals.pipeline.steps 执行顺序 阶段 校验 压缩 术语表 文件级元数据 剧情路线图 全局分析 批次划分 翻译执行 修复改进",
   afterTranslation:
     "翻译后处理后端 阶段8 执行顺序 common.gpt.afterTranslation improve brfix jpfix banfix semcheck fix 备选译文 疑似错误",
   stageBackends:
@@ -1521,6 +1507,45 @@ export function ProjectConfigPage() {
               </select>
             </Show>
           </div>
+        </div>
+      );
+    }
+    // kind === "pipelineSteps"：完整流水线阶段顺序（internals.pipeline.steps 有序列表）
+    if (kind === "pipelineSteps") {
+      // steps 配置有效（非空解析结果）才按列表展示；未配置/非法回退默认时按
+      // enable* 开关推导当前顺序（与后端 resolve_pipeline_steps 的回退口径一致）。
+      // 用户编辑后写入 steps（写入即权威），并同口径同步 enable* 键兼容旧版本回滚
+      const steps = (): PipelineStep[] => {
+        const raw = getValue("internals.pipeline.steps");
+        if (Array.isArray(raw)) {
+          const parsed = parsePipelineSteps(raw);
+          if (parsed.length > 0) return parsed;
+        }
+        return FALLBACK_STAGES.filter((s) => getValue(s.enabled_key) !== false).map(
+          (s) => s.key,
+        );
+      };
+      const handleStepsChange = (next: PipelineStep[]) => {
+        for (const w of validatePipelineSteps(next)) toast.warning(w);
+        setValue("internals.pipeline.steps", next);
+        const enableSync = stageEnableSync(next);
+        for (const s of FALLBACK_STAGES) {
+          setValue(s.enabled_key, enableSync[s.enabled_key.split(".").pop() as string] ?? true);
+        }
+      };
+      return (
+        <div class="pc-fixed-card">
+          <div class="pc-fixed-card__head">
+            <span class="pc-label">流水线阶段顺序</span>
+            <code class="pc-key">internals.pipeline.steps</code>
+          </div>
+          <p class="pc-desc">
+            完整流水线的执行顺序：数字几就代表该阶段第几个执行，留空则不执行，其余自动紧凑重排。
+            保存为有序数组（数组顺序即执行顺序）；配置后各阶段 enable 开关以本列表为准。
+            高级用法（在阶段之间插入 fix/检测类译后步骤、同一后端多次执行）可直接编辑
+            config.yaml 的本键，此类步骤会展示在「自定义 AI 初步处理步骤」分组中。
+          </p>
+          <PipelineStepsEditor value={steps()} onChange={handleStepsChange} />
         </div>
       );
     }

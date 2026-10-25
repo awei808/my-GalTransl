@@ -32,6 +32,7 @@ export type FixedCardKind =
   | "translationGuideline"
   | "externalInfo"
   | "problemAnalyze"
+  | "pipelineSteps"
   | "afterTranslation"
   | "stageBackends";
 
@@ -170,7 +171,7 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
   },
   {
     title: "翻译后端-完整流水线",
-    desc: "完整流水线（压缩 + 翻译 + 修复改进）的总开关、翻译后处理后端与各阶段独立开关。",
+    desc: "完整流水线（压缩 + 翻译 + 修复改进）的阶段顺序编辑、翻译后处理后端与各阶段独立 API。",
     subsections: [
       {
         title: "全局分析（路线分片+汇总）",
@@ -180,20 +181,6 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
           "internals.globalanalysis.routeParallelism",
           "internals.globalanalysis.forceRegenRouteAnalysis",
           "internals.pipeline.forceRegenGlobal",
-        ],
-      },
-      {
-        title: "流水线阶段开关",
-        keys: [
-          "internals.pipeline.enableValidate",
-          "internals.pipeline.enableCompress",
-          "internals.pipeline.enableGlobalPrompt",
-          "internals.pipeline.enableGenDic",
-          "internals.pipeline.enableFileMeta",
-          "internals.pipeline.enablePlotRoute",
-          "internals.pipeline.enableBatchMeta",
-          "internals.pipeline.enableTranslate",
-          "internals.pipeline.enableImprove",
         ],
       },
       {
@@ -218,8 +205,9 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
     ],
-    // 翻译后处理后端：有序数组专用卡片（数字框编辑器），不入通用列表
-    fixedCards: ["afterTranslation"],
+    // 流水线阶段顺序：数字框专用卡片（internals.pipeline.steps 有序列表）；
+    // 翻译后处理后端：有序数组专用卡片（数字框编辑器），均不入通用列表
+    fixedCards: ["pipelineSteps", "afterTranslation"],
   },
   {
     title: "翻译后端-术语表（GenDic）",

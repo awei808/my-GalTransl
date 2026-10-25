@@ -625,16 +625,50 @@ class BaseImproveRound(BaseSparseFixRound):
 
     @staticmethod
     def _coerce_problem_type_list(raw_types) -> list:
-        """把配置的问题类型规范为 CProblemType 列表。"""
+        """把配置的问题类型规范为 CProblemType 列表。
+
+        条目支持三种写法：类型名（残留日文）、枚举成员、序号（int 或十进制数字
+        字符串，按 /api/problem-types 目录顺序从 1 解析，见
+        ConfigHelper.PROBLEM_TYPE_CATALOG_ORDER）。
+        """
         if raw_types is None:
             return []
         if isinstance(raw_types, str):
             raw_types = [t.strip() for t in raw_types.split(",") if t.strip()]
-        from GalTransl.ConfigHelper import CProblemType
+        from GalTransl.ConfigHelper import (
+            CProblemType,
+            PROBLEM_TYPE_CATALOG_ORDER,
+        )
+
+        max_index = len(PROBLEM_TYPE_CATALOG_ORDER)
+
+        def _by_index(index: int, origin: str) -> Optional[CProblemType]:
+            if not 1 <= index <= max_index:
+                LOGGER.warning(
+                    f"{origin} 不是有效的问题类型序号，已忽略（有效范围 1-{max_index}，"
+                    f"序号与「问题检测类型」清单顺序一致）"
+                )
+                return None
+            return CProblemType[PROBLEM_TYPE_CATALOG_ORDER[index - 1]]
 
         result = []
         for item in raw_types:
+            # bool 是 int 子类，先排除以免 True/False 被当成序号 1/0
+            if isinstance(item, bool):
+                LOGGER.warning(f"问题类型条目 {item!r}（bool）不是有效写法，已忽略")
+                continue
+            if isinstance(item, int):
+                coerced = _by_index(item, str(item))
+                if coerced is not None:
+                    result.append(coerced)
+                continue
             name = item.name if hasattr(item, "name") else str(item)
+            # isdecimal 限定十进制数字（isdigit 会放过上标数字等 int() 不可解析字符）
+            if name.strip().isdecimal():
+                coerced = _by_index(int(name.strip()), name)
+                if coerced is not None:
+                    result.append(coerced)
+                continue
             try:
                 result.append(CProblemType[name])
             except KeyError:

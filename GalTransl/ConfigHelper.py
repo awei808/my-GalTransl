@@ -140,6 +140,18 @@ class CProblemType(Enum):
     节奏冗长 = 22  # AI 节奏冗长检测：译文信息量未增加却被同源二译、无源增补或跨行重复撑大，读起来拖沓（ForVerboseCheck 产出，ForVerboseCheckAgain 可复核）
 
 
+# 问题类型目录顺序（/api/problem-types 的下发顺序，与 server_meta._PROBLEM_TYPE_CATALOG
+# 由测试锁定一致）。配置里问题类型的「序号」写法（如 fix 的 types: [3]）按本顺序
+# 解析（1 起），而非枚举 value——两者在比日文长严格/字典使用/引入英文等处不同。
+PROBLEM_TYPE_CATALOG_ORDER: tuple = (
+    "词频过高", "标点错漏", "残留日文", "丢失换行", "多加换行",
+    "比日文长", "比日文长严格", "字典使用", "引入英文", "语言不通",
+    "缺控制符", "独白男他", "单句过长", "换行位置异常", "定语过长",
+    "用词不当", "状语过长", "频繁换行", "疑似错误", "词语色彩不一致",
+    "节奏单一", "节奏冗长",
+)
+
+
 def _flatten_dotted_keys(obj: dict, prefix: str = "") -> dict:
     """递归展平嵌套字典为点分键，如 {'pipeline': {'maxInputChars': 1}}
     变为 {'pipeline.maxInputChars': 1}。遇到列表等值则原样保留。"""

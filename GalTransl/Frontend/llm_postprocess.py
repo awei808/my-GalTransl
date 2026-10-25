@@ -304,11 +304,18 @@ async def _improve_single_file(
     marker_dir: str,
     num_better: int,
     input_dir: str,
+    group_id: str = "",
 ) -> None:
-    """对单个文件执行 afterTranslation 链：断点跳过 → 逐项后处理 → 收尾落盘 → 写标记。"""
+    """对单个文件执行 afterTranslation 链：断点跳过 → 逐项后处理 → 收尾落盘 → 写标记。
+
+    group_id 为断点标记分组（自定义流水线中每个顶层译后步骤一组），
+    空串对应 improve 宏（沿用旧版标记文件名，保证既有项目的断点续跑不失效）。
+    """
     _check_stop_requested(projectConfig)
     file_name = file_path.replace(input_dir, "").lstrip(os_sep).replace(os_sep, "-}")
-    marker_path = joinpath(marker_dir, file_name + ".json")
+    marker_path = joinpath(
+        marker_dir, file_name + (f".{group_id}" if group_id else "") + ".json"
+    )
 
     marker = _read_aftertrans_marker(marker_path)
     had_retrans = any(c.had_retranslated for c in chunks)
@@ -323,7 +330,7 @@ async def _improve_single_file(
     all_ok = True
     # 按配置数组顺序依次执行（数组顺序即执行顺序）；单项失败隔离，取消上抛
     for _m in order:
-        _display = _m if isinstance(_m, str) else "fix"
+        _display = _aftertrans_entry_label(_m)
         _update_runtime(projectConfig, stage=f"AI初步处理-{_display}")
         LOGGER.info(f"[后处理] 开始：{_display}，文件={file_name}")
         try:
@@ -361,17 +368,20 @@ async def run_improve_stage(
     projectConfig: CProjectConfig,
     file_chunks: Dict[str, List[SplitChunkMetadata]],
     order: list,
+    group_id: str = "",
 ) -> None:
     """流水线阶段 8：全部文件翻译完成后，统一执行 afterTranslation 后处理链。
 
-    断点语义：文件级标记（transl_cache/aftertrans_cache/<文件名>.json）记录配置
-    指纹，标记命中且本轮无重译的文件直接跳过——中断重启不再重复执行后处理。
-    任一文件的链未完整跑完则不写标记，下次重启重跑该文件。
+    断点语义：文件级标记（transl_cache/aftertrans_cache/<文件名>[.<group_id>].json）
+    记录配置指纹，标记命中且本轮无重译的文件直接跳过——中断重启不再重复执行后处理。
+    任一文件的链未完整跑完则不写标记，下次重启重跑该文件。group_id 区分自定义
+    流水线中不同译后步骤的标记（improve 宏为空串，沿用旧版标记文件名）。
 
     Args:
         projectConfig: 项目配置（并发取 workersPerProject，令牌池走 afterTrans 大阶段池）。
         file_chunks: 文件路径 → 该文件 chunk 列表（阶段 7 产出，含 trans_list 与重译标记）。
         order: afterTranslation 有序条目（_resolve_after_translation_order 产出，非空）。
+        group_id: 断点标记分组 id（空 = improve 宏的旧版标记文件名）。
     """
     _check_stop_requested(projectConfig)
     await ensure_model_available_if_needed(projectConfig, stage="afterTrans")
@@ -420,6 +430,7 @@ async def run_improve_stage(
                     await _improve_single_file(
                         projectConfig, fp, file_chunks[fp], order,
                         fingerprint, marker_dir, num_better, input_dir,
+                        group_id=group_id,
                     )
                 finally:
                     inflight -= 1
@@ -443,14 +454,34 @@ async def run_improve_stage(
     _update_runtime(projectConfig, stage="AI初步处理完成")
 
 
+def _aftertrans_entry_label(entry: Any) -> str:
+    """条目的展示标签：字符串 key 原样；fix 条目附问题类型短标注（最多列 2 个）。
+
+    供日志与运行态 stage 字符串区分同一链中出现的多个 fix 条目。
+    """
+    if not isinstance(entry, dict):
+        return str(entry)
+    fix_cfg = (entry or {}).get("fix") or {}
+    names = [
+        t.name if hasattr(t, "name") else str(t) for t in (fix_cfg.get("types") or [])
+    ]
+    if not names:
+        return "fix(未选类型)"
+    shown = "、".join(names[:2])
+    if len(names) > 2:
+        shown += f"等{len(names)}类"
+    return f"fix({shown})"
+
+
 def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 
     条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/verbosecheck/verbosecheckagain）或
     统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}；
     输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文），
-    配置中残留的 mode 字段直接忽略。同 key 条目去重保序（fix 条目仅保留第一个）。旧字符串格式
-    （none / improve+brfix 组合）仍兼容读取。空列表表示不执行；缺省回退
+    配置中残留的 mode 字段直接忽略。同一后端允许多次出现（fix 可配置多条不同类型
+    组合，按数组顺序依次执行），未知条目告警后忽略。旧字符串格式（none /
+    improve+brfix 组合）仍兼容读取。空列表表示不执行；缺省回退
     gpt.enableBetterTranslation（true→[improve]）以兼容旧项目配置。
     """
     allowed = {
@@ -463,23 +494,21 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     def _normalize_entry(entry) -> Optional[object]:
         if isinstance(entry, str):
             p = entry.strip().lower()
-            return p if p in allowed else None
+            # 裸 "fix" 字符串无效：fix 必须是 {fix: {types, ...}} 对象条目
+            # （与流水线步骤侧 resolve_pipeline_steps 口径一致）
+            return p if p in allowed and p != "fix" else None
         if isinstance(entry, dict):
             fix_cfg = entry.get("fix")
             return {"fix": fix_cfg} if isinstance(fix_cfg, dict) else None
         return None
 
     def _filter_parts(parts: list) -> list:
-        seen = set()
         result: list = []
         for part in parts:
             entry = _normalize_entry(part)
             if entry is None:
+                LOGGER.warning(f"[后处理] 忽略未知的 afterTranslation 条目：{part!r}")
                 continue
-            key = entry if isinstance(entry, str) else "fix"
-            if key in seen:
-                continue
-            seen.add(key)
             result.append(entry)
         return result
 
