@@ -108,7 +108,7 @@ pip install "mcp>=2.0,<3.0"
 
 | 路径 | 命令 |
 |---|---|
-| 一键构建脚本 | `python build_release_py312.py`（产 `backend/galtransl_mcp.exe` + 后端 exe；冒烟验 `initialize` 握手、`instructions` 非空、工具数口径、`instructions` 点名的约束文档随包） |
+| 一键构建脚本 | `python build_release_py312.py`（产 `backend/galtransl_mcp.exe` + 后端 exe；冒烟验 `initialize` 握手、`instructions` 非空、工具数口径、`instructions` 点名的约束文档随包；另产四类外置 Agent 包，见 3.5） |
 
 > 约束文档 `skills/galtransl-mcp/SKILL.md` 随发布包复制到**程序目录**（`release/GalTransl_{版本}_win/skills/galtransl-mcp/SKILL.md`），
 > 与 `instructions` 末句「完整约束见 GalTransl 程序目录下的 skills/galtransl-mcp/SKILL.md」对应；缺失会被构建的完整性校验拦下。
@@ -116,6 +116,20 @@ pip install "mcp>=2.0,<3.0"
 > 0.6.0 起移除了 `galtransl_mcp.spec`（连同 `galtransl_backend.spec` 一并进 `.gitignore`）：
 > 两份 spec 都硬编码了绝对路径，换个机器就失效；构建脚本内的 PyInstaller 命令已覆盖同样参数
 > 且用 `ROOT` 相对定位。需要手工打包时，直接照搬 `build_release_py312.py:build_mcp()` 的命令即可。
+
+### 3.5 随构建产出的四类外置 Agent 包
+
+主发布包之外，构建脚本在 `release/` 下同时产出（`--no-zip` 时一并跳过）：
+
+| 包 | 内容 | 用途 |
+|---|---|---|
+| `GalTransl_{版本}_mcp.zip` | `GalTransl_{版本}_mcp/backend/galtransl_mcp.exe` + `skills/galtransl-mcp/SKILL.md` + `Dict/` + `translation_guidelines/`（随包提供时）+ 配置说明 | 不想解压整个程序、只接 MCP 的用户；指向 exe 即可，无需 Python |
+| `GalTransl_{版本}_skill.zip` | `galtransl-mcp/SKILL.md` + README | 放进支持 Agent Skill 的客户端（如 `~/.claude/skills/`） |
+| `GalTransl_{版本}_dsh-preset.zip` | 完整 dsh bundle（`package.json` / `cordis.patch.yml` / `galtransl.preset.yml` / locale / 图标 / README）+ 打包版安装说明 | dsh 桌面版一键安装；MCP 连接已改为打包版 exe 占位路径，安装前需改成自己的程序根 |
+| `GalTransl_{版本}_preset-plain.zip` | 预设明文（`galtransl.preset.yml`）+ `SKILL.md` + 改写说明 | 面向**不使用 dsh**、但支持自定义预设/系统提示词的 Agent：把目录交给自己的 Agent，让它按目标格式改写 |
+
+> dsh 预设包与预设明文包里的 `command`/`cwd` 都是**占位路径**（`C:/GalTransl/...`），不会泄露构建机路径，也不会在未改路径时误连到构建机。
+> 预设明文包的 README 内含可直接粘贴给其他 Agent 的改写提示词，要求保留 persona 约束、MCP 连接与工具面边界。
 
 ---
 

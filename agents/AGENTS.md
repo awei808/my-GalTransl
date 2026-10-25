@@ -11,6 +11,8 @@
 | `agents/dsh-preset/README.md` | 安装说明（A：bundle 安装，仅当前 profile；B：home 层 `cordis:include`，全 profile）与两个实测坑（include 文件须放 `profiles\` 内；`path` 相对 profile 目录解析，需 `file:///`） |
 | `tools/build_dsh_preset.py` | 从真相源生成 `cordis.patch.yml`；`--check` 校验同步 |
 
+**发布打包**：`build_release_py312.py` 会把本目录打成 `GalTransl_{版本}_dsh-preset.zip`（bundle，MCP 路径改写为打包版 exe 占位符），并从同一真相源生成 `GalTransl_{版本}_preset-plain.zip`（预设明文，供非 dsh 的自定义预设 Agent 改写）。这两份 zip 内的 `command`/`cwd` 都是占位路径，用户需改成自己的程序根。
+
 **改动流程**：只改真相源 `galtransl.preset.yml`；改完重跑 `python tools/build_dsh_preset.py` 重新生成 `cordis.patch.yml`，请勿手改生成物；回归测试 `tests/test_dsh_preset_package.py`（`python run_pytest_utf8.py tests/test_dsh_preset_package.py`，含 bundle 清单与显示资源断言）。
 
 **安装**：`plugin_manager` 的 `install_bundle`，`target` 指向 `agents/dsh-preset` 绝对路径。装完新开会话在 Agent 预设选择器里选 `GalTransl`；MCP 是否连上以程序目录 `mcp_status.json` 心跳（90 秒新鲜 + 工具数）为准。

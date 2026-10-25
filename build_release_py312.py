@@ -28,6 +28,10 @@ GalTransl Windows 发布版构建脚本
       skills/                        # MCP 约束文档（instructions 点名的 SKILL.md）
       res/                           # 运行时资源
     GalTransl_{version}_win.zip       # 便携版压缩包
+    GalTransl_{version}_mcp.zip       # 独立 MCP 服务包（exe + 约束文档 + 公共字典）
+    GalTransl_{version}_skill.zip     # Agent Skill 包（galtransl-mcp/SKILL.md）
+    GalTransl_{version}_dsh-preset.zip  # dsh 预设 bundle（路径改为打包版占位符）
+    GalTransl_{version}_preset-plain.zip  # 预设明文包（供其他 Agent 自行改写适配）
 
 说明:
   本脚本产出的是便携版（zip），不产出 MSI/NSIS 安装包。
@@ -35,6 +39,8 @@ GalTransl Windows 发布版构建脚本
   构建完成后会对后端 exe 做一次冒烟测试（从发布根目录为 cwd 启动，
   探测 HTTP 服务是否可响应），并对 MCP exe 做一次 initialize 握手冒烟，
   确保「能构建、能运行」。
+  除主发布包外，另产出四个外置 Agent 相关包：MCP 服务包、Skill 包、
+  dsh 预设 bundle、预设明文包（面向其他支持自定义预设的 Agent）。
 """
 
 import argparse
@@ -49,7 +55,9 @@ import subprocess
 import sys
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
+from typing import Callable
 
 # 中文 Windows 下 stdout/stderr 默认 GBK，打印非 ASCII 字符（如 ✓、中文）会
 # 触发 UnicodeEncodeError。强制以 UTF-8 输出，避免构建脚本自身崩溃。
@@ -150,6 +158,8 @@ GUIDES_DIR = ROOT / "guides"
 # MCP 约束文档：run_mcp_server 下发的 instructions 末句点名 skills/galtransl-mcp/SKILL.md，
 # 不随包分发等于让外接 agent 拿着一条读不到的路径（构建完整性校验与此处配对）
 SKILLS_DIR = ROOT / "skills"
+# 官方 dsh 预设 bundle（与其 README / package.json 一起作为独立包分发）
+DSH_PRESET_DIR = ROOT / "agents" / "dsh-preset"
 RES_DIR = ROOT / "res"
 
 BACKEND_ENTRY = ROOT / "run_backend.py"
@@ -195,6 +205,22 @@ VERSION = get_version()
 BUILD_NAME = f"GalTransl_{VERSION}_win"
 BUILD_DIR = RELEASE_DIR / BUILD_NAME
 ZIP_NAME = f"{BUILD_NAME}.zip"
+# 外置 Agent 相关包：与主包同目录、各自独立 zip
+AGENT_ZIP_PREFIX = f"GalTransl_{VERSION}"
+MCP_ZIP_NAME = f"{AGENT_ZIP_PREFIX}_mcp.zip"
+SKILL_ZIP_NAME = f"{AGENT_ZIP_PREFIX}_skill.zip"
+DSH_ZIP_NAME = f"{AGENT_ZIP_PREFIX}_dsh-preset.zip"
+PLAIN_PRESET_ZIP_NAME = f"{AGENT_ZIP_PREFIX}_preset-plain.zip"
+
+# dsh 预设里的 MCP 命令必须是绝对路径；发布包无法预知用户安装位置，
+# 故生成物写占位符，由 README 指引用户替换为自己的程序根。
+PACKAGED_MCP_EXE_HINT = "C:/GalTransl/backend/galtransl_mcp.exe"
+PACKAGED_ROOT_HINT = "C:/GalTransl"
+PACKAGED_PRESET_NOTE = (
+    "# 【打包版说明】本包不含 tools/build_dsh_preset.py 生成脚本。\n"
+    "# 请按 INSTALL-PACKAGED.md 手改本文件的 command/args/cwd；\n"
+    "# 若 galtransl.preset.yml 与 cordis.patch.yml 都要用，请手工保持一致。\n"
+)
 
 
 def _resolve_windows_cmd(args: list[str]) -> list[str]:
@@ -662,6 +688,382 @@ def create_zip():
     log_ok(f"压缩包: {zip_path}")
 
 
+# ─── 外置 Agent 包（MCP / Skill / dsh 预设 / 预设明文） ─────
+
+def _collect_dir_entries(
+    src_dir: Path,
+    root: str | None = None,
+    transform: dict[str, Callable[[str], str]] | None = None,
+) -> list[tuple[str, Path | str]]:
+    """收集目录下的文件为 zip 条目；transform 可按相对路径改写文本内容。"""
+    entries: list[tuple[str, Path | str]] = []
+    for path in sorted(src_dir.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(src_dir).as_posix()
+        arcname = f"{root}/{rel}" if root else rel
+        if transform and rel in transform:
+            entries.append((arcname, transform[rel](path.read_text(encoding="utf-8"))))
+        else:
+            entries.append((arcname, path))
+    return entries
+
+
+def _write_zip_file(zip_path: Path, entries: list[tuple[str, Path | str]]) -> None:
+    """把「条目名 + 源文件路径/文本」写入 zip（文本固定 UTF-8、LF）。"""
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for arcname, payload in entries:
+            if isinstance(payload, Path):
+                zf.write(payload, arcname)
+            else:
+                zf.writestr(arcname, payload.replace("\r\n", "\n").encode("utf-8"))
+
+
+def _rewrite_mcp_client_config(text: str) -> str:
+    """把 dsh 预设 mcp-galtransl 行的源码路径改写为打包版占位路径。
+
+    dsh 的 subprocess provider 要求 command/cwd 是绝对路径，发布包无法预知
+    用户安装位置，故生成物使用显式占位符，由 README 指引替换。只处理
+    `- id: mcp-galtransl` 块，块外内容（persona、其它工具行）原样保留。
+    """
+    lines = text.replace("\r\n", "\n").splitlines()
+    out: list[str] = []
+    in_block = False
+    block_indent = 0
+    args_indent = 0
+    skip_args = False
+    replaced = {"command": 0, "args": 0, "cwd": 0}
+
+    for line in lines:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip(" "))
+
+        if not in_block:
+            out.append(line)
+            if stripped == "- id: mcp-galtransl":
+                in_block = True
+                block_indent = indent
+            continue
+
+        # 下一个同/更浅缩进的 - id: 即块结束（cordis.patch.yml 里为 6 空格缩进）
+        if stripped.startswith("- id:") and indent <= block_indent:
+            out.append(line)
+            # 连续出现第二个 mcp 块时继续计数，最终按「恰好 1 次」拒收
+            in_block = stripped == "- id: mcp-galtransl"
+            if in_block:
+                block_indent = indent
+            continue
+
+        # YAML 允许列表项与 args: 同级（生成物即如此），故用 >=
+        if skip_args and stripped.startswith("- ") and indent >= args_indent:
+            continue
+        skip_args = False
+
+        if re.match(r"^\s*command\s*:", line):
+            out.append(" " * indent + f"command: '{PACKAGED_MCP_EXE_HINT}'")
+            replaced["command"] += 1
+            continue
+        if re.match(r"^\s*args\s*:", line):
+            out.append(" " * indent + "args: []")
+            replaced["args"] += 1
+            args_indent = indent
+            skip_args = True
+            continue
+        if re.match(r"^\s*cwd\s*:", line):
+            out.append(" " * indent + f"cwd: '{PACKAGED_ROOT_HINT}'")
+            replaced["cwd"] += 1
+            continue
+        out.append(line)
+
+    if not any(replaced.values()):
+        raise ValueError("预设里找不到 - id: mcp-galtransl 块的 command/args/cwd")
+    for key, count in replaced.items():
+        if count != 1:
+            raise ValueError(
+                f"mcp-galtransl 块的 {key} 出现 {count} 次（应恰好 1 次），拒绝生成不完整预设"
+            )
+    return "\n".join(out) + "\n"
+
+
+def _mcp_package_readme() -> str:
+    return f"""# GalTransl MCP 服务（独立包）
+
+本包提供 GalTransl 的 MCP 服务单文件 exe，外部 Agent 可直接以 stdio 接入，
+**不需要**用户自备 Python 或 `mcp` 包。
+
+## 目录
+
+- `backend/galtransl_mcp.exe`：MCP 服务本体
+- `skills/galtransl-mcp/SKILL.md`：接入 Agent 的行为契约（H 门禁、写边界、路径白名单等；随包提供时）
+- `Dict/`：公共字典（`search_dict` 的 `include_common` 会读取；随包提供时）
+- `translation_guidelines/`：翻译规范文件（随包提供时）
+- `README.md`：本文件
+
+## 客户端配置
+
+把 `<解压目录>` 替换为本包解压后的绝对路径（Windows 路径含反斜杠时 JSON 里要写双反斜杠）：
+
+```json
+{{
+  "mcpServers": {{
+    "galtransl": {{
+      "type": "stdio",
+      "command": "<解压目录>/backend/galtransl_mcp.exe",
+      "args": []
+    }}
+  }}
+}}
+```
+
+- Claude Desktop：并入 `claude_desktop_config.json` 的 `mcpServers` 后重启客户端。
+- 其他客户端：按各自的 MCP 配置格式并入同一条 `galtransl` 条目。
+
+## 能力边界
+
+- 只读检索直接读取项目目录，不需要 GalTransl 后端在运行。
+- 任务状态、模型探测、提交/停止任务需要 GalTransl 后端在运行。
+- 写工具只能改项目内指定产物；完整约束见 `skills/galtransl-mcp/SKILL.md`，
+  接入 Agent 必须先读该文档。
+"""
+
+
+def _skill_package_readme() -> str:
+    return f"""# GalTransl MCP Skill
+
+本包只含 Agent Skill 文档（`SKILL.md`），不含 MCP 服务本体。
+
+## 安装
+
+1. 先按 `{MCP_ZIP_NAME}` 的 README 配置 galtransl MCP 服务。
+2. 把整个 `galtransl-mcp/` 目录放进你的 Agent 的 skills 目录
+   （例如 Claude Code 的 `~/.claude/skills/` 或项目内 `.claude/skills/`），
+   确保最终路径为 `.../skills/galtransl-mcp/SKILL.md`。
+3. 新开会话，让 Agent 在涉及 GalTransl 项目时先读该技能。
+"""
+
+
+def _dsh_package_readme() -> str:
+    return f"""# dsh 预设包（打包版）
+
+本目录是可直接安装的 dsh bundle，内容来自官方预设；其中 MCP 连接已由
+**源码模式的 venv + run_mcp_server.py** 改为**打包版 exe 的占位路径**。
+
+## 安装前必须改路径
+
+打开 `galtransl.preset.yml`，把 `mcp-galtransl` 行的三项改成你的程序根：
+
+```yaml
+command: '{PACKAGED_MCP_EXE_HINT}'   # 改成 <程序根>/backend/galtransl_mcp.exe
+args: []
+cwd: '{PACKAGED_ROOT_HINT}'          # 改成 <程序根>
+```
+
+走「直接并入 profile patch」方案时，`cordis.patch.yml` 里同样的三项也要改。
+
+> `command` 含路径分隔符时必须是绝对路径，相对路径会被 dsh 拒绝。
+
+## 安装
+
+- A（推荐）：dsh 设置 → 插件 → 安装本地插件，选择解压后的本目录；
+  或让 agent 执行 `plugin_manager` 的 `install_bundle` 指向本目录。
+- B：把 `galtransl.preset.yml` 放到 `$DSH_HOME\\profiles\\`，按 `README.md` 写 include 行；
+  或把 `cordis.patch.yml` 的 `- insert:` 段并入 profile patch。
+
+装完新开会话，在 Agent 预设选择器里选 `GalTransl`。完整说明见本目录 `README.md`。
+本包不需要 Python 环境。
+
+> 本包不含 `tools/build_dsh_preset.py` 与回归测试。`galtransl.preset.yml` 与
+> `cordis.patch.yml` 是同一内容的两种形态：只改你实际使用的那一份即可
+> （bundle 或直接并入 patch 用 `cordis.patch.yml`，include 用 `galtransl.preset.yml`）。
+> 若两份都要用，请手工保持 `mcp-galtransl` 三行一致。
+"""
+
+
+def _plain_preset_package_readme() -> str:
+    return f"""# GalTransl Agent 预设（明文）
+
+本包面向**不使用 dsh**、但支持自定义预设/系统提示词的其他 Agent。
+它只提供明文，不绑定任何 Agent 的清单格式，请让你的 Agent 自行改写。
+
+## 目录
+
+- `galtransl.preset.yml`：预设真相源（persona 系统提示词 + MCP 连接 + 工具边界）
+- `skills/galtransl-mcp/SKILL.md`：MCP 工具契约（硬性约束、H 门禁、路径白名单）
+- `README.md`：本文件
+
+## 用法（把下面这段交给你的 Agent）
+
+> 请读取本目录的 `galtransl.preset.yml` 与 `skills/galtransl-mcp/SKILL.md`，
+> 把其中的预设改写为你的 Agent 的自定义预设/系统提示词格式。要求：
+> 1. 保留 persona 段落中的全部硬性约束与 H 内容处理规则，不得放宽；
+> 2. 保留 MCP 服务 `galtransl` 的 stdio 连接配置：`command` 指向你的 GalTransl
+>    程序根下的 `backend/galtransl_mcp.exe`（源码环境则指向
+>    `venv\\Scripts\\python.exe`，`args` 指向 `run_mcp_server.py`），`cwd` 指向程序根；
+> 3. 工具面只保留 GalTransl MCP 工具（及你的 Agent 必需的交互工具），
+>    不要额外赋予文件读写、Shell、网页抓取等能力；
+> 4. 输出一份可直接导入你的 Agent 的预设文件，并说明安装位置。
+>
+> `galtransl.preset.yml` 里的 `command`/`cwd` 是占位路径（`{PACKAGED_ROOT_HINT}`），
+> 改写时必须替换为你本机的实际路径。
+"""
+
+
+def _packaged_dsh_readme(text: str) -> str:
+    """在仓库版 README 前加「打包版覆盖说明」，压过后文的源码维护指引。"""
+    return (
+        "> **打包版覆盖说明（优先于下文）**：本包不含 `tools/build_dsh_preset.py` 与回归测试；\n"
+        "> 下文「请勿手改」「重跑脚本」等说法仅适用于源码仓库。本包请按 `INSTALL-PACKAGED.md`\n"
+        "> 修改实际使用的那份 YAML；两份都要用时请手工保持一致。\n\n"
+        + text
+    )
+
+
+def _create_mcp_package(zip_path: Path, mcp_exe: Path, skills_dir: Path | None) -> None:
+    if not mcp_exe.is_file():
+        raise FileNotFoundError(f"MCP 服务 exe 缺失: {mcp_exe}")
+    root = zip_path.stem
+    entries: list[tuple[str, Path | str]] = [
+        (f"{root}/backend/{mcp_exe.name}", mcp_exe),
+        (f"{root}/README.md", _mcp_package_readme()),
+    ]
+    if skills_dir and skills_dir.is_dir():
+        entries += _collect_dir_entries(skills_dir, root=f"{root}/skills")
+    for name, src in (("Dict", DICT_DIR), ("translation_guidelines", GUIDELINES_DIR)):
+        if src.is_dir():
+            entries += _collect_dir_entries(src, root=f"{root}/{name}")
+    _write_zip_file(zip_path, entries)
+    log_debug(f"MCP 包条目数: {len(entries)}")
+
+
+def _create_skill_package(zip_path: Path, skills_dir: Path) -> None:
+    # 技能目录本身即安装单元：解压到 skills/ 下正好是 skills/galtransl-mcp/
+    skill_dir = skills_dir / "galtransl-mcp"
+    if not (skill_dir / "SKILL.md").is_file():
+        raise FileNotFoundError(f"Skill 文档缺失: {skill_dir / 'SKILL.md'}")
+    entries = _collect_dir_entries(skill_dir, root="galtransl-mcp")
+    entries.append(("galtransl-mcp/README.md", _skill_package_readme()))
+    _write_zip_file(zip_path, entries)
+    log_debug(f"Skill 包条目数: {len(entries)}")
+
+
+def _create_dsh_package(zip_path: Path, preset_dir: Path, skills_dir: Path | None) -> None:
+    root = "galtransl-dsh-preset"
+    for name in ("galtransl.preset.yml", "cordis.patch.yml", "package.json"):
+        if not (preset_dir / name).is_file():
+            raise FileNotFoundError(f"dsh 预设包必需文件缺失: {preset_dir / name}")
+
+    def _packaged_yaml(text: str) -> str:
+        return PACKAGED_PRESET_NOTE + "\n" + _rewrite_mcp_client_config(text)
+
+    rewrite = {
+        "galtransl.preset.yml": _packaged_yaml,
+        "cordis.patch.yml": _packaged_yaml,
+        "README.md": _packaged_dsh_readme,
+    }
+    entries = _collect_dir_entries(preset_dir, root=root, transform=rewrite)
+    entries.append((f"{root}/INSTALL-PACKAGED.md", _dsh_package_readme()))
+    if skills_dir and skills_dir.is_dir():
+        entries += _collect_dir_entries(skills_dir, root=f"{root}/skills")
+    _write_zip_file(zip_path, entries)
+    log_debug(f"dsh 预设包条目数: {len(entries)}")
+
+
+def _create_plain_preset_package(
+    zip_path: Path, preset_dir: Path, skills_dir: Path | None
+) -> None:
+    root = "galtransl-preset-plain"
+    source = preset_dir / "galtransl.preset.yml"
+    if not source.is_file():
+        raise FileNotFoundError(f"预设真相源缺失: {source}")
+    entries: list[tuple[str, Path | str]] = [
+        (f"{root}/galtransl.preset.yml", _rewrite_mcp_client_config(
+            source.read_text(encoding="utf-8")
+        )),
+        (f"{root}/README.md", _plain_preset_package_readme()),
+    ]
+    if skills_dir and skills_dir.is_dir():
+        entries += _collect_dir_entries(skills_dir, root=f"{root}/skills")
+    _write_zip_file(zip_path, entries)
+    log_debug(f"预设明文包条目数: {len(entries)}")
+
+
+def build_agent_packages(mcp_exe: Path | None, allow_incomplete: bool = False) -> list[Path]:
+    """构建四个外置 Agent 相关包；返回实际生成的 zip 路径列表。"""
+    log_info("═══ 构建外置 Agent 包（MCP / Skill / dsh 预设 / 预设明文） ═══")
+
+    skill_file = SKILLS_DIR / "galtransl-mcp" / "SKILL.md"
+    dsh_required = [
+        DSH_PRESET_DIR / "galtransl.preset.yml",
+        DSH_PRESET_DIR / "cordis.patch.yml",
+        DSH_PRESET_DIR / "package.json",
+    ]
+    skills_ready = skill_file.is_file()
+    dsh_ready = DSH_PRESET_DIR.is_dir() and all(p.is_file() for p in dsh_required)
+    plain_ready = (DSH_PRESET_DIR / "galtransl.preset.yml").is_file()
+
+    missing: list[str] = []
+    if not mcp_exe or not mcp_exe.is_file():
+        missing.append(f"MCP 服务 exe (dist/{mcp_exe_name()})")
+    if not skills_ready:
+        missing.append("skills/galtransl-mcp/SKILL.md")
+    if not DICT_DIR.is_dir():
+        missing.append("Dict/ 目录")
+    if not DSH_PRESET_DIR.is_dir():
+        missing.append("agents/dsh-preset/ 目录")
+    else:
+        for required in dsh_required:
+            if not required.is_file():
+                missing.append(f"agents/dsh-preset/{required.name}")
+
+    if missing and not allow_incomplete:
+        log_err("以下外置 Agent 包所需组件缺失，构建中止（可用 --allow-incomplete 显式降级）:")
+        for item in missing:
+            log_err(f"  - {item}")
+        sys.exit(1)
+    for item in missing:
+        log_warn(f"缺失 {item}，相关外置 Agent 包将跳过或降级")
+
+    built: list[Path] = []
+    if mcp_exe and mcp_exe.is_file():
+        path = RELEASE_DIR / MCP_ZIP_NAME
+        _create_mcp_package(path, mcp_exe, SKILLS_DIR if skills_ready else None)
+        built.append(path)
+        log_ok(f"MCP 包: {path}")
+    else:
+        log_warn("MCP 服务 exe 缺失，跳过 MCP 包")
+
+    if skills_ready:
+        path = RELEASE_DIR / SKILL_ZIP_NAME
+        _create_skill_package(path, SKILLS_DIR)
+        built.append(path)
+        log_ok(f"Skill 包: {path}")
+    else:
+        log_warn("skills/galtransl-mcp/SKILL.md 缺失，跳过 Skill 包")
+
+    if dsh_ready:
+        path = RELEASE_DIR / DSH_ZIP_NAME
+        _create_dsh_package(path, DSH_PRESET_DIR, SKILLS_DIR if skills_ready else None)
+        built.append(path)
+        log_ok(f"dsh 预设包: {path}")
+    else:
+        log_warn("agents/dsh-preset/ 必需文件缺失，跳过 dsh 预设包")
+
+    if plain_ready:
+        path = RELEASE_DIR / PLAIN_PRESET_ZIP_NAME
+        _create_plain_preset_package(
+            path, DSH_PRESET_DIR, SKILLS_DIR if skills_ready else None
+        )
+        built.append(path)
+        log_ok(f"预设明文包: {path}")
+    else:
+        log_warn("agents/dsh-preset/galtransl.preset.yml 缺失，跳过预设明文包")
+
+    return built
+
+
 # ─── 后端冒烟测试 ────────────────────────────────────────
 
 def _pick_free_port() -> int:
@@ -1090,14 +1492,20 @@ def main():
         log_err("MCP 冒烟测试失败：产物可能无法运行")
         sys.exit(1)
 
-    # 压缩
+    # 压缩 + 外置 Agent 包
+    agent_zip_paths: list[Path] = []
     if not args.no_zip:
         create_zip()
+        agent_zip_paths = build_agent_packages(
+            mcp_exe, allow_incomplete=args.allow_incomplete
+        )
 
     log_ok("构建完成!")
     log_info(f"   发布目录: {BUILD_DIR}")
     if not args.no_zip:
-        log_info(f"   压缩包:   {RELEASE_DIR / ZIP_NAME}")
+        log_info(f"   主压缩包: {RELEASE_DIR / ZIP_NAME}")
+        for path in agent_zip_paths:
+            log_info(f"   Agent 包: {path}")
 
     # 清理 PyInstaller 临时产出（P1-3：仅本次构建产生的 dist/build）
     # 本次构建一定生成了 ROOT/dist 与 ROOT/build；skip-be 复用 exe 时不清理 dist。
