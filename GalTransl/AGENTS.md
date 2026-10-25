@@ -294,6 +294,8 @@ if __name__ == "__main__":
 | `Backend/ForToneCheckAgain.py` | 对已标记「词语色彩不一致」的句子逐句二次复核，剔除误报 |
 | `Backend/ForVerboseCheck.py` | 节奏冗长检测：标记信息量未增加却被同源二译（同一原文成分被两处译出）或无源增补（原文没有的动作/心理/因果/时机/评价）撑大的句子（`verbose_issue`），不改译文；判据为「候选入口 → 否决筛查 → 删除测试」，reason 三选一（同源二译/无源增补/跨行重复）；与「节奏单一」启发式互补 |
 | `Backend/ForVerboseCheckAgain.py` | 对已标记「节奏冗长」的句子做否决式二次复核（核实首轮理由是否成立，不重新检测、不新增条目），剔除误报 |
+| `Backend/ForFluencyCheck.py` | 中文通顺检测：继承 `ForSemCheck`，首轮先经 `fluency_rules` 规则初筛（轻动词冗余/判断句冗赘/搭配冲突/虚词堆叠），再把候选句送 AI 判定是否符合现代汉语自然表达（`fluency_issue`，问题类型「中文不顺」），reason 为 `类别：「原片段」→「建议片段」(依据:…)`；覆写证据校验（建议片段不要求出现在 dst，但须非空、不同于原片段且字数不多于原片段）；目标语言非中文自动禁用；初筛后候选稀疏，恒按固定句数分批 |
+| `Backend/ForFluencyCheckAgain.py` | 对已标记「中文不顺」的句子做否决式二次复核（keep 语义），keep 的保留并沿用首轮 reason 格式，剔除可接受译文（角色口癖、正当强调、H 场景婉化）的误报 |
 | `Backend/BaseDetectRound.py` | **检测/复核轮公共基类**：令牌池降级、单轮批次循环、稀疏命中解析、keep 复核解析、整批回显重试、预览推送、批次划分（首轮默认按 `pass2_cache` 批次级元数据区间分批，`internals.detect.batch_from_metadata` / `..._max_sentences`；无元数据、句子无行号或行号与区间不匹配时回退 `_batch_size_keys` 固定句数，复核轮恒固定句数；子目录扁平化名的 basename 兜底在此收口）与批次大小配置链全部收口于此；复核轮输入附带命中句前后上下文（同 `gpt.fixIncludeContext`/`gpt.fixContextLines`，首轮按连续区间分批不附带）。新增检测后端只需声明类属性（`_marker_attr`/`_issue_label`/`_prompt_pair`/`_batch_size_keys`/`_round_kind`/`_parse_mode`/`_placeholder_reasons` + 日志措辞；复核轮另需 `_echo_retry_enabled=False` 与 `_extra_problem_attr`）并按需覆盖 5 个钩子（`_prepare_round`/`_prepare_file_context`/`_build_batch_user_content`/`_log_batch_skipped`/`_summary_suffix`），勿再整段复制 batch_translate |
 | `Backend/BaseFixRound.py` | 稀疏修复轮基类（`BaseSparseFixRound`）+ 按问题类型修复轮基类（`BaseProblemFixRound`）：筛选/分桶/稀疏解析/错误上报公共逻辑；问题修复轮在输入最前附带问题句前后上下文（`gpt.fixIncludeContext` 默认开 / `gpt.fixContextLines` 默认前后各 4 句，`_build_problem_context_block` 沿 prev/next_tran 链构建、排除批内句去重、无哈希锚点不参与解析；改进轮不附带）；对话模式跟随 `gpt.chatMode`（multi=文件级共用会话仅首轮发完整模板，single=每批独立完整请求、不建立/不回写会话） |
 | `Backend/ForFixRound.py` | 统一问题修复：按所选问题类型组合修复译文（多类可并行），每类按对应修复指令生成备选译文；输入模式自动推导（含需对照原文的类型即用译文+原文，否则仅译文） |
@@ -308,6 +310,7 @@ if __name__ == "__main__":
 | `Dictionary.py` | 字典系统：`CNormalDic`（译前/译后替换，条件规则）、`CGptDict`（GPT 字典）、`CBasicDicElement` 等 |
 | `Name.py` | 人名替换表（CSV/XLSX）提取、加载、导出；`extract_names_from_dir`/`load_name_table`/`dump_name_table_from_chunks` |
 | `Problem.py` | 质量检查：`find_problems()` 逐句检测并写入 `tran.problem` 属性。`problem` 为「半角逗号分隔的类型列表」，细节文本统一经 `normalize_problem_detail()` 把半角逗号转全角（前端 `lib/problems.ts` 的 `problemTypesOf` 与后端 `_filter_problem_by_types` 均按半角逗号切分，不归一会切出伪类型名） |
+| `fluency_rules.py` | 中文通顺检测的规则初筛（纯数据结构，不产生标记）：A 轻动词冗余 / B 判断句冗赘 / C 搭配冲突 / D 虚词堆叠；`find_fluency_candidates()` 返回候选句与分类计数，作为 `ForFluencyCheck` 首轮送 AI 的召回上限（未复核命中不会进入问题列表）；规则/词表可独立迭代 |
 | `GTPlugin.py` | 插件基类：`GTextPlugin`（before/after_src_processed、before/after_dst_processed）、`GFilePlugin`（load/save） |
 | `TextCompressor.py` | 文本无损压缩器，压缩全文供全局分析并校验完整性（`verify_compression`） |
 | `DataValidator.py` | 统一数据校验：输入/压缩/LLM 响应/元数据/输出五层校验（`validate_input_json`/`validate_global_prompt` 等） |
@@ -334,9 +337,9 @@ if __name__ == "__main__":
 | 5 | 生成全局游戏分析 | **路线分片汇总**：`ForRouteAnalysis` 按「文件归属」逐路线分析（分片可复用，并行 `internals.globalanalysis.routeParallelism`）→ `ForGlobalAnalysis` 融合分片产出全量分析；路线图缺失/mermaid 为空/划分不出任何可分析路线时回退 `ForGlobalPrompt` 全文分析；覆盖缺口（未归属文件）合成为「未归属文件」独立分片继续分片汇总，路线数超 `internals.globalanalysis.maxRoutes` 仅软告警不阻断 | `pass0_cache/route_analysis/*.json` 分片 + `pass0_cache/GlobalPrompt.json` |
 | 6 | 划分翻译区间 | `ForBatchMetaData` 批次+视角/氛围/H（0-1 浮点强度）标注；行数阈值同阶段 3 | `transl_cache/pass2_cache/*.batch.json` |
 | 7 | 翻译执行 | `ForGalJsonTranslate` 翻译（对话模式 `gpt.chatMode`：multi 多轮 / single 单轮） | `transl_cache/pass3_cache/*.json` → `gt_output/` |
-| 8 | 译文质量改进 | 按 `common.gpt.afterTranslation` **有序数组**依次执行后处理项：improve / brfix / jpfix / banfix / semcheck / semcheckagain / tonecheck / tonecheckagain / verbosecheck / verbosecheckagain / fix（fix 为 `{fix: {types: [...], injectProblem}}` 对象条目；types 支持问题类型名或序号（1-N，与 `/api/problem-types` 目录顺序一致）；旧 improve/brfix 字符串格式仍兼容；tonecheck/tonecheckagain 的色彩基准为**软依赖**——优先批次区间「用词色彩」标注，无批次元数据/区间不相交/色彩字段全空时回退对照 `src` 原文语气，不再跳过；verbosecheck/verbosecheckagain 为可选冗长质检，默认链不启用），同一后端允许多次出现（不去重，如多个不同类型组合的 fix 依次执行），逐文件生成备选译文或疑似错误/色彩/冗长标记 | `transl_cache/*.json` 的 `alt_dst` / `suspected_error` / `tone_issue` / `verbose_issue` 字段 |
+| 8 | 译文质量改进 | 按 `common.gpt.afterTranslation` **有序数组**依次执行后处理项：improve / brfix / jpfix / banfix / semcheck / semcheckagain / tonecheck / tonecheckagain / verbosecheck / verbosecheckagain / fluencycheck / fluencycheckagain / fix（fix 为 `{fix: {types: [...], injectProblem}}` 对象条目；types 支持问题类型名或序号（1-N，与 `/api/problem-types` 目录顺序一致）；旧 improve/brfix 字符串格式仍兼容；tonecheck/tonecheckagain 的色彩基准为**软依赖**——优先批次区间「用词色彩」标注，无批次元数据/区间不相交/色彩字段全空时回退对照 `src` 原文语气，不再跳过；verbosecheck/verbosecheckagain 为可选冗长质检、fluencycheck/fluencycheckagain 为可选通顺质检（规则初筛后送 AI），默认链均不启用），同一后端允许多次出现（不去重，如多个不同类型组合的 fix 依次执行），逐文件生成备选译文或疑似错误/色彩/冗长/通顺标记 | `transl_cache/*.json` 的 `alt_dst` / `suspected_error` / `tone_issue` / `verbose_issue` / `fluency_issue` 字段 |
 
-各阶段均可按缓存产物是否已存在而跳过（`internals.pipeline.forceRegen*` 与 `internals.globalanalysis.forceRegenRouteAnalysis` 可强制重生成）。元数据两阶段（3/6）另有行数阈值跳过：非空行数 < `internals.pipeline.metaMinLines`（默认 20）的文件不调用 AI、不写元数据产物，判定口径为 `metadata.count_nonempty_lines`（与前端进度分母同口径）；后端 `_run_meta_worker_pool` 返回 `MetaPoolResult` 单独汇报该类跳过，交叉验证与前端文件进度面板（`meta_min_lines`）按「已跳过」处理，避免误报缺失。独立引擎（`ForGlobalPrompt`/`ForRouteAnalysis`/`ForGlobalAnalysis`/`ForPlotRouteMap`/`GenDic`/`ForFileMetaData`/`ForBatchMetaData`/`ForImproveTranslation`/`ForBRStation`/`ForJPResidue`/`ForBanWordFix`/`ForSemCheck`/`ForSemCheckAgain`/`ForToneCheck`/`ForToneCheckAgain`/`ForVerboseCheck`/`ForVerboseCheckAgain`/`ForFixRound`/`dump-name`/`show-plugs`）也可单独作为 `translator` 运行。
+各阶段均可按缓存产物是否已存在而跳过（`internals.pipeline.forceRegen*` 与 `internals.globalanalysis.forceRegenRouteAnalysis` 可强制重生成）。元数据两阶段（3/6）另有行数阈值跳过：非空行数 < `internals.pipeline.metaMinLines`（默认 20）的文件不调用 AI、不写元数据产物，判定口径为 `metadata.count_nonempty_lines`（与前端进度分母同口径）；后端 `_run_meta_worker_pool` 返回 `MetaPoolResult` 单独汇报该类跳过，交叉验证与前端文件进度面板（`meta_min_lines`）按「已跳过」处理，避免误报缺失。独立引擎（`ForGlobalPrompt`/`ForRouteAnalysis`/`ForGlobalAnalysis`/`ForPlotRouteMap`/`GenDic`/`ForFileMetaData`/`ForBatchMetaData`/`ForImproveTranslation`/`ForBRStation`/`ForJPResidue`/`ForBanWordFix`/`ForSemCheck`/`ForSemCheckAgain`/`ForToneCheck`/`ForToneCheckAgain`/`ForVerboseCheck`/`ForVerboseCheckAgain`/`ForFluencyCheck`/`ForFluencyCheckAgain`/`ForFixRound`/`dump-name`/`show-plugs`）也可单独作为 `translator` 运行。
 
 ### 自定义流水线步骤（internals.pipeline.steps，低代码有序列表）
 
@@ -408,7 +411,7 @@ if __name__ == "__main__":
 
 ### 缓存条目（CacheEntry）
 
-缓存文件（`transl_cache/pass3_cache/*.json`）中每条 JSON 的核心字段：`index`、`name`、`pre_src`、`post_src`、`pre_dst`、`proofread_dst`、`trans_by`、`proofread_by`、`problem`、`post_dst_preview`，以及内部键 `__cache_key`（前句+当前句+后句上下文三元组，带 index 前缀区分同文不同位置）。译文质量改进/问题修复阶段（improve/brfix/jpfix/banfix/fix）会在条目上追加 `alt_dst`（备选译文，与主译文不同才落盘），校对页可一键交换；semcheck/semcheckagain 会写入 `suspected_error`（疑似错误标记，复核通过后移除）。
+缓存文件（`transl_cache/pass3_cache/*.json`）中每条 JSON 的核心字段：`index`、`name`、`pre_src`、`post_src`、`pre_dst`、`proofread_dst`、`trans_by`、`proofread_by`、`problem`、`post_dst_preview`，以及内部键 `__cache_key`（前句+当前句+后句上下文三元组，带 index 前缀区分同文不同位置）。译文质量改进/问题修复阶段（improve/brfix/jpfix/banfix/fix）会在条目上追加 `alt_dst`（备选译文，与主译文不同才落盘），校对页可一键交换；semcheck/semcheckagain 会写入 `suspected_error`（疑似错误标记，复核通过后移除）；tonecheck、verbosecheck、fluencycheck 及其 Again 复核轮分别写入 `tone_issue`、`verbose_issue`、`fluency_issue`（复核撤销后移除）。
 
 ## API 接口文档（唯一归属）
 
