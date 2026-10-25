@@ -131,7 +131,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "common.gpt.fixIncludeContext": {
     label: "修复/复核轮附带问题句上下文",
-    hint: "开启后，问题修复轮（fix/brfix/jpfix/banfix）与二次复核轮（semcheckagain/tonecheckagain/verbosecheckagain）在输入最前附带问题句的前后上下文（原文+译文；换行修复等纯译文修复模式下仅附译文），帮助 AI 理解剧情衔接与语气、降低误判。上下文行仅供理解，AI 不会对它们输出结果。",
+    hint: "开启后，问题修复轮（fix/brfix/jpfix/banfix）与二次复核轮（semcheckagain/tonecheckagain/verbosecheckagain/fluencycheckagain）在输入最前附带问题句的前后上下文（原文+译文；换行修复等纯译文修复模式下仅附译文），帮助 AI 理解剧情衔接与语气、降低误判。上下文行仅供理解，AI 不会对它们输出结果。",
   },
   "common.gpt.fixContextLines": {
     label: "上下文条数",
@@ -143,7 +143,7 @@ const FIELD_UI: Record<string, FieldUI> = {
   },
   "internals.detect.batch_from_metadata": {
     label: "检测轮按批次元数据分批",
-    hint: "开启后首轮检测（语义/色彩/冗长）按批次级元数据的剧情区间划分批次，每批不跨区间；无元数据、句子无行号或行号与区间不匹配时自动回退上方固定句数。复核轮始终按固定句数。",
+    hint: "开启后首轮检测（语义/色彩/冗长）按批次级元数据的剧情区间划分批次，每批不跨区间；无元数据、句子无行号或行号与区间不匹配时自动回退上方固定句数。复核轮与中文通顺检测始终按固定句数。",
   },
   "internals.detect.batch_from_metadata_max_sentences": {
     label: "按区间分批的单批句数上限",
@@ -1564,8 +1564,9 @@ export function ProjectConfigPage() {
             修复和改进译文」开关后此处不生效。也可直接在后端下拉中选择
             ForImproveTranslation / ForBRStation / ForJPResidue / ForBanWordFix / ForSemCheck
             / ForSemCheckAgain / ForToneCheck / ForToneCheckAgain / ForVerboseCheck
-            / ForVerboseCheckAgain 对已翻译文件手动执行（后者依次为语义命中句二次复核、
-            词语色彩命中句二次复核、节奏冗长检测与冗长命中句二次复核）。
+            / ForVerboseCheckAgain / ForFluencyCheck / ForFluencyCheckAgain 对已翻译文件手动执行
+            （后者依次为语义命中句二次复核、词语色彩命中句二次复核、节奏冗长检测与冗长命中句二次复核、
+            中文通顺检测与通顺命中句二次复核）。
           </p>
           <AfterTranslationOrderEditor
             value={order()}

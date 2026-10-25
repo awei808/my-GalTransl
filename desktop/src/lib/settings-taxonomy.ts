@@ -157,12 +157,13 @@ export const PROJECT_SETTINGS_TAXONOMY: TaxonomySection[] = [
         ],
       },
       {
-        // 覆盖 ForSemCheck/ForSemCheckAgain/ForToneCheck/ForToneCheckAgain/ForVerboseCheck/ForVerboseCheckAgain 六类检测轮
+        // 覆盖 ForSemCheck/ForSemCheckAgain/ForToneCheck/ForToneCheckAgain/ForVerboseCheck/ForVerboseCheckAgain/ForFluencyCheck/ForFluencyCheckAgain 八类检测轮
         title: "检测轮分批（语义/色彩/冗长）",
         keys: [
           "common.gpt.numPerRequestSemCheck",
           "common.gpt.numPerRequestToneCheck",
           "common.gpt.numPerRequestVerboseCheck",
+          "common.gpt.numPerRequestFluencyCheck",
           "internals.detect.batch_from_metadata",
           "internals.detect.batch_from_metadata_max_sentences",
         ],

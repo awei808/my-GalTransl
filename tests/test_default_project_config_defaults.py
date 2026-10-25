@@ -125,6 +125,7 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
                 "词语色彩不一致",
                 "节奏单一",
                 "节奏冗长",
+                "中文不顺",
             ],
         )
 

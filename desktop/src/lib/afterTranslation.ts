@@ -10,19 +10,25 @@
  * 前后端解析口径一致（后端见 GalTransl/Frontend/llm_postprocess.py 的
  * _resolve_after_translation_order），避免显示与执行不一致。
  *
- * 分组仅为编辑器展示（五个 AI 初步处理子分组：基本问题处理/修正翻译风格/词语色彩一致性检查/
- * 节奏冗长检测/标注疑似错误），不影响执行顺序：执行顺序仍由数字框（数组顺序）决定；
+ * 分组仅为编辑器展示（六个 AI 初步处理子分组：基本问题处理/修正翻译风格/词语色彩一致性检查/
+ * 节奏冗长检测/中文通顺检测/标注疑似错误），不影响执行顺序：执行顺序仍由数字框（数组顺序）决定；
  * 新建项目默认顺序为 统一问题修复 → 语义差异检测（semcheck）→ 词语色彩检查（tonecheck），
- * semcheck/tonecheck 仅打标记不改译文、互相无先后依赖；节奏冗长检测默认不在链上。
+ * semcheck/tonecheck 仅打标记不改译文、互相无先后依赖；节奏冗长检测与中文通顺检测默认不在链上。
  */
 
 /**
  * AI 初步处理分组（仅编辑器分组展示用）
  *
- * verbose 组（节奏冗长检测/复核）为可选质检项：默认后处理链不启用（多一轮
- * 全量 AI 判定等于额外成本），需要时在项目设置里勾选。
+ * verbose 组（节奏冗长检测/复核）与 fluency 组（中文通顺检测/复核）为可选质检项：
+ * 默认后处理链不启用（多一轮全量 AI 判定等于额外成本），需要时在项目设置里勾选。
  */
-export type AfterTranslationGroup = "basic" | "style" | "tone" | "verbose" | "semcheck";
+export type AfterTranslationGroup =
+  | "basic"
+  | "style"
+  | "tone"
+  | "verbose"
+  | "fluency"
+  | "semcheck";
 
 export interface AfterTranslationBackend {
   /** 配置数组元素值，与后端白名单 key 一致 */
@@ -45,6 +51,7 @@ export const AFTER_TRANSLATION_GROUPS: {
   { key: "style", label: "修正翻译风格", hint: "整文件评估译文质量，对可改进句给出备选译文。" },
   { key: "tone", label: "词语色彩一致性检查", hint: "对照色彩基准（批次区间「用词色彩」标注优先，无标注时对照原文语气）检查译文，并可二次复核撤销误报。" },
   { key: "verbose", label: "节奏冗长检测", hint: "AI 判定译文是否被同源二译或无源增补撑大（信息量未增加），并可二次复核撤销误报。" },
+  { key: "fluency", label: "中文通顺检测", hint: "规则初筛命中后由 AI 判定译文是否符合现代汉语自然表达，并可二次复核撤销误报。" },
   { key: "semcheck", label: "标注疑似错误", hint: "AI 判定错译/漏译/串行并标记，供人工复核。" },
 ];
 
@@ -102,6 +109,18 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
     label: "冗长命中句二次复核",
     group: "verbose",
     hint: "对节奏冗长检测标记的「节奏冗长」句子逐句二次复核，撤销可接受译文（必要补足、语气强化、原文本身铺陈）的误报标记（不改译文）。需先执行 verbosecheck 产生标记。",
+  },
+  {
+    key: "fluencycheck",
+    label: "中文通顺检测",
+    group: "fluency",
+    hint: "规则初筛出疑似翻译腔后，由 AI 判定译文是否符合现代汉语自然表达（轻动词冗余、判断句冗赘、搭配冲突、虚词堆叠等），标记「中文不顺」并附等长或更短的替换建议（不改译文）。可选质检项：默认后处理链不启用。",
+  },
+  {
+    key: "fluencycheckagain",
+    label: "通顺命中句二次复核",
+    group: "fluency",
+    hint: "对中文通顺检测标记的「中文不顺」句子逐句二次复核，撤销可接受译文（角色口癖、正当强调、H 场景婉化）的误报标记（不改译文）。需先执行 fluencycheck 产生标记。",
   },
   {
     key: "semcheck",

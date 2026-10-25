@@ -78,7 +78,7 @@ common:
   gpt.enhance_jailbreak: False # 是否启用“抗拒答”增强提示，降低模型拒答概率。[True/False]
   gpt.change_prompt: "no" # Prompt修改模式：no不改；AdditionalPrompt追加；OverwritePrompt覆盖默认提示词。[no/AdditionalPrompt/OverwritePrompt]
   gpt.prompt_content: "翻译结果使用文言文" # Prompt自定义内容；仅在change_prompt为AdditionalPrompt/OverwritePrompt时生效。
-  gpt.afterTranslation: # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 8）：有序数组，元素顺序即执行顺序；空数组不追加。默认：fix统一问题修复（残留日文/换行位置异常/多加换行/频繁换行[测试中，可能误检]/单句过长，types 需在 problemAnalyze.problemList 中启用才会被检测出）→semcheck语义差异检测→tonecheck词语色彩一致性检查。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过semcheck）；tonecheck词语色彩一致性检查（标记色彩明显偏离的句子，写入tone_issue并标记"词语色彩不一致"问题，不改译文；色彩基准优先取批次区间的用词色彩标注，无批次元数据或该批无标注时回退为对照原文语气，不再要求先跑批次划分）；tonecheckagain色彩命中句二次复核（对tonecheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过tonecheck）；verbosecheck节奏冗长检测（标记信息量未增加却被同源二译/无源增补/跨行重复撑大的句子，写入verbose_issue并标记"节奏冗长"问题，不改译文；默认不启用，需要时在此追加）；verbosecheckagain冗长命中句二次复核（对verbosecheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过verbosecheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/verbosecheck/verbosecheckagain/fix]
+  gpt.afterTranslation: # AI初步（批量）处理（完整流水线翻译完成后追加的后处理，阶段 8）：有序数组，元素顺序即执行顺序；空数组不追加。默认：fix统一问题修复（残留日文/换行位置异常/多加换行/频繁换行[测试中，可能误检]/单句过长，types 需在 problemAnalyze.problemList 中启用才会被检测出）→semcheck语义差异检测→tonecheck词语色彩一致性检查。可用项：improve改进轮（修正翻译风格）；brfix换行修复；jpfix残留日文修复；banfix禁用词修复（以上为基本问题处理）；semcheck语义差异检测（AI判定疑似错译/漏译/串行，写入suspected_error并标记"疑似错误"问题）；semcheckagain命中句二次复核（对semcheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过semcheck）；tonecheck词语色彩一致性检查（标记色彩明显偏离的句子，写入tone_issue并标记"词语色彩不一致"问题，不改译文；色彩基准优先取批次区间的用词色彩标注，无批次元数据或该批无标注时回退为对照原文语气，不再要求先跑批次划分）；tonecheckagain色彩命中句二次复核（对tonecheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过tonecheck）；verbosecheck节奏冗长检测（标记信息量未增加却被同源二译/无源增补/跨行重复撑大的句子，写入verbose_issue并标记"节奏冗长"问题，不改译文；默认不启用，需要时在此追加）；verbosecheckagain冗长命中句二次复核（对verbosecheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过verbosecheck）；fluencycheck中文通顺检测（规则初筛命中后送AI判定，标记不符合现代汉语自然表达的句子，写入fluency_issue并标记"中文不顺"问题，不改译文；默认不启用，需要时在此追加）；fluencycheckagain通顺命中句二次复核（对fluencycheck标记句逐句确认/撤销误报，复核时将第一轮具体原因注入输入行 problem 键供 AI 针对性核实，需先跑过fluencycheck）；fix统一问题修复（对象条目 {fix:{types:[...], injectProblem:true}}，types 为问题类型名数组，输入模式由所选类型自动推导：单句过长/换行位置异常/频繁换行 仅发译文，其余类型需对照原文则发译文+原文）。旧字符串格式（none/improve+brfix）仍兼容读取。[improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/verbosecheck/verbosecheckagain/fluencycheck/fluencycheckagain/fix]
     - fix:
         types: # 统一问题修复的问题类型白名单（需在 problemAnalyze.problemList 中启用才会被检测出）
           - 残留日文
@@ -94,11 +94,12 @@ common:
   gpt.enableProblemInject: false # 改进轮是否把译文问题(problem)注入提示词，供AI针对性改进，需先开启 gpt.afterTranslation(含 improve) [True/False]
   gpt.problemInjectTypes: [] # 改进轮注入的问题类型白名单（与 problemAnalyze.problemList 相同的类型名）；空列表=注入全部已检测问题
   gpt.swapFixToCurrent: true # 修复轮（brfix/jpfix/banfix/fix）产生的备选译文是否与当前译文交换属性：true 时修复结果直接覆盖当前译文（校对优先否则初译），原译文存入备选译文可回退；false 时仅作备选译文需手动交换。[True/False]
-  gpt.fixIncludeContext: true # 问题修复轮（fix/brfix/jpfix/banfix）与复核轮（semcheckagain/tonecheckagain/verbosecheckagain）是否在输入最前附带问题句的前后上下文，帮助 AI 理解剧情衔接与语气、降低误判。[True/False]
+  gpt.fixIncludeContext: true # 问题修复轮（fix/brfix/jpfix/banfix）与复核轮（semcheckagain/tonecheckagain/verbosecheckagain/fluencycheckagain）是否在输入最前附带问题句的前后上下文，帮助 AI 理解剧情衔接与语气、降低误判。[True/False]
   gpt.fixContextLines: 4 # 附带的上下文条数：每个问题句前后各取 N 句（相邻问题句不重复计入），0=不附带。[0-16]
   gpt.numPerRequestSemCheck: 20 # 语义差异检测（ForSemCheck）每批发送的句子数，越小越稳但越慢。[1-512]
   gpt.numPerRequestToneCheck: 20 # 词语色彩一致性检查（ForToneCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
   gpt.numPerRequestVerboseCheck: 20 # 节奏冗长检测（ForVerboseCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestSemCheck。[1-512]
+  gpt.numPerRequestFluencyCheck: 20 # 中文通顺检测（ForFluencyCheck）每批发送的句子数，越小越稳但越慢；未配置时回退 numPerRequestVerboseCheck。[1-512]
   stageBackends: # 每阶段独立API：值为「API 配置」页的配置名；留空=跟随任务主配置（翻译控制台所选）。阶段profile的proxy段不生效，统一用任务级代理。
     validate: "" # 阶段0 输入数据校验（一般无需独立后端）
     compress: "" # 阶段1 文本无损压缩（一般无需独立后端）
@@ -128,7 +129,7 @@ internals:
     # steps 条目：阶段 key（validate/compress/gen_dic/file_meta/plot_route/global_analysis/
     # batch_meta/translate/improve，improve 为宏=按 gpt.afterTranslation 链执行），
     # 或 AI 初步处理后端（brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/
-    # verbosecheck/verbosecheckagain，或 {fix: {types: [问题类型名或序号（1 起，按「问题检测类型」
+    # verbosecheck/verbosecheckagain/fluencycheck/fluencycheckagain，或 {fix: {types: [问题类型名或序号（1 起，按「问题检测类型」
     # 清单顺序）], injectProblem: true}}）。
     # 列表顺序即执行顺序，同一后端可多次出现（如两个不同类型组合的 fix）。
     # steps:
@@ -191,7 +192,8 @@ internals:
     min_batch_size: 8 # 单批最小区间长度（行数），小于此值的区间会尽量与相邻区间合并。[1-1000]
     max_batch_size: 64 # 单批最大区间长度（行数），超过此值的区间会被自动切分。[1-1000]
     inject_guideline: false # 是否将翻译规范注入批次划分提示词。[True/False]
-  # 检测类后端（ForSemCheck / ForToneCheck / ForVerboseCheck 及其 Again 复核轮）批次划分
+  # 检测类后端（ForSemCheck / ForToneCheck / ForVerboseCheck 及其 Again 复核轮）批次划分；
+  # 中文通顺检测（ForFluencyCheck）初筛后候选稀疏，恒按固定句数，不受本组配置影响
   detect:
     batch_from_metadata: true # 首轮检测是否按批次级元数据（pass2_cache 的剧情区间）划分批次；无元数据或无有效行号时自动回退固定句数。复核轮恒按固定句数。[True/False]
     batch_from_metadata_max_sentences: 0 # 按区间分批时的单批句数上限，0=不限制（一个区间一批）；超长区间按此值子切，区间外句子仍按固定句数切分。[0-512]
@@ -238,6 +240,7 @@ problemAnalyze:
     - 词语色彩不一致 # AI词语色彩检查：译文用词与色彩基准明显不符，由 ForToneCheck 后端标注 tone_issue 后认领，可由 ForToneCheckAgain 二次复核确认/撤销（基准优先为批次区间的用词色彩标注，无批次元数据或该批无标注时对照原文语气）
     - 节奏单一 # 换行前后相邻两行严格等长、均 >14 字且均不含中英文标点时判定（长句被等长拆开，疑似为对齐行宽注水），节奏呆板；启发式，可能误检刻意对仗/排比
     - 节奏冗长 # AI节奏冗长检测：译文信息量未增加却被同源二译（同一原文成分被两处译出）、无源增补（原文没有的动作/心理/因果/时机/评价）或跨行重复撑大，由 ForVerboseCheck 后端标注 verbose_issue 后认领，可由 ForVerboseCheckAgain 二次复核确认/撤销（需在 afterTranslation 中启用 verbosecheck，且本清单包含该类型才会出现在问题列表；升级项目默认不含本项，需手动添加）
+    - 中文不顺 # AI中文通顺检测：规则初筛命中后由 ForFluencyCheck 判定译文不符合现代汉语自然表达（翻译腔、轻动词冗余、搭配冲突、虚词堆叠），标注 fluency_issue 后认领，可由 ForFluencyCheckAgain 二次复核确认/撤销（需在 afterTranslation 中启用 fluencycheck，且本清单包含该类型才会出现在问题列表；升级项目默认不含本项，需手动添加）
   avgSentenceLengthThreshold: __AVG_LEN__ # 单句过长的分句长度阈值，默认__AVG_LEN__，建议范围15~25
   avgSentenceLengthThresholdH: __H_LEN__ # 单句过长的H场景专用分句长度阈值，默认__H_LEN__，建议范围20~30
 

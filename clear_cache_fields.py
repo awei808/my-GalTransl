@@ -3,6 +3,7 @@
 
 用于测试后清理缓存字段：
   - suspected_error：疑似错误标记（ForSemCheck 产出，模型整批回显误标时清空）
+  - tone_issue / verbose_issue / fluency_issue：各类 AI 检测标记
   - alt_dst：备选译文（ForImproveTranslation / ForBRStation / ForJPResidue /
     ForBanWordFix 产出）
 
@@ -22,7 +23,13 @@ from typing import List, Tuple
 
 import orjson
 
-FIELD_CHOICES = ("suspected_error", "tone_issue", "verbose_issue", "alt_dst")
+FIELD_CHOICES = (
+    "suspected_error",
+    "tone_issue",
+    "verbose_issue",
+    "fluency_issue",
+    "alt_dst",
+)
 
 
 def collect_cache_files(project_dir: str, filename: str = "") -> List[str]:

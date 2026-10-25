@@ -240,6 +240,7 @@ export type CacheEntry = {
   suspected_error?: string; // AI 语义检测标记（ForSemCheck 产出，ForSemCheckAgain 复核确认/撤销，非空即"疑似错误"，随缓存透传）
   tone_issue?: string; // AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销，非空即"词语色彩不一致"，随缓存透传）
   verbose_issue?: string; // AI 节奏冗长检测标记（ForVerboseCheck 产出，ForVerboseCheckAgain 复核确认/撤销，非空即"节奏冗长"，随缓存透传）
+  fluency_issue?: string; // AI 中文通顺检测标记（ForFluencyCheck 产出，ForFluencyCheckAgain 复核确认/撤销，非空即"中文不顺"，随缓存透传）
 };
 
 export type CacheSearchField = "all" | "src" | "dst" | "problem";

@@ -6,7 +6,10 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  AFTER_TRANSLATION_BACKENDS,
+  AFTER_TRANSLATION_GROUPS,
   createDefaultAfterTranslation,
+  isAfterTranslationBackend,
   isFixEntry,
   parseAfterTranslation,
 } from "../lib/afterTranslation";
@@ -47,6 +50,32 @@ describe("createDefaultAfterTranslation", () => {
     const order = createDefaultAfterTranslation();
     const roundtrip = parseAfterTranslation(JSON.parse(JSON.stringify(order)));
     expect(roundtrip).toEqual(order);
+  });
+});
+
+describe("中文通顺检测后端清单", () => {
+  const keys = ["fluencycheck", "fluencycheckagain"];
+
+  it("两个后端均已登记且可被解析", () => {
+    for (const key of keys) {
+      expect(isAfterTranslationBackend(key)).toBe(true);
+      expect(AFTER_TRANSLATION_BACKENDS.some((b) => b.key === key)).toBe(true);
+    }
+    expect(parseAfterTranslation([...keys])).toEqual(keys);
+  });
+
+  it("归属独立的 fluency 分组（与节奏冗长分开展示）", () => {
+    const group = AFTER_TRANSLATION_GROUPS.find((g) => g.key === "fluency");
+    expect(group).toBeTruthy();
+    for (const key of keys) {
+      expect(AFTER_TRANSLATION_BACKENDS.find((b) => b.key === key)?.group).toBe("fluency");
+    }
+  });
+
+  it("默认后处理链不包含可选通顺检测", () => {
+    const order = createDefaultAfterTranslation();
+    expect(order).not.toContain("fluencycheck");
+    expect(order).not.toContain("fluencycheckagain");
   });
 });
 

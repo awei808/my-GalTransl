@@ -628,6 +628,87 @@ class RegistrationTests(unittest.TestCase):
             list(PROBLEM_TYPE_CATALOG_ORDER),
         )
 
+    def test_stage_and_chain_registration(self) -> None:
+        """译后链白名单与自定义流水线步骤键（Phase 2 接线）。"""
+        from GalTransl.Frontend.llm_postprocess import _resolve_after_translation_order
+        from GalTransl.Frontend.pipeline_stages import (
+            AFTER_TRANS_STEP_KEYS,
+            resolve_pipeline_steps,
+        )
+
+        class _Cfg:
+            def __init__(self, values: dict) -> None:
+                self._values = values
+
+            def getKey(self, key: str, default=None):
+                return self._values.get(key, default)
+
+        chain = ["fluencycheck", "fluencycheckagain"]
+        self.assertEqual(
+            _resolve_after_translation_order(_Cfg({"gpt.afterTranslation": chain})),
+            chain,
+        )
+        for key in chain:
+            self.assertIn(key, AFTER_TRANS_STEP_KEYS)
+
+        steps, warnings, custom = resolve_pipeline_steps(
+            _Cfg({"internals.pipeline.steps": ["translate", *chain]})
+        )
+        self.assertTrue(custom)
+        self.assertEqual(warnings, [])
+        self.assertEqual(steps, ["translate", *chain])
+
+        # 译后链白名单覆盖全部流水线译后键（fix 须为对象条目，不参与字符串比对）
+        all_keys = [k for k in AFTER_TRANS_STEP_KEYS if k != "fix"] + ["improve"]
+        self.assertEqual(
+            _resolve_after_translation_order(
+                _Cfg({"gpt.afterTranslation": all_keys})
+            ),
+            all_keys,
+        )
+
+    def test_after_translation_dispatch_instantiates_fluency_backends(self) -> None:
+        """mode → 后端类分支写错时本用例失败（不只锁常量）。"""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from GalTransl.Frontend.llm_postprocess import _run_after_trans_single_file
+
+        class _Cfg:
+            proxyPool = None
+            gpt_dic = {}
+            stage_token_pools = {}
+            tokenPool = None
+
+            def getKey(self, key: str, default=None):
+                return default
+
+        for mode, module, cls_name in (
+            ("fluencycheck", "ForFluencyCheck", "ForFluencyCheck"),
+            ("fluencycheckagain", "ForFluencyCheckAgain", "ForFluencyCheckAgain"),
+        ):
+            inst = MagicMock()
+            inst.batch_translate = AsyncMock()
+            inst.shutdown = AsyncMock()
+            with patch(
+                f"GalTransl.Backend.{module}.{cls_name}", return_value=inst
+            ) as p_cls:
+                asyncio.run(
+                    _run_after_trans_single_file(
+                        mode,
+                        "f.json",
+                        "f.json",
+                        [SimpleNamespace()],
+                        _Cfg(),
+                        20,
+                    )
+                )
+            p_cls.assert_called_once()
+            self.assertEqual(p_cls.call_args[0][1], cls_name)
+            inst.batch_translate.assert_awaited_once()
+            inst.shutdown.assert_awaited_once()
+
     def test_review_sentinel_treated_as_no_reason(self) -> None:
         # 复核轮注入第一轮原因：占位文案「中文不顺」不注入（与疑似错误/节奏冗长同口径）
         from GalTransl.Backend.ForGalJsonTranslate import ForGalJsonTranslate

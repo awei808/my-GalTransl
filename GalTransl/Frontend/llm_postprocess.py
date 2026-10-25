@@ -476,7 +476,7 @@ def _aftertrans_entry_label(entry: Any) -> str:
 def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     """解析流水线翻译后处理后端配置，返回有序后端条目列表（数组顺序即执行顺序）。
 
-    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/verbosecheck/verbosecheckagain）或
+    条目可为字符串 key（improve/brfix/jpfix/banfix/semcheck/semcheckagain/tonecheck/tonecheckagain/verbosecheck/verbosecheckagain/fluencycheck/fluencycheckagain）或
     统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}；
     输入模式由所选问题类型自动推导（含需对照原文的类型即用译文+原文，否则仅译文），
     配置中残留的 mode 字段直接忽略。同一后端允许多次出现（fix 可配置多条不同类型
@@ -487,7 +487,8 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
     allowed = {
         "improve", "brfix", "jpfix", "banfix",
         "semcheck", "semcheckagain", "tonecheck", "tonecheckagain",
-        "verbosecheck", "verbosecheckagain", "fix",
+        "verbosecheck", "verbosecheckagain",
+        "fluencycheck", "fluencycheckagain", "fix",
     }
     raw = projectConfig.getKey("gpt.afterTranslation")
 
@@ -537,7 +538,7 @@ async def _run_after_trans_single_file(
     projectConfig: CProjectConfig,
     num_better: int,
 ) -> None:
-    """对单个文件执行一种 AI 初步处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复 / tonecheck 色彩检查 / tonecheckagain 色彩复核 / verbosecheck 冗长检测 / verbosecheckagain 冗长复核等）。
+    """对单个文件执行一种 AI 初步处理后端（improve 改进轮 / brfix 换行修复 / fix 统一修复 / tonecheck 色彩检查 / tonecheckagain 色彩复核 / verbosecheck 冗长检测 / verbosecheckagain 冗长复核 / fluencycheck 通顺检测 / fluencycheckagain 通顺复核等）。
 
     mode 可为字符串 key 或统一修复后端对象条目 {"fix": {"types": [...], "injectProblem": ...}}。
     直接实例化对应后端类（复用 projectConfig 已载入的 proxyPool/pre_dic/post_dic/
@@ -558,6 +559,8 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForToneCheckAgain import ForToneCheckAgain
     from GalTransl.Backend.ForVerboseCheck import ForVerboseCheck
     from GalTransl.Backend.ForVerboseCheckAgain import ForVerboseCheckAgain
+    from GalTransl.Backend.ForFluencyCheck import ForFluencyCheck
+    from GalTransl.Backend.ForFluencyCheckAgain import ForFluencyCheckAgain
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
 
     _after_pool = _stage_pool(projectConfig, "afterTrans")
@@ -658,6 +661,20 @@ async def _run_after_trans_single_file(
             _api = ForVerboseCheckAgain(
                 projectConfig,
                 "ForVerboseCheckAgain",
+                projectConfig.proxyPool,
+                _after_pool,
+            )
+        elif mode == "fluencycheck":
+            _api = ForFluencyCheck(
+                projectConfig,
+                "ForFluencyCheck",
+                projectConfig.proxyPool,
+                _after_pool,
+            )
+        elif mode == "fluencycheckagain":
+            _api = ForFluencyCheckAgain(
+                projectConfig,
+                "ForFluencyCheckAgain",
                 projectConfig.proxyPool,
                 _after_pool,
             )
