@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "GalTransl",
-    "description": "GalTransl translation-project assistant: mounts only the GalTransl MCP tools (22 read/write tools), with no file, shell, subagent, or web tools."
+    "description": "GalTransl translation-project assistant: mounts the GalTransl MCP tools (22 read/write tools) plus subagent delegation whose children inherit the same MCP-only tool surface; no file, shell, or web tools."
   }
 }

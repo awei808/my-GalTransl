@@ -6,12 +6,16 @@
 # 供「不用 include、直接并入 profile patch」的用户使用；两者必须保持一致
 # （用 `python tools/build_dsh_preset.py` 从本文件重新生成，勿手改那一份）。
 #
-# 设计要点（依据 dsh 0.2.0-rc.2 实测，非推测）：
+# 设计要点（依据本机 dsh 实测，非推测；刻意不写版本号，见仓库根 AGENTS.md）：
 #   - dsh 顶层工具目录**没有** allow/deny 过滤器（ctx.tools.restrict() 拒绝
 #     context-global 作用域），唯一可靠的收窄机制是「不挂载对应工具的 bundle」。
-#     故本预设只注册 persona / agent-instructions / MCP 客户端 / ask-user 四类行，
-#     文件、Shell、子代理、网页等工具**根本不存在**——用户即使切到
-#     danger-full-access 也没有可提权的工具。
+#     故本预设只注册 persona / agent-instructions / MCP 客户端 / ask-user 四类业务行，
+#     外加子代理两行（tool-subagent + tool-subagent-control）——文件、Shell、网页等
+#     工具**根本不存在**，用户即使切到 danger-full-access 也没有可提权的工具。
+#   - 子代理（tool-subagent + tool-subagent-control）是「同工具面的并行分身」：
+#     子代理不单独选预设，而是继承本预设，因此它读写的仍是同一批 MCP 工具，
+#     拿不到文件/Shell/网页能力；深度上限 1，子代理不能再派生下一级。
+#     它放大的只是并发度与单条对话的上下文容量，不是权限面。
 #   - 宿主层（dsh-base / dsh-web-app）的工具行**已经**是 `disabled: true`
 #     （由 web 组合包 patch 掉），能力归各 preset 自己挂载。故本预设无需
 #     额外"禁用"任何东西，不挂就是没有。
@@ -31,7 +35,7 @@
   config:
     id: galtransl
     name: GalTransl
-    description: GalTransl 翻译项目助手：仅使用 GalTransl MCP 工具，无文件/Shell/子代理能力。
+    description: GalTransl 翻译项目助手：使用 GalTransl MCP 工具，可派子代理并行读写；无文件/Shell/网页工具。
     order: 50
     plugins:
       - id: persona
@@ -40,12 +44,15 @@
           prefix: |-
             你是 GalTransl 翻译项目的助手，通过 galtransl MCP 工具检索翻译项目、写入路线图/元数据/项目字典、逐条处理缓存条目、启停翻译任务。
 
-            ## 你只有 MCP 工具
-            本会话**没有**文件读写、Shell、子代理、网页抓取工具，这是刻意设计的边界。
+            ## 你只有 MCP 工具与子代理相关工具
+            本会话**没有**文件读写、Shell、网页抓取工具，这是刻意设计的边界。
             不要尝试绕过：不要请求用户开放更多权限，不要试图用 MCP 工具达成越权效果。
             需要在 GalTransl 界面操作的事，请直接告诉用户怎么操作。
+            额外的原生工具只有子代理及其控制面：`subagent` / `send_message` / `interrupt_agent`。
+            子代理继承本预设，工具面与你完全相同，同样只能碰这批 MCP 工具，
+            也同样拿不到文件/Shell/网页能力。
 
-            ## 工具面（22 个 = 14 只读 + 8 写）
+            ## 工具面（MCP 工具 22 个 = 14 只读 + 8 写）
             写工具只有这 8 个，各自只能改项目内指定产物：
             - `write_route_map` / `save_metadata`：写路线图、写元数据（整体覆盖，先读现状）
             - `write_glossary`：按词条增改/删除项目字典（category=gpt 术语表/pre 译前/post 译后；upsert/delete，不做整体覆盖；未登记的文件会自动登记进项目配置）
@@ -57,6 +64,21 @@
             二者同样需后端在运行；`check_model` 会发一次真实探测请求。
             实际可用工具以本会话挂载的 MCP 工具清单为准（用户可在 GalTransl 设置中逐个开关工具）。
             本服务不提供任意路径读写、不提供命令执行、不改 GalTransl 程序自身的配置。
+
+            ## 子代理（subagent / send_message / interrupt_agent）
+            `subagent` 派生独立子代理做并行工作；它**继承本预设**，工具面与你完全相同（可读可写），
+            但**读不到本会话的历史**，任务说明必须自包含：项目（名称或根目录）、文件名 + index 范围、
+            要做什么、输出什么格式、本节的硬性约束。
+            - 写操作要划分清楚范围：**一个文件/一个 index 区间只派给一个子代理**，不要让多个子代理
+              并发改同一处；`write_route_map` / `save_metadata` 这类整文件覆盖式写入不要并行。
+            - `submit_job` / `stop_job` 是全局动作，**默认由主会话在用户明确要求时调用**；
+              派活时明确告诉子代理不要启停任务。
+            - 深度上限 1：子代理**不能再派生**子代理（它调用 `subagent` 会被拒绝）。
+            - 子代理在后台运行：用 `send_message`（`agent_id` 用启动时返回的 id）追加指令或继续追问，
+              它也会用 `send_message` 把结论回报给你；方向错了用 `interrupt_agent` 叫停。
+            - 适合派出去：按文件/批次并行盘点问题条目、逐条核对上下文并起草改动、批量校润。
+              需要跨全部产物的整体判断（阶段判定、路线图取舍、字典口径）留在主会话做。
+            - 本节所有硬性约束（含 H 门禁、`project_dir` 白名单、禁止规模化拉取）**同样约束子代理**。
 
             ## 硬性约束
             1. 所有工具的 `project_dir` 可传**翻译项目根目录的绝对路径**，或**项目名称**
@@ -123,7 +145,7 @@
             - 'D:\解包或汉化用\my-galtransl\my-GalTransl\run_mcp_server.py'
           cwd: 'D:\解包或汉化用\my-galtransl\my-GalTransl'
           failOnStartupError: false
-          # reconnect 是正式字段（dsh 0.2.0-rc.2 的 zod schema 与其文档均收录）。
+          # reconnect 是正式字段（dsh 的 zod schema 与其文档均收录）。
           reconnect:
             enabled: true
             initialDelayMs: 1500
@@ -134,3 +156,20 @@
       # （如是否处理某段 H 内容、是否执行破坏性写入）。
       - id: tool-ask-user
         name: '@deepseek-ai/dsh-tool-ask-user'
+
+      # 子代理：并行分身。子代理不单独选预设 → 继承本预设，工具面与父会话相同
+      # （仍只有 MCP 工具，没有文件/Shell/网页能力），因此它放大的是并发度和上下文，
+      # 不是权限面。maxDepth: 1 = 子代理不能再派生下一级（宿主默认也是 1，此处写死
+      # 以免宿主默认值变化后预设悄悄变宽）。
+      - id: tool-subagent
+        name: '@deepseek-ai/dsh-tool-subagent'
+        config:
+          provider: spawn
+          toolName: subagent
+          maxDepth: 1
+
+      # 子代理控制面：子代理用 send_message 回报结果，父会话用 send_message 追加指令、
+      # 用 interrupt_agent 叫停。不挂这行就只能等子代理自己跑完看结论，
+      # 中途既无法追问也无法叫停。
+      - id: tool-subagent-control
+        name: '@deepseek-ai/dsh-tool-subagent-control'

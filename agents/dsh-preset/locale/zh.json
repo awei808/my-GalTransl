@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "GalTransl 翻译助手",
-    "description": "GalTransl 翻译项目助手：只挂载 GalTransl MCP 工具（22 个读写工具），不含文件、Shell、子代理、网页工具。"
+    "description": "GalTransl 翻译项目助手：挂载 GalTransl MCP 工具（22 个读写工具）与子代理（子代理继承同一工具面，可并行读写），不含文件、Shell、网页工具。"
   }
 }
