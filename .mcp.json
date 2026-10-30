@@ -2,7 +2,7 @@
   "mcpServers": {
     "tauri-webview": {
       "type": "stdio",
-      "command": "python",
+      "command": "venv/Scripts/python.exe",
       "args": [
         "desktop/scripts/tauri_webview_mcp.py",
         "--cdp-port",
