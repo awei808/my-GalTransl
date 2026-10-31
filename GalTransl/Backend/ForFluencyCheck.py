@@ -27,6 +27,10 @@ from GalTransl.COpenAI import COpenAITokenPool
 from GalTransl.fluency_rules import find_fluency_candidates
 from typing import Optional
 
+# 替换建议允许比原片段多出的最大字数：放宽 2 字以便给出真正更自然的写法，
+# 同时仍保持"片段替换"的约束（不是整句重写）
+_SUGGESTION_MAX_EXTRA = 2
+
 
 def _lang_supports_fluency(target_lang: str) -> bool:
     """目标语言是否支持中文通顺检测：仅简体/繁体中文（口径同 BaseTranslate 的
@@ -86,9 +90,9 @@ class ForFluencyCheck(ForSemCheck):
     _reason_retry_hint = (
         "注意：上一轮你输出的命中句多数没有按格式给出可核对的替换建议"
         "（reason 为空，或不是「类别：「原片段」→「建议片段」(依据:…)」格式）。"
-        "请重新逐句判断：原片段必须原样摘自本句 dst（2–12 字），建议片段字数"
-        "不多于原片段；摘不出片段或给不出更短写法的句子说明它不成立，不要输出。"
-        "若整批均无问题，输出空代码块。"
+        "请重新逐句判断：原片段必须原样摘自本句 dst（2–12 字），建议片段最多"
+        "比原片段多 2 字，且替换后必须明显更自然；给不出可核对片段或明显更自然"
+        "写法的句子说明它不成立，不要输出。若整批均无问题，输出空代码块。"
     )
 
     def __init__(
@@ -135,8 +139,8 @@ class ForFluencyCheck(ForSemCheck):
 
         与基类口径的差异：建议片段按定义不在 dst 中，不能要求所有片段都在译文
         中找到。本口径为：恰好两个「…」片段；原片段必须在 dst 中（沿用基类两级
-        容错）；建议片段非空、与原片段不同且字数不多于原片段——最后一条同时是
-        提示词硬约束的机械兜底。
+        容错）；建议片段非空、与原片段不同且最多比原片段多 2 字——最后一条同时
+        是提示词硬约束的机械兜底（放宽 2 字是为了允许真正更自然的改写）。
         """
         if not reason_text:
             return False
@@ -146,7 +150,7 @@ class ForFluencyCheck(ForSemCheck):
         original, suggestion = (fragment.strip() for fragment in fragments)
         if not original or not suggestion:
             return False
-        if suggestion == original or len(suggestion) > len(original):
+        if suggestion == original or len(suggestion) > len(original) + _SUGGESTION_MAX_EXTRA:
             return False
         dst = tran.proofread_zh or tran.pre_dst or ""
         return self._fragment_in_dst(original, dst)

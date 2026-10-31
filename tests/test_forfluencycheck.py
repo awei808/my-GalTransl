@@ -5,7 +5,7 @@
   - fluency_rules 规则初筛：三条真实种子句（#40/#217/#283）分别命中 B/A/C 类，
     干净句不命中；初筛只管召回（气氛推向高潮/她达到了高潮 也召回，由 LLM 否决）
   - _parse_fix_response：reason 必须是「类别：「原片段」→「建议片段」(依据:…)」，
-    原片段须在 dst 中、建议片段非空/不同/不长于原片段（覆写后的证据校验口径）
+    原片段须在 dst 中、建议片段非空/不同/最多比原片段多 2 字（覆写后的证据校验口径）
   - find_problems 认领：fluency_issue 非空 → 输出「中文不顺」（reason 附带展示）
   - _FIX_SPECS：认领类型必须注册统一修复指令（否则勾选修复时无指令可用）
   - batch_translate：规则初筛压缩送检量（干净句不送 LLM）；初筛无命中整轮跳过；
@@ -124,11 +124,27 @@ class FluencyRulesTests(unittest.TestCase):
         self.assertEqual(match_fluency_category("她达到了高潮。"), "A")
 
     def test_d_co_occurrence_rules(self) -> None:
-        self.assertEqual(match_fluency_category("他已经十分疲惫了。"), "D")
+        # 「已经+程度+了」是标准完成体，不再召回（gold set 多例误报源）
+        self.assertIsNone(match_fluency_category("他已经十分疲惫了。"))
+        # 真正的冗赘形态是状态名词化
+        self.assertEqual(match_fluency_category("他已经是十分疲惫的状态了。"), "D")
+        self.assertEqual(match_fluency_category("已经到了非常危险的状态。"), "D")
         self.assertEqual(match_fluency_category("缓缓地轻轻地抚摸着。"), "D")
         # 单出现是合法用法：不召回
         self.assertIsNone(match_fluency_category("非常好看。"))
         self.assertIsNone(match_fluency_category("已经结束了。"))
+
+    def test_reaction_not_light_verb_candidate(self) -> None:
+        # 「做出反应」是固定自然搭配，不再作为初筛候选
+        self.assertIsNone(match_fluency_category("我对他做出了反应。"))
+
+    def test_discussion_light_verb_matched(self) -> None:
+        # 提示词校准样例「进行了讨论→讨论了」必须能被初筛召回，避免样例与规则脱节
+        self.assertEqual(match_fluency_category("他对这个方案进行了讨论。"), "A")
+
+    def test_de_di_not_counted_as_adverb(self) -> None:
+        # 「的地」是名词短语（舒服的地方），不能算第二个「～地」状语
+        self.assertIsNone(match_fluency_category("却准确地碰到了凛音最舒服的地方。"))
 
     def test_proofread_zh_preferred_over_pre_dst(self) -> None:
         trans = _trans(1, pre_dst="达到高潮", proofread_zh="攀上了高潮")
@@ -143,7 +159,7 @@ class FluencyRulesTests(unittest.TestCase):
 
 
 class ParseFluencyJsonlineTests(unittest.TestCase):
-    """首轮稀疏解析：覆写后的证据校验（原片段在 dst、建议不空/不同/不长于原片段）。"""
+    """首轮稀疏解析：覆写后的证据校验（原片段在 dst、建议不空/不同/最多 +2 字）。"""
 
     def test_valid_reason_kept(self) -> None:
         parser = _make_parser()
@@ -160,7 +176,7 @@ class ParseFluencyJsonlineTests(unittest.TestCase):
         )
 
     def test_equal_length_suggestion_kept(self) -> None:
-        # 字数不多于=允许等长（#283 推向高潮→攀上高潮 4→4）
+        # 等长也允许（#283 推向高潮→攀上高潮 4→4）
         parser = _make_parser()
         trans = _trans(2, pre_dst=SEED_283_DST)
         parser._parse_fix_response(
@@ -172,8 +188,20 @@ class ParseFluencyJsonlineTests(unittest.TestCase):
             trans.fluency_issue, "C：「推向高潮」→「攀上高潮」(依据:人不能推向高潮)"
         )
 
+    def test_suggestion_up_to_two_chars_longer_kept(self) -> None:
+        # 放宽 +2 字：允许用更自然的改写换取略长（脱力了下来→整个人没了力气 5→7）
+        parser = _make_parser()
+        trans = _trans(11, pre_dst="终于，凛音脱力了下来。")
+        hit, _ = parser._parse_fix_response(
+            'ab11|{"id": 11, "reason": "C：「脱力了下来」→「整个人没了力气」(依据:日语词加趋向补语)"}',
+            [trans],
+            "\r\n",
+        )
+        self.assertEqual(hit, 1)
+        self.assertNotEqual(trans.fluency_issue, "")
+
     def test_suggestion_longer_discarded(self) -> None:
-        # 硬约束机械兜底：建议长于原片段（越改越长）不是本项要的建议
+        # 硬约束机械兜底：超过 +2 字上限（高潮 2→达到了高潮 5，+3）丢弃
         parser = _make_parser()
         trans = _trans(3, pre_dst=SEED_217_DST)
         quality: dict = {}

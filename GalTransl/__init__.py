@@ -125,8 +125,8 @@ TRANSLATOR_SUPPORTED = {
         "en": "Second-pass confirmation for 'verbose rhythm' flags: re-checks each flagged sentence and keeps only confirmed redundancy, dismissing acceptable translations (false positives)."
     },
     "ForFluencyCheck": {
-        "zh-cn": "中文通顺检测：规则初筛后把候选句送 AI 复核，标记不符合现代汉语自然表达的句子（翻译腔、轻动词冗余、搭配冲突、虚词堆叠；fluency_issue 标记附等长或更短的替换建议，不改译文）。",
-        "en": "Chinese fluency check: regex pre-filter then LLM review, flagging unnatural modern-Chinese phrasing (translationese, light-verb redundancy, collocation clashes, function-word pileup; fluency_issue flag with equal-or-shorter rewrite suggestion, translation untouched)."
+        "zh-cn": "中文通顺检测：规则初筛后把候选句送 AI 复核，标记不符合现代汉语自然表达的句子（翻译腔、轻动词冗余、搭配冲突、虚词堆叠；fluency_issue 标记附等长或最多比原片段多 2 字的替换建议，不改译文）。",
+        "en": "Chinese fluency check: regex pre-filter then LLM review, flagging unnatural modern-Chinese phrasing (translationese, light-verb redundancy, collocation clashes, function-word pileup; fluency_issue flag with a rewrite suggestion up to 2 characters longer, translation untouched)."
     },
     "ForFluencyCheckAgain": {
         "zh-cn": "对已标记为「中文不顺」的句子逐句复核，撤销误报。",

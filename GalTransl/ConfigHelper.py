@@ -138,7 +138,7 @@ class CProblemType(Enum):
     词语色彩不一致 = 20  # AI 词语色彩检查：译文用词色彩与色彩基准明显不符（基准优先为批次区间的用词色彩标注，无标注时对照原文语气；ForToneCheck 产出，ForToneCheckAgain 可复核）
     节奏单一 = 21  # 换行前后相邻两行严格等长、均 >14 字且均不含中英文标点（长句被等长拆开，疑似为对齐行宽注水；启发式，可能误检刻意对仗/排比）
     节奏冗长 = 22  # AI 节奏冗长检测：译文信息量未增加却被同源二译、无源增补或跨行重复撑大，读起来拖沓（ForVerboseCheck 产出，ForVerboseCheckAgain 可复核）
-    中文不顺 = 23  # AI 中文通顺检测：译文不符合现代汉语自然表达（翻译腔、轻动词冗余、搭配冲突、虚词堆叠），reason 附等长或更短的替换建议（ForFluencyCheck 产出，ForFluencyCheckAgain 可复核）
+    中文不顺 = 23  # AI 中文通顺检测：译文不符合现代汉语自然表达（翻译腔、轻动词冗余、搭配冲突、虚词堆叠），reason 附等长或最多比原片段多 2 字的替换建议（ForFluencyCheck 产出，ForFluencyCheckAgain 可复核）
 
 
 # 问题类型目录顺序（/api/problem-types 的下发顺序，与 server_meta._PROBLEM_TYPE_CATALOG
