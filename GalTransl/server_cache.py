@@ -195,6 +195,9 @@ def _rebuild_trans_list_with_postprocess(
         s.tone_issue = e.get("tone_issue", "")
         s.verbose_issue = e.get("verbose_issue", "")
         s.fluency_issue = e.get("fluency_issue", "")
+        # 标记字段必须全部透传：缺失时 _run_problem_detection 重算 find_problems
+        # 认领不到对应问题类型，写回缓存时会把已有标记从 problem 里删掉
+        s.ngram_issue = e.get("ngram_issue", "")
         trans_list.append(s)
 
     for i, s in enumerate(trans_list):

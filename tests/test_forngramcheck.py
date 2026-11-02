@@ -7,6 +7,7 @@
   - find_problems 认领：ngram_issue 非空 → 输出「语域异常」（reason 附带展示）
   - _FIX_SPECS：语域异常必须注册统一修复指令（dst-only 模式）
   - Cache._build_cache_obj：ngram_issue 随快照落盘、读回
+  - server_cache 缓存重建：ngram_issue 随条目透传（缺失会让重检抹掉「语域异常」）
   - 注册链：llm_postprocess 白名单 / pipeline_stages 顶层步骤 / 问题类型目录同步
   - 交叉印证统计函数：全空不打日志、单边/双边命中计数正确
 
@@ -225,6 +226,28 @@ class CacheAndRegistrationTests(unittest.TestCase):
         # 空标记不落盘（与 fluency_issue 口径一致）
         tran2 = _trans(1, "另一句译文内容。")
         self.assertNotIn("ngram_issue", _build_cache_obj(tran2))
+
+    def test_server_cache_rebuild_keeps_ngram_issue(self) -> None:
+        """缓存条目重建必须保留 ngram_issue，否则重检后「语域异常」被抹掉。"""
+        from GalTransl.server_cache import _rebuild_trans_list_with_postprocess
+
+        entry = {
+            "index": 0,
+            "name": "",
+            "post_src": "こんにちは",
+            "pre_src": "こんにちは",
+            "pre_dst": "你好",
+            "proofread_dst": "",
+            "problem": "语域异常：语域分 -1.20 低于阈值 0.04",
+            "ngram_issue": "语域分 -1.20 低于阈值 0.04",
+            "fluency_issue": "",
+        }
+        tran = _rebuild_trans_list_with_postprocess([entry], None, None, None, [])[0]
+        self.assertEqual(tran.ngram_issue, "语域分 -1.20 低于阈值 0.04")
+        self.assertEqual(tran.fluency_issue, "")
+        # 透传后 find_problems 才能重新认领（重检写回时才不会把该类型删掉）
+        find_problems([tran], _Cfg(problem_list=[CProblemType.语域异常]), None)
+        self.assertIn("语域异常", tran.problem)
 
     def test_pipeline_registration(self) -> None:
         from GalTransl.Frontend.llm_postprocess import _resolve_after_translation_order

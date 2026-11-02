@@ -241,6 +241,7 @@ export type CacheEntry = {
   tone_issue?: string; // AI 词语色彩检查标记（ForToneCheck 产出，ForToneCheckAgain 复核确认/撤销，非空即"词语色彩不一致"，随缓存透传）
   verbose_issue?: string; // AI 节奏冗长检测标记（ForVerboseCheck 产出，ForVerboseCheckAgain 复核确认/撤销，非空即"节奏冗长"，随缓存透传）
   fluency_issue?: string; // AI 中文通顺检测标记（ForFluencyCheck 产出，ForFluencyCheckAgain 复核确认/撤销，非空即"中文不顺"，随缓存透传）
+  ngram_issue?: string; // 本地 n-gram 语域检测标记（ForNgramCheck 产出，非空即"语域异常"，随缓存透传；无复核轮）
 };
 
 export type CacheSearchField = "all" | "src" | "dst" | "problem";
