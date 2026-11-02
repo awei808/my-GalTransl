@@ -177,6 +177,24 @@ def find_ngram_flagged(
     return flagged, stats
 
 
+def auc(pos_scores: List[float], neg_scores: List[float]) -> float:
+    """Mann-Whitney AUC：pos 池分数期望高于 neg 池；0.5=不可分。
+
+    金标评估（tests/ngram_gold_eval.py）与离线分离度报告（tools/ngram_scorer.py）
+    共用此实现，避免两处口径分叉。
+    """
+    if not pos_scores or not neg_scores:
+        return 0.5
+    wins = 0.0
+    for p in pos_scores:
+        for s in neg_scores:
+            if p > s:
+                wins += 1.0
+            elif p == s:
+                wins += 0.5
+    return wins / (len(pos_scores) * len(neg_scores))
+
+
 # ---- 索引 IO ----------------------------------------------------------------
 
 def layer_table_path(index_dir: str, layer: str) -> str:
