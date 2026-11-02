@@ -49,6 +49,27 @@ from GalTransl.Frontend.llm_prepost import (
 )
 
 
+def _log_ngram_fluency_crosscheck(file_path: str, trans_list: list) -> None:
+    """n-gram 语域检测与 AI 通顺检测的交叉印证统计（两者解耦，双开时互补）。
+
+    每文件在 find_problems 重检后统计两类标记的覆盖与重合：共同命中=双证据
+    高置信；仅 n-gram 命中=AI 未见但语域偏离（建议抽查）。仅在 N-gram 侧有
+    标记时输出——单开 fluencycheck 或 N-gram 零命中时打空统计是纯噪声
+    （N-gram 侧的命中/跳过已由 ForNgramCheck 自身汇总日志覆盖）。
+    """
+    ngram = sum(1 for t in trans_list if getattr(t, "ngram_issue", ""))
+    if ngram == 0:
+        return
+    fluency = sum(1 for t in trans_list if getattr(t, "fluency_issue", ""))
+    both = sum(
+        1 for t in trans_list if getattr(t, "fluency_issue", "") and getattr(t, "ngram_issue", "")
+    )
+    LOGGER.info(
+        "[后处理] 交叉印证 %s：AI 通顺标记 %d 句，N-gram 语域标记 %d 句，共同命中 %d 句，仅 N-gram 命中 %d 句（建议抽查）",
+        os.path.basename(file_path), fluency, ngram, both, ngram - both,
+    )
+
+
 async def doLLMTranslSingleChunk(
     semaphore: asyncio.Semaphore,
     split_chunk: SplitChunkMetadata,
@@ -230,6 +251,7 @@ async def postprocess_results(
         # 注意：翻译阶段不传 h_check_words，H 场景用词不当检测仍由校对阶段重检补上。
         h_ranges = _resolve_file_h_ranges(proj_dir, cache_file_path, projectConfig)
         find_problems(trans_list, projectConfig, gpt_dic, h_ranges=h_ranges)
+        _log_ngram_fluency_crosscheck(file_path, trans_list)
         # post_save=True → 写完整快照并删除对应 .append 日志（即合并 jsonl）
         await save_transCache_to_json(
             trans_list,
@@ -488,7 +510,7 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
         "improve", "brfix", "jpfix", "banfix",
         "semcheck", "semcheckagain", "tonecheck", "tonecheckagain",
         "verbosecheck", "verbosecheckagain",
-        "fluencycheck", "fluencycheckagain", "fix",
+        "fluencycheck", "fluencycheckagain", "ngramcheck", "fix",
     }
     raw = projectConfig.getKey("gpt.afterTranslation")
 
@@ -561,6 +583,7 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForVerboseCheckAgain import ForVerboseCheckAgain
     from GalTransl.Backend.ForFluencyCheck import ForFluencyCheck
     from GalTransl.Backend.ForFluencyCheckAgain import ForFluencyCheckAgain
+    from GalTransl.Backend.ForNgramCheck import ForNgramCheck
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
 
     _after_pool = _stage_pool(projectConfig, "afterTrans")
@@ -678,6 +701,9 @@ async def _run_after_trans_single_file(
                 projectConfig.proxyPool,
                 _after_pool,
             )
+        elif mode == "ngramcheck":
+            # 纯本地 n-gram 语域检测：不占令牌池、零 API 成本，与 AI 通顺检测解耦
+            _api = ForNgramCheck(projectConfig)
         else:
             LOGGER.warning(f"[后处理] 未知模式 '{mode}'，跳过")
             return
