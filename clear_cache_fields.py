@@ -4,6 +4,7 @@
 用于测试后清理缓存字段：
   - suspected_error：疑似错误标记（ForSemCheck 产出，模型整批回显误标时清空）
   - tone_issue / verbose_issue / fluency_issue：各类 AI 检测标记
+  - ngram_issue：本地 n-gram 语域检测标记（ForNgramCheck 产出，纯本地无复核轮）
   - alt_dst：备选译文（ForImproveTranslation / ForBRStation / ForJPResidue /
     ForBanWordFix 产出）
 
@@ -28,6 +29,7 @@ FIELD_CHOICES = (
     "tone_issue",
     "verbose_issue",
     "fluency_issue",
+    "ngram_issue",
     "alt_dst",
 )
 

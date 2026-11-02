@@ -413,7 +413,7 @@ if __name__ == "__main__":
 
 ### 缓存条目（CacheEntry）
 
-缓存文件（`transl_cache/pass3_cache/*.json`）中每条 JSON 的核心字段：`index`、`name`、`pre_src`、`post_src`、`pre_dst`、`proofread_dst`、`trans_by`、`proofread_by`、`problem`、`post_dst_preview`，以及内部键 `__cache_key`（前句+当前句+后句上下文三元组，带 index 前缀区分同文不同位置）。译文质量改进/问题修复阶段（improve/brfix/jpfix/banfix/fix）会在条目上追加 `alt_dst`（备选译文，与主译文不同才落盘），校对页可一键交换；semcheck/semcheckagain 会写入 `suspected_error`（疑似错误标记，复核通过后移除）；tonecheck、verbosecheck、fluencycheck 及其 Again 复核轮分别写入 `tone_issue`、`verbose_issue`、`fluency_issue`（复核撤销后移除）。
+缓存文件（`transl_cache/pass3_cache/*.json`）中每条 JSON 的核心字段：`index`、`name`、`pre_src`、`post_src`、`pre_dst`、`proofread_dst`、`trans_by`、`proofread_by`、`problem`、`post_dst_preview`，以及内部键 `__cache_key`（前句+当前句+后句上下文三元组，带 index 前缀区分同文不同位置）。译文质量改进/问题修复阶段（improve/brfix/jpfix/banfix/fix）会在条目上追加 `alt_dst`（备选译文，与主译文不同才落盘），校对页可一键交换；semcheck/semcheckagain 会写入 `suspected_error`（疑似错误标记，复核通过后移除）；tonecheck、verbosecheck、fluencycheck 及其 Again 复核轮分别写入 `tone_issue`、`verbose_issue`、`fluency_issue`（复核撤销后移除）；ngramcheck 写入 `ngram_issue`（本地检测，无复核轮，只能整轮重跑刷新；保存/替换译文不会自动清旧标记）。
 
 ## API 接口文档（唯一归属）
 
