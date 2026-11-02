@@ -204,6 +204,23 @@ class MainAutoDupesTests(unittest.TestCase):
         self.assertIn("正例 1，负例 1", text)
 
 
+class SpreadDupesTests(unittest.TestCase):
+    def test_moves_adjacent_dupe_away_from_origin(self) -> None:
+        rows = [
+            {"text": "A", "origin": 0, "dup_of": None},
+            {"text": "A", "origin": None, "dup_of": 0},
+            {"text": "B", "origin": 1, "dup_of": None},
+            {"text": "C", "origin": 2, "dup_of": None},
+            {"text": "D", "origin": 3, "dup_of": None},
+        ]
+        gs._spread_dupes(rows)
+        dup_pos = next(i for i, r in enumerate(rows) if r["dup_of"] is not None)
+        origin_pos = next(i for i, r in enumerate(rows) if r.get("origin") == 0)
+        self.assertGreater(abs(dup_pos - origin_pos), 2)
+        # 换位只搬动纯原句行，原句集合不变
+        self.assertEqual({r["origin"] for r in rows if r["origin"] is not None}, {0, 1, 2, 3})
+
+
 class ResolveCacheDirTests(unittest.TestCase):
     def test_prefers_pass3_cache_over_project_root_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,6 +237,14 @@ class ResolveCacheDirTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "a.json"), "w", encoding="utf-8") as fh:
                 json.dump([{"name": "x"}], fh)
+            with self.assertRaises(SystemExit):
+                gs.resolve_cache_dir(tmp)
+
+    def test_tolerates_non_list_items(self) -> None:
+        """items 为对象（非法形态）时应跳过该文件而不是抛 TypeError。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "a.json"), "w", encoding="utf-8") as fh:
+                json.dump({"items": {"a": 1}}, fh)
             with self.assertRaises(SystemExit):
                 gs.resolve_cache_dir(tmp)
 
