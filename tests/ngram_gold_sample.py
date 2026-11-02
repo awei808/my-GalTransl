@@ -41,6 +41,8 @@ def _looks_like_cache_dir(path: str) -> bool:
         except Exception:
             continue
         items = data if isinstance(data, list) else (data.get("items") or [])
+        if not isinstance(items, list):
+            continue
         # 首条可能是无译文的占位行，扫前几条避免把合法缓存判成非法
         for item in items[:5]:
             if isinstance(item, dict) and any(
@@ -109,22 +111,27 @@ def collect_candidates(cache_dir: str, min_chars: int) -> Tuple[List[str], Dict[
 
 
 def _spread_dupes(rows: List[dict], min_gap: int = 2) -> None:
-    """把与原句相距不超过 min_gap 的重复句换到别的位置（就地调整）。
+    """把与原句相距不超过 min_gap 的重复句换到更远的位置（就地调整）。
 
-    均匀插入在小样本/槽位边界仍可能贴住原句，贴在一起就退化成"抄上一行"。
+    均匀插入在小样本/槽位边界仍可能贴住原句；换位候选要避开"别的重复句的原句"，
+    否则会把那一句的重复件推近，间距保证在它身上失效。
     """
+    dup_origins = {r["dup_of"] for r in rows if r["dup_of"] is not None}
     for i, row in enumerate(rows):
         if row["dup_of"] is None:
             continue
         origin_pos = next((k for k, r in enumerate(rows) if r["origin"] == row["dup_of"]), None)
         if origin_pos is None or abs(i - origin_pos) > min_gap:
             continue
+        best = None
         for p, cand in enumerate(rows):
-            if p == origin_pos or cand["dup_of"] is not None:
+            if cand["dup_of"] is not None or cand["origin"] in dup_origins:
                 continue
-            if abs(p - origin_pos) > min_gap:
-                rows[i], rows[p] = rows[p], rows[i]
-                break
+            distance = abs(p - origin_pos)
+            if distance > min_gap and (best is None or distance > best[0]):
+                best = (distance, p)
+        if best is not None:
+            rows[i], rows[best[1]] = rows[best[1]], rows[i]
 
 
 def build_sample(texts: List[str], n: int, dupes: int, seed: int) -> Tuple[List[dict], Dict[int, int]]:

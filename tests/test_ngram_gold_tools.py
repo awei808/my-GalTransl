@@ -8,11 +8,14 @@
   - best_threshold：按误标预算取最高阈值
   - consistency：重复句标注一致率
 """
+import contextlib
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -65,7 +68,7 @@ class BuildSampleTests(unittest.TestCase):
 
     def test_dupes_never_adjacent_across_seeds(self) -> None:
         """重复句与原句至少隔 2 行（回滚 _spread_dupes 即失败）。"""
-        for n, dupes in ((5, 2), (12, 3), (20, 2)):
+        for n, dupes in ((5, 2), (12, 3), (20, 2), (40, 4)):
             texts = [f"第{i}个足够长的中文测试句子内容" for i in range(n)]
             for seed in range(5):
                 _items, mapping = gs.build_sample(texts, n=n, dupes=dupes, seed=seed)
@@ -178,10 +181,6 @@ class ScoreGoldSkipTests(unittest.TestCase):
 class MainAutoDupesTests(unittest.TestCase):
     def test_main_excludes_sidecar_dupes(self) -> None:
         """不给 --dupes 时也应按同名旁路文件排除重复句（回滚探测逻辑即失败）。"""
-        import contextlib
-        import io
-        from unittest import mock
-
         rows = [
             {"id": 1, "dst": "甲" * 8, "label": "natural"},
             {"id": 2, "dst": "乙" * 8, "label": "awkward"},
