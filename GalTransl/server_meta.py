@@ -44,6 +44,7 @@ _PROBLEM_TYPE_CATALOG: list[dict[str, str]] = [
     {"name": "节奏单一", "description": "换行前后相邻两行严格等长、均超过 14 字且均不含中英文标点（长句被等长拆开，疑似为对齐行宽添加冗余措辞），断行节奏呆板。（启发式检测，可能误检刻意对仗/排比的句子）"},
     {"name": "节奏冗长", "description": "AI 节奏冗长检测（ForVerboseCheck）判定译文信息量未增加，却被同源二译（同一原文成分被两处译出）、无源增补（原文没有的加料）或跨行重复撑大，读起来拖沓；标记不改译文，可由 ForVerboseCheckAgain 二次复核确认/撤销。与「节奏单一」互补：后者按相邻行等长启发式判定。"},
     {"name": "中文不顺", "description": "AI 中文通顺检测（ForFluencyCheck）判定译文不符合现代汉语自然表达——翻译腔、轻动词冗余（进行了讨论→讨论了）、搭配冲突、虚词堆叠等；规则初筛命中后送 AI 复核，标记附等长或最多比原片段多 2 字的替换建议（不改译文、不写 alt_dst），可由 ForFluencyCheckAgain 二次复核确认/撤销。与「节奏冗长」正交：不判信息量增减，只判读起来不像人写的。"},
+    {"name": "语域异常", "description": "本地 n-gram 语域检测（ForNgramCheck）判定译文与地道中文参照语料（n-gram 分层索引）的语域分布明显偏离，疑似机器腔/LLM 腔；纯本地统计、零 API 成本，不改译文。与「中文不顺」（AI 通顺检测）相互解耦：可分开执行，双开时结果相互印证（收尾有交叉统计日志）。需先用 tools/ngram_scorer.py --build-index 构建索引。"},
 ]
 
 # name 替换表加载缓存：project_dir -> (mtime_ns, name_dict)

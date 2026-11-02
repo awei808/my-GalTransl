@@ -48,6 +48,7 @@ class CSentense:
         self.tone_issue = ""  # AI 词语色彩检查标记（ForToneCheck 产出，非空即视为"词语色彩不一致"，由 find_problems 认领；ForToneCheckAgain 复核确认/撤销）
         self.verbose_issue = ""  # AI 节奏冗长检测标记（ForVerboseCheck 产出，非空即视为"节奏冗长"，由 find_problems 认领；ForVerboseCheckAgain 复核确认/撤销）
         self.fluency_issue = ""  # AI 中文通顺检测标记（ForFluencyCheck 产出，非空即视为"中文不顺"，由 find_problems 认领；ForFluencyCheckAgain 复核确认/撤销）
+        self.ngram_issue = ""  # 本地 n-gram 语域检测标记（ForNgramCheck 产出，非空即视为"语域异常"，由 find_problems 认领；与 AI 通顺检测解耦，可分开执行、结果相互印证）
 
         self.prev_tran: CSentense = None  # 指向上一个tran
         self.next_tran: CSentense = None  # 指向下一个tran

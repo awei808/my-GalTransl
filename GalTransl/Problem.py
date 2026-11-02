@@ -486,6 +486,14 @@ def find_problems(
                 problem_list, tran, "fluency_issue", "中文不顺", ("1", "中文不顺")
             )
 
+        # 本地 n-gram 语域检测标记（ForNgramCheck 产出）：字段非空即标「语域异常」，
+        # reason 附语域分与阈值；与「中文不顺」解耦——两者可单独启用，双开时收尾
+        # 有交叉印证统计日志。
+        if CProblemType.语域异常 in find_type:
+            _claim_ai_marker(
+                problem_list, tran, "ngram_issue", "语域异常", ("1", "语域异常")
+            )
+
         # 定语/状语过长：只检测最终成品 post_dst（无校对时即 pre_dst），与旧分支对齐避免重复
         if CProblemType.定语过长 in find_type or CProblemType.状语过长 in find_type:
             if post_dst:
