@@ -58,12 +58,30 @@ class BuildSampleTests(unittest.TestCase):
         by_id = {it["id"]: it for it in items}
         for dup_id, orig_id in mapping.items():
             self.assertEqual(by_id[dup_id]["dst"], by_id[orig_id]["dst"])
-            # 重复句按均匀间隔插入，不与原句紧邻
-            self.assertGreater(abs(dup_id - orig_id), 3)
         # 盲标：不写分数，不含来源文件，label 待填
         for it in items:
             self.assertEqual(sorted(it), ["dst", "id", "label", "note", "subtype"])
             self.assertEqual(it["label"], "")
+
+    def test_dupes_never_adjacent_across_seeds(self) -> None:
+        """重复句与原句至少隔 2 行（回滚 _spread_dupes 即失败）。"""
+        for n, dupes in ((5, 2), (12, 3), (20, 2)):
+            texts = [f"第{i}个足够长的中文测试句子内容" for i in range(n)]
+            for seed in range(5):
+                _items, mapping = gs.build_sample(texts, n=n, dupes=dupes, seed=seed)
+                for dup_id, orig_id in mapping.items():
+                    self.assertGreater(
+                        abs(dup_id - orig_id), 2, f"n={n} dupes={dupes} seed={seed} 重复句相邻"
+                    )
+
+    def test_tiny_sample_dupes_still_distinct_rows(self) -> None:
+        """3 行装不下 2 行间隔时，只要求重复句与原句不是同一行（不重复计数）。"""
+        texts = ["甲甲甲甲甲甲甲甲", "乙乙乙乙乙乙乙乙"]
+        for seed in range(5):
+            _items, mapping = gs.build_sample(texts, n=2, dupes=1, seed=seed)
+            self.assertEqual(len(mapping), 1)
+            dup_id, orig_id = next(iter(mapping.items()))
+            self.assertNotEqual(dup_id, orig_id)
 
     def test_candidates_fewer_than_requested(self) -> None:
         texts = ["只有三个足够长的中文句子内容甲", "只有三个足够长的中文句子内容乙"]
@@ -155,6 +173,36 @@ class ScoreGoldSkipTests(unittest.TestCase):
         self.assertEqual(stats["dupes"], 3)
         self.assertEqual(pos, [])
         self.assertEqual(neg, [])
+
+
+class MainAutoDupesTests(unittest.TestCase):
+    def test_main_excludes_sidecar_dupes(self) -> None:
+        """不给 --dupes 时也应按同名旁路文件排除重复句（回滚探测逻辑即失败）。"""
+        import contextlib
+        import io
+        from unittest import mock
+
+        rows = [
+            {"id": 1, "dst": "甲" * 8, "label": "natural"},
+            {"id": 2, "dst": "乙" * 8, "label": "awkward"},
+            {"id": 3, "dst": "甲" * 8, "label": "natural"},
+        ]
+        scores = {"甲" * 8: 0.9, "乙" * 8: 0.1}
+        with tempfile.TemporaryDirectory() as tmp:
+            gold = os.path.join(tmp, "g.jsonl")
+            with open(gold, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+            with open(gold + ".dupes.json", "w", encoding="utf-8") as fh:
+                json.dump({"3": 1}, fh)
+            out = io.StringIO()
+            with mock.patch.object(ge.nr, "load_index", return_value=(object(), "")), mock.patch.object(
+                ge.nr, "score_text", side_effect=lambda text, _idx, _lam: scores[text.strip()]
+            ), contextlib.redirect_stdout(out):
+                code = ge.main(["--gold", gold])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("重复句排除 1", text)
+        self.assertIn("正例 1，负例 1", text)
 
 
 class ResolveCacheDirTests(unittest.TestCase):

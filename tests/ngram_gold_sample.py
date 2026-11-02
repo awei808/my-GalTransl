@@ -41,8 +41,11 @@ def _looks_like_cache_dir(path: str) -> bool:
         except Exception:
             continue
         items = data if isinstance(data, list) else (data.get("items") or [])
-        if items and isinstance(items[0], dict):
-            if any(k in items[0] for k in ("pre_dst", "pre_zh", "proofread_dst", "post_src")):
+        # 首条可能是无译文的占位行，扫前几条避免把合法缓存判成非法
+        for item in items[:5]:
+            if isinstance(item, dict) and any(
+                k in item for k in ("pre_dst", "pre_zh", "proofread_dst", "post_src")
+            ):
                 return True
     return False
 
@@ -105,6 +108,25 @@ def collect_candidates(cache_dir: str, min_chars: int) -> Tuple[List[str], Dict[
     return texts, stats
 
 
+def _spread_dupes(rows: List[dict], min_gap: int = 2) -> None:
+    """把与原句相距不超过 min_gap 的重复句换到别的位置（就地调整）。
+
+    均匀插入在小样本/槽位边界仍可能贴住原句，贴在一起就退化成"抄上一行"。
+    """
+    for i, row in enumerate(rows):
+        if row["dup_of"] is None:
+            continue
+        origin_pos = next((k for k, r in enumerate(rows) if r["origin"] == row["dup_of"]), None)
+        if origin_pos is None or abs(i - origin_pos) > min_gap:
+            continue
+        for p, cand in enumerate(rows):
+            if p == origin_pos or cand["dup_of"] is not None:
+                continue
+            if abs(p - origin_pos) > min_gap:
+                rows[i], rows[p] = rows[p], rows[i]
+                break
+
+
 def build_sample(texts: List[str], n: int, dupes: int, seed: int) -> Tuple[List[dict], Dict[int, int]]:
     """抽 n 条独立句并插入 dupes 条重复句，返回 (打乱后的条目, 重复映射)。
 
@@ -127,6 +149,7 @@ def build_sample(texts: List[str], n: int, dupes: int, seed: int) -> Tuple[List[
         step = len(rows) / len(dup_rows)
         for k, dup in enumerate(dup_rows):
             mixed.insert(min(len(mixed), int((k + 1) * step) + k), dup)
+        _spread_dupes(mixed)
     # id 按最终顺序分配；重复句的映射要等原始句 id 确定后再回填
     items: List[dict] = []
     origin_to_id: Dict[int, int] = {}
