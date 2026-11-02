@@ -50,15 +50,16 @@ class CollectCandidatesTests(unittest.TestCase):
 
 class BuildSampleTests(unittest.TestCase):
     def test_ids_contiguous_and_dupes_mapped(self) -> None:
-        texts = [f"第{i}个足够长的中文测试句子内容" for i in range(10)]
-        items, mapping = gs.build_sample(texts, n=6, dupes=2, seed=7)
-        self.assertEqual(len(items), 8)
-        self.assertEqual([it["id"] for it in items], list(range(1, 9)))
+        texts = [f"第{i}个足够长的中文测试句子内容" for i in range(20)]
+        items, mapping = gs.build_sample(texts, n=20, dupes=2, seed=7)
+        self.assertEqual(len(items), 22)
+        self.assertEqual([it["id"] for it in items], list(range(1, 23)))
         self.assertEqual(len(mapping), 2)
-        self.assertEqual(set(mapping), {it["id"] for it in items if it["id"] in mapping})
         by_id = {it["id"]: it for it in items}
         for dup_id, orig_id in mapping.items():
             self.assertEqual(by_id[dup_id]["dst"], by_id[orig_id]["dst"])
+            # 重复句按均匀间隔插入，不与原句紧邻
+            self.assertGreater(abs(dup_id - orig_id), 3)
         # 盲标：不写分数，不含来源文件，label 待填
         for it in items:
             self.assertEqual(sorted(it), ["dst", "id", "label", "note", "subtype"])
@@ -67,9 +68,9 @@ class BuildSampleTests(unittest.TestCase):
     def test_candidates_fewer_than_requested(self) -> None:
         texts = ["只有三个足够长的中文句子内容甲", "只有三个足够长的中文句子内容乙"]
         items, mapping = gs.build_sample(texts, n=400, dupes=30, seed=1)
-        # 候选不足时按全部抽样，重复句上限收敛到候选数
-        self.assertEqual(len(items) - len(mapping), 2)
-        self.assertEqual(len(mapping), 2)
+        # 候选不足时按全部抽样，重复句上限收敛到 max(1, 样本数//10)
+        self.assertEqual(len(items), 3)
+        self.assertEqual(len(mapping), 1)
 
 
 class LabelAndThresholdTests(unittest.TestCase):
@@ -107,14 +108,73 @@ class ConsistencyTests(unittest.TestCase):
             {"id": 2, "dst": "乙" * 8, "label": "awkward"},
             {"id": 3, "dst": "丙" * 8, "label": ""},
         ]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "dupes.json")
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"2": 1, "3": 1}, fh)
-            agree, total, bad = ge.consistency(items, path)
+        agree, total, bad = ge.consistency(items, {2: 1, 3: 1})
         self.assertEqual(total, 1)
         self.assertEqual(agree, 0)
         self.assertEqual(bad, [(2, 1)])
+
+    def test_load_dupes_reads_string_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "dupes.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"28": 364, "36": 103}, fh)
+            self.assertEqual(ge.load_dupes(path), {28: 364, 36: 103})
+
+    def test_load_dupes_missing_file_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            ge.load_dupes(os.path.join(tempfile.gettempdir(), "nope_dupes.json"))
+
+
+class LoadGoldTests(unittest.TestCase):
+    def test_reads_jsonl_and_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            jsonl = os.path.join(tmp, "g.jsonl")
+            with open(jsonl, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"id": 1, "dst": "甲" * 8, "label": "natural"}, ensure_ascii=False) + "\n")
+            rows = ge.load_gold(jsonl)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["dst"], "甲" * 8)
+
+            fixture = os.path.join(tmp, "g.json")
+            with open(fixture, "w", encoding="utf-8") as fh:
+                json.dump({"items": [{"text": "乙" * 8, "label": "ok"}]}, fh, ensure_ascii=False)
+            rows = ge.load_gold(fixture)
+            self.assertEqual(rows[0]["id"], 1)
+            self.assertEqual(rows[0]["dst"], "乙" * 8)
+
+
+class ScoreGoldSkipTests(unittest.TestCase):
+    def test_skips_dupes_without_touching_index(self) -> None:
+        items = [
+            {"id": 1, "dst": "甲" * 8, "label": "natural"},
+            {"id": 2, "dst": "乙" * 8, "label": "awkward"},
+            {"id": 3, "dst": "丙" * 8, "label": "natural"},
+        ]
+        # 被跳过的行不进入打分，故 index=None 也不会被访问
+        pos, neg, stats = ge.score_gold(items, None, 1.0, skip_ids={1, 2, 3})
+        self.assertEqual(stats["dupes"], 3)
+        self.assertEqual(pos, [])
+        self.assertEqual(neg, [])
+
+
+class ResolveCacheDirTests(unittest.TestCase):
+    def test_prefers_pass3_cache_over_project_root_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # 项目根有干扰 json
+            with open(os.path.join(tmp, "known_projects.json"), "w", encoding="utf-8") as fh:
+                json.dump([{"name": "x"}], fh)
+            cache = os.path.join(tmp, "transl_cache", "pass3_cache")
+            os.makedirs(cache)
+            with open(os.path.join(cache, "a.json"), "w", encoding="utf-8") as fh:
+                json.dump([{"index": 0, "pre_dst": "这是一个足够长的中文句子"}], fh, ensure_ascii=False)
+            self.assertEqual(gs.resolve_cache_dir(tmp), cache)
+
+    def test_rejects_dir_without_cache_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "a.json"), "w", encoding="utf-8") as fh:
+                json.dump([{"name": "x"}], fh)
+            with self.assertRaises(SystemExit):
+                gs.resolve_cache_dir(tmp)
 
 
 if __name__ == "__main__":

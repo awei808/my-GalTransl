@@ -9,10 +9,10 @@
 `pre_dst`；汉字数少于 `ngram_rules.MIN_SENT_CHARS` 的句子本就不判，采样时剔除；
 同一译文（NFC + 去空白后相同）只抽一次。
 
-输出是**盲标文件**：每行只含 `id`/`dst`/`label`/`subtype`/`note`，不含分数、来源
-文件与重复关系——重复句用于标注一致性自检，映射另存 `<out>.dupes.json`，标完后
-用 `python tests/ngram_gold_eval.py --gold <out> --dupes <out>.dupes.json` 算一致率。
-"""
+输出是**盲标文件**：每行只含 `id`/`dst`/`label`/`subtype`/`note`，不含分数与来源；
+重复句按随机间隔混入（用于标注一致性自检，文件里不做任何标记），映射另存
+`<out>.dupes.json`，标完后用
+`python tests/ngram_gold_eval.py --gold <out> --dupes <out>.dupes.json` 算一致率。"""
 from __future__ import annotations
 
 import argparse
@@ -32,13 +32,33 @@ from GalTransl import ngram_rules as nr
 DEFAULT_OUT = os.path.join(ROOT, "n-gram-origin", "_corpus", "gold", "ngram_gold_pending.jsonl")
 
 
+def _looks_like_cache_dir(path: str) -> bool:
+    """目录里是否有形如翻译缓存的 JSON（避免把项目根的其它 json 当缓存）。"""
+    for name in sorted(glob.glob(os.path.join(path, "*.json"))):
+        try:
+            with open(name, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            continue
+        items = data if isinstance(data, list) else (data.get("items") or [])
+        if items and isinstance(items[0], dict):
+            if any(k in items[0] for k in ("pre_dst", "pre_zh", "proofread_dst", "post_src")):
+                return True
+    return False
+
+
 def resolve_cache_dir(path: str) -> str:
-    """接受项目根目录或 pass3_cache 目录，返回实际缓存目录。"""
-    candidates = [path, os.path.join(path, "transl_cache", "pass3_cache")]
+    """接受项目根目录或 pass3_cache 目录，返回实际缓存目录。
+
+    先按项目结构找 `transl_cache/pass3_cache`，再回退到给定目录本身——项目根常
+    混有其它 json，直接采信会抽到垃圾数据。
+    """
+    candidates = [os.path.join(path, "transl_cache", "pass3_cache"), path]
     for cand in candidates:
         if os.path.isdir(cand) and glob.glob(os.path.join(cand, "*.json")):
-            return cand
-    raise SystemExit(f"未找到 pass3_cache：{path}")
+            if _looks_like_cache_dir(cand):
+                return cand
+    raise SystemExit(f"未找到可用的 pass3_cache（需含 pre_dst/proofread_dst 条目）：{path}")
 
 
 def iter_entries(cache_dir: str) -> Iterator[Tuple[str, int, str]]:
@@ -93,21 +113,29 @@ def build_sample(texts: List[str], n: int, dupes: int, seed: int) -> Tuple[List[
     rng = random.Random(seed)
     picked = texts if len(texts) <= n else rng.sample(texts, n)
     picked = list(picked)
-    dupes = min(dupes, len(picked))
-    dup_sources = rng.sample(range(len(picked)), dupes) if dupes > 0 else []
+    cap = max(1, len(picked) // 10)
+    if dupes > cap:
+        print(f"重复句收敛为 {cap} 条（不超过样本的 1/10）", file=sys.stderr)
+        dupes = cap
     rows = [{"text": t, "origin": i, "dup_of": None} for i, t in enumerate(picked)]
-    for src in dup_sources:
-        rows.append({"text": picked[src], "origin": None, "dup_of": src})
     rng.shuffle(rows)
-    # id 按打乱后的位置分配；重复句的映射要等原始句 id 确定后再回填
+    dup_sources = rng.sample(range(len(picked)), min(dupes, len(picked))) if dupes > 0 else []
+    dup_rows = [{"text": picked[i], "origin": None, "dup_of": i} for i in dup_sources]
+    # 重复句按均匀间隔插入，避免与原句紧邻（相邻会退化成"抄上一行"）
+    mixed = list(rows)
+    if dup_rows:
+        step = len(rows) / len(dup_rows)
+        for k, dup in enumerate(dup_rows):
+            mixed.insert(min(len(mixed), int((k + 1) * step) + k), dup)
+    # id 按最终顺序分配；重复句的映射要等原始句 id 确定后再回填
     items: List[dict] = []
     origin_to_id: Dict[int, int] = {}
-    for new_id, row in enumerate(rows, start=1):
+    for new_id, row in enumerate(mixed, start=1):
         items.append({"id": new_id, "dst": row["text"], "label": "", "subtype": "", "note": ""})
         if row["origin"] is not None:
             origin_to_id[row["origin"]] = new_id
     mapping: Dict[int, int] = {}
-    for new_id, row in enumerate(rows, start=1):
+    for new_id, row in enumerate(mixed, start=1):
         if row["dup_of"] is not None:
             mapping[new_id] = origin_to_id[row["dup_of"]]
     return items, mapping
@@ -152,8 +180,11 @@ def main(argv: List[str] = None) -> int:
     print(f"重复映射（勿给标注人看）：{dup_path}")
     print()
     print("标注规范：label 填 natural / awkward；awkward 时 subtype 填")
-    print("  直译语序 | 名词化堆砌 | 搭配冲突 | 虚词冗余（体裁豁免记 stylistic）")
-    print("只判「像不像人写的自然中文」，不判错译漏译；古风/敬语/角色口癖/H 场景拟声断续算 natural。")
+    print("  直译语序 | 名词化堆砌 | 搭配冲突 | 虚词冗余")
+    print("只判「像不像人写的自然中文」，不判错译漏译；古风/敬语/角色口癖/H 场景拟声断续算 natural，")
+    print("体裁豁免统一 label=natural、subtype=stylistic（把 stylistic 填进 label 会被当成未标注丢掉）。")
+    if mapping:
+        print(f"文件中含 {len(mapping)} 条随机间隔的重复句：请逐条独立判断，不要回翻比对。")
     return 0
 
 

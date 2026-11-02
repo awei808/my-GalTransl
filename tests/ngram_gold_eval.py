@@ -21,7 +21,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -32,6 +32,8 @@ from GalTransl import ngram_rules as nr
 POSITIVE_LABELS = ("1", "positive", "natural", "true")
 NEGATIVE_LABELS = ("0", "negative", "awkward", "false")
 DEFAULT_FPR_GRID = "0.02,0.05,0.08,0.10,0.15,0.20"
+# 与 DefaultProjectConfig 模板的 gpt.ngramThreshold 保持一致（改模板时同步）
+DEFAULT_DEPLOY_THRESHOLD = 0.044
 
 
 def load_gold(path: str) -> List[dict]:
@@ -63,12 +65,18 @@ def label_of(item: dict) -> str:
     return ""
 
 
-def score_gold(items: List[dict], index: nr.NgramIndex, lam: float) -> Tuple[List[float], List[float], Dict[str, int]]:
-    """按标签分池打分；汉字不足的句子无法打分，单独计数。"""
+def score_gold(
+    items: List[dict], index: nr.NgramIndex, lam: float, skip_ids: Optional[set] = None
+) -> Tuple[List[float], List[float], Dict[str, int]]:
+    """按标签分池打分；skip_ids 内的重复句不参与统计（只用于一致性校验）。"""
     pos: List[float] = []
     neg: List[float] = []
-    stats = {"total": len(items), "unlabeled": 0, "short": 0}
+    skip_ids = skip_ids or set()
+    stats = {"total": len(items), "unlabeled": 0, "short": 0, "dupes": 0}
     for item in items:
+        if int(item.get("id", 0)) in skip_ids:
+            stats["dupes"] += 1
+            continue
         label = label_of(item)
         if not label:
             stats["unlabeled"] += 1
@@ -102,10 +110,16 @@ def best_threshold(pos: List[float], neg: List[float], target_fpr: float) -> Tup
     return best if best is not None else (candidates[0], 0.0, 0.0)
 
 
-def consistency(items: List[dict], dupes_path: str) -> Tuple[int, int, List[Tuple[int, int]]]:
+def load_dupes(path: str) -> Dict[int, int]:
+    """读取重复映射 {重复 id: 原始 id}；缺失时给中文提示而不是堆栈。"""
+    if not os.path.isfile(path):
+        raise SystemExit(f"重复映射文件不存在：{path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        return {int(k): int(v) for k, v in json.load(fh).items()}
+
+
+def consistency(items: List[dict], mapping: Dict[int, int]) -> Tuple[int, int, List[Tuple[int, int]]]:
     """重复句标注一致率；返回 (一致数, 可比较数, 不一致的 (重复 id, 原始 id) 列表)。"""
-    with open(dupes_path, "r", encoding="utf-8") as fh:
-        mapping = {int(k): int(v) for k, v in json.load(fh).items()}
     labels = {int(item.get("id", 0)): label_of(item) for item in items}
     agree = 0
     total = 0
@@ -122,16 +136,21 @@ def consistency(items: List[dict], dupes_path: str) -> Tuple[int, int, List[Tupl
     return agree, total, bad
 
 
-def main(argv: List[str] = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gold", required=True, help="gold JSONL 或 fixture JSON")
     parser.add_argument("--index-dir", default=nr.default_index_dir(), help="索引目录")
     parser.add_argument("--lam", type=float, default=nr.DEFAULT_LAMBDA, help="背景项系数 λ")
-    parser.add_argument("--threshold", type=float, default=0.044, help="对照用的当前部署阈值")
+    parser.add_argument(
+        "--threshold", type=float, default=DEFAULT_DEPLOY_THRESHOLD, help="对照用的当前部署阈值"
+    )
     parser.add_argument("--target-fpr", type=float, default=0.08, help="可接受的误标率预算（推荐阈值用）")
     parser.add_argument("--fpr-grid", default=DEFAULT_FPR_GRID, help="扫描表的目标误标率档位（逗号分隔）")
-    parser.add_argument("--dupes", help="重复映射文件，给出则计算标注一致率")
-    parser.add_argument("--gate", type=float, help="AUC 门槛：低于该值返回码 1（CI 用）")
+    parser.add_argument(
+        "--dupes",
+        help="重复映射文件；省略时自动找 <gold>.dupes.json。重复句不参与 AUC，只用于一致率",
+    )
+    parser.add_argument("--gate", type=float, help="AUC 门槛：低于该值返回码 1（待 gold 入库后用于 CI）")
     args = parser.parse_args(argv)
 
     index, err = nr.load_index(args.index_dir)
@@ -140,7 +159,14 @@ def main(argv: List[str] = None) -> int:
         return 1
 
     items = load_gold(args.gold)
-    pos, neg, stats = score_gold(items, index, args.lam)
+    dupes_path = args.dupes or (args.gold + ".dupes.json")
+    mapping: Dict[int, int] = {}
+    if os.path.isfile(dupes_path):
+        mapping = load_dupes(dupes_path)
+    elif args.dupes:
+        load_dupes(dupes_path)  # 显式指定却缺失：直接报错退出
+
+    pos, neg, stats = score_gold(items, index, args.lam, skip_ids=set(mapping))
     if not pos or not neg:
         print(f"正例 {len(pos)} / 负例 {len(neg)} 不足，无法评估（先完成标注）", file=sys.stderr)
         return 1
@@ -150,7 +176,7 @@ def main(argv: List[str] = None) -> int:
     print(f"文件：{args.gold}")
     print(
         f"样本 {stats['total']}：未标注 {stats['unlabeled']}，不可打分 {stats['short']}，"
-        f"正例 {len(pos)}，负例 {len(neg)}"
+        f"重复句排除 {stats['dupes']}，正例 {len(pos)}，负例 {len(neg)}"
     )
     print(f"AUC：{auc:.4f}（0.5 不可分，1.0 完全可分）")
     if stats["unlabeled"]:
@@ -168,16 +194,17 @@ def main(argv: List[str] = None) -> int:
     print()
     print(f"当前阈值 {args.threshold:.3f}：误标 {fpr_now:.3f}，召回 {recall_now:.3f}")
     rec_t, rec_fpr, rec_recall = best_threshold(pos, neg, args.target_fpr)
+    allowance = int(args.target_fpr * len(pos))
     print(
-        f"按误标预算 {args.target_fpr:.2f} 推荐阈值 {rec_t:.3f}"
-        f"（实测误标 {rec_fpr:.3f}，召回 {rec_recall:.3f}）"
+        f"按误标预算 {args.target_fpr:.2f}（正例 {len(pos)} 句，至多误标 {allowance} 句）"
+        f"推荐阈值 {rec_t:.3f}（实测误标 {rec_fpr:.3f}，召回 {rec_recall:.3f}）"
     )
 
-    if args.dupes:
-        agree, total, bad = consistency(items, args.dupes)
+    if mapping:
+        agree, total, bad = consistency(items, mapping)
         if total:
             print()
-            print(f"标注一致性：{agree}/{total} = {agree / total:.1%}")
+            print(f"标注一致性：{agree}/{total} = {agree / total:.1%}（仅供参考，不是硬门槛）")
             for dup_id, orig_id in bad[:10]:
                 print(f"  不一致：重复 #{dup_id} vs 原始 #{orig_id}")
         else:
