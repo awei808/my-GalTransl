@@ -1,12 +1,13 @@
 {
  "version": 1,
- "description": "n-gram 语域检测人工金标：从真实项目 pass3_cache 随机抽 400 句（种子 20261102），label=natural 表示读起来自然、awkward 表示明显是译出来的。原采样另混入 30 条重复句做标注一致性自检（一致 28/30=93.3%），重复行不入本文件以避免 AUC 重复加权。3 条存疑句已结合上下文复核：原文即省略句/角色口癖的归 natural，词义不当的归 awkward。",
+ "description": "n-gram 语域检测人工金标：真实项目 pass3_cache 随机抽 400 句（种子 20261102），label=natural 读起来自然、awkward 明显是译出来的。30 条重复句用于标注一致性自检（一致 28/30=93.3%），重复行不入库以免 AUC 重复加权；1 条含 %p/%f 控制码的句子因无法判断语域已剔除。3 条存疑句均结合上下文复核：2 条改判 natural（原文即省略句/角色口癖），1 条维持 awkward。",
  "source": "小粥3-全量/transl_cache/pass3_cache（proofread_dst 优先，剔除汉字<6 与重复译文）",
  "counts": {
   "natural": 380,
-  "awkward": 20,
+  "awkward": 19,
   "sampled": 430,
   "dupes_excluded": 30,
+  "format_dropped": 1,
   "dupes_agreement": "28/30"
  },
  "items": [
@@ -604,13 +605,6 @@
    "label": "natural",
    "subtype": "",
    "note": ""
-  },
-  {
-   "id": 92,
-   "dst": "门票请在这里出示一下%p-1;%fＭＳ ゴシック;――%p;%fuser;",
-   "label": "awkward",
-   "subtype": "直译语序",
-   "note": "一般是“请在这里出示门票”"
   },
   {
    "id": 93,

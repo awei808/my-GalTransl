@@ -236,10 +236,13 @@ class FixtureTests(unittest.TestCase):
         labels = [it["label"] for it in items]
         self.assertEqual(set(labels), {"natural", "awkward"})
         self.assertEqual(labels.count("natural"), data["counts"]["natural"])
+        # 金标核心约束：不得混入重复句（否则 AUC 里被重复加权）
+        self.assertEqual(len({nr.normalize_text(it["dst"]) for it in items}), len(items))
         # 每条都必须能被打分器评分（汉字不足的句子在采样阶段已剔除）
         for it in items:
             self.assertGreaterEqual(nr.han_char_count(nr.normalize_text(it["dst"])), nr.MIN_SENT_CHARS)
-        self.assertEqual(ge.load_gold(path)[0]["id"], items[0]["id"])
+        # 经 eval 的标签归一化后仍是正负两池（不是被当成未标注丢掉）
+        self.assertEqual(ge.label_of(ge.load_gold(path)[0]), "positive")
 
 
 class ResolveCacheDirTests(unittest.TestCase):
