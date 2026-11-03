@@ -246,9 +246,10 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(
             counts["sampled"], len(items) + counts["dupes_excluded"] + counts["format_dropped"]
         )
-        # 经 eval 的标签归一化后正负两池都在（负例掉出白名单会变成未标注）
-        pools = {ge.label_of(it) for it in ge.load_gold(path)}
-        self.assertEqual(pools, {"positive", "negative"})
+        # 经 eval 的标签归一化后正负两池都在，且没有条目掉成未标注（label 拼错即失败）
+        rows = ge.load_gold(path)
+        self.assertEqual({ge.label_of(it) for it in rows}, {"positive", "negative"})
+        self.assertEqual(sum(1 for it in rows if not ge.label_of(it)), 0)
 
 
 class ResolveCacheDirTests(unittest.TestCase):
