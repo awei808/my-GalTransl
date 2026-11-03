@@ -221,6 +221,27 @@ class SpreadDupesTests(unittest.TestCase):
         self.assertEqual({r["origin"] for r in rows if r["origin"] is not None}, {0, 1, 2, 3})
 
 
+class FixtureTests(unittest.TestCase):
+    """入库金标的结构契约（内容变化需同步 description/counts）。"""
+
+    def test_fixture_is_well_formed(self) -> None:
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "fixtures", "ngram_gold_set.json"
+        )
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        items = data["items"]
+        self.assertEqual(len(items), data["counts"]["natural"] + data["counts"]["awkward"])
+        self.assertEqual(len({it["id"] for it in items}), len(items))
+        labels = [it["label"] for it in items]
+        self.assertEqual(set(labels), {"natural", "awkward"})
+        self.assertEqual(labels.count("natural"), data["counts"]["natural"])
+        # 每条都必须能被打分器评分（汉字不足的句子在采样阶段已剔除）
+        for it in items:
+            self.assertGreaterEqual(nr.han_char_count(nr.normalize_text(it["dst"])), nr.MIN_SENT_CHARS)
+        self.assertEqual(ge.load_gold(path)[0]["id"], items[0]["id"])
+
+
 class ResolveCacheDirTests(unittest.TestCase):
     def test_prefers_pass3_cache_over_project_root_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
