@@ -428,7 +428,13 @@ class CProjectConfig:
             return []
         result: list[CProblemType] = []
         for i in problem_analyze[backendName]:
-            result.append(CProblemType[i])
+            try:
+                result.append(CProblemType[i])
+            except (KeyError, TypeError):
+                # 已下线/拼错的问题类型：跳过并告警，勿让旧项目升级后整段检测崩掉
+                LOGGER.warning(
+                    f"problemAnalyze.{backendName} 含未知问题类型 {i!r}，已忽略"
+                )
 
         return result
 

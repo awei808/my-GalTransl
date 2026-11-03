@@ -191,12 +191,28 @@ class ClaimAndSpecTests(_IndexMixin, unittest.TestCase):
     """find_problems 认领 + 修复指令注册 + 目录同步。"""
 
     def test_find_problems_no_longer_claims_ngram(self) -> None:
-        """入口下线：缓存里残留 ngram_issue 也不再产出「语域异常」。"""
+        """入口下线：问题类型枚举里没有「语域异常」，缓存残留标记也不再被认领。"""
+        self.assertNotIn("语域异常", [t.name for t in CProblemType])
         cfg = _Cfg(problem_list=[])
         tran = _trans(0, "新华社报道经济发展成效，民生保障工作持续推进。")
         tran.ngram_issue = "语域分 -1.20 低于阈值 0.04"
         find_problems([tran], cfg, None)
         self.assertNotIn("语域异常", tran.problem)
+
+    def test_unknown_problem_type_in_config_is_tolerated(self) -> None:
+        """旧项目 problemList 残留已下线类型时不得抛 KeyError（会阻断缓存写盘）。"""
+        from GalTransl.ConfigHelper import CProjectConfig
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "config.yaml").write_text(
+                "problemAnalyze:\n  problemList:\n    - 语域异常\n    - 残留日文\n",
+                encoding="utf-8",
+            )
+            cfg = CProjectConfig(tmp, "config.yaml")
+            types = cfg.getProblemAnalyzeConfig("problemList")
+        self.assertEqual([t.name for t in types], ["残留日文"])
 
     def test_fix_spec_removed(self) -> None:
         names = [getattr(k, "name", str(k)) for k in _FIX_SPECS]
