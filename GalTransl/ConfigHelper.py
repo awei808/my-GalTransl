@@ -426,10 +426,13 @@ class CProjectConfig:
         pool = self.stage_token_pools.get(self.resolve_stage_pool_key(stage))
         return pool if pool is not None else self.tokenPool
 
+    def _problem_analyze_section(self) -> dict:
+        """problemAnalyze 段归一为 dict：缺失/null/类型异常一律当空段（旧项目兼容）。"""
+        section = self.projectConfig.get("problemAnalyze")
+        return section if isinstance(section, dict) else {}
+
     def getProblemAnalyzeConfig(self, backendName: str) -> list[CProblemType]:
-        problem_analyze = self.projectConfig.get("problemAnalyze") or {}
-        if not isinstance(problem_analyze, dict):
-            return []
+        problem_analyze = self._problem_analyze_section()
         raw = problem_analyze.get(backendName)
         if not raw:
             return []
@@ -450,11 +453,10 @@ class CProjectConfig:
 
     def hasProblemAnalyzeConfig(self, backendName: str) -> bool:
         """problemAnalyze 段中是否存在指定键，用于区分「未配置」与「配置为空」。"""
-        problem_analyze = self.projectConfig.get("problemAnalyze") or {}
-        return isinstance(problem_analyze, dict) and backendName in problem_analyze
+        return backendName in self._problem_analyze_section()
 
     def getProblemAnalyzeArinashiDict(self) -> dict:
-        problem_analyze = self.projectConfig.get("problemAnalyze", {})
+        problem_analyze = self._problem_analyze_section()
         if "arinashiDict" not in problem_analyze:
             return {}
         elif not problem_analyze["arinashiDict"]:
@@ -464,7 +466,7 @@ class CProjectConfig:
     def getAvgSentenceLengthThreshold(self) -> int:
         """单句过长的平均分句长度阈值，默认17，建议15~25。"""
         return _coerce_positive_int(
-            self.projectConfig.get("problemAnalyze", {}).get(
+            self._problem_analyze_section().get(
                 "avgSentenceLengthThreshold", DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD
             ),
             DEFAULT_AVG_SENTENCE_LENGTH_THRESHOLD,
@@ -473,7 +475,7 @@ class CProjectConfig:
     def getHSentenceLengthThreshold(self) -> int:
         """单句过长的 H 场景专用平均分句长度阈值，默认24，建议20~30。"""
         return _coerce_positive_int(
-            self.projectConfig.get("problemAnalyze", {}).get(
+            self._problem_analyze_section().get(
                 "avgSentenceLengthThresholdH", DEFAULT_H_SENTENCE_LENGTH_THRESHOLD
             ),
             DEFAULT_H_SENTENCE_LENGTH_THRESHOLD,
@@ -482,7 +484,7 @@ class CProjectConfig:
     def getAttributiveMaxLength(self) -> int:
         """定语过长检测的定语最大长度，默认10，超过即报「定语过长」。"""
         return _coerce_positive_int(
-            self.projectConfig.get("problemAnalyze", {}).get(
+            self._problem_analyze_section().get(
                 "attributiveMaxLength", DEFAULT_ATTRIBUTIVE_MAX_LENGTH
             ),
             DEFAULT_ATTRIBUTIVE_MAX_LENGTH,
@@ -491,7 +493,7 @@ class CProjectConfig:
     def getAdverbialMaxLength(self) -> int:
         """状语过长检测的状语最大长度，默认12，超过即报「状语过长」。"""
         return _coerce_positive_int(
-            self.projectConfig.get("problemAnalyze", {}).get(
+            self._problem_analyze_section().get(
                 "adverbialMaxLength", DEFAULT_ADVERBIAL_MAX_LENGTH
             ),
             DEFAULT_ADVERBIAL_MAX_LENGTH,

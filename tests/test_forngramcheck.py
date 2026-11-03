@@ -231,6 +231,9 @@ class ClaimAndSpecTests(_IndexMixin, unittest.TestCase):
                 self.assertEqual(cfg.getProblemAnalyzeConfig("problemList"), [])
                 # 键存在但值为 null 仍算「已配置」（与 hasProblemAnalyzeConfig 原语义一致）
                 self.assertEqual(cfg.hasProblemAnalyzeConfig("problemList"), has_key)
+                # 端到端：arinashiDict 与四个阈值 getter 也必须能读（否则检测仍中断）
+                tran = _trans(0, "这是一句用于问题检测的测试译文内容。")
+                find_problems([tran], cfg, None)
 
     def test_fix_spec_removed(self) -> None:
         names = [getattr(k, "name", str(k)) for k in _FIX_SPECS]
