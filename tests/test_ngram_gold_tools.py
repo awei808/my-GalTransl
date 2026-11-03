@@ -241,8 +241,14 @@ class FixtureTests(unittest.TestCase):
         # 每条都必须能被打分器评分（汉字不足的句子在采样阶段已剔除）
         for it in items:
             self.assertGreaterEqual(nr.han_char_count(nr.normalize_text(it["dst"])), nr.MIN_SENT_CHARS)
-        # 经 eval 的标签归一化后仍是正负两池（不是被当成未标注丢掉）
-        self.assertEqual(ge.label_of(ge.load_gold(path)[0]), "positive")
+        # counts 自洽：采样 430 = 入库 + 重复句 + 控制码剔除
+        counts = data["counts"]
+        self.assertEqual(
+            counts["sampled"], len(items) + counts["dupes_excluded"] + counts["format_dropped"]
+        )
+        # 经 eval 的标签归一化后正负两池都在（负例掉出白名单会变成未标注）
+        pools = {ge.label_of(it) for it in ge.load_gold(path)}
+        self.assertEqual(pools, {"positive", "negative"})
 
 
 class ResolveCacheDirTests(unittest.TestCase):
