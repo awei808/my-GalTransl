@@ -107,6 +107,10 @@ class CProxy:
         pass
 
 
+# 已告警过的未知问题类型（逐 chunk 反复读配置，同一类型只告警一次）
+_WARNED_UNKNOWN_PROBLEM_TYPES: set = set()
+
+
 class CProblemType(Enum):
     """
     问题类型
@@ -423,24 +427,31 @@ class CProjectConfig:
         return pool if pool is not None else self.tokenPool
 
     def getProblemAnalyzeConfig(self, backendName: str) -> list[CProblemType]:
-        problem_analyze = self.projectConfig.get("problemAnalyze", {})
-        if backendName not in problem_analyze:
+        problem_analyze = self.projectConfig.get("problemAnalyze") or {}
+        if not isinstance(problem_analyze, dict):
+            return []
+        raw = problem_analyze.get(backendName)
+        if not raw:
             return []
         result: list[CProblemType] = []
-        for i in problem_analyze[backendName]:
+        for i in raw:
             try:
                 result.append(CProblemType[i])
             except (KeyError, TypeError):
-                # 已下线/拼错的问题类型：跳过并告警，勿让旧项目升级后整段检测崩掉
-                LOGGER.warning(
-                    f"problemAnalyze.{backendName} 含未知问题类型 {i!r}，已忽略"
-                )
+                # 已下线/拼错的类型跳过告警；逐 chunk 调用，同一类型只告警一次
+                key = f"{backendName}:{i!r}"
+                if key not in _WARNED_UNKNOWN_PROBLEM_TYPES:
+                    _WARNED_UNKNOWN_PROBLEM_TYPES.add(key)
+                    LOGGER.warning(
+                        f"problemAnalyze.{backendName} 含未知问题类型 {i!r}，已忽略"
+                    )
 
         return result
 
     def hasProblemAnalyzeConfig(self, backendName: str) -> bool:
         """problemAnalyze 段中是否存在指定键，用于区分「未配置」与「配置为空」。"""
-        return backendName in self.projectConfig.get("problemAnalyze", {})
+        problem_analyze = self.projectConfig.get("problemAnalyze") or {}
+        return isinstance(problem_analyze, dict) and backendName in problem_analyze
 
     def getProblemAnalyzeArinashiDict(self) -> dict:
         problem_analyze = self.projectConfig.get("problemAnalyze", {})

@@ -214,6 +214,24 @@ class ClaimAndSpecTests(_IndexMixin, unittest.TestCase):
             types = cfg.getProblemAnalyzeConfig("problemList")
         self.assertEqual([t.name for t in types], ["残留日文"])
 
+    def test_null_problem_analyze_section_is_tolerated(self) -> None:
+        """problemAnalyze / problemList 写成 null 或非对象时返回空列表而非抛 TypeError。"""
+        from GalTransl.ConfigHelper import CProjectConfig
+        import tempfile
+        from pathlib import Path
+
+        for body, has_key in (
+            ("problemAnalyze:\n", False),
+            ("problemAnalyze:\n  problemList:\n", True),
+            ("problemAnalyze: [1, 2]\n", False),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, "config.yaml").write_text(body, encoding="utf-8")
+                cfg = CProjectConfig(tmp, "config.yaml")
+                self.assertEqual(cfg.getProblemAnalyzeConfig("problemList"), [])
+                # 键存在但值为 null 仍算「已配置」（与 hasProblemAnalyzeConfig 原语义一致）
+                self.assertEqual(cfg.hasProblemAnalyzeConfig("problemList"), has_key)
+
     def test_fix_spec_removed(self) -> None:
         names = [getattr(k, "name", str(k)) for k in _FIX_SPECS]
         self.assertNotIn("语域异常", names)
