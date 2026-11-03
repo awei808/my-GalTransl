@@ -126,15 +126,13 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
                 "节奏单一",
                 "节奏冗长",
                 "中文不顺",
-                "语域异常",
             ],
         )
 
-    def test_ngram_and_language_keys_reachable_via_real_config(self) -> None:
-        """回归锁定：ngram/language 键必须能经真实 CProjectConfig.getKey 读到。
+    def test_ngram_keys_removed_and_language_reachable(self) -> None:
+        """0.7.0 下线：配置模板不再下发 ngram 键；language 键仍能经真实 getKey 读到。
 
-        keyValues 对 common 段拍平一层——真实键是 `language` 而非
-        `common.language`；ForNgramCheck 的语言门控曾因臆猜键名而永不生效。
+        keyValues 对 common 段拍平一层——真实键是 `language` 而非 `common.language`。
         """
         import tempfile
 
@@ -146,10 +144,9 @@ class DefaultProjectConfigContractTests(unittest.TestCase):
             )
             cfg = CProjectConfig(tmp, "config.yaml")
             self.assertIn("zh-cn", str(cfg.getKey("language")))
-            # gpt 段键经模板可读（阈值为标定值非空 → 默认非观察模式）
-            self.assertTrue(str(cfg.getKey("gpt.ngramThreshold", "")).strip() != "")
-            self.assertIsNotNone(cfg.getKey("gpt.ngramIndexPath"))
-            self.assertEqual(float(cfg.getKey("gpt.ngramLambda")), 1.0)
+            self.assertIsNone(cfg.getKey("gpt.ngramThreshold"))
+            self.assertIsNone(cfg.getKey("gpt.ngramIndexPath"))
+            self.assertIsNone(cfg.getKey("gpt.ngramLambda"))
 
 
 if __name__ == "__main__":

@@ -251,7 +251,6 @@ async def postprocess_results(
         # 注意：翻译阶段不传 h_check_words，H 场景用词不当检测仍由校对阶段重检补上。
         h_ranges = _resolve_file_h_ranges(proj_dir, cache_file_path, projectConfig)
         find_problems(trans_list, projectConfig, gpt_dic, h_ranges=h_ranges)
-        _log_ngram_fluency_crosscheck(file_path, trans_list)
         # post_save=True → 写完整快照并删除对应 .append 日志（即合并 jsonl）
         await save_transCache_to_json(
             trans_list,
@@ -510,7 +509,7 @@ def _resolve_after_translation_order(projectConfig: CProjectConfig) -> list:
         "improve", "brfix", "jpfix", "banfix",
         "semcheck", "semcheckagain", "tonecheck", "tonecheckagain",
         "verbosecheck", "verbosecheckagain",
-        "fluencycheck", "fluencycheckagain", "ngramcheck", "fix",
+        "fluencycheck", "fluencycheckagain", "fix",
     }
     raw = projectConfig.getKey("gpt.afterTranslation")
 
@@ -583,7 +582,6 @@ async def _run_after_trans_single_file(
     from GalTransl.Backend.ForVerboseCheckAgain import ForVerboseCheckAgain
     from GalTransl.Backend.ForFluencyCheck import ForFluencyCheck
     from GalTransl.Backend.ForFluencyCheckAgain import ForFluencyCheckAgain
-    from GalTransl.Backend.ForNgramCheck import ForNgramCheck
     from GalTransl.Backend.ForFixRound import ForProblemFixRound
 
     _after_pool = _stage_pool(projectConfig, "afterTrans")
@@ -701,9 +699,6 @@ async def _run_after_trans_single_file(
                 projectConfig.proxyPool,
                 _after_pool,
             )
-        elif mode == "ngramcheck":
-            # 纯本地 n-gram 语域检测：不占令牌池、零 API 成本，与 AI 通顺检测解耦
-            _api = ForNgramCheck(projectConfig)
         else:
             LOGGER.warning(f"[后处理] 未知模式 '{mode}'，跳过")
             return

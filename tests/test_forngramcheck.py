@@ -1,15 +1,10 @@
 # -*- coding: utf-8 -*-
 """ForNgramCheck 本地 n-gram 语域检测的单元测试。
 
-覆盖：
-  - 禁用语义：目标语言非中文 / 索引缺失 → _disabled_reason，batch_translate 跳过
-  - 观察模式：阈值留空只打分不标记；配置阈值后标记低于阈值句并清旧标记
-  - find_problems 认领：ngram_issue 非空 → 输出「语域异常」（reason 附带展示）
-  - _FIX_SPECS：语域异常必须注册统一修复指令（dst-only 模式）
-  - Cache._build_cache_obj：ngram_issue 随快照落盘、读回
-  - server_cache 缓存重建：ngram_issue 随条目透传（缺失会让重检抹掉「语域异常」）
-  - 注册链：llm_postprocess 白名单 / pipeline_stages 顶层步骤 / 问题类型目录同步
-  - 交叉印证统计函数：全空不打日志、单边/双边命中计数正确
+0.7.0 起该功能入口已下线（前端选项、后处理白名单、流水线步骤、问题类型目录、
+配置模板键全部移除），实现与金标保留以便恢复。本文件因此分两类：
+  - 下线锁定：入口不再暴露、find_problems 不再认领「语域异常」
+  - 底层能力：禁用语义、观察模式打分、索引 IO、缓存字段透传（恢复后仍生效）
 
 n-gram 数学与索引 IO 在 tools/test_ngram_scorer.py 覆盖，此处用合成微索引。
 """
@@ -28,7 +23,7 @@ from GalTransl.Problem import find_problems
 from GalTransl.ConfigHelper import CProblemType, PROBLEM_TYPE_CATALOG_ORDER
 from GalTransl import ngram_rules as nr
 from GalTransl.Backend.ForNgramCheck import ForNgramCheck
-from GalTransl.Backend.ForFixRound import _FIX_SPECS, MODE_DST_ONLY, MODE_SRC_DST
+from GalTransl.Backend.ForFixRound import _FIX_SPECS, MODE_SRC_DST
 
 
 def _trans(index: int, pre_dst: str, proofread_zh: str = "") -> CSentense:
@@ -195,22 +190,24 @@ class ForNgramCheckRunTests(_IndexMixin, unittest.TestCase):
 class ClaimAndSpecTests(_IndexMixin, unittest.TestCase):
     """find_problems 认领 + 修复指令注册 + 目录同步。"""
 
-    def test_find_problems_claims_ngram(self) -> None:
-        cfg = _Cfg(problem_list=[CProblemType.语域异常])
+    def test_find_problems_no_longer_claims_ngram(self) -> None:
+        """入口下线：缓存里残留 ngram_issue 也不再产出「语域异常」。"""
+        cfg = _Cfg(problem_list=[])
         tran = _trans(0, "新华社报道经济发展成效，民生保障工作持续推进。")
         tran.ngram_issue = "语域分 -1.20 低于阈值 0.04"
         find_problems([tran], cfg, None)
-        self.assertEqual(tran.problem, "语域异常：语域分 -1.20 低于阈值 0.04")
+        self.assertNotIn("语域异常", tran.problem)
 
-    def test_fix_spec_registered_dst_only(self) -> None:
-        self.assertIn(CProblemType.语域异常, _FIX_SPECS)
-        self.assertEqual(_FIX_SPECS[CProblemType.语域异常].mode, MODE_DST_ONLY)
+    def test_fix_spec_removed(self) -> None:
+        names = [getattr(k, "name", str(k)) for k in _FIX_SPECS]
+        self.assertNotIn("语域异常", names)
         # 中文不顺保持 src+dst（互不覆盖的回归锁定）
         self.assertEqual(_FIX_SPECS[CProblemType.中文不顺].mode, MODE_SRC_DST)
 
     def test_catalog_order_sync(self) -> None:
         from GalTransl.server_meta import _PROBLEM_TYPE_CATALOG
-        self.assertEqual(PROBLEM_TYPE_CATALOG_ORDER[-1], "语域异常")
+        self.assertNotIn("语域异常", PROBLEM_TYPE_CATALOG_ORDER)
+        self.assertEqual(PROBLEM_TYPE_CATALOG_ORDER[-1], "中文不顺")
         names = [item["name"] for item in _PROBLEM_TYPE_CATALOG]
         self.assertEqual(names, list(PROBLEM_TYPE_CATALOG_ORDER))
 
@@ -228,7 +225,7 @@ class CacheAndRegistrationTests(unittest.TestCase):
         self.assertNotIn("ngram_issue", _build_cache_obj(tran2))
 
     def test_server_cache_rebuild_keeps_ngram_issue(self) -> None:
-        """缓存条目重建必须保留 ngram_issue，否则重检后「语域异常」被抹掉。"""
+        """字段透传保留：入口下线后仍兼容旧缓存，恢复功能时无需改重建逻辑。"""
         from GalTransl.server_cache import _rebuild_trans_list_with_postprocess
 
         entry = {
@@ -245,15 +242,12 @@ class CacheAndRegistrationTests(unittest.TestCase):
         tran = _rebuild_trans_list_with_postprocess([entry], None, None, None, [])[0]
         self.assertEqual(tran.ngram_issue, "语域分 -1.20 低于阈值 0.04")
         self.assertEqual(tran.fluency_issue, "")
-        # 透传后 find_problems 才能重新认领（重检写回时才不会把该类型删掉）
-        find_problems([tran], _Cfg(problem_list=[CProblemType.语域异常]), None)
-        self.assertIn("语域异常", tran.problem)
 
-    def test_pipeline_registration(self) -> None:
+    def test_pipeline_registration_removed(self) -> None:
         from GalTransl.Frontend.llm_postprocess import _resolve_after_translation_order
         from GalTransl.Frontend.pipeline_stages import AFTER_TRANS_STEP_KEYS
 
-        self.assertIn("ngramcheck", AFTER_TRANS_STEP_KEYS)
+        self.assertNotIn("ngramcheck", AFTER_TRANS_STEP_KEYS)
 
         class _KeyCfg:
             def __init__(self, value):
@@ -263,7 +257,7 @@ class CacheAndRegistrationTests(unittest.TestCase):
                 return self._v if key == "gpt.afterTranslation" else default
 
         order = _resolve_after_translation_order(_KeyCfg(["ngramcheck", "fluencycheck"]))
-        self.assertEqual(order, ["ngramcheck", "fluencycheck"])
+        self.assertEqual(order, ["fluencycheck"])
 
     def test_crosscheck_stats(self) -> None:
         import io

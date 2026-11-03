@@ -28,7 +28,6 @@ export type AfterTranslationGroup =
   | "tone"
   | "verbose"
   | "fluency"
-  | "ngram"
   | "semcheck";
 
 export interface AfterTranslationBackend {
@@ -53,7 +52,6 @@ export const AFTER_TRANSLATION_GROUPS: {
   { key: "tone", label: "词语色彩一致性检查", hint: "对照色彩基准（批次区间「用词色彩」标注优先，无标注时对照原文语气）检查译文，并可二次复核撤销误报。" },
   { key: "verbose", label: "节奏冗长检测", hint: "AI 判定译文是否被同源二译或无源增补撑大（信息量未增加），并可二次复核撤销误报。" },
   { key: "fluency", label: "中文通顺检测", hint: "规则初筛命中后由 AI 判定译文是否符合现代汉语自然表达，并可二次复核撤销误报。" },
-  { key: "ngram", label: "N-gram 语域检测", hint: "纯本地统计（零 API 成本），与地道中文参照语料比对语域分布，标记疑似机器腔；与 AI 通顺检测可分开启用，双开时结果相互印证。" },
   { key: "semcheck", label: "标注疑似错误", hint: "AI 判定错译/漏译/串行并标记，供人工复核。" },
 ];
 
@@ -123,12 +121,6 @@ export const AFTER_TRANSLATION_BACKENDS: AfterTranslationBackend[] = [
     label: "通顺命中句二次复核",
     group: "fluency",
     hint: "对中文通顺检测标记的「中文不顺」句子逐句二次复核，撤销可接受译文（角色口癖、正当强调、H 场景拟声/断续/露骨用词）的误报标记（不改译文）。需先执行 fluencycheck 产生标记。",
-  },
-  {
-    key: "ngramcheck",
-    label: "N-gram 语域检测",
-    group: "ngram",
-    hint: "纯本地 n-gram 统计（零 API 成本）：把每句译文与地道中文参照语料（分层索引）比对语域分布，标记明显偏离的「语域异常」句（不改译文）。与「中文通顺检测」相互解耦——可分开启用，双开时收尾有交叉印证统计。需先构建索引（tools/ngram_scorer.py --build-index），索引缺失时自动跳过；阈值未配置时为观察模式（只打日志不标记）。可选质检项：默认后处理链不启用。",
   },
   {
     key: "semcheck",

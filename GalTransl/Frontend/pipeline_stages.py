@@ -249,7 +249,7 @@ AFTER_TRANS_STEP_KEYS: Tuple[str, ...] = (
     "brfix", "jpfix", "banfix", "fix",
     "semcheck", "semcheckagain", "tonecheck", "tonecheckagain",
     "verbosecheck", "verbosecheckagain",
-    "fluencycheck", "fluencycheckagain", "ngramcheck",
+    "fluencycheck", "fluencycheckagain",
 )
 
 # 默认步骤顺序（未配置 steps 时的等价清单；实际执行仍走各阶段 enable* 开关）

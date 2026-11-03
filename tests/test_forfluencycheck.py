@@ -651,7 +651,7 @@ class RegistrationTests(unittest.TestCase):
         from GalTransl.server_meta import _PROBLEM_TYPE_CATALOG
 
         # 目录只允许尾部追加（fix 序号写法按目录顺序解析，插入中部会移位旧配置）
-        self.assertEqual(PROBLEM_TYPE_CATALOG_ORDER[-1], "语域异常")
+        self.assertEqual(PROBLEM_TYPE_CATALOG_ORDER[-1], "中文不顺")
         self.assertEqual(
             [entry["name"] for entry in _PROBLEM_TYPE_CATALOG],
             list(PROBLEM_TYPE_CATALOG_ORDER),
