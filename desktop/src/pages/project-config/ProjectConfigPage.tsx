@@ -969,12 +969,14 @@ export function ProjectConfigPage() {
       // 同理：「长句丢失换行」→「单句过长」
       list = list.map((x) => (x === "长句丢失换行" ? "单句过长" : x));
       // 后端已下线的类型（如 0.7.0 移除「语域异常」）没有可取消的勾选框，必须在此丢掉，
-      // 否则保存后仍带着失效项、后端会按未知类型告警
-      const knownTypes = new Set(catalog.types.map((t) => t.name));
-      const dropped = list.filter((x) => !knownTypes.has(x));
-      if (dropped.length > 0) {
-        list = list.filter((x) => knownTypes.has(x));
-        console.warn(`[项目设置] 已忽略下线/未知的问题类型：${dropped.join("、")}`);
+      // 否则保存后仍带着失效项、后端会按未知类型告警。目录为空（后端未就绪）时不动配置。
+      if (catalog.types.length > 0) {
+        const knownTypes = new Set(catalog.types.map((t) => t.name));
+        const dropped = list.filter((x) => !knownTypes.has(x));
+        if (dropped.length > 0) {
+          list = list.filter((x) => knownTypes.has(x));
+          console.warn(`[项目设置] 已忽略下线/未知的问题类型：${dropped.join("、")}`);
+        }
       }
       setEnabledProblemTypes(list);
       setAvgThreshold(
