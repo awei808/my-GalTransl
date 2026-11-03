@@ -231,7 +231,13 @@ class ClaimAndSpecTests(_IndexMixin, unittest.TestCase):
                 self.assertEqual(cfg.getProblemAnalyzeConfig("problemList"), [])
                 # 键存在但值为 null 仍算「已配置」（与 hasProblemAnalyzeConfig 原语义一致）
                 self.assertEqual(cfg.hasProblemAnalyzeConfig("problemList"), has_key)
-                # 端到端：arinashiDict 与四个阈值 getter 也必须能读（否则检测仍中断）
+                # 段内其余 getter 也不得因空段崩（find_problems 只在对应类型启用时才读阈值，
+                # 这里直接逐个取值，避免"问题列表为空"掩盖回归）
+                self.assertEqual(cfg.getProblemAnalyzeArinashiDict(), {})
+                self.assertGreater(cfg.getAvgSentenceLengthThreshold(), 0)
+                self.assertGreater(cfg.getHSentenceLengthThreshold(), 0)
+                self.assertGreater(cfg.getAttributiveMaxLength(), 0)
+                self.assertGreater(cfg.getAdverbialMaxLength(), 0)
                 tran = _trans(0, "这是一句用于问题检测的测试译文内容。")
                 find_problems([tran], cfg, None)
 
