@@ -221,13 +221,17 @@ class SpreadDupesTests(unittest.TestCase):
         self.assertEqual({r["origin"] for r in rows if r["origin"] is not None}, {0, 1, 2, 3})
 
 
+GOLD_FIXTURE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "ngram_gold_set.json"
+)
+
+
+@unittest.skipUnless(os.path.isfile(GOLD_FIXTURE), "人工金标为本地数据，不入库（见 .gitignore）")
 class FixtureTests(unittest.TestCase):
-    """入库金标的结构契约（内容变化需同步 description/counts）。"""
+    """本地金标的结构契约（内容变化需同步 description/counts）。"""
 
     def test_fixture_is_well_formed(self) -> None:
-        path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "fixtures", "ngram_gold_set.json"
-        )
+        path = GOLD_FIXTURE
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         items = data["items"]

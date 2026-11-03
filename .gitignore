@@ -38,6 +38,7 @@ corpus_build.py
 
 # 中文 n-gram 语料与派生产物（本地数据，不入库）
 n-gram-origin/
+tests/fixtures/ngram_gold_set.json
 
 #测试程序引入
 Reload
