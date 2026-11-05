@@ -201,7 +201,9 @@ class MainAutoDupesTests(unittest.TestCase):
         self.assertEqual(code, 0)
         text = out.getvalue()
         self.assertIn("重复句排除 1", text)
-        self.assertIn("正例 1，负例 1", text)
+        # 对比台 AUC 表按「可用/总数」列报告覆盖率：3 条里排除了 1 条重复句
+        self.assertIn("2/3", text)
+        self.assertIn("[1/3] AUC", text)
 
 
 class SpreadDupesTests(unittest.TestCase):
