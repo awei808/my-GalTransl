@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from typing import Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -76,7 +77,7 @@ class VocabTests(unittest.TestCase):
 
 
 class CollectPairsTests(unittest.TestCase):
-    def _entry(self, index: int, src: str, dst: str) -> dict:
+    def _entry(self, index: int, src: str, dst: str) -> Dict[str, object]:
         return {"index": index, "post_src": src, "pre_dst": dst, "proofread_dst": "", "name": "凛音"}
 
     def test_snapshot_diff_is_read_only_and_filtered(self) -> None:
@@ -115,6 +116,78 @@ class CollectPairsTests(unittest.TestCase):
             self.assertEqual(included[0]["diff_type"], "措辞/搭配")
             self.assertEqual(included[0]["src"], "原文一")
             self.assertEqual([p["diff_type"] for p in pairs if not p["included"]], ["称呼口径"])
+
+
+
+class ExtraRevisionTests(unittest.TestCase):
+    """审查跟进：多快照、旧布局、异常 index、覆写保护与相对阈值。"""
+
+    def _entry(self, index: object, dst: str) -> Dict[str, object]:
+        return {"index": index, "post_src": "原文", "pre_dst": dst, "name": "凛音"}
+
+    def _write(self, path: str, rows: List[dict]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh, ensure_ascii=False)
+
+    def _project(self, tmp: str, top_level: bool = False) -> str:
+        cur = os.path.join(tmp, "transl_cache", "" if top_level else "pass3_cache")
+        snap = os.path.join(tmp, "transl_cache", ".snapshots", "" if top_level else "pass3_cache")
+        name = "01_test.txt.json"
+        self._write(os.path.join(snap, name + ".20260101-000000-000000.bak"),
+                    [self._entry(0, "甲甲甲甲甲甲"), self._entry(1, "乙乙乙乙乙乙")])
+        self._write(os.path.join(snap, name + ".20260102-000000-000000.bak"),
+                    [self._entry(0, "甲甲乙甲甲甲"), self._entry(1, "乙乙乙乙乙乙")])
+        self._write(os.path.join(cur, name),
+                    [self._entry(0, "甲丙乙甲甲甲"), self._entry(1, "乙乙乙乙乙丙")])
+        return tmp
+
+    def test_adjacent_captures_intermediate_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = self._project(tmp)
+            cumulative, _ = rp.collect_pairs(project, set(), set(), adjacent=False)
+            adjacent, _ = rp.collect_pairs(project, set(), set(), adjacent=True)
+        self.assertEqual(len(cumulative), 2)
+        self.assertEqual(len(adjacent), 3)  # A→B 一处 + B→当前两处
+        self.assertEqual({p["version"] for p in cumulative}, {"earliest->current"})
+        self.assertEqual({p["version"] for p in adjacent}, {"v0->v1", "v1->v2"})
+
+    def test_top_level_cache_layout_is_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = self._project(tmp, top_level=True)
+            pairs, stats = rp.collect_pairs(project, set(), set())
+        self.assertEqual(stats["compared_files"], 1)
+        self.assertEqual(len(pairs), 2)
+
+    def test_bad_and_duplicate_index_do_not_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cur = os.path.join(tmp, "transl_cache", "pass3_cache")
+            snap = os.path.join(tmp, "transl_cache", ".snapshots", "pass3_cache")
+            name = "01_test.txt.json"
+            self._write(os.path.join(snap, name + ".20260101-000000-000000.bak"),
+                        [self._entry(0, "甲甲甲甲甲甲"), self._entry(0, "乙乙乙乙乙乙"),
+                         self._entry("bad", "丙丙丙丙丙丙")])
+            self._write(os.path.join(cur, name),
+                        [self._entry(0, "甲甲甲甲甲乙"), self._entry("bad", "丙丙丙丙丙丁")])
+            pairs, stats = rp.collect_pairs(tmp, set(), set())
+        self.assertGreaterEqual(stats["bad_index"], 1)
+        self.assertEqual(stats["dup_index"], 1)
+        self.assertTrue(all(isinstance(p["index"], int) for p in pairs))
+
+    def test_check_outputs_requires_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "pairs.jsonl")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{}")
+            with self.assertRaises(SystemExit):
+                rp._check_outputs(path, force=False)
+            rp._check_outputs(path, force=True)
+
+    def test_relative_rewrite_threshold_keeps_long_polish(self) -> None:
+        # 长句里 9 字的润色不应被当错译（绝对阈值 8 会误判）
+        diff_type, category, included = rp.classify("非常非常地", "相当自然地", set(), set(), ref_len=60)
+        self.assertEqual(category, "naturalness")
+        self.assertTrue(included)
 
 
 if __name__ == "__main__":

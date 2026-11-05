@@ -3,7 +3,7 @@
 """句子级自然度指标对比台：AUC + 成对准确率 + 误标预算（不属于 pytest 自动收集）。
 
 用法：
-  # 单指标（旧用法，输出不变）
+  # 单指标（旧用法：仍输出完整阈值扫描与一致性；表格排版已调整）
   python tests/ngram_gold_eval.py --gold tests/fixtures/ngram_gold_set.json
   # 多指标对比（外部分数文件，每行 {"text": "原句", "score": 0.73}）
   python tests/ngram_gold_eval.py --gold <gold> --pairs <revision_pairs.jsonl> \\
@@ -32,7 +32,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -60,9 +60,10 @@ def load_gold(path: str) -> List[dict]:
     with open(path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
     for pos, item in enumerate(data.get("items") or []):
-        item.setdefault("id", pos + 1)
-        item.setdefault("dst", item.get("text", ""))
-        items.append(item)
+        row = dict(item)
+        row.setdefault("id", pos + 1)
+        row.setdefault("dst", item.get("text", ""))
+        items.append(row)
     return items
 
 
@@ -77,7 +78,7 @@ def label_of(item: dict) -> str:
 
 
 def score_gold(
-    items: List[dict], index: nr.NgramIndex, lam: float, skip_ids: Optional[set] = None
+    items: List[dict], index: nr.NgramIndex, lam: float, skip_ids: Optional[Set[int]] = None
 ) -> Tuple[List[float], List[float], Dict[str, int]]:
     """按标签分池打分；skip_ids 内的重复句不参与统计（只用于一致性校验）。"""
     pos: List[float] = []
@@ -148,10 +149,19 @@ def consistency(items: List[dict], mapping: Dict[int, int]) -> Tuple[int, int, L
 
 
 def load_pairs(path: str, include_excluded: bool = False) -> List[dict]:
-    """读取人工修订成对集，默认只取 included=true 的行。"""
+    """读取人工修订成对集，默认只取 included=true 的行。
+
+    include_excluded 时合并同名 sidecar（采集脚本把排除项写在 <path>.excluded.jsonl）。
+    """
     with open(path, "r", encoding="utf-8") as fh:
         rows = [json.loads(line) for line in fh if line.strip()]
-    return [r for r in rows if include_excluded or r.get("included", True)]
+    if include_excluded:
+        sidecar = path + ".excluded.jsonl"
+        if os.path.isfile(sidecar):
+            with open(sidecar, "r", encoding="utf-8") as fh:
+                rows += [json.loads(line) for line in fh if line.strip()]
+        return rows
+    return [r for r in rows if r.get("included", True)]
 
 
 def load_metric_scores(path: str) -> Tuple[Dict[str, float], Dict[str, int]]:
@@ -162,7 +172,7 @@ def load_metric_scores(path: str) -> Tuple[Dict[str, float], Dict[str, int]]:
     if not os.path.isfile(path):
         raise SystemExit(f"分数文件不存在：{path}")
     scores: Dict[str, float] = {}
-    stats = {"rows": 0, "used": 0, "skipped": 0}
+    stats = {"rows": 0, "used": 0, "skipped": 0, "duplicated": 0}
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -180,6 +190,8 @@ def load_metric_scores(path: str) -> Tuple[Dict[str, float], Dict[str, int]]:
             if not key:
                 stats["skipped"] += 1
                 continue
+            if key in scores:
+                stats["duplicated"] += 1
             scores[key] = value
             stats["used"] += 1
     return scores, stats
@@ -207,7 +219,7 @@ def lookup(scores: Dict[str, float], text: str) -> Optional[float]:
 
 
 def gold_pools_for(
-    items: List[dict], scores: Dict[str, float], skip_ids: Optional[set] = None
+    items: List[dict], scores: Dict[str, float], skip_ids: Optional[Set[int]] = None
 ) -> Tuple[List[float], List[float], Dict[str, int]]:
     """某指标在 gold 上的正负分数池与覆盖率统计。"""
     skip_ids = skip_ids or set()
@@ -252,7 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gold", required=True, help="gold JSONL 或 fixture JSON")
     parser.add_argument("--pairs", help="人工修订成对集（ngram_revision_pairs.py 输出）")
-    parser.add_argument("--pairs-all", action="store_true", help="成对集里被排除的行也参与统计")
+    parser.add_argument("--pairs-all", action="store_true", help="合并 sidecar 中被排除的修订对一起统计")
     parser.add_argument("--index-dir", default=nr.default_index_dir(), help="内置 n-gram 索引目录")
     parser.add_argument("--lam", type=float, default=nr.DEFAULT_LAMBDA, help="背景项系数 λ")
     parser.add_argument("--no-ngram", action="store_true", help="不计算内置 n-gram 指标（只跑外部分数）")
@@ -307,7 +319,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not name:
             raise SystemExit(f"--scores 指标名不能为空：{spec}")
         scores, stats = load_metric_scores(path)
-        print(f"[载入] {name}: 用 {stats['used']} 行，跳过 {stats['skipped']} 行（{path}）")
+        print(f"[载入] {name}: 用 {stats['used']} 行，跳过 {stats['skipped']} 行，"
+              f"重复键 {stats['duplicated']} 行（{path}）")
         metrics[name] = scores
     for name in args.invert:
         if name not in metrics:
@@ -317,6 +330,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         raise SystemExit("没有任何可用指标（检查 --scores / --no-ngram）")
 
     names = list(metrics)
+    if args.grid_metric and args.grid_metric not in names:
+        raise SystemExit(f"--grid-metric 找不到指标 {args.grid_metric}；已载入：{', '.join(names)}")
     print()
     print("=== 多指标对比台 ===")
     print(f"gold：{args.gold}（{len(items)} 条，重复句排除 {len(mapping)}）")
@@ -336,6 +351,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(_row(name, f"{cov['usable']}/{cov['total']}", f"{auc:.4f}", str(len(pos)), str(len(neg))))
         if cov["missing"]:
             print(f"    [提示] {name} 缺 {cov['missing']} 条分数")
+    empty_pools = [name for name, (pos, neg) in pools_by_metric.items() if not pos or not neg]
+    if empty_pools:
+        print(f"[错误] 指标的正例或负例分数池为空，结果无意义：{', '.join(empty_pools)}", file=sys.stderr)
+        return 1
 
     print()
     print("--- [2/3] 成对准确率（人工修订：改后分 > 改前分）---")
@@ -361,8 +380,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     # 单指标时保留旧的完整扫描表与阈值建议，避免破坏既有用法
     grid_metric = args.grid_metric or (names[0] if len(names) == 1 else None)
     if grid_metric:
-        if grid_metric not in pools_by_metric:
-            raise SystemExit(f"--grid-metric 找不到指标 {grid_metric}")
         pos, neg = pools_by_metric[grid_metric]
         print()
         print(f"--- {grid_metric} 阈值扫描（误标 = 正例被判异常；召回 = 负例被标出）---")

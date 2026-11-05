@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from typing import Dict, List, Tuple
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,7 +18,7 @@ from GalTransl import ngram_rules as nr
 
 
 class ScoreFileTests(unittest.TestCase):
-    def _write(self, path: str, lines: list) -> None:
+    def _write(self, path: str, lines: List[object]) -> None:
         with open(path, "w", encoding="utf-8") as fh:
             for line in lines:
                 fh.write(line if isinstance(line, str) else json.dumps(line, ensure_ascii=False))
@@ -34,7 +35,7 @@ class ScoreFileTests(unittest.TestCase):
                 {"text": "", "score": 1.0},
             ])
             scores, stats = bench.load_metric_scores(path)
-        self.assertEqual(stats, {"rows": 5, "used": 2, "skipped": 3})
+        self.assertEqual(stats, {"rows": 5, "used": 2, "skipped": 3, "duplicated": 0})
         # normalize_text 去空白后建键，gold 里的原始文本也能查到
         self.assertEqual(bench.lookup(scores, "甲乙"), 0.9)
         self.assertEqual(bench.lookup(scores, "丙"), 0.2)
@@ -95,7 +96,7 @@ class PoolAndPairTests(unittest.TestCase):
 
 
 class BenchCLITests(unittest.TestCase):
-    def _build_fixtures(self, tmp: str) -> tuple:
+    def _build_fixtures(self, tmp: str) -> Tuple[str, str, str, str]:
         gold = os.path.join(tmp, "gold.jsonl")
         pairs = os.path.join(tmp, "pairs.jsonl")
         high = os.path.join(tmp, "qemind.jsonl")
@@ -117,7 +118,8 @@ class BenchCLITests(unittest.TestCase):
                     fh.write(json.dumps({"text": text, "score": value}, ensure_ascii=False) + "\n")
         return gold, pairs, high, low
 
-    def _run(self, gold: str, pairs: str, high: str, low: str, extra: list) -> tuple:
+    def _run(self, gold: str, pairs: str, high: str, low: str,
+             extra: List[str]) -> Tuple[int, str]:
         argv = ["--gold", gold, "--pairs", pairs, "--no-ngram",
                 "--scores", f"qemind={high}", "--scores", f"ppl={low}", "--invert", "ppl"] + extra
         out = io.StringIO()
@@ -150,6 +152,79 @@ class BenchCLITests(unittest.TestCase):
             gold, _, _, _ = self._build_fixtures(tmp)
             with self.assertRaises(SystemExit):
                 bench.main(["--gold", gold, "--no-ngram"])
+
+
+
+class ExtraBenchTests(unittest.TestCase):
+    """审查跟进：重复键、池空、混合 gate、参数校验与 sidecar 合并。"""
+
+    def _write_jsonl(self, path: str, rows: List[dict]) -> None:
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def test_duplicate_keys_are_reported_and_last_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "d.jsonl")
+            self._write_jsonl(path, [{"text": "甲", "score": 0.1}, {"text": "甲", "score": 0.9}])
+            scores, stats = bench.load_metric_scores(path)
+        self.assertEqual(stats["duplicated"], 1)
+        self.assertEqual(bench.lookup(scores, "甲"), 0.9)
+
+    def test_load_pairs_all_merges_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "p.jsonl")
+            self._write_jsonl(path, [{"included": True}, {"included": True}])
+            self._write_jsonl(path + ".excluded.jsonl", [{"included": False}])
+            self.assertEqual(len(bench.load_pairs(path)), 2)
+            self.assertEqual(len(bench.load_pairs(path, include_excluded=True)), 3)
+
+    def _gold_and_two_metrics(self, tmp: str) -> Tuple[str, str, str]:
+        gold = os.path.join(tmp, "g.jsonl")
+        good = os.path.join(tmp, "good.jsonl")
+        bad = os.path.join(tmp, "bad.jsonl")
+        self._write_jsonl(gold, [
+            {"id": 1, "dst": "甲", "label": "natural"},
+            {"id": 2, "dst": "乙", "label": "natural"},
+            {"id": 3, "dst": "丙", "label": "awkward"},
+            {"id": 4, "dst": "丁", "label": "awkward"},
+        ])
+        self._write_jsonl(good, [{"text": t, "score": v} for t, v in
+                                 (("甲", 0.9), ("乙", 0.8), ("丙", 0.2), ("丁", 0.1))])
+        self._write_jsonl(bad, [{"text": t, "score": v} for t, v in
+                                (("甲", 0.1), ("乙", 0.2), ("丙", 0.8), ("丁", 0.9))])
+        return gold, good, bad
+
+    def _run(self, argv: List[str]) -> Tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = bench.main(argv)
+        return code, out.getvalue()
+
+    def test_gate_checks_every_metric(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gold, good, bad = self._gold_and_two_metrics(tmp)
+            code, _ = self._run(["--gold", gold, "--no-ngram",
+                                 "--scores", f"good={good}", "--scores", f"bad={bad}",
+                                 "--gate", "0.9"])
+        self.assertEqual(code, 1)  # bad 的 AUC=0，只看首指标会漏
+
+    def test_empty_pool_returns_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gold, good, _ = self._gold_and_two_metrics(tmp)
+            partial = os.path.join(tmp, "partial.jsonl")
+            self._write_jsonl(partial, [{"text": "甲", "score": 0.9}, {"text": "乙", "score": 0.8}])
+            code, _ = self._run(["--gold", gold, "--no-ngram", "--scores", f"p={partial}"])
+        self.assertEqual(code, 1)  # 负例池为空，不能静默给 AUC=0.5
+
+    def test_unknown_invert_and_grid_metric_exit_early(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gold, good, _ = self._gold_and_two_metrics(tmp)
+            base = ["--gold", gold, "--no-ngram", "--scores", f"good={good}"]
+            with self.assertRaises(SystemExit):
+                bench.main(base + ["--invert", "nope"])
+            with self.assertRaises(SystemExit):
+                bench.main(base + ["--grid-metric", "nope"])
 
 
 if __name__ == "__main__":
