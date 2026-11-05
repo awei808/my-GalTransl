@@ -343,18 +343,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(_row("指标", "可用/总数", "AUC", "正例", "负例"))
     auc_by_metric: Dict[str, float] = {}
     pools_by_metric: Dict[str, Tuple[List[float], List[float]]] = {}
+    coverage: Dict[str, Dict[str, int]] = {}
     for name in names:
         pos, neg, cov = gold_pools_for(items, metrics[name], skip_ids=set(mapping))
         pools_by_metric[name] = (pos, neg)
-        auc = nr.auc(pos, neg) if pos and neg else 0.5
-        auc_by_metric[name] = auc
-        print(_row(name, f"{cov['usable']}/{cov['total']}", f"{auc:.4f}", str(len(pos)), str(len(neg))))
-        if cov["missing"]:
-            print(f"    [提示] {name} 缺 {cov['missing']} 条分数")
+        coverage[name] = cov
     empty_pools = [name for name, (pos, neg) in pools_by_metric.items() if not pos or not neg]
     if empty_pools:
         print(f"[错误] 指标的正例或负例分数池为空，结果无意义：{', '.join(empty_pools)}", file=sys.stderr)
         return 1
+    for name in names:
+        pos, neg = pools_by_metric[name]
+        cov = coverage[name]
+        auc = nr.auc(pos, neg)
+        auc_by_metric[name] = auc
+        print(_row(name, f"{cov['usable']}/{cov['total']}", f"{auc:.4f}", str(len(pos)), str(len(neg))))
+        if cov["missing"]:
+            print(f"    [提示] {name} 缺 {cov['missing']} 条分数")
 
     print()
     print("--- [2/3] 成对准确率（人工修订：改后分 > 改前分）---")

@@ -40,7 +40,10 @@ if ROOT not in sys.path:
 
 from GalTransl import ngram_rules as nr
 from GalTransl.Dictionary import _split_dict_line
-from GalTransl.server_cache import _SNAPSHOT_STAMP_RE
+
+# 与 server_cache._SNAPSHOT_STAMP_RE 同口径；内联避免为一条正则拉起半个 server 依赖树
+_STAMP_RE = re.compile(r"\d{8}-\d{6}-\d{6}")
+_SEPARATOR_RE = re.compile(r"[=\-~_*]{3,}")
 
 DEFAULT_OUT = os.path.join(ROOT, "n-gram-origin", "_corpus", "gold", "revision_pairs.jsonl")
 # 称呼后缀：用于识别「创君→创先生」这类一致性修订（词典会再补充具体组合）
@@ -80,8 +83,13 @@ def load_vocab(project_dir: str) -> Tuple[Set[str], Set[str]]:
         with open(dict_path, "r", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
-                if not line or line.startswith(("//", "#")):
+                # 与 Dictionary 的 load_dic 同口径：仅 // 是注释，# 不是
+                if not line or line.lstrip().startswith("//"):
                     continue
+                if _SEPARATOR_RE.fullmatch(line.strip()):
+                    continue
+                # Tab / 四空格 / 旧箭头格式先规范化为 |，再按字典口径分割
+                line = line.replace("    ", "\t").replace("\t", "|").replace("->", "|")
                 parts = _split_dict_line(line)
                 if len(parts) < 2:
                     continue
@@ -217,19 +225,17 @@ def _diff_versions(
 def _snapshot_files(cache_dir: str) -> Dict[str, List[str]]:
     """收集快照，兼容 pass3_cache 子目录与顶层旧布局（按 server_cache 口径）。"""
     snap_root = os.path.join(cache_dir, ".snapshots")
-    snapshots: Dict[str, List[Tuple[str, str]]] = {}
+    snapshots: Dict[str, List[str]] = {}
     for sub in ("pass3_cache", ""):
         snap_dir = os.path.join(snap_root, sub) if sub else snap_root
-        cur_dir = os.path.join(cache_dir, sub) if sub else cache_dir
         for path in glob.glob(os.path.join(snap_dir, "*.bak")):
             base = os.path.basename(path)
             match = re.search(r"\.(\d{8}-\d{6}-\d{6})\.bak$", base)
-            if not match or not _SNAPSHOT_STAMP_RE.fullmatch(match.group(1)):
+            if not match or not _STAMP_RE.fullmatch(match.group(1)):
                 continue
             name = base[: match.start()]
-            snapshots.setdefault(os.path.join(sub, name), []).append((path, cur_dir))
-    return {key: [path for path, _ in sorted(items, key=lambda x: x[0])]
-            for key, items in snapshots.items()}
+            snapshots.setdefault(os.path.join(sub, name), []).append(path)
+    return {key: sorted(paths) for key, paths in snapshots.items()}
 
 
 def collect_pairs(
@@ -280,12 +286,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--force", action="store_true", help="允许覆写已存在的输出文件")
     args = parser.parse_args(argv)
 
-    _check_outputs(args.out, args.force)
     terms, names = (set(), set()) if args.no_dict else load_vocab(args.project)
     pairs, stats = collect_pairs(args.project, terms, names, args.adjacent)
     if not pairs:
         print("未还原出任何修订对（快照与当前缓存一致），请确认项目目录", file=sys.stderr)
         return 1
+    _check_outputs(args.out, args.force)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     included = [p for p in pairs if p["included"]]

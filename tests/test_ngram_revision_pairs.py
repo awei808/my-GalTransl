@@ -64,6 +64,15 @@ class ClassifyTests(unittest.TestCase):
 
 
 class VocabTests(unittest.TestCase):
+    def test_loads_legacy_dict_separators(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "项目GPT字典.txt"), "w", encoding="utf-8") as fh:
+                fh.write("//整行注释\n====\n創\t创/创先生\n華恋    华恋\n凛音->凛音\n")
+            terms, names = rp.load_vocab(tmp)
+        for word in ("创", "创先生", "华恋", "凛音"):
+            self.assertIn(word, terms)
+        self.assertEqual(names, set())  # 无 name 替换表时人名集合为空
+
     def test_loads_dict_and_name_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "项目GPT字典.txt"), "w", encoding="utf-8") as fh:
