@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "GalTransl Agent 预设（dsh bundle）：挂载 GalTransl MCP 工具 + 子代理（子代理继承同一 MCP 工具面），不含文件/Shell/网页工具。",
+  "description": "GalTransl Agent 预设（dsh bundle）：含 galtransl-coder（翻译助手 + 程序员，挂 GalTransl MCP 工具、通用文件工具与串行子代理）与 galtransl（纯翻译助手，仅 MCP 工具与串行子代理）；均不含 Shell/网页工具。",
   "exports": {
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"

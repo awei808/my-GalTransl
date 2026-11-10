@@ -20,4 +20,6 @@ MCP 服务提供检索与受限写入两类工具：检索缓存译文、原文�
 
 安装 dsh 后，把 galtransl 预设挂载到 dsh 的 home 层即可（用户只需新建 1 个文件，不影响其他配置）。详细步骤见仓库文档 `docx/MCP接入指南.md` 与 `agents/dsh-preset/README.md`。
 
+预设含两条，建会话时二选一：**GalTransl Coder**（翻译助手 + 程序员，可读写文件、可主动给出针对程序的建议）与 **GalTransl 翻译助手**（只做翻译、不主动给程序建议，无文件/Shell/网页工具）。两条的子代理都按约定串行执行（一轮最多派 1 个）。
+
 发布包同时提供 `GalTransl_{版本}_dsh-preset.zip`（dsh bundle，安装前把 MCP 路径改成自己的程序根）与 `GalTransl_{版本}_preset-plain.zip`（预设明文，供其他支持自定义预设的 Agent 自行改写）；只接 MCP 可用 `GalTransl_{版本}_mcp.zip`，技能文档单独分发在 `GalTransl_{版本}_skill.zip`。

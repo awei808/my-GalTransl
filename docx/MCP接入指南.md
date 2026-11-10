@@ -130,6 +130,16 @@ pip install "mcp>=2.0,<3.0"
 
 > dsh 预设包与预设明文包里的 `command`/`cwd` 都是**占位路径**（`C:/GalTransl/...`），不会泄露构建机路径，也不会在未改路径时误连到构建机。
 > 预设明文包的 README 内含可直接粘贴给其他 Agent 的改写提示词，要求保留 persona 约束、MCP 连接与工具面边界。
+>
+> dsh 预设包内含**两条预设**（选择器里各占一项，每会话二选一，安装前两条的 `mcp-galtransl`
+> 路径都要改）：`GalTransl Coder`——翻译助手 + 程序员，额外挂通用文件工具
+> （`read`/`read_image`/`write`/`edit`），可主动给出针对程序的建议；`GalTransl 翻译助手`——
+> 只做翻译、不主动给程序建议，除 MCP 工具外无文件/Shell/网页能力。两条的子代理都按
+> persona 约定串行（一轮最多派 1 个）。两条预设的取舍与安全边界见 `agents/dsh-preset/README.md`。
+>
+> ⚠️ **H 硬门禁只拦 MCP 工具**：`GalTransl Coder` 额外挂的通用文件工具（`read`/`write`/`edit`）
+> 直接读写磁盘，能绕过门禁看到或改到缓存里的成人向内容。coder 的 persona 已要求「门禁开启时不碰
+> 这类文件」，但那是提示词约定；对 H 内容合规有强要求时请用 `GalTransl 翻译助手`。
 
 ---
 

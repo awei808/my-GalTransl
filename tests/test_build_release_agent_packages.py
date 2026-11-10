@@ -73,7 +73,7 @@ def _build_namespace(dict_dir: pathlib.Path, guidelines_dir: pathlib.Path) -> di
         "PACKAGED_ROOT_HINT": PACKAGED_ROOT,
         "PACKAGED_PRESET_NOTE": (
             f"# {PACKAGED_NOTE}本包不含 tools/build_dsh_preset.py 生成脚本。\n"
-            "# 请按 INSTALL-PACKAGED.md 手改本文件的 command/args/cwd；\n"
+            "# 请按 INSTALL-PACKAGED.md 手改本文件每条预设的 command/args/cwd；\n"
             "# 若 galtransl.preset.yml 与 cordis.patch.yml 都要用，请手工保持一致。\n"
         ),
         "MCP_ZIP_NAME": "GalTransl_0.0.0_mcp.zip",
@@ -114,6 +114,10 @@ class PresetRewriteTests(unittest.TestCase):
     def test_rewrites_truth_source(self) -> None:
         written = self.rewrite(self._actual("galtransl.preset.yml"))
         self._assert_packaged(written)
+        # 真相源含两条预设（coder / translator），两条的 MCP 行都必须被改写
+        self.assertEqual(written.count(f"command: '{PACKAGED_EXE}'"), 2)
+        self.assertEqual(written.count("args: []"), 2)
+        self.assertEqual(written.count(f"cwd: '{PACKAGED_ROOT}'"), 2)
         self.assertIn("你是 GalTransl 翻译项目的助手", written)
 
     def test_rewrites_generated_patch(self) -> None:
@@ -122,6 +126,7 @@ class PresetRewriteTests(unittest.TestCase):
         self._assert_packaged(written)
         self.assertTrue(written.lstrip().startswith("#"))
         self.assertIn("- insert:", written)
+        self.assertEqual(written.count(f"command: '{PACKAGED_EXE}'"), 2)
 
     def test_rewrite_is_idempotent(self) -> None:
         once = self.rewrite(self._actual("galtransl.preset.yml"))
@@ -131,18 +136,72 @@ class PresetRewriteTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.rewrite("- id: persona\n  name: '@deepseek-ai/dsh-persona'\n")
 
-    def test_duplicated_mcp_block_raises(self) -> None:
-        # 重复块会让 command 命中 2 次；宁可失败也不生成残缺预设
-        block = (
-            "- id: mcp-galtransl\n"
+    def _mcp_block(self) -> str:
+        return (
+            "  - id: mcp-galtransl\n"
+            "    config:\n"
+            "      command: 'D:\\dev\\python.exe'\n"
+            "      args:\n"
+            "        - 'D:\\dev\\run_mcp_server.py'\n"
+            "      cwd: 'D:\\dev'\n"
+        )
+
+    def test_rewrites_every_mcp_block(self) -> None:
+        # 每条预设各有一个 mcp 块；两个块都要改写，只改第一个会留下源码路径
+        text = (
+            "- id: preset-a\n"
             "  config:\n"
-            "    command: 'D:\\dev\\python.exe'\n"
-            "    args:\n"
-            "      - 'D:\\dev\\run_mcp_server.py'\n"
-            "    cwd: 'D:\\dev'\n"
+            "    plugins:\n" + self._mcp_block() +
+            "- id: preset-b\n"
+            "  config:\n"
+            "    plugins:\n" + self._mcp_block()
+        )
+        written = self.rewrite(text)
+        self.assertEqual(written.count(f"command: '{PACKAGED_EXE}'"), 2)
+        self.assertEqual(written.count("args: []"), 2)
+        self.assertEqual(written.count(f"cwd: '{PACKAGED_ROOT}'"), 2)
+
+    def test_duplicated_block_in_one_preset_raises(self) -> None:
+        # 同一条预设里写了两个 mcp 块：块数(3) 与预设数(2) 不符，必须拒收
+        text = (
+            "- id: preset-a\n"
+            "  config:\n"
+            "    plugins:\n" + self._mcp_block() + self._mcp_block() +
+            "- id: preset-b\n"
+            "  config:\n"
+            "    plugins:\n" + self._mcp_block()
         )
         with self.assertRaises(ValueError):
-            self.rewrite(block + block)
+            self.rewrite(text)
+
+    def test_preset_without_mcp_block_raises(self) -> None:
+        # 某条预设漏写 mcp 块：块数(1) 与预设数(2) 不符，必须拒收
+        text = (
+            "- id: preset-a\n"
+            "  config:\n"
+            "    plugins:\n" + self._mcp_block() +
+            "- id: preset-b\n"
+            "  config:\n"
+            "    plugins:\n"
+            "      - id: persona\n"
+        )
+        with self.assertRaises(ValueError):
+            self.rewrite(text)
+
+    def test_incomplete_block_raises(self) -> None:
+        # 块存在但缺少 cwd：宁可失败也不生成指向源码路径的残块
+        block = (
+            "- id: preset-a\n"
+            "  config:\n"
+            "    plugins:\n"
+            "      - id: mcp-galtransl\n"
+            "        config:\n"
+            "          command: 'D:\\dev\\python.exe'\n"
+            "          args:\n"
+            "            - 'D:\\dev\\run_mcp_server.py'\n"
+        )
+        with self.assertRaises(ValueError):
+            self.rewrite(block)
 
 
 class AgentPackageZipTests(unittest.TestCase):

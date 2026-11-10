@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "GalTransl",
-    "description": "GalTransl translation-project assistant: mounts the GalTransl MCP tools (23 read/write tools) plus subagent delegation whose children inherit the same MCP-only tool surface; no file, shell, or web tools."
+    "title": "GalTransl Presets (Coder / Translator)",
+    "description": "Two dsh presets for GalTransl: galtransl-coder works as both translator and programmer and may use the generic file tools to read and write code and docs; galtransl is a translator-only assistant that never volunteers program changes and has no file, shell, or web tools. Both mount the GalTransl MCP tools (23) plus serial subagents."
   }
 }

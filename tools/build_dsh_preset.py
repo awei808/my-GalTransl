@@ -39,7 +39,8 @@ TARGET_HEADER = """\
 # ⚠️ 外部/新增行**必须放在 `insert:` 列表里**：裸写 `- id: X / name: Y` 会被当作
 #    对已有条目的覆写，tree 中不存在时报 "entry not found" 且不插入。
 #
-# ⚠️ 下面 command / args / cwd 三处路径需按你的实际安装位置修改。
+# ⚠️ 本文件含多条预设（每条一个 `- id: preset-*` 条目、各带一个 mcp-galtransl 行）。
+#    每一处 mcp-galtransl 的 command / args / cwd 都要按实际安装位置修改。
 """
 
 

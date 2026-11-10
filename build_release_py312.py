@@ -218,7 +218,7 @@ PACKAGED_MCP_EXE_HINT = "C:/GalTransl/backend/galtransl_mcp.exe"
 PACKAGED_ROOT_HINT = "C:/GalTransl"
 PACKAGED_PRESET_NOTE = (
     "# 【打包版说明】本包不含 tools/build_dsh_preset.py 生成脚本。\n"
-    "# 请按 INSTALL-PACKAGED.md 手改本文件的 command/args/cwd；\n"
+    "# 请按 INSTALL-PACKAGED.md 手改本文件每条预设的 command/args/cwd；\n"
     "# 若 galtransl.preset.yml 与 cordis.patch.yml 都要用，请手工保持一致。\n"
 )
 
@@ -726,65 +726,89 @@ def _rewrite_mcp_client_config(text: str) -> str:
     """把 dsh 预设 mcp-galtransl 行的源码路径改写为打包版占位路径。
 
     dsh 的 subprocess provider 要求 command/cwd 是绝对路径，发布包无法预知
-    用户安装位置，故生成物使用显式占位符，由 README 指引替换。只处理
-    `- id: mcp-galtransl` 块，块外内容（persona、其它工具行）原样保留。
+    用户安装位置，故生成物使用显式占位符，由 README 指引替换。预设文件含多条
+    预设（每条一个 `- id: preset-*` 条目、各带一个 mcp 块），**每一处**
+    `- id: mcp-galtransl` 块都要改写；块外内容（persona、其它工具行）原样保留。
+
+    完整性校验用两个**互相独立**的口径：
+    - 期望块数来自预设条目数（`- id: preset-*`），与 mcp 块识别互不依赖，
+      否则「块被写成带引号/多空格导致漏识别」这类错误会自证通过；
+    - 每个 mcp 块内 command/args/cwd 各恰好 1 次，避免跨块汇总掩盖某块的残缺。
     """
     lines = text.replace("\r\n", "\n").splitlines()
+    # 行识别放在函数内：该函数会被发布打包测试单独 exec，不依赖模块级常量。
+    # 容忍引号与多余空格——格式写错时要报错，不能静默漏改后把源码路径打进包里。
+    block_id_re = re.compile(r"^-\s*id:\s*['\"]?mcp-galtransl['\"]?\s*$")
+    preset_id_re = re.compile(r"^-\s*id:\s*['\"]?preset-[\w-]*['\"]?\s*$")
     out: list[str] = []
     in_block = False
+    blocks = 0
     block_indent = 0
     args_indent = 0
     skip_args = False
-    replaced = {"command": 0, "args": 0, "cwd": 0}
+    seen: dict[str, int] = {}
+
+    def _flush_block() -> None:
+        """按块校验必填键，缺一即拒收（块序号从 1 起，便于定位是哪条预设）。"""
+        for key in ("command", "args", "cwd"):
+            if seen.get(key, 0) != 1:
+                raise ValueError(
+                    f"第 {blocks} 个 mcp-galtransl 块的 {key} 出现 {seen.get(key, 0)} 次"
+                    "（每块应恰好 1 次），拒绝生成不完整预设"
+                )
 
     for line in lines:
         stripped = line.strip()
         indent = len(line) - len(line.lstrip(" "))
 
-        if not in_block:
+        # 块内正文
+        if in_block and not (stripped.startswith("- id:") and indent <= block_indent):
+            # args 列表项：同级 `- `（生成物）或更深缩进（真相源）都属于 args 的值
+            if skip_args and (stripped.startswith("- ") or indent > args_indent):
+                continue
+            skip_args = False
+
+            if re.match(r"^\s*command\s*:", line):
+                out.append(" " * indent + f"command: '{PACKAGED_MCP_EXE_HINT}'")
+                seen["command"] = seen.get("command", 0) + 1
+                continue
+            if re.match(r"^\s*args\s*:", line):
+                out.append(" " * indent + "args: []")
+                seen["args"] = seen.get("args", 0) + 1
+                args_indent = indent
+                skip_args = True
+                continue
+            if re.match(r"^\s*cwd\s*:", line):
+                out.append(" " * indent + f"cwd: '{PACKAGED_ROOT_HINT}'")
+                seen["cwd"] = seen.get("cwd", 0) + 1
+                continue
             out.append(line)
-            if stripped == "- id: mcp-galtransl":
-                in_block = True
-                block_indent = indent
             continue
 
-        # 下一个同/更浅缩进的 - id: 即块结束（cordis.patch.yml 里为 6 空格缩进）
-        if stripped.startswith("- id:") and indent <= block_indent:
-            out.append(line)
-            # 连续出现第二个 mcp 块时继续计数，最终按「恰好 1 次」拒收
-            in_block = stripped == "- id: mcp-galtransl"
-            if in_block:
-                block_indent = indent
-            continue
+        # 块结束（下一个同/更浅缩进的 - id:）
+        if in_block:
+            _flush_block()
+            in_block = False
+            skip_args = False
+            seen = {}
 
-        # YAML 允许列表项与 args: 同级（生成物即如此），故用 >=
-        if skip_args and stripped.startswith("- ") and indent >= args_indent:
-            continue
-        skip_args = False
-
-        if re.match(r"^\s*command\s*:", line):
-            out.append(" " * indent + f"command: '{PACKAGED_MCP_EXE_HINT}'")
-            replaced["command"] += 1
-            continue
-        if re.match(r"^\s*args\s*:", line):
-            out.append(" " * indent + "args: []")
-            replaced["args"] += 1
-            args_indent = indent
-            skip_args = True
-            continue
-        if re.match(r"^\s*cwd\s*:", line):
-            out.append(" " * indent + f"cwd: '{PACKAGED_ROOT_HINT}'")
-            replaced["cwd"] += 1
-            continue
         out.append(line)
+        if block_id_re.match(stripped):
+            in_block = True
+            blocks += 1
+            block_indent = indent
 
-    if not any(replaced.values()):
-        raise ValueError("预设里找不到 - id: mcp-galtransl 块的 command/args/cwd")
-    for key, count in replaced.items():
-        if count != 1:
-            raise ValueError(
-                f"mcp-galtransl 块的 {key} 出现 {count} 次（应恰好 1 次），拒绝生成不完整预设"
-            )
+    if in_block:
+        _flush_block()
+
+    expected = sum(1 for line in lines if preset_id_re.match(line.strip()))
+    if not blocks:
+        raise ValueError("预设里找不到 - id: mcp-galtransl 块")
+    if blocks != expected:
+        raise ValueError(
+            f"mcp-galtransl 块数 {blocks} 与预设条目数 {expected} 不符"
+            "（每条预设应恰好一个 MCP 客户端，且不得漏写或多写），拒绝生成"
+        )
     return "\n".join(out) + "\n"
 
 
@@ -853,7 +877,8 @@ def _dsh_package_readme() -> str:
 
 ## 安装前必须改路径
 
-打开 `galtransl.preset.yml`，把 `mcp-galtransl` 行的三项改成你的程序根：
+打开 `galtransl.preset.yml`，把**每条预设**（`galtransl-coder` 与 `galtransl`）
+的 `mcp-galtransl` 行三项都改成你的程序根：
 
 ```yaml
 command: '{PACKAGED_MCP_EXE_HINT}'   # 改成 <程序根>/backend/galtransl_mcp.exe
@@ -861,7 +886,7 @@ args: []
 cwd: '{PACKAGED_ROOT_HINT}'          # 改成 <程序根>
 ```
 
-走「直接并入 profile patch」方案时，`cordis.patch.yml` 里同样的三项也要改。
+走「直接并入 profile patch」方案时，`cordis.patch.yml` 里同样要逐条改。
 
 > `command` 含路径分隔符时必须是绝对路径，相对路径会被 dsh 拒绝。
 
@@ -872,13 +897,16 @@ cwd: '{PACKAGED_ROOT_HINT}'          # 改成 <程序根>
 - B：把 `galtransl.preset.yml` 放到 `$DSH_HOME\\profiles\\`，按 `README.md` 写 include 行；
   或把 `cordis.patch.yml` 的 `- insert:` 段并入 profile patch。
 
-装完新开会话，在 Agent 预设选择器里选 `GalTransl`。完整说明见本目录 `README.md`。
+装完新开会话，在 Agent 预设选择器里二选一：
+`GalTransl Coder`（翻译 + 程序员，可读写文件、可主动给程序建议）或
+`GalTransl 翻译助手`（只做翻译，不主动给程序建议，无文件/Shell/网页工具）。
+完整说明见本目录 `README.md`。
 本包不需要 Python 环境。
 
 > 本包不含 `tools/build_dsh_preset.py` 与回归测试。`galtransl.preset.yml` 与
 > `cordis.patch.yml` 是同一内容的两种形态：只改你实际使用的那一份即可
 > （bundle 或直接并入 patch 用 `cordis.patch.yml`，include 用 `galtransl.preset.yml`）。
-> 若两份都要用，请手工保持 `mcp-galtransl` 三行一致。
+> 若两份都要用，请手工保持各条预设的 `mcp-galtransl` 三行一致。
 """
 
 
@@ -890,20 +918,22 @@ def _plain_preset_package_readme() -> str:
 
 ## 目录
 
-- `galtransl.preset.yml`：预设真相源（persona 系统提示词 + MCP 连接 + 工具边界）
+- `galtransl.preset.yml`：预设真相源（两条预设：`galtransl-coder` 翻译 + 程序员 / `galtransl` 纯翻译助手；含 persona 系统提示词 + MCP 连接 + 工具边界）
 - `skills/galtransl-mcp/SKILL.md`：MCP 工具契约（硬性约束、H 门禁、路径白名单）
 - `README.md`：本文件
 
 ## 用法（把下面这段交给你的 Agent）
 
 > 请读取本目录的 `galtransl.preset.yml` 与 `skills/galtransl-mcp/SKILL.md`，
-> 把其中的预设改写为你的 Agent 的自定义预设/系统提示词格式。要求：
+> 把其中的预设改写为你的 Agent 的自定义预设/系统提示词格式。该文件含**两条预设**：
+> `galtransl-coder`（翻译助手 + 程序员，额外给通用文件读写工具）与
+> `galtransl`（纯翻译助手，只给 MCP 工具）；按用户需要改写其中一条或两条都改写。要求：
 > 1. 保留 persona 段落中的全部硬性约束与 H 内容处理规则，不得放宽；
 > 2. 保留 MCP 服务 `galtransl` 的 stdio 连接配置：`command` 指向你的 GalTransl
 >    程序根下的 `backend/galtransl_mcp.exe`（源码环境则指向
 >    `venv\\Scripts\\python.exe`，`args` 指向 `run_mcp_server.py`），`cwd` 指向程序根；
-> 3. 工具面只保留 GalTransl MCP 工具（及你的 Agent 必需的交互工具），
->    不要额外赋予文件读写、Shell、网页抓取等能力；
+> 3. 改写 `galtransl`（纯翻译助手）时，工具面只保留 GalTransl MCP 工具
+>    （及你的 Agent 必需的交互工具），不要额外赋予文件读写、Shell、网页抓取等能力；
 > 4. 输出一份可直接导入你的 Agent 的预设文件，并说明安装位置。
 >
 > `galtransl.preset.yml` 里的 `command`/`cwd` 是占位路径（`{PACKAGED_ROOT_HINT}`），
