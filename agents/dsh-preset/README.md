@@ -14,6 +14,13 @@
 > `"parent"`，调用即返回子会话 id）。因此两条预设都在 persona 里约定：**同一轮最多派 1 个**，
 > 派出后立即结束本轮、等完成通知再继续；不要并发派多个、不要轮询。这是提示词约定，
 > 不是硬机制——真正的并发上限仍由宿主 `subagent.maxActiveSubagents` 决定。
+>
+> **方向相反的那句话来自宿主，不是本预设**：`@deepseek-ai/dsh-tool-subagent` 在装配时会自己
+> 注册一段系统提示（`tool:subagent`，section order 2800，**排在 persona 的 0 之后**）：
+> 「Start independent delegations … together in one assistant message and continue useful work
+> while they run」。预设既不能卸载这一段（由工具装配时注册），也改不了它的文案，所以两条
+> persona 的串行段都显式写了**「本节优先于系统提示里『一次派出多个、边跑边干』的通用建议」**。
+> 提示词里看到两种说法冲突时，以 persona 的串行约定为准。
 
 ## 这个预设解决什么问题
 
@@ -87,7 +94,10 @@ GalTransl 本体不再内置 Agent，改为**只提供 MCP 连接与 MCP 工具*
 要点与边界：
 
 - **只对当前 profile 生效**（Desktop 是 `desktop`，CLI/Web 是 `web`）；换 profile 需重装。
-- 目录是 **link 安装**：改本目录即改已装 bundle；改完重跑生成脚本后，新会话即读到新内容。
+- 目录是 **link 安装**：改本目录即改已装 bundle 的文件，但**已运行的 dsh 不会重读 bundle patch**——
+  profile HMR 只监视 profile 自己的 `cordis.patch.yml`、`$DSH_HOME/cordis.patch.yml` 和 profile 的
+  `package.json`，不含各 bundle 的 patch 文件（`dsh-hmr` 的 `patchFiles` 只有前两者）。
+  所以改完 persona 并重跑生成脚本后，**要重启 dsh**；重启后新开（或恢复）的会话才读到新文案。
 - bundle **不含任何 JS**，只声明预设行；能力仍只来自 `cordis.patch.yml` 里的预设行。
 - 卸载：插件管理器里移除 `@local/dsh-galtransl-preset`（等价于删 profile 里的 bundle 行）。
 
@@ -240,7 +250,8 @@ python tools/build_dsh_preset.py          # 刷新 cordis.patch.yml
 python tools/build_dsh_preset.py --check  # 校验两者是否同步
 ```
 
-改了真相源后，把新的 `galtransl.preset.yml` 覆盖到 `$DSH_HOME\profiles\` 即可升级。
+改了真相源后，把新的 `galtransl.preset.yml` 覆盖到 `$DSH_HOME\profiles\` 即可升级（安装 A 走 link，
+不用覆盖，但两种情况都要**重启 dsh** 才会重新读取预设文案）。
 
 ## 已知限制
 
@@ -260,6 +271,9 @@ python tools/build_dsh_preset.py --check  # 校验两者是否同步
 - **子代理默认串行是 persona 约定，不是硬机制**：官方 `subagent` 工具调用即返回
   （`delivery: "parent"`），没有同步参数；「一轮最多派 1 个、派完结束本轮等通知」写在 persona 里靠模型遵守。
   宿主侧 `subagent.maxActiveSubagents`（默认 8）才是真正的并发上限，本预设不改它。
+  更麻烦的是宿主会**反向提示**：`tool-subagent` 自己注册的 `tool:subagent` 提示段（section order 2800，
+  位于 persona 之后）写着「一次派出多个、边跑边干」。该段由工具装配时注册，预设无法卸载或改写，
+  所以 persona 的串行段显式声明本节优先——这仍是**双重提示词约定**，不是硬机制。
 - **子代理的写边界同样靠约定**：子代理继承本预设，因此同样持有 8 个 MCP 写工具
   （coder 还持有文件工具），dsh 侧没有「按工具名禁用」的能力（`toolFilter` 已废弃）。
   「一个文件 / 一个 index 区间只派一个子代理」「`submit_job` 只由主会话调」写在 persona 里。
