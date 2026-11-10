@@ -25,6 +25,7 @@ from GalTransl.server_runtime import (
     clear_runtime_notices,
     decode_project_dir,
     encode_project_dir,
+    load_fix_report_file,
 )
 from GalTransl.server_config_schema import (
     _deep_merge_defaults,
@@ -842,6 +843,27 @@ def route_project_api_part2(
                         _collect_alt(rel)
         LOGGER.debug(f"alt-translations: 扫描 {scanned} 个缓存文件，命中 {len(all_alts)} 条备选译文")
         handler._send_json({"project_dir": project_dir, "alts": all_alts, "total": len(all_alts)})
+        return
+
+    # GET /api/projects/:id/fix-report
+    # 本次任务修复/改进报告（按文件分组）：RuntimeRegistry 优先，回退读
+    # transl_cache/fix_report/latest.json（后端重启后仍可查看最近一次报告）。
+    if sub_path == "/fix-report":
+        report = RUNTIME_REGISTRY.get_fix_report_snapshot(project_dir)
+        exists = report is not None
+        if not exists:
+            report = load_fix_report_file(project_dir)
+            exists = report is not None
+        if report is None:
+            report = {
+                "label": "",
+                "started_at": "",
+                "finished_at": "",
+                "total": 0,
+                "truncated": False,
+                "files": [],
+            }
+        handler._send_json({"project_dir": project_dir, "exists": exists, **report})
         return
 
     # GET /api/projects/:id/logs?source=engine|frontend

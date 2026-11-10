@@ -133,6 +133,10 @@ class TTFTPreview:
 
 RUNTIME_RECENT_EVENT_LIMIT = 80
 RUNTIME_PER_FILE_SUCCESS_LIMIT = 100
+
+# 修复/改进报告明细上限：entries 超限截断，count 保持精确（前端提示"仅显示前 N 条"）
+FIX_REPORT_PER_FILE_LIMIT = 200
+FIX_REPORT_TOTAL_LIMIT = 5000
 # Upper bound on success events per snapshot (500): each file keeps a 100-slot deque,
 # returning all would explode HTTP payload; 500 covers UI budget + per-file filter
 RUNTIME_SNAPSHOT_SUCCESS_LIMIT = 500
@@ -210,6 +214,14 @@ class RuntimeState:
     # 一次性用户提示队列（前端轮询到即 toast 并清除），用于流水线阶段告知
     notices: deque[str] = field(default_factory=lambda: deque(maxlen=20))
     success_timestamps: deque[float] = field(default_factory=deque)
+    # 本次任务修复/改进报告：reset_project 时随 RuntimeState 一并清零（"本次"语义）。
+    # fix_report_files[filename] = {"count": int, "entries": list[dict], "truncated": bool}
+    fix_report_label: str = ""
+    fix_report_started_at: str = ""
+    fix_report_finished_at: str = ""
+    fix_report_total: int = 0
+    fix_report_truncated: bool = False
+    fix_report_files: dict[str, dict] = field(default_factory=dict)
 
 
 class RuntimeRegistry:
@@ -422,6 +434,105 @@ class RuntimeRegistry:
             if state is not None:
                 state.notices.clear()
                 state.updated_at = _utcnow_text()
+
+    def add_fix_change(self, project_dir: str, entry: dict) -> None:
+        """追加一条修复/改进采纳明细到本次任务的修复报告。
+
+        仅在项目存在运行中的任务（RuntimeState 已由 reset_runtime_project 重建）
+        且报告未收尾时记录；CLI 直跑后端（无任务）不产生孤儿记录。
+        entries 超过 FIX_REPORT_*_LIMIT 时截断，count 保持精确。
+        """
+        with self._lock:
+            state = self._states.get(_normalize_project_dir(project_dir))
+            if state is None or state.fix_report_finished_at:
+                return
+            filename = str(entry.get("filename", "") or "未知文件")
+            file_report = state.fix_report_files.get(filename)
+            if file_report is None:
+                file_report = {"count": 0, "entries": [], "truncated": False}
+                state.fix_report_files[filename] = file_report
+            file_report["count"] += 1
+            state.fix_report_total += 1
+            if (
+                len(file_report["entries"]) < FIX_REPORT_PER_FILE_LIMIT
+                and state.fix_report_total <= FIX_REPORT_TOTAL_LIMIT
+            ):
+                file_report["entries"].append(dict(entry))
+            else:
+                file_report["truncated"] = True
+                state.fix_report_truncated = True
+            if not state.fix_report_started_at:
+                state.fix_report_started_at = _utcnow_text()
+            state.updated_at = _utcnow_text()
+
+    def finish_fix_report(self, project_dir: str, label: str = "") -> None:
+        """收尾本次任务的修复报告：置结束时间并原子写报告文件（best-effort）。
+
+        total=0 也写文件：明确"本次无修复"，避免端点回退读到上一次的陈旧报告。
+        """
+        with self._lock:
+            state = self._states.get(_normalize_project_dir(project_dir))
+            if state is None:
+                return
+            if label:
+                state.fix_report_label = str(label)
+            if not state.fix_report_finished_at:
+                state.fix_report_finished_at = _utcnow_text()
+            state.updated_at = state.fix_report_finished_at
+            snapshot = self._snapshot_fix_report_locked(state)
+        try:
+            self._write_fix_report_file(project_dir, snapshot)
+            if snapshot["total"] > 0:
+                LOGGER.info(
+                    f"[fix-report] 本次任务修复报告已生成：共 {snapshot['total']} 条，"
+                    f"涉及 {len(snapshot['files'])} 个文件"
+                )
+            else:
+                LOGGER.debug("[fix-report] 本次任务无修复/改进记录")
+        except Exception as e:
+            LOGGER.warning(f"[fix-report] 修复报告文件写入失败：{e}")
+
+    @staticmethod
+    def _snapshot_fix_report_locked(state: RuntimeState) -> dict:
+        """组装修复报告快照（持锁调用）；entries 按 index 排序便于展示。"""
+        files = []
+        for filename, file_report in state.fix_report_files.items():
+            files.append({
+                "filename": filename,
+                "count": file_report["count"],
+                "truncated": file_report["truncated"],
+                "entries": sorted(
+                    file_report["entries"], key=lambda e: e.get("index", 0)
+                ),
+            })
+        files.sort(key=lambda f: f["filename"])
+        return {
+            "label": state.fix_report_label,
+            "started_at": state.fix_report_started_at,
+            "finished_at": state.fix_report_finished_at,
+            "total": state.fix_report_total,
+            "truncated": state.fix_report_truncated,
+            "files": files,
+        }
+
+    @staticmethod
+    def _write_fix_report_file(project_dir: str, snapshot: dict) -> None:
+        """原子写修复报告到 <project>/transl_cache/fix_report/latest.json。"""
+        report_dir = os.path.join(project_dir, CACHE_FOLDERNAME, "fix_report")
+        os.makedirs(report_dir, exist_ok=True)
+        target = os.path.join(report_dir, "latest.json")
+        tmp_path = target + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(snapshot, ensure_ascii=False))
+        os.replace(tmp_path, target)
+
+    def get_fix_report_snapshot(self, project_dir: str) -> dict | None:
+        """返回该项目当前任务的修复报告快照；无运行状态时返回 None。"""
+        with self._lock:
+            state = self._states.get(_normalize_project_dir(project_dir))
+            if state is None:
+                return None
+            return self._snapshot_fix_report_locked(state)
 
     @staticmethod
     def _resolve_display_filename_locked(state: RuntimeState, filename: str) -> str:
@@ -1341,6 +1452,43 @@ def record_runtime_notice(project_dir: str, message: str) -> None:
 def clear_runtime_notices(project_dir: str) -> None:
     """清除该项目的所有未读提示（前端 toast 后调用）。"""
     RUNTIME_REGISTRY.clear_notices(project_dir)
+
+
+def record_fix_change(projectConfig: Any, entry: dict) -> None:
+    """记录一条修复/改进采纳明细到本次任务的修复报告（供任务完成后按文件展示）。
+
+    项目目录解析与 _runtime_project_dir 同口径（runtime_project_dir 优先）；
+    无运行中任务 / 解析失败时静默跳过，绝不影响修复主流程。
+    """
+    try:
+        project_dir = getattr(projectConfig, "runtime_project_dir", None) or (
+            projectConfig.getProjectDir()
+        )
+        RUNTIME_REGISTRY.add_fix_change(project_dir, entry)
+    except Exception as e:
+        LOGGER.debug(f"[fix-report] 修复记录写入失败（忽略）：{e}")
+
+
+def finish_project_fix_report(project_dir: str, label: str = "") -> None:
+    """任务收尾：置本次修复报告结束时间并持久化到项目缓存目录（best-effort）。"""
+    try:
+        RUNTIME_REGISTRY.finish_fix_report(project_dir, label)
+    except Exception as e:
+        LOGGER.warning(f"[fix-report] 修复报告收尾失败：{e}")
+
+
+def load_fix_report_file(project_dir: str) -> dict | None:
+    """读取最近一次持久化的修复报告文件；不存在/损坏返回 None。"""
+    path = os.path.join(project_dir, CACHE_FOLDERNAME, "fix_report", "latest.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        LOGGER.warning(f"[fix-report] 修复报告文件读取失败：{e}")
+        return None
 
 
 # Project path helpers

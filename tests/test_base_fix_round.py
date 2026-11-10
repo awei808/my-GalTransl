@@ -11,8 +11,11 @@
 """
 import asyncio
 import json
+import os
+import tempfile
 import unittest
 from types import MethodType, SimpleNamespace
+from unittest import mock
 
 from GalTransl.CSentense import CSentense
 from GalTransl.Backend.BaseFixRound import (
@@ -23,6 +26,7 @@ from GalTransl.Backend.BaseFixRound import (
 from GalTransl.Backend.ForJPResidue import ForJPResidue
 from GalTransl.Backend.ForBRStation import ForBRStation
 from GalTransl.Backend.ForImproveTranslation import ForImproveTranslation
+from GalTransl.server_runtime import RUNTIME_REGISTRY, _normalize_project_dir
 
 
 class _FakeOpencc:
@@ -521,6 +525,106 @@ class ProblemContextBlockTests(unittest.TestCase):
         self.assertEqual(
             t._build_problem_context_block(trans_list, "", True, 4), ""
         )
+
+
+class FixChangeRecordTests(unittest.IsolatedAsyncioTestCase):
+    """采纳点写入运行时修复报告：字段口径、writes_main 判定与 best-effort 语义。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="fix_report_proj_")
+        # 模拟任务已启动：reset_runtime_project 已为项目重建 RuntimeState（空报告）
+        RUNTIME_REGISTRY.reset_project(self.project_dir)
+
+    def tearDown(self) -> None:
+        # 测试专用清理：移除本用例的项目运行态，避免临时目录残留进后续用例
+        RUNTIME_REGISTRY._states.pop(_normalize_project_dir(self.project_dir), None)
+
+    def _translator(self, swap: bool = False) -> ForJPResidue:
+        t = make_translator(ForJPResidue)
+        t.pj_config.runtime_project_dir = self.project_dir
+        if swap:
+            t.pj_config.getKey = lambda key, default=None: True
+        return t
+
+    async def _run(self, t, trans_list, llm_resp, num_per_request=100) -> None:
+        async def fake_call_llm(self, messages, filename, idx_tip, *_a, **_k):
+            return llm_resp, SimpleNamespace(model_name="m", domain="x")
+
+        t._call_llm = MethodType(fake_call_llm, t)
+        await t.batch_translate(
+            "f.json", "f.json", trans_list, num_per_request, gpt_dic=None
+        )
+
+    def _snapshot(self) -> dict:
+        return RUNTIME_REGISTRY.get_fix_report_snapshot(self.project_dir)
+
+    async def test_applied_change_recorded(self) -> None:
+        t = self._translator()
+        trans_list = [make_tran(1, "残留日文：です", "译1")]
+        await self._run(t, trans_list, 'a1b|{"id": 1, "better": "修复译1"}')
+        snap = self._snapshot()
+        self.assertEqual(snap["total"], 1)
+        self.assertEqual(snap["finished_at"], "")  # 任务未收尾，报告仍打开
+        group = snap["files"][0]
+        self.assertEqual(group["filename"], "f.json")
+        self.assertEqual(group["count"], 1)
+        self.assertFalse(group["truncated"])
+        entry = group["entries"][0]
+        self.assertEqual(entry["index"], 1)
+        self.assertEqual(entry["old_dst"], "译1")
+        self.assertEqual(entry["new_dst"], "修复译1")
+        self.assertEqual(entry["backend"], "ForJPResidue")
+        self.assertEqual(entry["post_src"], "src")
+        self.assertEqual(entry["problems"], "残留日文：です")
+        self.assertEqual(entry["writes_main"], False)  # 默认只写 alt_dst
+        # 报告记录不改变修复行为本身
+        self.assertEqual(trans_list[0].alt_dst, "修复译1")
+
+    async def test_writes_main_true_when_swap(self) -> None:
+        t = self._translator(swap=True)
+        trans_list = [make_tran(1, "残留日文：です", "旧译文")]
+        await self._run(t, trans_list, 'a1b|{"id": 1, "better": "新译文"}')
+        entry = self._snapshot()["files"][0]["entries"][0]
+        self.assertEqual(entry["writes_main"], True)
+        # swap 行为本身不变：主译文覆盖、旧译文入 alt_dst
+        self.assertEqual(trans_list[0].pre_dst, "新译文")
+        self.assertEqual(trans_list[0].alt_dst, "旧译文")
+
+    async def test_no_filename_keeps_legacy_signature_silent(self) -> None:
+        # 历史 3 参直调（无 filename）不写报告，也不报错
+        t = self._translator()
+        trans_list = [make_tran(1, "残留日文：です", "译1")]
+        success, found = t._parse_fix_response(
+            '{"id":1,"better":"修复译1"}', trans_list, ""
+        )
+        self.assertEqual((success, found), (1, 1))
+        self.assertEqual(trans_list[0].alt_dst, "修复译1")
+        self.assertEqual(self._snapshot()["total"], 0)
+
+    async def test_record_failure_does_not_break_apply(self) -> None:
+        t = self._translator()
+        trans_list = [make_tran(1, "残留日文：です", "译1")]
+        with mock.patch(
+            "GalTransl.server_runtime.record_fix_change",
+            side_effect=RuntimeError("boom"),
+        ):
+            await self._run(t, trans_list, 'a1b|{"id": 1, "better": "修复译1"}')
+        # 记录失败只打 debug 日志，修复结果照常应用
+        self.assertEqual(trans_list[0].alt_dst, "修复译1")
+        self.assertEqual(self._snapshot()["total"], 0)
+
+    async def test_improve_round_records_without_problems(self) -> None:
+        # 改进轮（BaseImproveRound）：不按问题筛选，problems 可为空串，恒只写 alt_dst
+        t = make_translator(ForImproveTranslation)
+        t.pj_config.runtime_project_dir = self.project_dir
+        trans_list = [make_tran(1, "", "译1")]
+        await self._run(t, trans_list, 'a1b|{"id": 1, "better": "改进译1"}')
+        entry = self._snapshot()["files"][0]["entries"][0]
+        self.assertEqual(entry["backend"], "ForImproveTranslation")
+        self.assertEqual(entry["problems"], "")
+        self.assertEqual(entry["writes_main"], False)
+        self.assertEqual(entry["new_dst"], "改进译1")
+        self.assertEqual(trans_list[0].alt_dst, "改进译1")
 
 
 class BatchTranslateContextInjectionTests(unittest.IsolatedAsyncioTestCase):

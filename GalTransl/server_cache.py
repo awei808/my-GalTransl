@@ -643,11 +643,13 @@ def _snapshot_locked(cache_dir: str, rel_norm: str, source: str) -> str:
     return dest
 
 
-# 非翻译缓存的元数据目录前缀：路线分析分片 / GenDic 断点分片 / 阶段 8 断点标记
+# 非翻译缓存的元数据目录前缀：路线分析分片 / GenDic 断点分片 / 阶段 8 断点标记 /
+# 修复/改进报告（fix_report/latest.json，dict 形状的程序产物）
 _METADATA_REL_PREFIXES = (
     "pass0_cache/route_analysis/",
     "gendic_cache/",
     "aftertrans_cache/",
+    "fix_report/",
 )
 # 固定命名的 pass0 元数据文件（全局分析 / 剧情路线图），不作为翻译缓存处理
 _METADATA_FILENAMES = ("GlobalPrompt.json", "PlotRouteMap.json")
@@ -658,9 +660,9 @@ def _is_translation_cache_rel(rel: str) -> bool:
 
     构建输出/校验、问题列表、全量重检、进度统计共用此判定，避免各写一份造成范围漂移。
     翻译缓存位于 pass3_cache/*.txt.json（或顶层 *.json，兼容旧布局）；以下一律排除：
-    pass0 路线分析分片、gendic 断点分片、aftertrans 阶段 8 断点标记、pass1 *.meta.json、
-    pass2 *.batch.json、固定命名的 pass0 元数据文件、`_` 前缀示例/临时文件，
-    以及任意点开头路径段（如 .snapshots 快照备份）。
+    pass0 路线分析分片、gendic 断点分片、aftertrans 阶段 8 断点标记、fix_report 修复报告、
+    pass1 *.meta.json、pass2 *.batch.json、固定命名的 pass0 元数据文件、
+    `_` 前缀示例/临时文件，以及任意点开头路径段（如 .snapshots 快照备份）。
     """
     norm = str(rel or "").replace("\\", "/").strip("/")
     if not norm or not norm.endswith(".json"):

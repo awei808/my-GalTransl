@@ -82,6 +82,7 @@ from GalTransl.server_runtime import (
     decode_project_dir,
     encode_project_dir,
     clear_runtime_notices,
+    finish_project_fix_report,
     record_runtime_error,
     record_runtime_success,
     reset_runtime_project,

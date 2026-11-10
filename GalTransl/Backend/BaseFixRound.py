@@ -314,7 +314,7 @@ class BaseSparseFixRound(ForGalJsonTranslate):
 
             result_text = preprocess_jsonline_response(raw_resp or "")
             success_count, found_count = self._parse_fix_response(
-                result_text, batch, n_symbol
+                result_text, batch, n_symbol, filename=filename
             )
 
             if self._warn_on_zero_found and result_text.strip() and found_count == 0:
@@ -405,9 +405,17 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         self._apply_internal_prompt_template_overrides()
 
     def _parse_fix_response(
-        self, result_text: str, trans_list: CTransList, n_symbol: str
+        self,
+        result_text: str,
+        trans_list: CTransList,
+        n_symbol: str,
+        filename: str = "",
     ) -> tuple:
-        """按 id 稀疏解析 better 输出，返回 (success_count, found_count)。"""
+        """按 id 稀疏解析 better 输出，返回 (success_count, found_count)。
+
+        filename 用于把采纳明细写入运行时修复报告（任务完成后按文件展示）；
+        缺省（历史直调/测试）时不记录。
+        """
         id_map = {t.index: t for t in trans_list}
         success_count = 0
         found_count = 0
@@ -477,6 +485,9 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             if self._apply_better_result(tran, current_dst, normalized, line_id):
                 success_count += 1
                 applied.append(tran)
+                self._record_fix_change(
+                    filename, line_id, tran, current_dst, normalized
+                )
         if applied:
             # 实时推送结果预览（前端翻译控制台"结果预览"，覆盖 improve/brfix/jpfix/banfix/fix 各修复轮）
             self.push_result_preview(
@@ -530,6 +541,43 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         tran.alt_dst = normalized
         return True
 
+    def _fix_result_writes_main(self) -> bool:
+        """本轮采纳的修复结果是否写入主译文（False=只写 alt_dst 备选）。
+
+        记录与实际写入共用本判定，保证修复报告的 writes_main 字段与行为一致。
+        """
+        return False
+
+    def _record_fix_change(
+        self, filename: str, line_id: int, tran, old_dst: str, new_dst: str
+    ) -> None:
+        """把一条已采纳的修复/改进写入运行时修复报告（按项目聚合）。
+
+        任务结束后由前端经 /fix-report 端点按文件展示；best-effort：任何异常
+        都不影响修复主流程，无运行中任务时静默跳过。
+        """
+        if not filename:
+            return
+        try:
+            from GalTransl.server_runtime import record_fix_change
+
+            record_fix_change(
+                self.pj_config,
+                {
+                    "filename": filename,
+                    "index": int(line_id),
+                    "speaker": tran.get_speaker_name() or "",
+                    "post_src": tran.post_src,
+                    "old_dst": old_dst,
+                    "new_dst": new_dst,
+                    "problems": getattr(tran, "problem", "") or "",
+                    "backend": self.eng_type,
+                    "writes_main": self._fix_result_writes_main(),
+                },
+            )
+        except Exception as e:
+            LOGGER.debug(f"{self._log_tag} 修复记录写入失败（忽略）：{e}")
+
     def _format_result_preview(
         self,
         sentences: list,
@@ -582,10 +630,14 @@ class BaseProblemFixRound(BaseSparseFixRound):
     _include_src = True
     _include_problem_context = True
 
+    def _fix_result_writes_main(self) -> bool:
+        """swapFixToCurrent 开启时修复结果覆盖主译文（旧译文移入 alt_dst）。"""
+        return coerce_bool(self.pj_config.getKey("gpt.swapFixToCurrent", False))
+
     def _apply_better_result(
         self, tran, current_dst: str, normalized: str, line_id: int
     ) -> bool:
-        if self.pj_config.getKey("gpt.swapFixToCurrent", False):
+        if self._fix_result_writes_main():
             tran.alt_dst = current_dst
             if tran.proofread_zh:
                 tran.proofread_zh = normalized

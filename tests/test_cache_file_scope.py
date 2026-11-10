@@ -55,6 +55,7 @@ class TranslationCacheRelTests(unittest.TestCase):
             "pass0_cache/route_analysis/路线A.json",
             "gendic_cache/terms-b0.json",
             "aftertrans_cache/story.txt.json",
+            "fix_report/latest.json",
             "pass3_cache/_示例缓存文件.json",
             ".snapshots/pass3_cache/story.txt.json.20260101-000000-000000.bak",
             "pass3_cache/story.txt.json.tmp",
@@ -77,6 +78,8 @@ class TranslationCacheRelTests(unittest.TestCase):
             _write_json(os.path.join(cache_dir, "pass2_cache", "a.txt.json.batch.json"), {})
             _write_json(os.path.join(cache_dir, "pass0_cache", "GlobalPrompt.json"), {})
             _write_json(os.path.join(cache_dir, "gendic_cache", "terms-b0.json"), {})
+            _write_json(os.path.join(cache_dir, "aftertrans_cache", "a.txt.json"), {})
+            _write_json(os.path.join(cache_dir, "fix_report", "latest.json"), {})
             _write_json(os.path.join(cache_dir, ".snapshots", "pass3_cache", "a.txt.json.bak"), [])
             self.assertEqual(
                 _collect_cache_files(cache_dir),

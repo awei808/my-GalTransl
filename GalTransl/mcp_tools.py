@@ -486,13 +486,14 @@ def _tool_get_project_overview(arguments: Dict[str, Any]) -> Dict[str, Any]:
     # 文件名清单一并返回：read_translation_file / read_source_script 都需要 filename，
     # 概览是 agent 拿到清单的主要入口（count 由清单派生，避免双重遍历）
     script_names = _list_files(input_dir, ".json") if os.path.isdir(input_dir) else []
-    # aftertrans_cache（阶段 8 断点标记）与 gendic_cache（阶段 2 术语表分片）均为 dict 形状的
-    # 断点产物，不是翻译缓存，不进 agent 文件清单（与 _is_translation_cache_rel 的排除口径一致）
+    # aftertrans_cache（阶段 8 断点标记）、gendic_cache（阶段 2 术语表分片）与
+    # fix_report（修复/改进报告）均为 dict 形状的程序产物，不是翻译缓存，不进
+    # agent 文件清单（_is_translation_cache_rel 同样排除这些前缀，另排除路线分析分片）
     cache_names = (
         [
             n
             for n in _list_files(cache_dir, ".json")
-            if not n.startswith(("aftertrans_cache/", "gendic_cache/"))
+            if not n.startswith(("aftertrans_cache/", "gendic_cache/", "fix_report/"))
         ]
         if os.path.isdir(cache_dir)
         else []
@@ -1206,6 +1207,105 @@ def _tool_check_model(arguments: Dict[str, Any]) -> Dict[str, Any]:
         payload["backend_profile"] = backend_profile
     result = post_json(f"/api/projects/{encode_project_dir(project_dir)}/check-model", payload)
     return {"project_dir": project_dir, "config_file_name": config_file_name, "check": result}
+
+
+def _shape_fix_report(
+    project_dir: str, raw: Dict[str, Any], source: str, file_filter: str = ""
+) -> Dict[str, Any]:
+    """把修复报告原始 dict 裁剪为面向 agent 的响应体。
+
+    不带 file：只回文件级汇总（剥离逐句 entries，防大负载污染上下文）；
+    带 file：返回该文件逐句明细；未命中软失败（回 available_files 清单）。
+    """
+    files_raw = raw.get("files") if isinstance(raw.get("files"), list) else []
+    files = [f for f in files_raw if isinstance(f, dict)]
+    result: Dict[str, Any] = {
+        "project_dir": project_dir,
+        "source": source,
+        "exists": True,
+        "label": str(raw.get("label", "") or ""),
+        "started_at": str(raw.get("started_at", "") or ""),
+        "finished_at": str(raw.get("finished_at", "") or ""),
+        "total": int(raw.get("total", 0) or 0),
+        "truncated": bool(raw.get("truncated", False)),
+    }
+    wanted = str(file_filter or "").strip()
+    if not wanted:
+        result["files"] = [
+            {
+                "filename": str(f.get("filename", "") or ""),
+                "count": int(f.get("count", 0) or 0),
+                "truncated": bool(f.get("truncated", False)),
+            }
+            for f in files
+        ]
+        result["note"] = "传 file=<报告内文件名> 查看该文件的逐句明细"
+        return result
+
+    match = next((f for f in files if str(f.get("filename", "")) == wanted), None)
+    if match is None:
+        result["file"] = wanted
+        result["count"] = 0
+        result["entries"] = []
+        result["available_files"] = [str(f.get("filename", "") or "") for f in files]
+        result["note"] = "报告中无此文件；available_files 为报告内的文件名清单"
+        return result
+    result["file"] = str(match.get("filename", "") or "")
+    result["count"] = int(match.get("count", 0) or 0)
+    result["truncated"] = bool(match.get("truncated", False))
+    entries = match.get("entries")
+    result["entries"] = entries if isinstance(entries, list) else []
+    return result
+
+
+def _tool_get_fix_report(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """读取修复/改进报告：后端运行中走 /fix-report 端点（实时快照），否则读持久化文件。
+
+    端点口径本就是 registry 优先 → 文件回退，故后端可达时整体信任其响应
+    （含任务进行中已采纳的部分，且避免任务重启后误读上一任务的陈旧文件）；
+    端点 exists=false（尚无报告）与后端不可达（独立进程离线使用）时回退/
+    返回与文件缺失同形的 exists=false + hint。
+    """
+    project_dir = _require_project_dir(arguments)
+    file_filter = str(arguments.get("file", "") or "").strip()
+    report_path = os.path.join(project_dir, CACHE_FOLDERNAME, "fix_report", "latest.json")
+
+    def _missing(source: str) -> Dict[str, Any]:
+        return {
+            "project_dir": project_dir,
+            "source": source,
+            "exists": False,
+            "path": report_path,
+            "hint": "修复报告在任务收尾时生成（后端运行中会实时返回）；"
+                    "任务进行中的进度可用 galtransl_get_job_status 查看",
+        }
+
+    live: Optional[Dict[str, Any]] = None
+    try:
+        from GalTransl.mcp_backend_client import get_json
+        from GalTransl.server_runtime import encode_project_dir
+
+        resp = get_json(
+            f"/api/projects/{encode_project_dir(project_dir)}/fix-report", timeout=5.0
+        )
+        if isinstance(resp, dict) and "exists" in resp:
+            live = resp
+        else:
+            LOGGER.warning("[mcp] fix-report 端点响应形状异常（缺 exists 字段），回退读报告文件")
+    except Exception as exc:
+        LOGGER.debug(f"[mcp] fix-report 端点不可用，回退读报告文件：{exc}")
+
+    if live is not None:
+        if not live.get("exists"):
+            return _missing("live")
+        return _shape_fix_report(project_dir, live, "live", file_filter)
+
+    from GalTransl.server_runtime import load_fix_report_file
+
+    raw = load_fix_report_file(project_dir)
+    if raw is None:
+        return _missing("file")
+    return _shape_fix_report(project_dir, raw, "file", file_filter)
 
 
 # ---------- 路线图读写（供 MCP 写工具与后续 agent 复用） ----------
@@ -2042,7 +2142,7 @@ def build_server_instructions(
         "   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。\n"
         "2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，\n"
         "   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。\n"
-        "3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具直接读磁盘。\n"
+        "3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具不依赖后端、直接读磁盘（get_fix_report 后端运行时优先返回实时快照）。\n"
         f"{h_line}\n"
         "5. project_dir 只能是用户明确指定的翻译项目目录。禁止指向 GalTransl 程序目录（其 backend_profiles.yaml 含 API 密钥）、仓库根目录、系统目录或他人目录。\n"
         "6. 禁止读取或外传任何凭据、密钥、API 端点。日志中命中疑似凭据的行不引用原文。\n"
@@ -2323,6 +2423,22 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
         ["project_dir", "translator"],
         annotations=PROBE_ANNOTATIONS,
     ),
+    _def(
+        "galtransl_get_fix_report",
+        "读取本次任务修复/改进报告（修复轮/改进轮对译文的改动记录）：按文件分组，"
+        "每条含句号、旧译文→新译文、问题类型、处理后端与写入位置（覆盖主译文/写入备选译文）。"
+        "不带 file 时返回按文件的条数汇总；file=<报告内文件名> 返回该文件逐句明细。"
+        "报告在任务收尾时生成：后端运行中返回实时快照（含进行中已采纳的部分），"
+        "后端未运行时读取上次任务收尾后持久化的报告。",
+        {
+            "project_dir": _PROJECT_PROP,
+            "file": {
+                "type": "string",
+                "description": "可选，只看某个缓存文件的明细（报告内的文件名，如 demo.json）；不传返回文件级汇总",
+            },
+        },
+        ["project_dir"],
+    ),
 ]
 
 _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
@@ -2502,6 +2618,7 @@ _TOOL_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "galtransl_get_project_metadata": _tool_get_project_metadata,
     "galtransl_get_job_status": _tool_get_job_status,
     "galtransl_check_model": _tool_check_model,
+    "galtransl_get_fix_report": _tool_get_fix_report,
     "galtransl_write_route_map": _tool_write_route_map,
     "galtransl_save_metadata": _tool_save_metadata,
     "galtransl_write_glossary": _tool_write_glossary,

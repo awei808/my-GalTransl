@@ -3,7 +3,7 @@
 > 版本：0.5.1 起提供只读检索；0.6.0 起增加受限写工具（译文字段改写批次后共 8 个）。让外部 agent
 > （CodeBuddy / Claude Desktop / Cherry Studio / dsh 等 MCP 客户端）
 > 检索 GalTransl 项目的术语、译文、字典与项目字典、人名表、日志与元数据，并写入路线图/元数据/项目字典、逐条处理缓存条目（含改写译文字段）、启停翻译任务。
-> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（22 个工具）。
+> 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（23 个工具）。
 
 ---
 
@@ -35,7 +35,7 @@
 | GalTransl 的依赖 | `PyYAML` / `orjson` / `requests` 等（见 `requirements.txt`） |
 
 本项目内已有两个可用环境，均实测通过（`initialize` 协商 + 工具清单 + 真实项目检索；
-接入验收时是 11 个只读工具，**0.6.0 起为 15 个、0.6.x 起为 17 个、术语表批次起为 19 个、缓存条目批次起为 21 个、译文字段改写批次起为 22 个**）：
+接入验收时是 11 个只读工具，**0.6.0 起为 15 个、0.6.x 起为 17 个、术语表批次起为 19 个、缓存条目批次起为 21 个、译文字段改写批次起为 22 个、修复报告批次起为 23 个（+1 只读）**）：
 
 | 环境 | 说明 |
 |---|---|
@@ -65,7 +65,7 @@ pip install "mcp>=2.0,<3.0"
       "type": "stdio",
       "command": "python",
       "args": ["run_mcp_server.py"],
-      "description": "GalTransl 翻译项目工具（22 个：14 只读检索 + 8 受限写入）：翻译缓存 / 原始脚本 / 字典与项目字典 / 人名表 / 日志 / 元数据 / 路线图 / 缓存条目跳检、备选交换与译文字段改写 / 启停任务"
+      "description": "GalTransl 翻译项目工具（23 个：15 只读检索 + 8 受限写入）：翻译缓存 / 原始脚本 / 字典与项目字典 / 人名表 / 日志 / 元数据 / 修复改进报告 / 路线图 / 缓存条目跳检、备选交换与译文字段改写 / 启停任务"
     }
   }
 }
@@ -133,9 +133,9 @@ pip install "mcp>=2.0,<3.0"
 
 ---
 
-## 4. 可用工具（22 个 = 14 只读 + 8 写入）
+## 4. 可用工具（23 个 = 15 只读 + 8 写入）
 
-### 只读检索（本地 12 项免后端；作业域 2 项需后端）
+### 只读检索（本地 13 项免后端；作业域 2 项需后端）
 
 | 工具 | 用途 |
 |---|---|
@@ -153,6 +153,7 @@ pip install "mcp>=2.0,<3.0"
 | `galtransl_get_project_metadata` | 读元数据（globalprompt / plotroute / filemeta / batchmeta / routeanalysis） |
 | `galtransl_get_job_status` | 查任务状态与实时进度摘要（阶段/百分比/worker/速度）——**需后端运行** |
 | `galtransl_check_model` | 校验模型/令牌可用性——**需后端运行**；发一次真实探测请求（消耗极小额度），建议 submit_job 前调用 |
+| `galtransl_get_fix_report` | 读取本次任务修复/改进报告（按文件分组：句号、旧译文→新译文、问题类型、写入位置）；不带 `file` 回文件级汇总，`file=<报告内文件名>` 回逐句明细。报告在任务收尾时生成：后端运行中返回实时快照（含进行中已采纳部分），后端未运行时读上次收尾后持久化的报告 |
 
 ### 写入（0.6.0 新增，受路径约束；其中路线图/元数据/项目字典/缓存条目译文字段另受 H 门禁）
 
@@ -184,7 +185,7 @@ pip install "mcp>=2.0,<3.0"
 |---|---|
 | `initialize` | 返回 `protocolVersion: 2025-06-18`、`capabilities.tools`、`serverInfo{name: galtransl}` |
 | `notifications/initialized` | 无响应（通知不产生响应，符合协议） |
-| `tools/list` | 0.5.1 时返回 **11** 个工具；0.6.0 增至 **15** 个（+4 写工具）；0.6.x 增至 **17** 个（+2 作业域只读：任务状态 / 模型探测）；术语表批次增至 **19** 个（+1 只读 +1 写）；缓存条目批次增至 **21** 个（+2 写）；译文字段改写批次增至 **22** 个（+1 写），`inputSchema` 合法 |
+| `tools/list` | 0.5.1 时返回 **11** 个工具；0.6.0 增至 **15** 个（+4 写工具）；0.6.x 增至 **17** 个（+2 作业域只读：任务状态 / 模型探测）；术语表批次增至 **19** 个（+1 只读 +1 写）；缓存条目批次增至 **21** 个（+2 写）；译文字段改写批次增至 **22** 个（+1 写）；修复报告批次增至 **23** 个（+1 只读：修复/改进报告），`inputSchema` 合法 |
 | `tools/call` → `galtransl_get_project_overview` | 在真实项目上正确读出 `language: zh-cn`、`numPerRequestTranslate: 16`、`translation_guideline` 等 |
 | `tools/call` → `galtransl_search_scripts` | 在真实项目上成功命中「クルト」及其所在文件与 index |
 | `tools/call` → 未知工具 | 返回 `isError: true` + 「未知工具」文案，**协议连接未中断** |
@@ -211,7 +212,7 @@ MCP 服务是**按需拉起的独立进程**，后端无法直接感知其存活
   "available": true,
   "path": "D:\\...\\mcp_status.json",
   "pid": 34964,
-  "tools": 22,
+  "tools": 23,
   "started_at": "2026-09-22T15:07:56+00:00",
   "updated_at": "2026-09-22T15:07:56+00:00",
   "age_seconds": 0.8,

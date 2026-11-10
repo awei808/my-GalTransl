@@ -1,6 +1,6 @@
 """mcp_tools 工具层单测（0.5.1 MCP 外部 agent 接入）。
 
-覆盖：工具定义与分发表一致性、JSON Schema 合法性、参数校验、22 个工具的行为。
+覆盖：工具定义与分发表一致性、JSON Schema 合法性、参数校验、23 个工具的行为。
 """
 import json
 import os
@@ -60,8 +60,9 @@ class ToolDefinitionTests(unittest.TestCase):
         # 术语表批次：+1 只读（read_glossary）+1 写（write_glossary）
         # 缓存条目批次：+2 写（mark_skip_check / swap_alt_translation）
         # 译文字段改写批次：+1 写（update_translation_entry）
-        self.assertEqual(len(MCP_TOOL_DEFS), 22)
-        self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "read"), 14)
+        # 修复报告批次：+1 只读（get_fix_report）
+        self.assertEqual(len(MCP_TOOL_DEFS), 23)
+        self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "read"), 15)
         self.assertEqual(sum(1 for d in MCP_TOOL_DEFS if d["kind"] == "write"), 8)
 
     def test_all_names_are_prefixed_and_unique(self) -> None:
@@ -125,7 +126,7 @@ class ConstraintDeliveryTests(unittest.TestCase):
         # 文案必须与工具面一致：存在写工具时不得声称「全部工具只读」，
         # 否则 agent 会被诱导拒绝使用写工具
         self.assertNotIn("全部工具只读", SERVER_INSTRUCTIONS)
-        self.assertIn("14 个只读检索 + 8 个写操作", SERVER_INSTRUCTIONS)
+        self.assertIn("15 个只读检索 + 8 个写操作", SERVER_INSTRUCTIONS)
 
     def test_read_only_annotations_keys_match_sdk(self) -> None:
         # 键名必须与 mcp SDK ToolAnnotations 字段一致（SDK 升级改名时立即暴露）

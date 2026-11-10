@@ -520,11 +520,11 @@ class ReadToolProjectDirWarningTests(unittest.TestCase):
         result = call_mcp_tool("galtransl_search_scripts", {"project_dir": self.project_dir, "query": "x"})
         self.assertTrue(result["project_dir_valid"])
 
-    def test_read_only_set_is_fourteen_and_disjoint_from_write(self) -> None:
+    def test_read_only_set_is_fifteen_and_disjoint_from_write(self) -> None:
         writes = {d["name"] for d in MCP_TOOL_DEFS if d["kind"] == "write"}
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 14)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES), 15)
         self.assertEqual(_READ_ONLY_TOOL_NAMES & writes, frozenset())
-        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 22)
+        self.assertEqual(len(_READ_ONLY_TOOL_NAMES | writes), 23)
 
     def test_write_tool_success_is_not_annotated_with_warning(self) -> None:
         # 写工具已硬校验，成功返回体不应再被附加 project_dir_valid

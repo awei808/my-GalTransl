@@ -235,7 +235,11 @@ async def run_job_async(
     state: JobState | None = None,
     stop_event: threading.Event | None = None,
 ) -> JobState:
-    from GalTransl.server import reset_runtime_project, update_runtime_status
+    from GalTransl.server import (
+        finish_project_fix_report,
+        reset_runtime_project,
+        update_runtime_status,
+    )
 
     current_state = state or create_job_state(spec)
     cfg: CProjectConfig | None = None
@@ -477,6 +481,8 @@ async def run_job_async(
             f"[job] 任务结束 job={spec.job_id} status={current_state.status} "
             f"耗时 {time.monotonic() - _job_start_mono:.1f}s"
         )
+        # 收尾本次任务的修复/改进报告（内部 best-effort，无修复也落一份空报告）
+        finish_project_fix_report(spec.project_dir, label=spec.translator)
         update_runtime_status(spec.project_dir, workers_active=0)
 
     return current_state

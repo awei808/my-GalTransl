@@ -5,7 +5,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 # GalTransl 翻译项目工具（MCP）
 
-本技能通过 MCP 服务 `galtransl` 访问本机 GalTransl 项目。22 个工具中 14 个为**只读**检索，
+本技能通过 MCP 服务 `galtransl` 访问本机 GalTransl 项目。23 个工具中 15 个为**只读**检索，
 8 个为**受限写入**（路线图、元数据、项目字典、缓存条目标记/交换/译文字段改写、启停翻译）。所有工具的 `project_dir`
 可传**项目根目录的绝对路径**（例如 `D:\解包或汉化用\xp3专用汉化文件夹\gal翻译\test-dev`），
 或**项目名称**——名称解析来源有二：GalTransl 已登记的项目（在界面中打开过/创建过/提交过翻译任务，
@@ -18,7 +18,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 ## 硬性约束与禁止查看（先读本节，再调工具）
 
-本节是外接 agent 的**行为契约**。14 个只读工具不因「只读」就可以随便读——下列内容是**禁止查看**的；
+本节是外接 agent 的**行为契约**。15 个只读工具不因「只读」就可以随便读——下列内容是**禁止查看**的；
 8 个写工具也各有明确边界，不得视为通用写权限。
 
 ### 1. 禁止查看：H / 成人向内容（最高优先级）
@@ -122,7 +122,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 > 该内容不在 galtransl MCP 的授权范围内（<禁区名>）。我没有任意路径读写或执行命令的能力，也不会绕过去做。可以在 GalTransl 界面本地处理，或由你明确授权具体范围后我再继续。
 
-## 工具清单（22 个）
+## 工具清单（23 个）
 
 ### 搜索（只读）
 
@@ -147,6 +147,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | `galtransl_get_project_metadata` | 读元数据：`globalprompt` / `plotroute` / `filemeta` / `batchmeta` / `routeanalysis` / `all` | `kind`、`filename` |
 | `galtransl_get_job_status` | 查**任务状态与实时进度**（阶段/百分比/worker/速度；**需后端**） | — |
 | `galtransl_check_model` | 校验模型/令牌可用性（**发一次真实探测请求；需后端**） | `translator`、`config_file_name`、`backend_profile` |
+| `galtransl_get_fix_report` | 读**修复/改进报告**（按文件分组：句号、旧译文→新译文、问题类型、写入位置）；不带 `file` 回文件级汇总，`file=<报告内文件名>` 回逐句明细。报告在任务收尾时生成：后端运行中返回实时快照（含进行中已采纳部分），后端未运行时读上次收尾后持久化的报告 | `file`（可选） |
 
 ### 写入（均受路径白名单约束；其中路线图/元数据/项目字典/缓存条目译文字段另受 H 门禁）
 
@@ -178,7 +179,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | `pass0_cache/GlobalPrompt.json`、`pass0_cache/route_analysis/*.json` | 全局分析与路线分析分片 | 5 生成全局游戏分析 |
 | `pass2_cache/*.batch.json` | 批次区间与用词色彩标注 | 6 划分翻译区间 |
 | `pass3_cache/*.json`（顶层旧布局 `*.json` 同义） | 翻译缓存 | 7 翻译执行中 |
-| `gendic_cache/`、`aftertrans_cache/`、`*.append.jsonl` | 术语表分片 / 后处理断点标记 / 增量合并日志，**不是翻译缓存** | — |
+| `gendic_cache/`、`aftertrans_cache/`、`fix_report/`、`*.append.jsonl` | 术语表分片 / 后处理断点标记 / 修复改进报告 / 增量合并日志，**不是翻译缓存** | — |
 
 翻译条目字段指纹：`pre_dst`+`trans_by` = 已翻译；`trans_by` 带 `(Failed)` = 翻译失败句；
 `problem` = 问题标注（阶段7 每个文件翻译完成时即写入，阶段8 与写工具重检会刷新，单凭它不能判定阶段8已跑）；
@@ -251,7 +252,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 ## 注意事项
 
-- **只读 + 受限写入**：14 个只读工具 + 8 个写工具（边界见 §4）。项目字典可用 `write_glossary` 按词条增改；缓存条目可逐条标记跳过检查、交换备选译文或直接改写译文字段；公共字典/配置仍需在 GalTransl 界面操作。
+- **只读 + 受限写入**：15 个只读工具 + 8 个写工具（边界见 §4）。项目字典可用 `write_glossary` 按词条增改；缓存条目可逐条标记跳过检查、交换备选译文或直接改写译文字段；公共字典/配置仍需在 GalTransl 界面操作。
 - **H 内容**：读路径**无 H 门禁过滤**（须自行遵守 §1）；写工具中 `write_route_map` / `save_metadata` / `write_glossary` / `update_translation_entry` **有硬门禁**，命中 H 区间或 H 词库即拒绝写入；`mark_skip_check` / `swap_alt_translation` 只改标志位或对调既有译文，**不在门禁范围内**（H 区间条目同样可操作）。门禁 **fail-open**，项目未配 H 词库时不拦，详见 §1 的失效边界。
 - **作业域工具需后端**：`get_job_status` / `check_model` / `submit_job` / `stop_job` 需要 GalTransl 程序在运行；后端未启动时会返回「无法连接 GalTransl 后端」的中文错误，此时转告用户启动程序即可，不要反复重试。`check_model` 会向模型端点发起一次真实探测请求（消耗极小额度），不要在无谓的场景反复调用。
 - **结果上限**：搜索类工具默认最多返回 200 条（硬顶 2000），超出时返回体里 `truncated` 为 `true`，`total` 才是全部命中数。需要更多就加 `regex` 收窄检索词，或提高 `max_results`。

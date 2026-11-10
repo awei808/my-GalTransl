@@ -337,7 +337,7 @@ class BuildServerInstructionsTests(unittest.TestCase):
         # 金样本：0.6.0 静态文本原文（工具计数、project_dir 口径、写工具清单）；第 4 条按 H 门禁覆盖面修正。
         # 默认参数输出必须与它逐字一致，防止未来编辑 f-string 拼接时静默漂移。
         golden = (
-            "GalTransl 翻译项目管理服务（22 个工具：14 个只读检索 + 8 个写操作）。"
+            "GalTransl 翻译项目管理服务（23 个工具：15 个只读检索 + 8 个写操作）。"
             "project_dir 可传翻译项目根目录的绝对路径，或项目名称（已登记/工作区根下的项目，galtransl_list_projects 可列出）。\n"
             "\n"
             "使用前必须遵守：\n"
@@ -346,7 +346,7 @@ class BuildServerInstructionsTests(unittest.TestCase):
             "   本服务不提供任意路径读写、不提供命令执行、不改程序配置。需要其它改动请让用户在 GalTransl 界面操作。\n"
             "2. submit_job 会真实启动翻译并消耗 API 额度：仅在用户明确要求时调用，调用前先与用户确认项目与引擎，\n"
             "   可先用 check_model 探测可用性（同样发起真实请求，消耗极小额度）。\n"
-            "3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具直接读磁盘。\n"
+            "3. get_job_status / check_model / submit_job / stop_job 需 GalTransl 后端在运行；其余工具不依赖后端、直接读磁盘（get_fix_report 后端运行时优先返回实时快照）。\n"
             "4. 禁止查看 H / 成人向内容：写工具中 write_route_map / save_metadata / write_glossary / update_translation_entry 带 H 硬门禁（命中即拒绝）；\n"
             "   mark_skip_check / swap_alt_translation 只改标志位或对调既有译文、不引入新文本，故不受门禁约束。\n"
             "   识别到成人向内容必须立即停止该方向检索，不得回引原文或译文，只报告位置（文件名 + index）并请用户决定。\n"
