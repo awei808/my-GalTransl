@@ -41,6 +41,7 @@ import type {
   PerFileMetadataResponse,
   StopProjectResponse,
   CommonDictionaryManagerResponse,
+  FixReportResponse,
 } from "./types";
 
 // ---- Project config ----
@@ -424,6 +425,13 @@ export async function fetchProjectProblems(projectId: string, file?: string) {
 export async function fetchProjectAltTranslations(projectId: string, file?: string) {
   const q = file ? `?file=${encodeURIComponent(file)}` : "";
   return apiRequest<ProjectAltTransResponse>(`/api/projects/${projectId}/alt-translations${q}`);
+}
+
+// ---- Project fix report ----
+
+/** 本次任务修复/改进报告（按文件分组，任务收尾时后端生成；详情见 FixReportResponse） */
+export async function fetchProjectFixReport(projectId: string) {
+  return apiRequest<FixReportResponse>(`/api/projects/${projectId}/fix-report`);
 }
 
 /** 对给定缓存条目重新运行问题检测；persist=true 时写回缓存文件（单文件范围），供"保存并重检"同步侧栏 */

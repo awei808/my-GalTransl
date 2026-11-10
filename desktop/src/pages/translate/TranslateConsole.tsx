@@ -12,6 +12,7 @@ import { getErrorMessage, isApiTimeoutError } from "../../lib/errors";
 import { confirm } from "../../stores/confirmStore";
 import {
   fetchProjectRuntime,
+  fetchProjectFixReport,
   clearRuntimeNotices,
   stopProjectTranslation,
 } from "../../lib/api/project";
@@ -22,11 +23,13 @@ import { projectName } from "../home/homeUtils";
 import { pickTranslationPreview } from "../../lib/previewSelection";
 import { BackendPicker } from "../../components/BackendPicker";
 import { GuideLink } from "../../components/GuideLink";
+import { FixReportPanel } from "../../components/FixReportPanel";
 import type {
   ModelCheckResult,
   ProjectRuntimeResponse,
   TranslatorOption,
   TTFTPreview,
+  FixReportResponse,
 } from "../../lib/api/types";
 
 /* ── 步骤指示器 ── */
@@ -139,8 +142,33 @@ export function TranslateConsole() {
   // prevJobStatus 已提升为全局 appState.prevJobStatus（见 appStore），避免切回页面时误弹“已开始”
 
   // 右侧面板标签切换
-  type PanelTab = "assembled" | "errors" | "files" | "flow";
+  type PanelTab = "assembled" | "errors" | "files" | "flow" | "fixreport";
   const [panelTab, setPanelTab] = createSignal<PanelTab>("assembled");
+
+  // 修复/改进报告（本次任务）：任务完成转换时拉取并 toast 摘要；打开标签页时按需刷新
+  const [fixReport, setFixReport] = createSignal<FixReportResponse | null>(null);
+  let fixReportSeq = 0; // 防过期响应覆盖；切项目/新任务开始时使旧响应失效
+  let fixReportProject = ""; // 报告所属项目的 id（base64url token），切项目时据此清空
+  const loadFixReport = (projectId: string, announce: boolean) => {
+    const seq = ++fixReportSeq;
+    fetchProjectFixReport(projectId)
+      .then((res) => {
+        if (seq !== fixReportSeq || appState.activeProjectId !== projectId) return;
+        setFixReport(res);
+        fixReportProject = projectId;
+        if (announce && (res.total ?? 0) > 0) {
+          toast.success(
+            `本次共修复/改进 ${res.total} 条，涉及 ${res.files?.length ?? 0} 个文件（详见右侧"修复报告"）`,
+          );
+        }
+      })
+      .catch(() => {});
+  };
+  const openFixReportTab = () => {
+    setPanelTab("fixreport");
+    const pid = appState.activeProjectId;
+    if (pid) loadFixReport(pid, false);
+  };
 
   // 左侧提示词面板：多 worker 动态 tab 板块
   const [promptWorkerTab, setPromptWorkerTab] = createSignal<string | null>(null);
@@ -239,6 +267,11 @@ export function TranslateConsole() {
     }
 
     const projectId = pid;
+    // 切换项目：清空上一项目的修复报告，避免串项目显示
+    if (fixReportProject && fixReportProject !== projectId) {
+      setFixReport(null);
+      fixReportProject = "";
+    }
 
     async function poll() {
       try {
@@ -297,8 +330,17 @@ export function TranslateConsole() {
         if (status && untrack(() => appState.prevJobStatus) !== status) {
           if (status === "running") {
             toast.info(`【${taskType}】翻译任务已开始`);
+            // 新任务开始：清掉上一轮的修复报告展示（本次报告待任务收尾后重新拉取），
+            // 并使在途的旧报告响应过期，避免清空后被回填
+            if (untrack(() => fixReport())) {
+              untrack(() => setFixReport(null));
+              fixReportProject = "";
+            }
+            fixReportSeq++;
           } else if (status === "completed") {
             toast.success(`【${taskType}】翻译任务已完成`);
+            // 修复/改进报告：完成后拉取，有内容时 toast 摘要（明细见"修复报告"标签页）
+            loadFixReport(projectId, true);
           } else if (status === "failed") {
             toast.error(`【${taskType}】翻译失败: ${rt.job?.error || "未知错误"}`);
             // 主动停止任务，清理后端残留进程
@@ -867,6 +909,12 @@ export function TranslateConsole() {
               >
                 流程说明
               </button>
+              <button
+                class={`panel-tab ${panelTab() === "fixreport" ? "panel-tab--active" : ""}`}
+                onClick={() => openFixReportTab()}
+              >
+                修复报告
+              </button>
             </div>
 
             {/* ── 标签内容 ── */}
@@ -1020,6 +1068,12 @@ export function TranslateConsole() {
                     <li><b>构建输出</b>：把校对后的译文合成最终文件，导出到 output 目录。</li>
                   </ol>
                   <p class="flow-note">翻译完成后，到“校对审核”页面检查译文，改好后点“构建输出”即可。</p>
+                </div>
+              </Match>
+              {/* 修复报告：本次任务修复/改进明细，按文件分组（数据来自 /fix-report 端点） */}
+              <Match when={panelTab() === "fixreport"}>
+                <div class="panel-content panel-content--scroll">
+                  <FixReportPanel report={fixReport()} />
                 </div>
               </Match>
             </Switch>

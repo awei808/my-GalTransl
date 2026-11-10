@@ -748,6 +748,52 @@ textarea {
   white-space: nowrap;
 }
 
+/* ── 修复报告（FixReportPanel：复用 problem-* 分组折叠样式，以下为条目明细专属） ── */
+.fix-report-entry-body {
+  min-width: 0;
+  flex: 1;
+}
+.fix-report-old {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fix-report-new {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fix-report-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin-top: 2px;
+}
+.fix-report-chip {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+  /* 胶囊结构参考 .problem-stat-chip：背景用字体色的低饱和度混合 */
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  user-select: none;
+}
+.fix-report-chip--main {
+  color: var(--color-status-success);
+}
+.fix-report-meta {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+.fix-report-more {
+  padding: 4px 8px;
+}
+
 .sidebar-placeholder {
   color: var(--color-text-tertiary);
   font-size: var(--font-sm);

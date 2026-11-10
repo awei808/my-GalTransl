@@ -546,6 +546,45 @@ export type ProjectAltTransResponse = {
   total: number;
 };
 
+/** GET /api/projects/:id/fix-report 单条修复/改进采纳明细（后端 BaseSparseFixRound 采集） */
+export type FixReportEntry = {
+  filename: string;
+  index: number;
+  speaker: string;
+  post_src: string;
+  /** 采纳前的当前译文（proofread_zh 或 pre_dst） */
+  old_dst: string;
+  /** 本轮采纳的新译文（主译文覆盖值或 alt_dst 备选值） */
+  new_dst: string;
+  /** 半角逗号分隔的问题类型名（改进轮可能为空串） */
+  problems: string;
+  /** 产生本次修复的后端引擎名（如 ForImproveTranslation） */
+  backend: string;
+  /** true=已覆盖主译文（swapFixToCurrent），false=写入备选译文 alt_dst */
+  writes_main: boolean;
+};
+
+/** GET /api/projects/:id/fix-report 按文件分组的修复明细 */
+export type FixReportFileGroup = {
+  filename: string;
+  count: number;
+  /** 明细超过单文件上限被截断（count 仍精确） */
+  truncated: boolean;
+  entries: FixReportEntry[];
+};
+
+/** GET /api/projects/:id/fix-report 响应（本次任务修复/改进报告） */
+export type FixReportResponse = {
+  project_dir: string;
+  exists: boolean;
+  label: string;
+  started_at: string;
+  finished_at: string;
+  total: number;
+  truncated: boolean;
+  files: FixReportFileGroup[];
+};
+
 /** POST /api/projects/:id/cache/check 单条目重检结果 */
 export type CacheCheckResult = {
   index: number;
