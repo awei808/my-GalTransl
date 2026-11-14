@@ -331,7 +331,7 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             if found_count > 0 and success_count == 0:
                 _degrade_msg = (
                     f"{self._log_tag}[{filename}:{idx_tip}] 模型输出 {found_count} 条 better "
-                    f"但全部被过滤（疑似整批回显或退化输出）"
+                    f"但全部被过滤（疑似整批回显、退化或非法输出）"
                 )
                 if not use_single_round:
                     _degrade_msg += "，重置对话"
@@ -419,6 +419,7 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         id_map = {t.index: t for t in trans_list}
         success_count = 0
         found_count = 0
+        rejected_count = 0
         applied = []
         for line in result_text.splitlines():
             line = line.strip()
@@ -441,6 +442,17 @@ class BaseSparseFixRound(ForGalJsonTranslate):
             if tran.post_src != "" and better.strip() == "":
                 continue
             if "�" in better:
+                continue
+            # 明显非法值检测：子类可扩展（改进轮拦新增日文等），命中即整条丢弃
+            reject_reason = self._better_reject_reason(tran, better)
+            if reject_reason:
+                rejected_count += 1
+                # 非法行同样是模型输出：计入 found_count，使「整批被丢弃」能触发
+                # batch_translate 的退化分支（告警 + 重置对话），避免污染后续批次
+                found_count += 1
+                LOGGER.debug(
+                    f"{self._log_tag} 句子 {line_id} 的 better 非法（{reject_reason}），跳过"
+                )
                 continue
             # 原文回显（精确）：归一化前直接比较，避免 opencc 简繁转换改写中日同形汉字
             # 导致 normalized != post_src 而绕过过滤
@@ -488,6 +500,8 @@ class BaseSparseFixRound(ForGalJsonTranslate):
                 self._record_fix_change(
                     filename, line_id, tran, current_dst, normalized
                 )
+        if rejected_count:
+            LOGGER.debug(f"{self._log_tag} 本批丢弃 {rejected_count} 条非法 better")
         if applied:
             # 实时推送结果预览（前端翻译控制台"结果预览"，覆盖 improve/brfix/jpfix/banfix/fix 各修复轮）
             self.push_result_preview(
@@ -533,6 +547,10 @@ class BaseSparseFixRound(ForGalJsonTranslate):
         if batch_size <= 0 or found_count < self._echo_min_hits:
             return False
         return found_count / batch_size >= self._echo_hit_ratio
+
+    def _better_reject_reason(self, tran: Any, better: str) -> str:
+        """返回 better 的非法原因（空串=合法）；基类不做额外校验，按轮次覆盖。"""
+        return ""
 
     def _apply_better_result(
         self, tran, current_dst: str, normalized: str, line_id: int

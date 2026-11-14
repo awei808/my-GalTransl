@@ -644,12 +644,19 @@ def _tool_write_route_map(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 def _tool_save_metadata(arguments: Dict[str, Any]) -> Dict[str, Any]:
     project_dir = _require_write_project_dir(arguments)
+    kind = str(arguments.get("kind", "") or "").strip()
+    items = arguments.get("items")
+    if items is not None:
+        # 按「有值」判断：客户端模板可能带 filename="" / entry=null 的默认值
+        if arguments.get("filename") not in (None, "") or arguments.get("entry") is not None:
+            raise ValueError("items 与 filename/entry 只能提供一种（批量用 items）")
+        return write_metadata_batch(project_dir, kind, items)
     entry = arguments.get("entry")
     if not isinstance(entry, dict):
         raise ValueError("entry 必须是 JSON 对象（要写入的完整元数据）")
     return write_metadata(
         project_dir,
-        str(arguments.get("kind", "") or "").strip(),
+        kind,
         str(arguments.get("filename", "") or "").strip(),
         entry,
     )
@@ -765,22 +772,96 @@ def _active_job_of(project_dir: str) -> Tuple[Optional[Dict[str, Any]], bool]:
     return recent_terminal, True
 
 
-def _modify_cache_entry(
+# 批量写入上限：只防参数体积与误传超大数组；重检开销与条数无关（本就是整文件重检）
+MCP_CACHE_BATCH_LIMIT = 500
+
+
+def _parse_cache_index(value: Any) -> int:
+    """解析单条 index（兼容落盘为数字字符串的旧缓存）；非整数与 bool 抛 ValueError。
+
+    bool 是 int 子类、float 可被 int() 静默截断（1.9→1），两者都会改错条目，故显式拒绝。
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"index 必须是整数: {value!r}")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"index 必须是整数: {value!r}")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"index 必须是整数: {value!r}")
+
+
+def _normalize_cache_indexes(raw: Any) -> List[int]:
+    """校验批量 indexes：非空数组、逐项整数、去重保序、不超上限。"""
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("indexes 必须是非空整数数组（批量用；单条请用 index）")
+    if len(raw) > MCP_CACHE_BATCH_LIMIT:
+        raise ValueError(
+            f"indexes 一次最多 {MCP_CACHE_BATCH_LIMIT} 条（本次 {len(raw)} 条），请分批调用"
+        )
+    indexes: List[int] = []
+    seen: Set[int] = set()
+    for i, item in enumerate(raw):
+        try:
+            idx = _parse_cache_index(item)
+        except ValueError:
+            raise ValueError(f"indexes[{i}] 必须是整数: {item!r}")
+        # 同一条目重复传入只处理一次，避免第二次 mutate 变 no-op 造成计数歧义
+        if idx in seen:
+            continue
+        seen.add(idx)
+        indexes.append(idx)
+    return indexes
+
+
+def _locate_cache_entry(entries: List[Any], idx: int) -> Optional[Dict[str, Any]]:
+    """按 index 定位缓存条目；兼容 index 落盘为数字字符串的旧缓存。"""
+    target = next(
+        (e for e in entries if isinstance(e, dict) and e.get("index") == idx), None
+    )
+    if target is not None:
+        return target
+    return next(
+        (
+            e
+            for e in entries
+            if isinstance(e, dict)
+            and isinstance(e.get("index"), str)
+            and e["index"].isdigit()
+            and int(e["index"]) == idx
+        ),
+        None,
+    )
+
+
+def _index_scope_hint(entries: List[Any]) -> str:
+    """现有 index 范围提示（用于「未找到 index」的报错文案）。"""
+    indexes: List[int] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        val = e.get("index")
+        if isinstance(val, int):
+            indexes.append(val)
+        elif isinstance(val, str) and val.isdigit():
+            indexes.append(int(val))
+    return f"{min(indexes)}~{max(indexes)}" if indexes else "（文件为空）"
+
+
+def _modify_cache_entries(
     project_dir: str,
     filename: str,
-    index: Any,
-    mutate: Callable[[Dict[str, Any]], Optional[str]],
+    indexes: List[int],
+    mutate: Callable[[int, Dict[str, Any]], Optional[str]],
     action_label: str,
-    on_change: Optional[Callable[[Dict[str, Any], str], None]] = None,
+    on_changes: Optional[Callable[[List[Tuple[int, Dict[str, Any]]], str], None]] = None,
 ) -> Dict[str, Any]:
-    """定位缓存条目 → 原地修改 → 快照 → 落盘 → 按 /cache/save 同口径重建问题标注。
+    """批量改写同一缓存文件的多个条目：读一次、重检一次、快照一次、落盘一次。
 
-    mutate(entry) 返回操作描述文本；业务校验不过（如无备选译文）时在 mutate 内抛
-    ValueError。重建复用 server_cache 的检测链路（依赖加载失败时保留原 problem，
-    检测异常时不覆写已有 problem，与 /cache/save 的降级口径一致）。
-
-    on_change(target, rel) 在确认有实际变化后、快照/落盘前调用（用于 H 门禁等
-    写前校验）；抛异常即中止本次写入，磁盘保持原样。no-op 时不会调用。
+    mutate(index, entry) 返回操作描述；返回 None 表示该条已处于目标状态（no-op）。
+    失败分层：参数与项目校验、任务占用、on_changes 抛错（H 门禁）整批拒绝且磁盘不动；
+    单条业务失败（index 不存在、无备选译文）记入 failed，其余条目照常落盘。
+    全部条目都 no-op 时不落盘也不重检——否则整文件重检会刷新其它条目的问题标注。
     """
     # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
     validate_project_dir(project_dir)
@@ -815,59 +896,70 @@ def _modify_cache_entry(
     if not isinstance(entries, list):
         raise ValueError(f"缓存文件内容不是 JSON 数组: {rel}")
 
-    try:
-        idx_int = int(index)
-    except (TypeError, ValueError):
-        raise ValueError(f"index 必须是整数: {index!r}")
-    target = next(
-        (e for e in entries if isinstance(e, dict) and e.get("index") == idx_int), None
-    )
-    if target is None:
-        # 兼容 index 落盘为数字字符串的旧缓存
-        target = next(
-            (
-                e
-                for e in entries
-                if isinstance(e, dict)
-                and isinstance(e.get("index"), str)
-                and e["index"].isdigit()
-                and int(e["index"]) == idx_int
-            ),
-            None,
-        )
-    if target is None:
-        indexes = []
-        for e in entries:
-            if not isinstance(e, dict):
-                continue
-            val = e.get("index")
-            if isinstance(val, int):
-                indexes.append(val)
-            elif isinstance(val, str) and val.isdigit():
-                indexes.append(int(val))
-        scope = f"{min(indexes)}~{max(indexes)}" if indexes else "（文件为空）"
-        raise ValueError(f"未找到 index={idx_int} 的条目（{rel} 现有 index 范围 {scope}）")
-    problem_before = target.get("problem", "")
-    detail = mutate(target)
-    if detail is None:
-        # 本操作为 no-op：不动文件、不重检——否则整文件重检可能刷新其它条目，
-        # 造成「detail 说没改但 changed=true」的误导（审计日志同样会自相矛盾）
-        LOGGER.info(f"[mcp] {action_label} {rel} index={idx_int}（no-op）")
-        return {
-            "success": True,
-            "project_dir": project_dir,
-            "filename": rel,
+    records: List[Dict[str, Any]] = []
+    changed_targets: List[Tuple[int, Dict[str, Any]]] = []
+    located_targets: List[Tuple[int, Dict[str, Any]]] = []
+    # 未命中提示在循环外算一次，避免大量失效 index 时反复全量扫描条目
+    scope_hint = _index_scope_hint(entries)
+    for idx_int in indexes:
+        target = _locate_cache_entry(entries, idx_int)
+        if target is None:
+            records.append({
+                "index": idx_int,
+                "status": "failed",
+                "error": f"未找到 index={idx_int} 的条目（{rel} 现有 index 范围 {scope_hint}）",
+            })
+            continue
+        located_targets.append((idx_int, target))
+        problem_before = target.get("problem", "")
+        try:
+            detail = mutate(idx_int, target)
+        except ValueError as exc:
+            # 单条业务校验失败（如无备选译文）不阻断其余条目
+            records.append({
+                "index": idx_int,
+                "status": "failed",
+                "error": str(exc),
+                "problem_before": problem_before,
+            })
+            continue
+        if detail is None:
+            records.append({
+                "index": idx_int,
+                "status": "unchanged",
+                "detail": "条目已处于目标状态，无变化",
+                "problem_before": problem_before,
+                "problem_after": problem_before,
+            })
+            continue
+        records.append({
             "index": idx_int,
-            "changed": False,
-            "detail": "条目已处于目标状态，无变化",
+            "status": "changed",
+            "detail": detail,
             "problem_before": problem_before,
-            "problem_after": problem_before,
-            "recheck_note": "",
-            "job_check": "ok" if backend_reachable else "backend_unreachable（无法确认是否有翻译任务在运行，请自行确认）",
-        }
+        })
+        changed_targets.append((idx_int, target))
 
-    if on_change is not None:
-        on_change(target, rel)
+    job_check = (
+        "ok" if backend_reachable
+        else "backend_unreachable（无法确认是否有翻译任务在运行，请自行确认）"
+    )
+    if not changed_targets:
+        # 全量 no-op：不动文件、不重检，避免重检刷新其它条目造成「没改却 changed」
+        failed_ids = [rec["index"] for rec in records if rec["status"] == "failed"]
+        if failed_ids:
+            shown = "、".join(str(i) for i in failed_ids[:5])
+            more = f" 等 {len(failed_ids)} 条" if len(failed_ids) > 5 else ""
+            LOGGER.warning(f"[mcp] {action_label} {rel} 未处理任何条目（失败 {len(failed_ids)} 条：{shown}{more}）")
+        else:
+            LOGGER.info(f"[mcp] {action_label} {rel}（{len(indexes)} 条全部无变化，未落盘）")
+        return _batch_modify_result(
+            project_dir, rel, records, changed_count=0, applied=False,
+            recheck_note="", job_check=job_check,
+        )
+
+    if on_changes is not None:
+        on_changes(changed_targets, rel)
 
     # 重建 problem / post_dst_preview / skip_check（整文件，与 /cache/save 保存后重建一致）
     recheck_note = ""
@@ -922,9 +1014,18 @@ def _modify_cache_entry(
             elif "skip_check" in e:
                 del e["skip_check"]
 
+    target_map = dict(located_targets)
+    for rec in records:
+        # 整文件重检会刷新所有条目的 problem（含本批未改动的同文件条目），故两类都回填
+        if rec["status"] in ("changed", "unchanged"):
+            rec["problem_after"] = target_map[rec["index"]].get("problem", "")
+
     new_bytes = orjson.dumps(entries, option=orjson.OPT_INDENT_2)
-    changed = new_bytes != old_bytes
-    if changed:
+    applied = new_bytes != old_bytes
+    if changed_targets and not applied:
+        # mutate 声称改动但序列化结果一致：新增 mutate 只写 detail 时会落到这里
+        LOGGER.warning(f"[mcp] {action_label} {rel}：条目在内存改动但落盘字节一致，未写入")
+    if applied:
         from GalTransl.server_cache import _append_engine_log, snapshot_cache_file
 
         snapshot_cache_file(cache_dir, rel, project_dir)
@@ -932,33 +1033,149 @@ def _modify_cache_entry(
         with open(tmp_path, "wb") as f:
             f.write(new_bytes)
         os.replace(tmp_path, file_path)
-        _append_engine_log(project_dir, f"[mcp] {action_label} {rel} index={idx_int}：{detail}")
-    LOGGER.info(f"[mcp] {action_label} {rel} index={idx_int}（changed={changed}）")
+        changed_records = [rec for rec in records if rec["status"] == "changed"]
+        if len(changed_records) == 1:
+            # 单条沿用旧审计口径：日志带具体操作描述（批量只记 index 与计数）
+            rec = changed_records[0]
+            log_text = f"[mcp] {action_label} {rel} index={rec['index']}：{rec['detail']}"
+        else:
+            changed_ids = [rec["index"] for rec in changed_records]
+            if len(changed_ids) <= 20:
+                index_text = "、".join(str(i) for i in changed_ids)
+            else:
+                index_text = "、".join(str(i) for i in changed_ids[:20]) + f"… 共 {len(changed_ids)} 条"
+            log_text = (
+                f"[mcp] {action_label} {rel} index={index_text}："
+                f"改动 {len(changed_records)} 条 / 请求 {len(indexes)} 条"
+            )
+        _append_engine_log(project_dir, log_text)
+
+    unchanged_count = sum(1 for rec in records if rec["status"] == "unchanged")
+    failed_ids = [rec["index"] for rec in records if rec["status"] == "failed"]
+    LOGGER.info(
+        f"[mcp] {action_label} {rel}：请求 {len(indexes)} / 改动 {len(changed_targets)}"
+        f" / 未变 {unchanged_count} / 失败 {len(failed_ids)}（changed={applied}）"
+    )
+    if failed_ids:
+        shown = "、".join(str(i) for i in failed_ids[:5])
+        more = f" 等 {len(failed_ids)} 条" if len(failed_ids) > 5 else ""
+        LOGGER.warning(f"[mcp] {action_label} {rel} 有未处理条目：{shown}{more}")
+    return _batch_modify_result(
+        project_dir, rel, records, changed_count=len(changed_targets), applied=applied,
+        recheck_note=recheck_note, job_check=job_check,
+    )
+
+
+def _batch_modify_result(
+    project_dir: str,
+    rel: str,
+    records: List[Dict[str, Any]],
+    *,
+    changed_count: int,
+    applied: bool,
+    recheck_note: str,
+    job_check: str,
+) -> Dict[str, Any]:
+    """把批量记录组装为返回体：聚合计数 + 逐条明细（failed 明细供 agent 自行纠正）。"""
+    items: List[Dict[str, Any]] = []
+    for rec in records:
+        item: Dict[str, Any] = {"index": rec["index"], "status": rec["status"]}
+        for key in ("detail", "error", "problem_before", "problem_after"):
+            if key in rec:
+                item[key] = rec[key]
+        items.append(item)
+    failed_count = sum(1 for rec in records if rec["status"] == "failed")
     return {
         "success": True,
         "project_dir": project_dir,
         "filename": rel,
-        "index": idx_int,
-        "changed": changed,
-        "detail": detail,
-        "problem_before": problem_before,
-        "problem_after": target.get("problem", ""),
+        "requested": len(records),
+        "changed_count": changed_count,
+        "skipped_count": sum(1 for rec in records if rec["status"] == "unchanged"),
+        "failed_count": failed_count,
+        "partial": failed_count > 0,
+        "applied": applied,
+        "items": items,
         "recheck_note": recheck_note,
-        "job_check": "ok" if backend_reachable else "backend_unreachable（无法确认是否有翻译任务在运行，请自行确认）",
+        "job_check": job_check,
     }
 
 
-def mark_skip_check(project_dir: str, filename: str, index: Any, skip: bool = True) -> Dict[str, Any]:
-    """标记 / 取消某条翻译缓存条目的「跳过问题检查」（skip_check）。
+def _modify_cache_entry(
+    project_dir: str,
+    filename: str,
+    index: Any,
+    mutate: Callable[[Dict[str, Any]], Optional[str]],
+    action_label: str,
+    on_change: Optional[Callable[[Dict[str, Any], str], None]] = None,
+) -> Dict[str, Any]:
+    """单条入口：委托批量核心，返回体保持单条口径（changed 为布尔、带 index/detail）。
 
-    标记后该条不再参与问题检测，已有 problem 标记经重建清除；取消后重检恢复检测。
+    mutate(entry) 返回操作描述文本；业务校验不过（如无备选译文）时在 mutate 内抛
+    ValueError 并原样冒泡（单条不降级为 failed）。on_change(target, rel) 在确认有
+    实际变化后、快照/落盘前调用（H 门禁）；抛异常即中止写入，磁盘保持原样。
     """
+    idx_int = _parse_cache_index(index)
+    batch = _modify_cache_entries(
+        project_dir,
+        filename,
+        [idx_int],
+        lambda _idx, entry: mutate(entry),
+        action_label,
+        on_changes=(
+            (lambda targets, rel: on_change(targets[0][1], rel)) if on_change else None
+        ),
+    )
+    item = batch["items"][0]
+    if item["status"] == "failed":
+        raise ValueError(item["error"])
+    return {
+        "success": True,
+        "project_dir": batch["project_dir"],
+        "filename": batch["filename"],
+        "index": idx_int,
+        "changed": item["status"] == "changed",
+        "detail": item["detail"],
+        "problem_before": item.get("problem_before", ""),
+        "problem_after": item.get("problem_after", item.get("problem_before", "")),
+        "recheck_note": batch["recheck_note"],
+        "job_check": batch["job_check"],
+    }
+
+
+def mark_skip_check(
+    project_dir: str,
+    filename: str,
+    index: Any = None,
+    skip: bool = True,
+    indexes: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    """标记 / 取消翻译缓存条目的「跳过问题检查」（skip_check）。
+
+    单条传 index、批量传 indexes（同一缓存文件内多条），两者只能取其一。
+    标记后该条不再参与问题检测，已有 problem 标记经重建清除；取消后重检恢复检测。
+    批量返回聚合计数与逐条明细，单条业务失败不阻断其余条目。
+    """
+    resolved_skip = bool(skip)
+    action_label = "标记跳过检查" if resolved_skip else "取消跳过检查"
+    if indexes is not None:
+        if index is not None:
+            raise ValueError("index 与 indexes 只能提供一个（单条用 index，批量用 indexes）")
+        return _modify_cache_entries(
+            project_dir,
+            filename,
+            _normalize_cache_indexes(indexes),
+            lambda _idx, entry: _mutate_skip_check(entry, resolved_skip),
+            action_label,
+        )
+    if index is None:
+        raise ValueError("index 必填（批量请传 indexes 数组）")
     return _modify_cache_entry(
         project_dir,
         filename,
         index,
-        lambda entry: _mutate_skip_check(entry, bool(skip)),
-        "标记跳过检查" if skip else "取消跳过检查",
+        lambda entry: _mutate_skip_check(entry, resolved_skip),
+        action_label,
     )
 
 
@@ -975,12 +1192,30 @@ def _mutate_skip_check(entry: Dict[str, Any], skip: bool) -> Optional[str]:
     return "已取消 skip_check 标记（问题检测恢复覆盖该条）"
 
 
-def swap_alt_translation(project_dir: str, filename: str, index: Any) -> Dict[str, Any]:
-    """交换某条翻译缓存条目的备选译文（alt_dst）与当前译文（pre_dst），语义与校对页一致。
+def swap_alt_translation(
+    project_dir: str,
+    filename: str,
+    index: Any = None,
+    indexes: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    """交换翻译缓存条目的备选译文（alt_dst）与当前译文（pre_dst），语义与校对页一致。
 
+    单条传 index、批量传 indexes（同一缓存文件内多条），两者只能取其一。
     旧缓存条目仅有 pre_zh（无 pre_dst）时，交换会把旧 pre_zh 值写入 alt_dst——
     读侧 pre_dst 优先，行为与校对页对该类条目的处理存在历史格式差异，但不破坏数据。
     """
+    if indexes is not None:
+        if index is not None:
+            raise ValueError("index 与 indexes 只能提供一个（单条用 index，批量用 indexes）")
+        return _modify_cache_entries(
+            project_dir,
+            filename,
+            _normalize_cache_indexes(indexes),
+            lambda _idx, entry: _mutate_swap_alt(entry),
+            "交换备选译文",
+        )
+    if index is None:
+        raise ValueError("index 必填（批量请传 indexes 数组）")
     return _modify_cache_entry(
         project_dir,
         filename,
@@ -1012,6 +1247,7 @@ def _tool_mark_skip_check(arguments: Dict[str, Any]) -> Dict[str, Any]:
         str(arguments.get("filename", "") or "").strip(),
         arguments.get("index"),
         bool(arguments.get("skip", True)),
+        indexes=arguments.get("indexes"),
     )
 
 
@@ -1021,6 +1257,7 @@ def _tool_swap_alt_translation(arguments: Dict[str, Any]) -> Dict[str, Any]:
         project_dir,
         str(arguments.get("filename", "") or "").strip(),
         arguments.get("index"),
+        indexes=arguments.get("indexes"),
     )
 
 
@@ -1036,38 +1273,31 @@ def _enforce_cache_entry_h_gate(project_dir: str, rel: str, texts: List[str]) ->
     enforce_h_gate(project_dir, cache_filename=rel, texts=texts)
 
 
-def update_translation_entry(
-    project_dir: str,
-    filename: str,
-    index: Any,
-    fields: Dict[str, Any],
-) -> Dict[str, Any]:
-    """直接改写某条翻译缓存条目的可写译文字段。
-
-    可写字段与校对页一致：pre_dst（初译/主译文）、proofread_dst（校对译文）、
-    alt_dst（备选译文）。新值按真实换行（LF）归一；proofread_dst / alt_dst 传空串
-    表示移除该字段，pre_dst 传空串表示置为未翻译。改写后按 /cache/save 同口径
-    整文件重检 problem/post_dst_preview，并在写前做 H 硬门禁校验。
-
-    Raises:
-        ValueError: 字段不合法、条目不存在、翻译任务运行中/刚结束、命中 H 门禁。
-    """
+def _normalize_translation_fields(fields: Any, label: str = "fields") -> Dict[str, str]:
+    """校验并归一可写译文字段：键白名单 + 值必须字符串 + 真实换行（LF）归一。"""
     if not isinstance(fields, dict) or not fields:
         raise ValueError(
-            "fields 必须是非空对象，至少包含 "
+            f"{label} 必须是非空对象，至少包含 "
             f"{'/'.join(_CACHE_ENTRY_WRITABLE_FIELDS)} 之一"
         )
     unknown = sorted(set(fields) - set(_CACHE_ENTRY_WRITABLE_FIELDS))
     if unknown:
         raise ValueError(
-            f"不支持的字段: {', '.join(unknown)}；可写字段仅 "
+            f"{label} 含不支持的字段: {', '.join(unknown)}；可写字段仅 "
             f"{'/'.join(_CACHE_ENTRY_WRITABLE_FIELDS)}"
         )
     normalized: Dict[str, str] = {}
     for key, value in fields.items():
         if not isinstance(value, str):
-            raise ValueError(f"字段 {key} 的值必须是字符串（清空请传空串）")
+            raise ValueError(f"{label}.{key} 的值必须是字符串（清空请传空串）")
         normalized[key] = value.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized
+
+
+def _build_translation_mutate(
+    normalized: Dict[str, str], changed_values: List[str]
+) -> Callable[[Dict[str, Any]], Optional[str]]:
+    """按归一化字段构造单条 mutate；实际变化的新文本追加到 changed_values（供 H 门禁）。"""
 
     def _current(entry: Dict[str, Any], key: str) -> str:
         # canonical 键存在即以其为准（含空串，与 Cache.py 的 _cache_get 一致）；
@@ -1085,8 +1315,6 @@ def update_translation_entry(
             return False
         old = entry.get(legacy)
         return old is not None and str(old) != value
-
-    changed_values: List[str] = []
 
     def _mutate(entry: Dict[str, Any]) -> Optional[str]:
         changed_keys = [
@@ -1122,11 +1350,74 @@ def update_translation_entry(
             parts.append("已清理旧键 " + "、".join(cleanup_only))
         return "；".join(parts)
 
+    return _mutate
+
+
+def update_translation_entry(
+    project_dir: str,
+    filename: str,
+    index: Any = None,
+    fields: Any = None,
+    entries: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    """直接改写翻译缓存条目的可写译文字段。
+
+    单条传 index + fields、批量传 entries（同一缓存文件内多条），两者只能取其一；
+    entries 每项为 ``{"index": 1, "fields": {...}}``。
+    可写字段与校对页一致：pre_dst（初译/主译文）、proofread_dst（校对译文）、
+    alt_dst（备选译文）。新值按真实换行（LF）归一；proofread_dst / alt_dst 传空串
+    表示移除该字段，pre_dst 传空串表示置为未翻译。改写后按 /cache/save 同口径
+    整文件重检 problem/post_dst_preview（批量只重检一次），写前做 H 硬门禁校验。
+
+    Raises:
+        ValueError: 字段不合法、条目不存在、翻译任务运行中/刚结束、命中 H 门禁。
+    """
+    if entries is not None:
+        if index is not None or fields is not None:
+            raise ValueError("index/fields 与 entries 只能提供一种（批量用 entries）")
+        if not isinstance(entries, list) or not entries:
+            raise ValueError('entries 必须是非空数组，每项为 {"index": ..., "fields": {...}}')
+        if len(entries) > MCP_CACHE_BATCH_LIMIT:
+            raise ValueError(
+                f"entries 一次最多 {MCP_CACHE_BATCH_LIMIT} 条（本次 {len(entries)} 条），请分批调用"
+            )
+        plan: Dict[int, Dict[str, str]] = {}
+        order: List[int] = []
+        for i, item in enumerate(entries):
+            if not isinstance(item, dict):
+                raise ValueError(f"entries[{i}] 必须是对象")
+            if "index" not in item or "fields" not in item:
+                raise ValueError(f"entries[{i}] 必须同时含 index 与 fields")
+            idx_int = _parse_cache_index(item["index"])
+            if idx_int in plan:
+                raise ValueError(f"entries 中 index={idx_int} 重复；同一条目请合并为一项")
+            plan[idx_int] = _normalize_translation_fields(item["fields"], f"entries[{i}].fields")
+            order.append(idx_int)
+        changed_values: List[str] = []
+        mutators = {
+            idx_int: _build_translation_mutate(plan[idx_int], changed_values)
+            for idx_int in order
+        }
+        return _modify_cache_entries(
+            project_dir,
+            filename,
+            order,
+            lambda idx_int, entry: mutators[idx_int](entry),
+            "改写译文",
+            # 批量把所有新写入文本汇总后一次过门禁：任一命中即整批拒绝
+            on_changes=lambda _targets, rel: _enforce_cache_entry_h_gate(
+                project_dir, rel, changed_values
+            ),
+        )
+    if index is None:
+        raise ValueError("index 必填（批量请传 entries 数组）")
+    normalized = _normalize_translation_fields(fields)
+    changed_values: List[str] = []
     return _modify_cache_entry(
         project_dir,
         filename,
         index,
-        _mutate,
+        _build_translation_mutate(normalized, changed_values),
         "改写译文",
         # 只校验本次新写入的文本；文件维度覆盖 target 所在的 H 区间
         on_change=lambda _entry, rel: _enforce_cache_entry_h_gate(
@@ -1142,6 +1433,7 @@ def _tool_update_translation_entry(arguments: Dict[str, Any]) -> Dict[str, Any]:
         str(arguments.get("filename", "") or "").strip(),
         arguments.get("index"),
         arguments.get("fields"),
+        entries=arguments.get("entries"),
     )
 
 
@@ -1538,18 +1830,14 @@ _METADATA_SUBDIRS = {
 }
 
 
-def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, Any]) -> Dict[str, Any]:
-    """原子写入单文件元数据；kind 仅支持 filemeta / batchmeta。
+MCP_METADATA_BATCH_LIMIT = 200
 
-    走本模块自带的 .tmp + os.replace 原子写（HTTP 侧元数据端点同为该原子写口径），
-    并复用与 HTTP 端点同口径的文件名校验。
-    plotroute 必须走 write_route_map（mermaid 同口径校验 + 字段合并），globalprompt
-    由流水线生成——两者在此拒绝，避免绕过路线图校验的弱化写路径。
+
+def _resolve_metadata_target(project_dir: str, kind: str, filename: Any) -> Tuple[str, str]:
+    """校验 kind/filename、解析真实 meta 文件名并过 H 门禁；返回 (real_name, path)。
+
+    解析与 H 校验先于落盘，批量写入据此在写任何文件前完成整批预检。
     """
-    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
-    validate_project_dir(project_dir)
-    if not isinstance(entry, dict):
-        raise ValueError("entry 必须是 JSON 对象")
     if kind not in _METADATA_SUBDIRS:
         raise ValueError(f"未知 kind: {kind}（可选 filemeta/batchmeta；剧情路线图请走 write_route_map）")
     name = str(filename or "").strip()
@@ -1571,16 +1859,98 @@ def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, 
         )
     # H 门禁用解析后的真实输入名，保证全角文件名在半角输入下同样能判定 H 区间
     enforce_h_gate(project_dir, cache_filename=real_name)
-    path = os.path.join(meta_dir, f"{real_name}{suffix}")
+    return real_name, os.path.join(meta_dir, f"{real_name}{suffix}")
 
+
+def _write_metadata_file(path: str, entry: Dict[str, Any]) -> int:
+    """原子写单个元数据文件（.tmp + os.replace），返回落盘字节数。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(entry, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, path)
-    size = os.path.getsize(path)
+    return os.path.getsize(path)
+
+
+def write_metadata(project_dir: str, kind: str, filename: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+    """原子写入单文件元数据；kind 仅支持 filemeta / batchmeta。
+
+    走本模块自带的 .tmp + os.replace 原子写（HTTP 侧元数据端点同为该原子写口径），
+    并复用与 HTTP 端点同口径的文件名校验。
+    plotroute 必须走 write_route_map（mermaid 同口径校验 + 字段合并），globalprompt
+    由流水线生成——两者在此拒绝，避免绕过路线图校验的弱化写路径。
+    """
+    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
+    validate_project_dir(project_dir)
+    if not isinstance(entry, dict):
+        raise ValueError("entry 必须是 JSON 对象")
+    real_name, path = _resolve_metadata_target(project_dir, kind, filename)
+    size = _write_metadata_file(path, entry)
     LOGGER.info(f"[mcp] 元数据已写入 kind={kind} ({size} 字节)")
     return {"success": True, "kind": kind, "filename": real_name, "bytes": size}
+
+
+def write_metadata_batch(project_dir: str, kind: str, items: Any) -> Dict[str, Any]:
+    """批量原子写多个文件的元数据（同一 kind），返回聚合计数与逐文件明细。
+
+    整批预检：结构、文件名合法性、NFKC 解析与 H 门禁全部通过后才开始落盘——
+    任一项非法（含 H 命中）即整批拒绝，不写任何文件。落盘阶段的单文件 OSError
+    记入 failed 继续处理其余文件。
+    """
+    # 自身兜底：本函数是公开入口，直接调用者不应绕过 L3 项目校验
+    validate_project_dir(project_dir)
+    if not isinstance(items, list) or not items:
+        raise ValueError('items 必须是非空数组，每项为 {"filename": ..., "entry": {...}}')
+    if len(items) > MCP_METADATA_BATCH_LIMIT:
+        raise ValueError(
+            f"items 一次最多 {MCP_METADATA_BATCH_LIMIT} 个文件（本次 {len(items)} 个），请分批调用"
+        )
+    plans: List[Tuple[str, str, Dict[str, Any]]] = []
+    seen: Set[str] = set()
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"items[{i}] 必须是对象")
+        entry = item.get("entry")
+        if not isinstance(entry, dict):
+            raise ValueError(f"items[{i}].entry 必须是 JSON 对象（要写入的完整元数据）")
+        # 预检可序列化：落盘阶段只兜 OSError，序列化错误必须在这里整批拒
+        try:
+            json.dumps(entry, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"items[{i}].entry 无法序列化为 JSON：{exc}")
+        if not str(item.get("filename", "") or "").strip():
+            raise ValueError(f"items[{i}].filename 必填（不含扩展名）")
+        real_name, path = _resolve_metadata_target(project_dir, kind, item.get("filename", ""))
+        # 同名文件写两次会让前一次结果被静默覆盖，按参数错误拒绝
+        if real_name in seen:
+            raise ValueError(f"items 中 filename={real_name} 重复；同一文件请合并为一项")
+        seen.add(real_name)
+        plans.append((real_name, path, entry))
+
+    results: List[Dict[str, Any]] = []
+    written = 0
+    for real_name, path, entry in plans:
+        try:
+            size = _write_metadata_file(path, entry)
+        except OSError as exc:
+            LOGGER.warning(f"[mcp] 批量写元数据失败：{real_name}: {exc}")
+            results.append({"filename": real_name, "status": "failed", "error": str(exc)})
+            continue
+        written += 1
+        results.append({"filename": real_name, "status": "written", "bytes": size})
+    failed_count = len(plans) - written
+    LOGGER.info(
+        f"[mcp] 批量写元数据 kind={kind}：请求 {len(plans)} / 写入 {written} / 失败 {failed_count}"
+    )
+    return {
+        "success": True,
+        "kind": kind,
+        "requested": len(plans),
+        "written_count": written,
+        "failed_count": failed_count,
+        "partial": failed_count > 0,
+        "items": results,
+    }
 
 
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -2441,6 +2811,18 @@ MCP_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
 ]
 
+# 缓存条目译文字段 schema：单条 fields 与批量 entries[].fields 共用同一份定义（只读共享）
+_CACHE_ENTRY_FIELDS_PROP: Dict[str, Any] = {
+    "type": "object",
+    "description": "要改写的字段对象，至少包含一项；值均为字符串",
+    "properties": {
+        "pre_dst": {"type": "string", "description": "初译/主译文；空串=未翻译"},
+        "proofread_dst": {"type": "string", "description": "校对译文；空串=清除"},
+        "alt_dst": {"type": "string", "description": "备选译文；空串=清除"},
+    },
+    "additionalProperties": False,
+}
+
 _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
     _def(
         "galtransl_write_route_map",
@@ -2460,8 +2842,10 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_save_metadata",
-        "原子写入单文件元数据，kind=filemeta（文件级）或 batchmeta（批次级），均需 filename（不含扩展名）。"
-        "entry 为要写入的完整 JSON 对象（整体覆盖）。"
+        "原子写入元数据，kind=filemeta（文件级）或 batchmeta（批次级）。"
+        "单条传 filename（不含扩展名）+ entry（要写入的完整 JSON 对象，整体覆盖）；"
+        "批量传 items（每项 {filename, entry}，最多 200 个文件，同一 kind）。"
+        "批量会先整批预检（文件名、NFKC 解析与 H 门禁），任一项非法即整批不写。"
         "剧情路线图请走 galtransl_write_route_map（带 mermaid 校验）；全局分析由流水线生成，不开放写入。",
         {
             "project_dir": _PROJECT_PROP,
@@ -2470,10 +2854,23 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
                 "enum": ["filemeta", "batchmeta"],
                 "description": "元数据种类",
             },
-            "filename": {"type": "string", "description": "必填，不含扩展名"},
-            "entry": {"type": "object", "description": "要写入的完整元数据对象"},
+            "filename": {"type": "string", "description": "单条：文件名（不含扩展名，与 items 二选一）"},
+            "entry": {"type": "object", "description": "单条：要写入的完整元数据对象（与 items 二选一）"},
+            "items": {
+                "type": "array",
+                "maxItems": MCP_METADATA_BATCH_LIMIT,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {"type": "string", "description": "文件名（不含扩展名）"},
+                        "entry": {"type": "object", "description": "要写入的完整元数据对象"},
+                    },
+                    "required": ["filename", "entry"],
+                },
+                "description": "批量：每项含 filename 与 entry（最多 200 个文件，与 filename/entry 二选一）",
+            },
         },
-        ["project_dir", "kind", "entry"],
+        ["project_dir", "kind"],
         kind="write",
     ),
     _def(
@@ -2516,58 +2913,81 @@ _WRITE_TOOL_DEFS: List[Dict[str, Any]] = [
     ),
     _def(
         "galtransl_mark_skip_check",
-        "把某条翻译缓存条目标记为「跳过问题检查」（skip_check=true，默认）或取消标记（skip=false）。"
+        "把翻译缓存条目标记为「跳过问题检查」（skip_check=true，默认）或取消标记（skip=false）。"
         "标记后该条不再参与问题检测、已有 problem 标记被清除；取消后按新译文重检恢复。"
-        "适用于译文确认无误但检测持续误报的条目。修改后按校对页保存同口径重检该文件的问题标注。",
+        "适用于译文确认无误但检测持续误报的条目。"
+        "单条传 index，批量传 indexes（同一缓存文件内多条，最多 500 条，二选一）；"
+        "批量只读一次文件、只重检一次、只生成一份快照，单条失败（index 不存在）记入 failed 不阻断其余条目。"
+        "修改后按校对页保存同口径重检该文件的问题标注。",
         {
             "project_dir": _PROJECT_PROP,
             "filename": {"type": "string", "description": "相对 transl_cache 的缓存文件名（如 pass3_cache/xx.json）"},
-            "index": {"type": "integer", "description": "缓存条目 index"},
+            "index": {"type": "integer", "description": "单条：缓存条目 index（与 indexes 二选一）"},
+            "indexes": {
+                "type": "array",
+                "maxItems": MCP_CACHE_BATCH_LIMIT,
+                "items": {"type": "integer"},
+                "description": "批量：缓存条目 index 数组（同一文件内，最多 500 条，与 index 二选一；重复项自动去重）",
+            },
             "skip": {
                 "type": "boolean",
                 "description": "true=标记跳过（默认），false=取消跳过",
             },
         },
-        ["project_dir", "filename", "index"],
+        ["project_dir", "filename"],
         kind="write",
     ),
     _def(
         "galtransl_swap_alt_translation",
-        "把某条翻译缓存条目的备选译文（alt_dst）与当前译文（pre_dst）交换，语义与校对页「交换备选」一致，"
+        "把翻译缓存条目的备选译文（alt_dst）与当前译文（pre_dst）交换，语义与校对页「交换备选」一致，"
         "交换后按新译文重检问题标注。仅当条目有 alt_dst 时可用"
-        "（备选译文由后处理轮 improve/brfix/jpfix/banfix/fix 生成）。",
+        "（备选译文由后处理轮 improve/brfix/jpfix/banfix/fix 生成）。"
+        "单条传 index，批量传 indexes（同一缓存文件内多条，最多 500 条，二选一）；"
+        "批量只读一次、只重检一次、只生成一份快照，无 alt_dst 的条目记入 failed 不阻断其余条目。",
         {
             "project_dir": _PROJECT_PROP,
             "filename": {"type": "string", "description": "相对 transl_cache 的缓存文件名（如 pass3_cache/xx.json）"},
-            "index": {"type": "integer", "description": "缓存条目 index"},
+            "index": {"type": "integer", "description": "单条：缓存条目 index（与 indexes 二选一）"},
+            "indexes": {
+                "type": "array",
+                "maxItems": MCP_CACHE_BATCH_LIMIT,
+                "items": {"type": "integer"},
+                "description": "批量：缓存条目 index 数组（同一文件内，最多 500 条，与 index 二选一；重复项自动去重）",
+            },
         },
-        ["project_dir", "filename", "index"],
+        ["project_dir", "filename"],
         kind="write",
     ),
     _def(
         "galtransl_update_translation_entry",
-        "直接改写某条翻译缓存条目的可写译文字段，语义与校对页编辑并保存一致。"
+        "直接改写翻译缓存条目的可写译文字段，语义与校对页编辑并保存一致。"
+        "单条传 index + fields，批量传 entries（同一文件内多条，最多 500 条，二选一；每项 {index, fields}）。"
         "可写字段：pre_dst（初译/主译文）、proofread_dst（校对译文）、alt_dst（备选译文）；"
         "值为字符串，新值按真实换行（LF）归一。proofread_dst/alt_dst 传空串表示清除该字段，"
         "pre_dst 传空串表示置为未翻译；未列出的字段保持不变。"
-        "改写后按 /cache/save 同口径整份文件重检 problem/post_dst_preview；"
+        "改写后按 /cache/save 同口径整份文件重检 problem/post_dst_preview（批量只重检一次）；"
+        "单条失败（index 不存在）记入 failed 不阻断其余条目，但 H 门禁命中任一条目即整批拒绝。"
         "受 H 硬门禁约束（目标缓存文件含 H 区间，或新译文命中 H 词库时拒绝），翻译任务运行中/刚结束时拒绝。",
         {
             "project_dir": _PROJECT_PROP,
             "filename": {"type": "string", "description": "相对 transl_cache 的缓存文件名（如 pass3_cache/xx.json）"},
-            "index": {"type": "integer", "description": "缓存条目 index"},
-            "fields": {
-                "type": "object",
-                "description": "要改写的字段对象，至少包含一项；值均为字符串",
-                "properties": {
-                    "pre_dst": {"type": "string", "description": "初译/主译文；空串=未翻译"},
-                    "proofread_dst": {"type": "string", "description": "校对译文；空串=清除"},
-                    "alt_dst": {"type": "string", "description": "备选译文；空串=清除"},
+            "index": {"type": "integer", "description": "单条：缓存条目 index（与 entries 二选一）"},
+            "fields": _CACHE_ENTRY_FIELDS_PROP,
+            "entries": {
+                "type": "array",
+                "maxItems": MCP_CACHE_BATCH_LIMIT,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer", "description": "缓存条目 index"},
+                        "fields": _CACHE_ENTRY_FIELDS_PROP,
+                    },
+                    "required": ["index", "fields"],
                 },
-                "additionalProperties": False,
+                "description": "批量：每项含 index 与 fields（同一文件内，最多 500 条，与 index/fields 二选一）",
             },
         },
-        ["project_dir", "filename", "index", "fields"],
+        ["project_dir", "filename"],
         kind="write",
     ),
     _def(

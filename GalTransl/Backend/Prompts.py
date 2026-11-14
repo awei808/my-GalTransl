@@ -49,7 +49,7 @@ def _build_json_round_prompt(task_block: str, *, with_info: bool = True,
 FORFILEMETA_SYSTEM = "你是 Galgame 剧本分析助手，负责从剧本文件中提取角色、服装、剧情摘要与场景标签，输出严格的 JSON 摘要。"
 FORBATCHMETA_SYSTEM = "你是 Galgame 剧本结构分析助手，负责按剧情自然边界把剧本划分为翻译批次，并标注各批次的翻译元信息。"
 FORGLOBAL_SYSTEM = "你是 Galgame 全局剧本分析专家，负责输出整体剧情、角色、世界观与行文风格的全局分析报告。"
-FORIMPROVE_SYSTEM = "你是 Galgame 译文质检专家，只对确有明显改进空间的句子给出更好的译文，不为改而改，不因风格偏好随意改动已正确的译文。"
+FORIMPROVE_SYSTEM = "你是 Galgame 译文质检专家，只对确有明显改进空间的句子给出更好的译文，不为改而改，不因风格偏好随意改动已正确的译文。输出的 better 必须是目标语言译文：不得出现原文没有的日文假名，不得照抄原文或当前译文。"
 FORBR_SYSTEM = "你是 Galgame 译文换行位置修复专家，在不改变句子原意与翻译规范的前提下修复不合规的换行位置，并补正必要的标点与表述。"
 FORPLOTROUTE_SYSTEM = "你是 Galgame 剧情结构分析专家，负责依据文件剧情摘要规划剧情路线图，并输出语法合法的 mermaid 源码。"
 FORPLOTROUTE_SYSTEM_ROUTES_ONLY = "你是 Galgame 剧情结构分析专家，负责按已确定的剧情路线划分，为每条路线汇总剧情摘要。"
@@ -131,6 +131,12 @@ _IMPROVE_TASK = """<process_requirements>
 3. 只输出需要改进的句子，行数可少于输入行数；若整批无需改进，输出空代码块即可
 
 输出配方：<hash_anchor>|{"id": int, (可选)"name": string, "better": string}
+
+### 输出合法性（硬性约束，不满足的句子不要输出）
+1. `better` 必须是 [TargetLang] 译文；[TargetLang] 不是日文时不得出现 `src`/`dst` 中没有的日文假名（原文已保留的专名、术语可原样沿用）。
+2. 不得把 `src` 原样作为 `better` 输出，也不得输出与 `dst` 完全相同的文本。
+3. 不得输出空值、占位符（如 `...`、`dst`、`better`）或只有标点/控制码的内容。
+4. `better` 内不得夹带哈希锚点、JSON 片段或任何解释性文字。
 
 ### 质量标准（逐条对照检查）
 1. 准确性：无错译、漏译、过度意译；专有名词、数字、称谓准确。

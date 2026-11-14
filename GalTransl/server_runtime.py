@@ -21,6 +21,7 @@ from GalTransl import (
     LOGGER,
     PASS1_CACHE_DIR,
     PASS2_CACHE_DIR,
+    PASS3_CACHE_DIR,
 )
 from GalTransl.Utils import get_file_list
 
@@ -55,6 +56,162 @@ def _has_newer_release(current_version: str, latest_version: str | None) -> bool
 
 def _normalize_project_dir(project_dir: str) -> str:
     return str(Path(project_dir).resolve())
+
+
+def _read_cache_index_span(path: str) -> tuple[int, int]:
+    """读缓存分片条目 index 的最小/最大值；读不出时返回 (-1, -1)（不参与按序号命中）。
+
+    取值口径与 server_cache._is_numeric_index 一致（int 或纯数字字符串），
+    额外排除 bool（bool 是 int 子类，会被误当成 0/1）。
+    """
+    import orjson
+
+    try:
+        with open(path, "rb") as f:
+            data = orjson.loads(f.read())
+    except Exception:
+        return -1, -1
+    if not isinstance(data, list):
+        return -1, -1
+    values = []
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        raw = row.get("index")
+        if isinstance(raw, bool):
+            continue
+        if isinstance(raw, int):
+            values.append(raw)
+        elif isinstance(raw, str) and raw.isdigit():
+            values.append(int(raw))
+    if not values:
+        return -1, -1
+    return min(values), max(values)
+
+
+def _collect_shard_spans(
+    cache_dirs: list[tuple[str, str]], stem: str
+) -> list[tuple[int, int, str]]:
+    """收集 ``<stem>_<N>.json`` 分片及其 index 区间。
+
+    按 cache_dirs 顺序分组、组内按分片序号（数字）升序，整体不保证全局有序。
+    返回 ``[(lo, hi, 缓存相对路径), ...]``；区间读不出的分片记为 (-1, -1)，
+    仍可作为最后兜底目标。cache_dirs 为 ``[(目录, 相对路径前缀), ...]``，
+    前缀用于拼出与 ``/cache/<rel>`` 一致的口径（pass3_cache/ 或空）。
+    """
+    spans: list[tuple[int, int, str]] = []
+    pattern = f"{stem}_"
+    for directory, prefix in cache_dirs:
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        shards: list[tuple[int, str]] = []
+        for name in names:
+            if not name.startswith(pattern) or not name.endswith(".json"):
+                continue
+            suffix = name[len(pattern) : -len(".json")]
+            if suffix.isdecimal():
+                shards.append((int(suffix), name))
+        for _num, name in sorted(shards):
+            low, high = _read_cache_index_span(os.path.join(directory, name))
+            spans.append((low, high, f"{prefix}{name}"))
+    return spans
+
+
+def _resolve_fix_report_cache_path(
+    project_dir: str,
+    filename: str,
+    index: int | None = None,
+    spans_memo: dict[str, list[tuple[int, int, str]]] | None = None,
+) -> str:
+    """把修复报告里的流水线文件名解析为缓存相对路径（供前端跳转校对页）。
+
+    修复轮记录的是输入相对名（子目录以 ``-}`` 连接，如 ``a-}b.txt``），而校对页
+    的 activeFilePath 要求「pass3_cache/<缓存文件名>」。候选依次为：原样 / ``-}``
+    形式 / 两者的 ±``.json``（去重后先查 pass3_cache、再查旧布局的 transl_cache 根）。
+    全部落空时按分片缓存兜底：大文件切成 ``<file_name>_<N>.json``（file_name 本身
+    可能已带 ``.json``），此时按条目的 index 选分片。注意分片序号只在输入带显式
+    index 时是全局行号，否则每片从 1 重计、区间会重叠，可能仍落在首片——属切分
+    缓存的既有口径限制。解析不到返回空串，调用方回退原始文件名。
+
+    spans_memo 传入可变 dict 可跨调用复用分片区间探测结果（每次仍要 listdir）。
+    """
+    name = str(filename or "").strip().replace("\\", "/")
+    if not name:
+        return ""
+    parts = [part for part in name.split("/") if part not in ("", ".")]
+    # 报告文件可被手工编辑：绝对路径/目录穿越一律不解析（与 /cache/ 端点同口径）
+    if not parts or name.startswith("/") or ":" in parts[0] or ".." in parts:
+        return ""
+    cache_root = os.path.join(project_dir, CACHE_FOLDERNAME)
+    pass3_dir = os.path.join(cache_root, PASS3_CACHE_DIR)
+    name = "/".join(parts)
+    base = name.replace("/", "-}")
+    candidates = dict.fromkeys(
+        [name, base]
+        + [
+            value[:-5] if value.endswith(".json") else f"{value}.json"
+            for value in (name, base)
+        ]
+    )
+    for candidate in candidates:
+        if candidate and os.path.isfile(os.path.join(pass3_dir, candidate)):
+            return f"{PASS3_CACHE_DIR}/{candidate}"
+    for candidate in candidates:
+        if candidate and os.path.isfile(os.path.join(cache_root, candidate)):
+            return candidate
+    cache_dirs = [(pass3_dir, f"{PASS3_CACHE_DIR}/"), (cache_root, "")]
+    # 分片名 = <file_name>_<N>.json，file_name 可能已带 .json（如 x.txt.json_0.json）
+    spans = None if spans_memo is None else spans_memo.get(name)
+    if spans is None:
+        spans = _collect_shard_spans(cache_dirs, base)
+        if spans_memo is not None:
+            spans_memo[name] = spans
+    if not spans and base.endswith(".json") and len(base) > len(".json"):
+        # 备用 stem（剥掉 .json）可能命中另一个输入文件的缓存（如 x.txt_0.json），
+        # 故只采纳 index 确实落在其分片区间内的结果，宁可返回空让前端回退原始名
+        alt = _collect_shard_spans(cache_dirs, base[:-5])
+        if index is not None:
+            spans = [item for item in alt if item[0] <= index <= item[1]]
+    if not spans:
+        return ""
+    if index is not None:
+        for low, high, rel in spans:
+            if low <= index <= high:
+                return rel
+    return spans[0][2]
+
+
+def backfill_fix_report_cache_paths(project_dir: str, report: Dict[str, Any]) -> Dict[str, Any]:
+    """给旧版持久化报告就地补齐 cache_path（旧报告没有该字段，导致点击跳不动）。
+
+    仅补缺失字段，解析不到保持空（前端回退原始文件名）；返回同一 dict。
+    """
+    groups = report.get("files")
+    if not isinstance(groups, list):
+        return report
+    memo: dict[tuple[str, int | None], str] = {}
+    spans_memo: dict[str, list[tuple[int, int, str]]] = {}
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        entries = group.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("cache_path"):
+                continue
+            name = str(entry.get("filename") or group.get("filename") or "")
+            index = entry.get("index")
+            key = (name, index if isinstance(index, int) else None)
+            if key not in memo:
+                memo[key] = _resolve_fix_report_cache_path(
+                    project_dir, name, key[1], spans_memo
+                )
+            if memo[key]:
+                entry["cache_path"] = memo[key]
+    return report
 
 
 class _ConcurrentLimitError(ValueError):
@@ -222,6 +379,9 @@ class RuntimeState:
     fix_report_total: int = 0
     fix_report_truncated: bool = False
     fix_report_files: dict[str, dict] = field(default_factory=dict)
+    # 修复报告跳转用缓存路径：(文件名, 序号) -> 缓存相对路径；分片区间按文件名记忆
+    fix_report_cache_paths: dict[tuple[str, int | None], str] = field(default_factory=dict)
+    fix_report_shard_spans: dict[str, list[tuple[int, int, str]]] = field(default_factory=dict)
 
 
 class RuntimeRegistry:
@@ -447,6 +607,19 @@ class RuntimeRegistry:
             if state is None or state.fix_report_finished_at:
                 return
             filename = str(entry.get("filename", "") or "未知文件")
+            # 缓存相对路径供前端跳转校对页：按 (文件名, 序号) 记忆，
+            # 分片缓存的区间探测按文件名记忆（一次 listdir + 读取），后续命中内存
+            index = entry.get("index")
+            memo_key = (filename, index if isinstance(index, int) else None)
+            if memo_key not in state.fix_report_cache_paths:
+                state.fix_report_cache_paths[memo_key] = (
+                    _resolve_fix_report_cache_path(
+                        project_dir,
+                        filename,
+                        memo_key[1],
+                        state.fix_report_shard_spans,
+                    )
+                )
             file_report = state.fix_report_files.get(filename)
             if file_report is None:
                 file_report = {"count": 0, "entries": [], "truncated": False}
@@ -457,7 +630,11 @@ class RuntimeRegistry:
                 len(file_report["entries"]) < FIX_REPORT_PER_FILE_LIMIT
                 and state.fix_report_total <= FIX_REPORT_TOTAL_LIMIT
             ):
-                file_report["entries"].append(dict(entry))
+                stored = dict(entry)
+                cache_path = state.fix_report_cache_paths.get(memo_key) or ""
+                if cache_path:
+                    stored["cache_path"] = cache_path
+                file_report["entries"].append(stored)
             else:
                 file_report["truncated"] = True
                 state.fix_report_truncated = True

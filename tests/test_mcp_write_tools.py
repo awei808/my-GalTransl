@@ -14,6 +14,7 @@ from unittest import mock
 
 from GalTransl.ConfigHelper import detect_config_file
 from GalTransl.mcp_tools import (
+    MCP_METADATA_BATCH_LIMIT,
     MCP_TOOL_DEFS,
     _H_DENY_MESSAGE,
     _READ_ONLY_TOOL_NAMES,
@@ -174,6 +175,175 @@ class MetadataWriteToolTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 with self.assertRaises(ValueError):
                     write_metadata(self.project_dir, kind, "", {"mermaid": "不是 mermaid"})
+
+
+class MetadataBatchWriteToolTests(unittest.TestCase):
+    """save_metadata 批量：整批预检（含 H 门禁）通过才落盘，落盘阶段单文件失败不阻断。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="gt_metabatch_")
+        _make_project(self.project_dir)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project_dir, ignore_errors=True)
+
+    def _meta_path(self, sub_dir: str, name: str, suffix: str) -> str:
+        return os.path.join(self.project_dir, "transl_cache", sub_dir, f"{name}{suffix}")
+
+    def test_batch_writes_multiple_files(self) -> None:
+        result = call_mcp_tool(
+            "galtransl_save_metadata",
+            {
+                "project_dir": self.project_dir,
+                "kind": "filemeta",
+                "items": [
+                    {"filename": "01_a", "entry": {"角色": ["琴美"]}},
+                    {"filename": "02_b", "entry": {"角色": ["渚"]}},
+                ],
+            },
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["written_count"], 2)
+        self.assertFalse(result["partial"])
+        for name, expected in (("01_a", {"角色": ["琴美"]}), ("02_b", {"角色": ["渚"]})):
+            path = self._meta_path("pass1_cache", name, ".meta.json")
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(json.load(f), expected)
+            self.assertFalse(os.path.isfile(path + ".tmp"))
+
+    def test_batch_rejects_duplicate_filename(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {
+                    "project_dir": self.project_dir,
+                    "kind": "filemeta",
+                    "items": [
+                        {"filename": "01_a", "entry": {}},
+                        {"filename": "01_a", "entry": {"x": 1}},
+                    ],
+                },
+            )
+        self.assertIn("重复", str(ctx.exception))
+
+    def test_batch_requires_entry_object(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {
+                    "project_dir": self.project_dir,
+                    "kind": "filemeta",
+                    "items": [{"filename": "01_a", "entry": [1, 2]}],
+                },
+            )
+        self.assertIn("entry 必须是 JSON 对象", str(ctx.exception))
+
+    def test_batch_h_gate_rejects_whole_batch(self) -> None:
+        os.makedirs(os.path.join(self.project_dir, "transl_cache", "pass3_cache"), exist_ok=True)
+        os.makedirs(os.path.join(self.project_dir, "transl_cache", "pass2_cache"), exist_ok=True)
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "pass3_cache", "01_h.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump([], f)
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "pass2_cache", "01_h.json.batch.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump({"批次": [{"区间": [1, 5], "h": 0.95}]}, f)
+        with self.assertRaises(ValueError) as ctx:
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {
+                    "project_dir": self.project_dir,
+                    "kind": "batchmeta",
+                    "items": [
+                        {"filename": "01_a", "entry": {"视角": "第三人称"}},
+                        {"filename": "01_h", "entry": {"视角": "第三人称"}},
+                    ],
+                },
+            )
+        self.assertEqual(str(ctx.exception), _H_DENY_MESSAGE)
+        # 整批预检在落盘前完成：未命中门禁的文件也不得写入
+        self.assertFalse(
+            os.path.isfile(self._meta_path("pass2_cache", "01_a", ".batch.json"))
+        )
+
+    def test_batch_rejects_unserializable_entry(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {
+                    "project_dir": self.project_dir,
+                    "kind": "filemeta",
+                    "items": [{"filename": "01_a", "entry": {"x": object()}}],
+                },
+            )
+        self.assertIn("无法序列化为 JSON", str(ctx.exception))
+
+    def test_batch_continues_after_single_write_error(self) -> None:
+        from GalTransl import mcp_tools
+
+        real_write = mcp_tools._write_metadata_file
+        calls = {"n": 0}
+
+        def flaky(path: str, entry: dict) -> int:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("磁盘已满")
+            return real_write(path, entry)
+
+        with mock.patch("GalTransl.mcp_tools._write_metadata_file", side_effect=flaky):
+            result = call_mcp_tool(
+                "galtransl_save_metadata",
+                {
+                    "project_dir": self.project_dir,
+                    "kind": "filemeta",
+                    "items": [
+                        {"filename": "01_a", "entry": {}},
+                        {"filename": "02_b", "entry": {}},
+                    ],
+                },
+            )
+        self.assertEqual(result["written_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertTrue(result["partial"])
+        self.assertTrue(os.path.isfile(self._meta_path("pass1_cache", "02_b", ".meta.json")))
+
+    def test_batch_limit_enforced(self) -> None:
+        items = [{"filename": f"f{i}", "entry": {}} for i in range(MCP_METADATA_BATCH_LIMIT + 1)]
+        with self.assertRaises(ValueError) as ctx:
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {"project_dir": self.project_dir, "kind": "filemeta", "items": items},
+            )
+        self.assertIn("最多", str(ctx.exception))
+
+    def test_batch_rejects_mixed_items_and_single_args(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            call_mcp_tool(
+                "galtransl_save_metadata",
+                {
+                    "project_dir": self.project_dir,
+                    "kind": "filemeta",
+                    "filename": "01_a",
+                    "entry": {},
+                    "items": [{"filename": "02_b", "entry": {}}],
+                },
+            )
+        self.assertIn("只能提供一种", str(ctx.exception))
+
+    def test_schema_exposes_items_and_drops_entry_requirement(self) -> None:
+        schema = next(
+            d for d in MCP_TOOL_DEFS if d["name"] == "galtransl_save_metadata"
+        )["input_schema"]
+        self.assertIn("items", schema["properties"])
+        # 单条与批量二选一，entry 不能再作为必填项（否则批量调用会被客户端拦下）
+        self.assertNotIn("entry", schema["required"])
+        self.assertIn("kind", schema["required"])
 
 
 class HGateTests(unittest.TestCase):

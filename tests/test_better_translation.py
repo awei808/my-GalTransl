@@ -272,6 +272,78 @@ class BuildImproveFirstRoundTests(unittest.TestCase):
         self.assertNotIn("<plot_metadata>", content)
 
 
+class ImproveIllegalBetterTests(unittest.TestCase):
+    """改进轮合法性校验：拦原文没有的日文假名，保留原文已有的专名假名。"""
+
+    def setUp(self) -> None:
+        self.t = make_translator()
+
+    def _parse(self, src: str, dst: str, better: str) -> tuple:
+        tr = CSentense(src, index=1)
+        tr.pre_dst = dst
+        tr.alt_dst = ""
+        resp = json.dumps({"id": 1, "better": better}, ensure_ascii=False)
+        success, found = self.t._parse_fix_response(resp, [tr], "")
+        return success, found, tr
+
+    def test_introduced_kana_rejected(self) -> None:
+        # 原文没有的假名（です）出现在 better 里 → 判为残留日文，整条丢弃；
+        # 仍计入 found_count，整批全非法时由 batch_translate 的退化分支重置对话
+        success, found, tr = self._parse(
+            "こんにちは、元気？", "你好，还好吗？", "你好です，还好吗？"
+        )
+        self.assertEqual(success, 0)
+        self.assertEqual(found, 1)
+        self.assertEqual(tr.alt_dst, "")
+
+    def test_kana_present_in_source_allowed(self) -> None:
+        # 原文已有的专名/术语保留日文不算非法，不应误杀
+        success, _found, tr = self._parse("チョコを食べる", "吃巧克力", "吃「チョコ」")
+        self.assertEqual(success, 1)
+        self.assertEqual(tr.alt_dst, "吃「チョコ」")
+
+    def test_kana_kept_in_current_dst_allowed(self) -> None:
+        # 人工校对后有意保留的假名（当前译文里已有）同样放行
+        success, _found, tr = self._parse("カフェに行く", "去カフェ", "去カフェ坐坐")
+        self.assertEqual(success, 1)
+        self.assertEqual(tr.alt_dst, "去カフェ坐坐")
+
+    def test_japanese_target_skips_kana_check(self) -> None:
+        # 目标语言本身是日文时，假名不构成非法值
+        self.t.target_lang = "Japanese"
+        success, _found, tr = self._parse("こんにちは", "こんにちは", "こんにちは！")
+        self.assertEqual(success, 1)
+        self.assertEqual(tr.alt_dst, "こんにちは！")
+
+    def test_punctuation_only_rejected(self) -> None:
+        success, found, tr = self._parse("こんにちは", "你好", "……！")
+        self.assertEqual(success, 0)
+        self.assertEqual(found, 1)
+        self.assertEqual(tr.alt_dst, "")
+
+    def test_bare_placeholder_rejected(self) -> None:
+        # 模型只回填了键名（占位符）而非译文
+        success, found, tr = self._parse("こんにちは", "你好", "dst")
+        self.assertEqual(success, 0)
+        self.assertEqual(found, 1)
+        self.assertEqual(tr.alt_dst, "")
+
+    def test_plain_new_chinese_accepted(self) -> None:
+        success, _found, tr = self._parse("こんにちは", "你好", "你好呀")
+        self.assertEqual(success, 1)
+        self.assertEqual(tr.alt_dst, "你好呀")
+
+    def test_prompt_declares_legality_constraints(self) -> None:
+        from GalTransl.Backend.Prompts import (
+            FORGAL_JSON_IMPROVE_PROMPT,
+            FORIMPROVE_SYSTEM,
+        )
+
+        self.assertIn("输出合法性", FORGAL_JSON_IMPROVE_PROMPT)
+        self.assertIn("日文假名", FORGAL_JSON_IMPROVE_PROMPT)
+        self.assertIn("日文假名", FORIMPROVE_SYSTEM)
+
+
 class BatchTranslateImproveTests(unittest.IsolatedAsyncioTestCase):
     def _make_better_ask(self, better_indices: set):
         """构造按输入 sig/id 回显 better 的假 ask_chatbot（非流式）。"""

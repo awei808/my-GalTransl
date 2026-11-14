@@ -643,7 +643,7 @@ export function ReviewPage() {
       // 译文文件加载完成：离开 metadata 模式，重置元数据路径标记，
       // 否则 captureUnmountSnapshot 的译文分支（依赖 metaLoadedFullPath 为空）会被误跳过
       metaLoadedFullPath = "";
-    } catch {
+    } catch (err) {
       // 仅当本次请求仍是最新且文件未切走时，才清空避免显示旧文件残留
       if (myToken === loadToken && appState.activeFilePath === targetFile) {
         setEntries([]);
@@ -655,6 +655,13 @@ export function ReviewPage() {
         setHBatchExists(false);
         // 加载失败：取消指向该文件的在途跨文件撤销/重做（记录保留在栈中，用户可重试）
         if (pendingRestore && pendingRestore.entry.file === targetFile) pendingRestore = null;
+        // 外部跳转（修复报告/问题列表）指向的文件打不开时，清掉一次性跳转标记，
+        // 否则会残留到用户下次打开别的文件时误跳；同时给出可感知的失败提示
+        // （仅带跳转标记时提示，普通切文件失败保持静默，避免联机波动时刷 toast）
+        if (appState.reviewJumpToIndex !== null) {
+          setAppState("reviewJumpToIndex", null);
+          toast.error(`打开 ${targetFile} 失败：${getErrorMessage(err)}`);
+        }
       }
     } finally {
       if (myToken === loadToken) setLoading(false);

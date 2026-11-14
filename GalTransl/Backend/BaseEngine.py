@@ -1454,7 +1454,7 @@ class BaseEngine:
 
                 # Create the API call as a task so we can cancel it if
                 # the user requests a stop while the request is in-flight.
-                LOGGER.info(f"timeout: {self.api_timeout}")
+                LOGGER.info(f"[api] apiTimeout={self.api_timeout}s（流式分片间隔超时）")
                 # 按服务商生成思考参数（未配置时返回空体，向后兼容）
                 extra_body, thinking_effort, thinking_on = self._build_thinking_params(
                     token.model_name
@@ -1517,7 +1517,7 @@ class BaseEngine:
                             except asyncio.CancelledError:
                                 pass
                         raise APIWallTimeoutError(
-                            f"请求墙钟超时 {_wall_limit:g}s（等待响应阶段）"
+                            f"请求发出后 {_wall_limit:g}s 内未收到完整回复，已主动断开连接"
                         )
                     done, _ = await asyncio.wait({api_task}, timeout=0.5)
                     if done:
@@ -1546,7 +1546,7 @@ class BaseEngine:
                             ):
                                 # finally 会 aclose 流，服务端能及时感知客户端离开
                                 raise APIWallTimeoutError(
-                                    f"请求墙钟超时 {_wall_limit:g}s（流式消费阶段）"
+                                    f"回复已开始接收，但 {_wall_limit:g}s 内未接收完整，已主动断开连接"
                                 )
                             if not chunk.choices:
                                 continue
@@ -1808,7 +1808,7 @@ class BaseEngine:
                         error_parts.append(f"API返回: {api_error_text}")
 
                     message_text = " | ".join(part for part in error_parts if part)
-                    message_text = f"{message_text} | sleeping {sleep_time:.3f}s"
+                    message_text = f"{message_text} | {sleep_time:g}s 后自动重试"
                     # ── API 调用日志：可重试错误 ──
                     if _call_trace:
                         _lat = (time.monotonic() - _wall_started) * 1000

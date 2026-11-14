@@ -102,7 +102,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - 这些工具**不提供**任意路径读写、**不提供**命令执行、**不修改**程序配置与 API 密钥。
 - 写工具只接受**可识别的 GalTransl 项目目录**（含 `config.inc.yaml`/`config.yaml`）。指向别处会被拒绝，**不要**为了绕过而去找一个含配置文件的目录顶替——`project_dir` 必须是用户指定的那一个。
 - 禁止绕过 MCP 去达成其它写效果：不得直接调 GalTransl HTTP 写端点（`PUT /api/projects/:id/config`、`/cache/save`、`/cache/replace`、`/cache/delete-*` 等），不得直接编辑项目目录下的文件。上面 8 个工具本身走后端是**实现细节**，不代表你也获得了直接打这些端点的授权。
-- 用户要求「帮我改一下译文」时，用 `galtransl_update_translation_entry` 逐条改写 `pre_dst` / `proofread_dst` / `alt_dst`（先读现状确认 index 与原文，只改用户指定的条目）；配置/公共字典仍无写能力，请用户在 GalTransl 界面操作（项目**字典**例外：用 `write_glossary` 按词条增改）。**不要**用任何间接手段代劳；`mark_skip_check` / `swap_alt_translation` 仍只能改标志位或对调既有文本，不能拿来「改写」译文。
+- 用户要求「帮我改一下译文」时，用 `galtransl_update_translation_entry` 改写 `pre_dst` / `proofread_dst` / `alt_dst`（先读现状确认 index 与原文，只改用户指定的条目；同一文件多条用 `entries` 一次提交）；配置/公共字典仍无写能力，请用户在 GalTransl 界面操作（项目**字典**例外：用 `write_glossary` 按词条增改）。**不要**用任何间接手段代劳；`mark_skip_check` / `swap_alt_translation` 仍只能改标志位或对调既有文本，不能拿来「改写」译文。
 - `submit_job` 是有副作用且耗时的操作：**不要**在用户只是「看看进度」「评估一下」时调用。
 
 ### 5. 禁止：规模化拉取（上下文纪律）
@@ -154,11 +154,11 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 | 工具 | 用途 | 关键参数 |
 |---|---|---|
 | `galtransl_write_route_map` | 整体覆盖写剧情路线图（未提供字段保留旧值） | `mermaid`、`文件归属`、`节点剧情`、`结构类型`、`用户大纲` |
-| `galtransl_save_metadata` | 原子写元数据 | `kind`(filemeta/batchmeta)、`filename`、`entry` |
+| `galtransl_save_metadata` | 原子写元数据 | `kind`(filemeta/batchmeta)；单条 `filename`+`entry`，批量 `items`（`[{filename, entry}]`，≤200 个文件） |
 | `galtransl_write_glossary` | 按词条增改 / 删除项目字典（**不做整体覆盖**） | `category`(gpt/pre/post)、`file`（字典文件名，必填）、`mode`(upsert/delete)、`entries`(`src`/`dst`/`note`) |
-| `galtransl_mark_skip_check` | 标记 / 取消缓存条目的「跳过问题检查」 | `filename`（缓存相对路径）、`index`、`skip`(默认 true) |
-| `galtransl_swap_alt_translation` | 交换缓存条目的备选译文与当前译文 | `filename`（缓存相对路径）、`index` |
-| `galtransl_update_translation_entry` | 直接改写缓存条目的译文字段（校对页同口径，改后重检） | `filename`（缓存相对路径）、`index`、`fields`（`pre_dst`/`proofread_dst`/`alt_dst`，值为字符串） |
+| `galtransl_mark_skip_check` | 标记 / 取消缓存条目的「跳过问题检查」 | `filename`（缓存相对路径）；单条 `index`，批量 `indexes`（整数数组，≤500 条）；`skip`(默认 true) |
+| `galtransl_swap_alt_translation` | 交换缓存条目的备选译文与当前译文 | `filename`（缓存相对路径）；单条 `index`，批量 `indexes`（≤500 条） |
+| `galtransl_update_translation_entry` | 直接改写缓存条目的译文字段（校对页同口径，改后重检） | `filename`（缓存相对路径）；单条 `index`+`fields`，批量 `entries`（`[{index, fields}]`，≤500 条）；`fields` 仅 `pre_dst`/`proofread_dst`/`alt_dst` |
 | `galtransl_submit_job` | 提交翻译任务（**需后端运行；消耗额度**） | `translator`（必填）、`config_file_name`、`backend_profile`、`file_filter` |
 | `galtransl_stop_job` | 停止项目当前任务（**需后端运行**） | — |
 
@@ -194,7 +194,8 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
   `update_translation_entry` 在任务运行中/刚结束（约 30 秒）会被拒绝（见注意事项末两条），缓存条目改动等任务结束；
   字典/元数据写入虽不被拒绝，也建议等任务结束再改。
 - **校润阶段**（`alt_dst` / `suspected_error` 等阶段8标记已出现）：`list_problems` 定位 →
-  `update_translation_entry` 逐条改写或 `swap_alt_translation` 换备选，检测误报用 `mark_skip_check` 跳过；
+  `update_translation_entry` 改写（同一文件多条用 `entries` 一次提交）或 `swap_alt_translation` 换备选
+  （多条用 `indexes`），检测误报用 `mark_skip_check` 跳过（多条同样用 `indexes`）；
   `suspected_error` 只是「疑似」标记，改前先读上下文确认；写后按校对页同口径自动重检，无需手动重跑检测。
 
 ## 推荐工作流
@@ -235,12 +236,12 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 3. 返回体 `also_found_in` 非空表示同名词条还存在于其它同类字典文件（H / 非 H 场景本就允许同词不同译）；有冲突疑义时先与用户确认，不要自作主张删改另一份。
 4. 若返回 H 门禁错误 → 如实转告用户，不要改写措辞重试。
 
-### 7. 处理误报条目、备选译文与改写译文（写，逐条）
+### 7. 处理误报条目、备选译文与改写译文（写，单条或同文件批量）
 
 1. `galtransl_list_problems` 或 `galtransl_read_translation_file` — 定位条目（文件名 + index），确认译文确实无误但检测持续误报时，用 `galtransl_mark_skip_check`（`skip: true`）标记跳过；误标了再用 `skip: false` 取消。标记会清除该条 problem，取消后按新状态重检。
 2. 条目带 `alt_dst` 备选译文且用户想采用它时，用 `galtransl_swap_alt_translation` 交换（等价于校对页「交换备选」按钮）；交换后问题标注按新译文重检。
 3. 用户明确要求润色/改写某句译文时，用 `galtransl_update_translation_entry` 写 `pre_dst`（主译文）或 `proofread_dst`（校对译文）；只提交 `fields` 中需要改的字段，未列出的字段保持不变。改写会引入新文本，**受 H 门禁约束**。
-4. 三个工具都只能逐条处理，且翻译任务运行中/刚结束时会被拒绝；改写后按校对页保存同口径整文件重检，返回体的 `problem_before` / `problem_after` 可用于核对影响。
+4. 同一缓存文件内有多条要处理时用批量参数一次提交（`mark_skip_check` / `swap_alt_translation` 传 `indexes`，`update_translation_entry` 传 `entries`），避免逐条调用反复重检、反复生成快照；跨文件仍需按文件分别调用。翻译任务运行中/刚结束时会被拒绝；改写后按校对页保存同口径整文件重检（批量只重检一次），单条的 `problem_before` / `problem_after` 与批量的 `items[]` 可用于核对影响。
 
 ### 8. 启动 / 停止翻译（写，消耗额度）
 
@@ -252,7 +253,7 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 
 ## 注意事项
 
-- **只读 + 受限写入**：15 个只读工具 + 8 个写工具（边界见 §4）。项目字典可用 `write_glossary` 按词条增改；缓存条目可逐条标记跳过检查、交换备选译文或直接改写译文字段；公共字典/配置仍需在 GalTransl 界面操作。
+- **只读 + 受限写入**：15 个只读工具 + 8 个写工具（边界见 §4）。项目字典可用 `write_glossary` 按词条增改；缓存条目可单条或同文件批量标记跳过检查、交换备选译文或直接改写译文字段；公共字典/配置仍需在 GalTransl 界面操作。
 - **H 内容**：读路径**无 H 门禁过滤**（须自行遵守 §1）；写工具中 `write_route_map` / `save_metadata` / `write_glossary` / `update_translation_entry` **有硬门禁**，命中 H 区间或 H 词库即拒绝写入；`mark_skip_check` / `swap_alt_translation` 只改标志位或对调既有译文，**不在门禁范围内**（H 区间条目同样可操作）。门禁 **fail-open**，项目未配 H 词库时不拦，详见 §1 的失效边界。
 - **作业域工具需后端**：`get_job_status` / `check_model` / `submit_job` / `stop_job` 需要 GalTransl 程序在运行；后端未启动时会返回「无法连接 GalTransl 后端」的中文错误，此时转告用户启动程序即可，不要反复重试。`check_model` 会向模型端点发起一次真实探测请求（消耗极小额度），不要在无谓的场景反复调用。
 - **结果上限**：搜索类工具默认最多返回 200 条（硬顶 2000），超出时返回体里 `truncated` 为 `true`，`total` 才是全部命中数。需要更多就加 `regex` 收窄检索词，或提高 `max_results`。
@@ -266,3 +267,5 @@ description: 通过 galtransl MCP 工具检索 GalTransl 翻译项目的术语�
 - **`get_project_metadata` / `read_*` 的 `filename` 只传裸文件名**（不带路径、不带 `.meta.json`/`.batch.json` 后缀；`read_glossary` 的 `filename` 传字典文件名，如 `项目GPT字典.txt`）。`save_metadata` 的 `filename` 有穿越校验，但同样只应传裸文件名。
 - **缓存条目写工具（`mark_skip_check` / `swap_alt_translation` / `update_translation_entry`）**：`filename` 传相对 `transl_cache` 的缓存路径，**仅翻译缓存可用**（`pass3_cache/*.json` 与顶层旧布局 `*.json`；pass1/pass2/pass0 元数据文件会被拒绝），以 `get_project_overview` 的 `cache_file_names` 为参考但注意其中元数据文件不可用；每次修改前会先快照旧文件、修改后按校对页保存同口径重检整份文件的问题标注；返回体 `changed=false` 表示没有实际变化（含条目已处于目标状态的 no-op，此时不做重检）。翻译任务运行中会直接报错；**任务刚结束约 30 秒内也会报错**（后端正在合并增量缓存与重检），稍候重试即可；后端不可达时放行但返回体 `job_check` 会注明，此时请先与用户确认没有翻译在跑。重检会在本进程内装载项目文本插件（与校对页同口径），行为异常的第三方插件可能影响该工具。
 - **`update_translation_entry` 的字段语义**：只接受 `pre_dst` / `proofread_dst` / `alt_dst`，值必须是字符串；新值按真实换行（`\n`）归一。`proofread_dst` / `alt_dst` 传空串表示清除该字段，`pre_dst` 传空串表示置为未翻译；未列出的字段保持不变。写 `pre_dst` / `proofread_dst` 时会一并清掉旧键 `pre_zh` / `proofread_zh`（否则读侧会回退旧值）。
+- **批量写入参数（同一缓存文件内多条）**：`mark_skip_check` / `swap_alt_translation` 传 `indexes`（整数数组，≤500 条，重复项自动去重）；`update_translation_entry` 传 `entries: [{index, fields}]`（≤500 条）；`save_metadata` 传 `items: [{filename, entry}]`（≤200 个文件）。单条参数与批量参数**二选一**，同时传会被拒绝。批量只读一次文件、只重检一次、只生成一份快照；返回体为 `requested` / `changed_count` / `skipped_count` / `failed_count` / `partial` / `applied` / `items[]`，逐条 `status` 为 `changed` / `unchanged` / `failed`。**`success` 只表示调用完成**，是否全部生效看 `failed_count` 与 `items[].status`（单条调用仍返回 `changed` 布尔与 `index`/`detail`，不要混读）。
+- **批量失败语义**：`index` 不存在、条目无 `alt_dst` 等单条业务失败记入 `failed`（`items[].error` 有原因），其余条目照常落盘；但参数错误、翻译任务占用与 **H 门禁命中**会整批拒绝且不写任何条目。`save_metadata` 批量在落盘前整批预检（文件名、NFKC 解析、H 门禁），任一项非法即整批不写。全部条目都是 no-op 时不落盘也不重检（避免刷新其它条目的问题标注）。

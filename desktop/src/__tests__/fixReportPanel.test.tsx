@@ -27,6 +27,7 @@ const REPORT: FixReportResponse = {
       entries: [
         {
           filename: "scene01-1.json",
+          cache_path: "pass3_cache/scene01-1.json",
           index: 103,
           speaker: "爱丽丝",
           post_src: "こんにちは",
@@ -56,6 +57,7 @@ const REPORT: FixReportResponse = {
       entries: [
         {
           filename: "scene02-3.json",
+          cache_path: "pass3_cache/scene02-3.json",
           index: 55,
           speaker: "",
           post_src: "x",
@@ -71,7 +73,13 @@ const REPORT: FixReportResponse = {
 };
 
 function normalizeAppState() {
-  setAppState({ activeView: "home", activeFilePath: null, reviewJumpToIndex: null });
+  setAppState({
+    activeView: "home",
+    activeFilePath: null,
+    reviewJumpToIndex: null,
+    sidebarOpen: false,
+    sidebarTab: null,
+  });
 }
 
 describe("FixReportPanel", () => {
@@ -145,7 +153,7 @@ describe("FixReportPanel", () => {
     expect(container.querySelectorAll(".problem-entry")).toHaveLength(1);
   });
 
-  it("点击条目跳校对页：切换文件时同时设置 activeFilePath", () => {
+  it("点击条目跳校对页：用 cache_path 打开文件并展开文件侧栏", () => {
     const { container } = render(() => <FixReportPanel report={REPORT} />);
     const toggles = container.querySelectorAll(".problem-toggle");
     fireEvent.click(toggles[0]);
@@ -154,9 +162,47 @@ describe("FixReportPanel", () => {
     fireEvent.click(entries[0]); // scene01-1.json #103
     expect(appState.activeView).toBe("review");
     expect(appState.reviewJumpToIndex).toBe(103);
-    expect(appState.activeFilePath).toBe("scene01-1.json");
+    // 流水线文件名不能直接当缓存路径用，必须取 cache_path
+    expect(appState.activeFilePath).toBe("pass3_cache/scene01-1.json");
+    // 跨视图跳转要显式打开文件侧栏，否则侧栏为空
+    expect(appState.sidebarOpen).toBe(true);
+    expect(appState.sidebarTab).toBe("explorer");
     fireEvent.click(entries[2]); // scene02-3.json #55
-    expect(appState.activeFilePath).toBe("scene02-3.json");
+    expect(appState.activeFilePath).toBe("pass3_cache/scene02-3.json");
     expect(appState.reviewJumpToIndex).toBe(55);
+  });
+
+  it("cache_path 缺失（旧报告）时回退用 filename 跳转", () => {
+    const legacy: FixReportResponse = {
+      ...REPORT,
+      total: 1,
+      files: [
+        {
+          filename: "old.json",
+          count: 1,
+          truncated: false,
+          entries: [
+            {
+              filename: "old.json",
+              index: 7,
+              speaker: "",
+              post_src: "s",
+              old_dst: "旧",
+              new_dst: "新",
+              problems: "",
+              backend: "ForImproveTranslation",
+              writes_main: false,
+            },
+          ],
+        },
+      ],
+    };
+    const { container } = render(() => <FixReportPanel report={legacy} />);
+    fireEvent.click(container.querySelector(".problem-toggle")!);
+    fireEvent.click(container.querySelector(".problem-entry")!);
+    expect(appState.activeView).toBe("review");
+    expect(appState.activeFilePath).toBe("old.json");
+    expect(appState.reviewJumpToIndex).toBe(7);
+    expect(appState.sidebarTab).toBe("explorer");
   });
 });

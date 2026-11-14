@@ -548,7 +548,10 @@ export type ProjectAltTransResponse = {
 
 /** GET /api/projects/:id/fix-report 单条修复/改进采纳明细（后端 BaseSparseFixRound 采集） */
 export type FixReportEntry = {
+  /** 流水线内部文件名（展示用；子目录以 -} 连接，非缓存路径） */
   filename: string;
+  /** 缓存相对路径（如 pass3_cache/xx.json），跳转校对页用；旧报告可能缺失 */
+  cache_path?: string;
   index: number;
   speaker: string;
   post_src: string;

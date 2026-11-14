@@ -22,6 +22,7 @@ from GalTransl.server_runtime import (
     _normalize_retran_terms,
     _parse_runtime_job_started_at_ns,
     _safe_project_dir,
+    backfill_fix_report_cache_paths,
     clear_runtime_notices,
     decode_project_dir,
     encode_project_dir,
@@ -854,6 +855,9 @@ def route_project_api_part2(
         if not exists:
             report = load_fix_report_file(project_dir)
             exists = report is not None
+            if report is not None:
+                # 旧报告无 cache_path：按磁盘缓存补齐，保证历史报告也能点击跳转
+                report = backfill_fix_report_cache_paths(project_dir, report)
         if report is None:
             report = {
                 "label": "",

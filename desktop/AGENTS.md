@@ -17,7 +17,7 @@
 | `src/lib/pipelineSteps.ts` + `src/lib/orderedEntryList.ts` + `src/components/PipelineStepsEditor.tsx` | 完整流水线自定义步骤（`internals.pipeline.steps` 有序列表）的解析/校验/开关键同步、数字框交互公共实现（两编辑器共用）与阶段顺序编辑器（项目设置页固定卡片 + 新建向导；手写译后步骤只展示可排序/移除） |
 | `src/lib/engineDisplay.ts` + `src/components/BackendPicker.tsx` | 翻译后端下拉的展示元数据（中文短名/短说明/分组/组内顺序）与过滤、分组纯函数；`BackendPicker` 是控制台后端选择器的交互封装（搜索 + 分组 + 键盘）。选项值始终是引擎名，不改变提交任务与模型检测的口径。后端清单覆盖度由 `__tests__/engineDisplay.test.ts` 与根目录 `tests/test_engine_display_consistency.py` 双向锁定 |
 | `src/lib/previewSelection.ts` | 翻译控制台「结果预览」的选取口径（纯函数）：选中 worker 板块优先 → 公共 key "-1"（非 worker 上下文后端）→ 首条可用预览 |
-| `src/components/FixReportPanel.tsx` | 翻译控制台「修复报告」标签页：按文件分组折叠展示本次任务修复/改进明细（每条含旧译文→新译文、问题类型、写入位置徽标），数据来自 `project.ts` 的 `fetchProjectFixReport`（端点定义见 GalTransl/AGENTS.md `/fix-report`）；任务完成转换时拉取并 toast 摘要，条目点击跳校对页，样式复用 `part01.css` 的 `problem-*` 分组类 + `fix-report-*` 条目类 |
+| `src/components/FixReportPanel.tsx` | 翻译控制台「修复报告」标签页：按文件分组折叠展示本次任务修复/改进明细（每条含旧译文→新译文、问题类型、写入位置徽标），数据来自 `project.ts` 的 `fetchProjectFixReport`（端点定义见 GalTransl/AGENTS.md `/fix-report`）；任务完成转换时拉取并 toast 摘要，条目点击跳校对页（`entry.cache_path || filename` 作为 activeFilePath，并显式置 `sidebarOpen/sidebarTab:"explorer"` 展开文件侧栏 + `reviewJumpToIndex` 定位该句），样式复用 `part01.css` 的 `problem-*` 分组类 + `fix-report-*` 条目类 |
 | `src/lib/usePageAutosave.ts` | 页面卸载自动保存统一骨架 |
 | `src/lib/globalSave.ts` | 全局保存注册表：Ctrl+S / 菜单「保存」统一入口（页面注册 `save` 函数，未注册视图提示无可保存内容） |
 | `src/lib/customBackground.ts` + `src/styles/custom-background.css` | 自定义背景图设置与样式 |

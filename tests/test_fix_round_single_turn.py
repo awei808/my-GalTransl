@@ -241,7 +241,8 @@ class SingleModeResilienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reset_calls, [])  # 单轮无会话，不做重置
         self.assertEqual(t.conversations, {})
         joined = "\n".join(cm.output)
-        self.assertIn("疑似整批回显或退化输出", joined)
+        self.assertIn("疑似整批回显", joined)
+        self.assertIn("全部被过滤", joined)
         self.assertNotIn("重置对话", joined)
         self.assertTrue(recorded and "疑似整批回显" in recorded[0])
 

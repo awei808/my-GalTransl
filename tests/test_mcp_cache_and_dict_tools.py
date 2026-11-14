@@ -20,6 +20,8 @@ import unittest
 from unittest import mock
 
 from GalTransl.mcp_tools import (
+    MCP_CACHE_BATCH_LIMIT,
+    MCP_TOOL_DEFS,
     _CACHE_ENTRY_WRITABLE_FIELDS,
     _H_DENY_MESSAGE,
     call_mcp_tool,
@@ -765,6 +767,256 @@ class WriteGlossaryPrePostTests(unittest.TestCase):
                 self.project_dir, "x.txt", "upsert", [{"src": "a", "dst": "b"}], category="forbidden"
             )
         self.assertIn("未知 category", str(ctx.exception))
+
+
+class CacheBatchWriteToolTests(CacheWriteToolTestsBase):
+    """批量参数：一次读文件 / 一次重检 / 一份快照，单条失败不阻断其余条目。"""
+
+    def _snapshot_count(self) -> int:
+        snap_dir = os.path.join(self.project_dir, "transl_cache", ".snapshots", "pass3_cache")
+        if not os.path.isdir(snap_dir):
+            return 0
+        return len([n for n in os.listdir(snap_dir) if n.startswith("01.json.")])
+
+    def test_batch_mark_marks_all_in_one_snapshot(self) -> None:
+        from GalTransl import server_cache
+
+        # 快照有 60 秒合并窗口，逐条调用也可能只留一份快照；必须直接断言调用次数
+        with (
+            mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs),
+            mock.patch.object(
+                server_cache, "snapshot_cache_file", wraps=server_cache.snapshot_cache_file
+            ) as snapshot,
+            mock.patch.object(
+                server_cache, "_run_problem_detection", wraps=server_cache._run_problem_detection
+            ) as detect,
+        ):
+            result = mark_skip_check(self.project_dir, self.rel, indexes=[1, 2])
+        self.assertTrue(result["success"])
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["changed_count"], 2)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertFalse(result["partial"])
+        self.assertTrue(result["applied"])
+        self.assertEqual([i["status"] for i in result["items"]], ["changed", "changed"])
+        entries = _read_cache(self.project_dir)
+        self.assertTrue(entries[0].get("skip_check"))
+        self.assertTrue(entries[1].get("skip_check"))
+        self.assertNotIn("problem", entries[0])
+        # 批量只重检一次、只生成一份快照（逐条实现会是 2 次）
+        self.assertEqual(detect.call_count, 1)
+        self.assertEqual(snapshot.call_count, 1)
+
+    def test_batch_mark_reports_missing_index_and_applies_rest(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = mark_skip_check(self.project_dir, self.rel, indexes=[1, 99])
+        self.assertEqual(result["changed_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertTrue(result["partial"])
+        failed = [i for i in result["items"] if i["status"] == "failed"]
+        self.assertEqual(failed[0]["index"], 99)
+        self.assertIn("未找到 index=99", failed[0]["error"])
+        self.assertTrue(_read_cache(self.project_dir)[0].get("skip_check"))
+
+    def test_batch_requires_one_of_index_or_indexes(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            mark_skip_check(self.project_dir, self.rel)
+        self.assertIn("index 必填", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            mark_skip_check(self.project_dir, self.rel, 1, True, indexes=[1, 2])
+        self.assertIn("只能提供一个", str(ctx.exception))
+
+    def test_batch_all_noop_leaves_file_and_snapshot_untouched(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            mark_skip_check(self.project_dir, self.rel, indexes=[1, 2])
+        before = _read_cache(self.project_dir)
+        snapshots_before = self._snapshot_count()
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = mark_skip_check(self.project_dir, self.rel, indexes=[1, 2])
+        self.assertEqual(result["changed_count"], 0)
+        self.assertEqual(result["skipped_count"], 2)
+        self.assertFalse(result["applied"])
+        self.assertEqual(_read_cache(self.project_dir), before)
+        self.assertEqual(self._snapshot_count(), snapshots_before)
+
+    def test_batch_dedupes_repeated_indexes(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = mark_skip_check(self.project_dir, self.rel, indexes=[1, 1, 2, "2"])
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["changed_count"], 2)
+
+    def test_batch_limit_enforced(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            mark_skip_check(
+                self.project_dir,
+                self.rel,
+                indexes=list(range(1, MCP_CACHE_BATCH_LIMIT + 2)),
+            )
+        self.assertIn("最多", str(ctx.exception))
+
+    def test_batch_update_entries_limit_enforced(self) -> None:
+        entries = [
+            {"index": i, "fields": {"pre_dst": "x"}}
+            for i in range(1, MCP_CACHE_BATCH_LIMIT + 2)
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            update_translation_entry(self.project_dir, self.rel, entries=entries)
+        self.assertIn("最多", str(ctx.exception))
+
+    def test_index_rejects_bool_and_fractional_value(self) -> None:
+        # bool 是 int 子类、float 会被 int() 静默截断，两者都会改错条目
+        for bad in (True, 1.5):
+            with self.subTest(index=bad):
+                with self.assertRaises(ValueError) as ctx:
+                    mark_skip_check(self.project_dir, self.rel, bad, True)
+                self.assertIn("必须是整数", str(ctx.exception))
+
+    def test_index_zero_is_a_valid_index(self) -> None:
+        rel = _write_cache(
+            self.project_dir,
+            [{"index": 0, "pre_src": "a", "post_src": "a", "pre_dst": "b"}],
+            rel="pass3_cache/02.json",
+        )
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = mark_skip_check(self.project_dir, rel, 0, True)
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["index"], 0)
+
+    def test_batch_update_partial_missing_index(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = update_translation_entry(
+                self.project_dir,
+                self.rel,
+                entries=[
+                    {"index": 1, "fields": {"pre_dst": "改一"}},
+                    {"index": 99, "fields": {"pre_dst": "改九十九"}},
+                ],
+            )
+        self.assertEqual(result["changed_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(_read_cache(self.project_dir)[0]["pre_dst"], "改一")
+
+    def test_batch_swap_all_failed_does_not_touch_file(self) -> None:
+        before = _read_cache(self.project_dir)
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = swap_alt_translation(self.project_dir, self.rel, indexes=[1])
+        self.assertEqual(result["changed_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertFalse(result["applied"])
+        self.assertEqual(_read_cache(self.project_dir), before)
+
+    def test_batch_swap_fails_entries_without_alt(self) -> None:
+        result = swap_alt_translation(self.project_dir, self.rel, indexes=[1, 2])
+        self.assertEqual(result["changed_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        failed = [i for i in result["items"] if i["status"] == "failed"][0]
+        self.assertEqual(failed["index"], 1)
+        self.assertIn("没有备选译文", failed["error"])
+        self.assertEqual(_read_cache(self.project_dir)[1]["pre_dst"], "再会了")
+
+    def test_batch_update_applies_per_entry_fields(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = update_translation_entry(
+                self.project_dir,
+                self.rel,
+                entries=[
+                    {"index": 1, "fields": {"pre_dst": "你好呀"}},
+                    {"index": 2, "fields": {"proofread_dst": "校对稿"}},
+                ],
+            )
+        self.assertEqual(result["changed_count"], 2)
+        entries = _read_cache(self.project_dir)
+        self.assertEqual(entries[0]["pre_dst"], "你好呀")
+        self.assertEqual(entries[1]["proofread_dst"], "校对稿")
+
+    def test_batch_update_rejects_duplicate_index(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            update_translation_entry(
+                self.project_dir,
+                self.rel,
+                entries=[
+                    {"index": 1, "fields": {"pre_dst": "a"}},
+                    {"index": 1, "fields": {"pre_dst": "b"}},
+                ],
+            )
+        self.assertIn("重复", str(ctx.exception))
+
+    def test_batch_update_requires_fields_per_entry(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            update_translation_entry(
+                self.project_dir, self.rel, entries=[{"index": 1}]
+            )
+        self.assertIn("必须同时含 index 与 fields", str(ctx.exception))
+
+    def test_batch_update_rejects_mixed_entry_and_single_args(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            update_translation_entry(
+                self.project_dir,
+                self.rel,
+                1,
+                {"pre_dst": "x"},
+                entries=[{"index": 2, "fields": {"pre_dst": "y"}}],
+            )
+        self.assertIn("只能提供一种", str(ctx.exception))
+
+    def test_batch_update_h_gate_rejects_whole_batch(self) -> None:
+        project_dir = tempfile.mkdtemp(prefix="gt_cachebatch_h_")
+        try:
+            _make_project(project_dir, h_words=["禁词"])
+            rel = _write_cache(project_dir, _ENTRIES)
+            with self.assertRaises(ValueError) as ctx:
+                update_translation_entry(
+                    project_dir,
+                    rel,
+                    entries=[
+                        {"index": 1, "fields": {"pre_dst": "正常译文"}},
+                        {"index": 2, "fields": {"pre_dst": "这里写了禁词"}},
+                    ],
+                )
+            self.assertEqual(str(ctx.exception), _H_DENY_MESSAGE)
+            # 整批预检：未命中门禁的那条也不得落盘
+            self.assertEqual(_read_cache(project_dir)[0]["pre_dst"], "你好")
+            self.assertEqual(_read_cache(project_dir)[1]["pre_dst"], "再见")
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_batch_update_via_dispatch(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = call_mcp_tool(
+                "galtransl_update_translation_entry",
+                {
+                    "project_dir": self.project_dir,
+                    "filename": self.rel,
+                    "entries": [{"index": 1, "fields": {"pre_dst": "改过"}}],
+                },
+            )
+        self.assertEqual(result["changed_count"], 1)
+        self.assertEqual(_read_cache(self.project_dir)[0]["pre_dst"], "改过")
+
+    def test_batch_mark_via_dispatch(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = call_mcp_tool(
+                "galtransl_mark_skip_check",
+                {"project_dir": self.project_dir, "filename": self.rel, "indexes": [1, 2]},
+            )
+        self.assertEqual(result["changed_count"], 2)
+
+    def test_single_index_keeps_legacy_result_shape(self) -> None:
+        with mock.patch("GalTransl.mcp_backend_client.get_json", side_effect=_no_jobs):
+            result = mark_skip_check(self.project_dir, self.rel, 1, True)
+        self.assertIsInstance(result["changed"], bool)
+        self.assertEqual(result["index"], 1)
+        self.assertNotIn("items", result)
+
+    def test_schema_exposes_batch_params(self) -> None:
+        defs = {d["name"]: d for d in MCP_TOOL_DEFS}
+        self.assertIn("indexes", defs["galtransl_mark_skip_check"]["input_schema"]["properties"])
+        self.assertIn(
+            "indexes", defs["galtransl_swap_alt_translation"]["input_schema"]["properties"]
+        )
+        self.assertIn(
+            "entries", defs["galtransl_update_translation_entry"]["input_schema"]["properties"]
+        )
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 > 版本：0.5.1 起提供只读检索；0.6.0 起增加受限写工具（译文字段改写批次后共 8 个）。让外部 agent
 > （CodeBuddy / Claude Desktop / Cherry Studio / dsh 等 MCP 客户端）
-> 检索 GalTransl 项目的术语、译文、字典与项目字典、人名表、日志与元数据，并写入路线图/元数据/项目字典、逐条处理缓存条目（含改写译文字段）、启停翻译任务。
+> 检索 GalTransl 项目的术语、译文、字典与项目字典、人名表、日志与元数据，并写入路线图/元数据/项目字典、处理缓存条目（单条或同文件批量，含改写译文字段）、启停翻译任务。
 > 实现见 `run_mcp_server.py`（stdio 传输）+ `GalTransl/mcp_tools.py`（23 个工具）。
 
 ---
@@ -170,11 +170,11 @@ pip install "mcp>=2.0,<3.0"
 | 工具 | 用途 | 备注 |
 |---|---|---|
 | `galtransl_write_route_map` | 整体覆盖写剧情路线图 | 需先读现状；mermaid 经生成侧校验；未提供字段保留旧值；**受 H 硬门禁** |
-| `galtransl_save_metadata` | 原子写单文件元数据 | `kind` = filemeta / batchmeta（plotroute 走 `write_route_map`，globalprompt 由流水线生成不开放写）；**受 H 硬门禁** |
+| `galtransl_save_metadata` | 原子写元数据（单文件或批量多文件） | `kind` = filemeta / batchmeta（plotroute 走 `write_route_map`，globalprompt 由流水线生成不开放写）；单条 `filename`+`entry`，批量 `items`=[{filename, entry}]（≤200 个文件，整批预检后落盘）；**受 H 硬门禁** |
 | `galtransl_write_glossary` | 按词条增改 / 删除项目字典（`category` = gpt 术语表 / pre 译前字典 / post 译后字典） | `mode` = upsert（按 src 匹配，原地更新或追加）/ delete；`file` 必填；保留原注释与行尾，未登记文件自动登记进对应清单；**不做整体覆盖**；**受 H 硬门禁** |
-| `galtransl_mark_skip_check` | 逐条标记 / 取消缓存条目的「跳过问题检查」（`skip` 默认 true） | 只改 `skip_check` 标志位并按保存同口径**整份文件重检**问题标注与 `post_dst_preview`，**不改译文**；**不受 H 门禁约束**（H 区间条目的标志位同样可改）；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝（后端正在合并增量缓存）；后端不可达时放行，返回体 `job_check` 会注明 |
-| `galtransl_swap_alt_translation` | 逐条交换缓存条目的备选译文（`alt_dst`）与当前译文（`pre_dst`） | 语义与校对页「交换备选」一致，**只对调既有文本**（故对调 H 区间条目的既有译文属允许操作，**不受 H 门禁约束**）；仅当条目有 `alt_dst` 时可用；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝；后端不可达时放行，返回体 `job_check` 会注明 |
-| `galtransl_update_translation_entry` | 逐条改写缓存条目的可写译文字段（`fields` 支持 `pre_dst` / `proofread_dst` / `alt_dst`） | 与校对页编辑保存同口径：新值按 `\n` 归一，改后整份文件重检 `problem`/`post_dst_preview`；`proofread_dst`/`alt_dst` 传空串清除该字段，`pre_dst` 传空串表示未翻译；未列出的字段不动；**受 H 硬门禁约束**（引入新文本）；翻译任务运行中/刚结束时拒绝；后端不可达时放行并注明 `job_check` |
+| `galtransl_mark_skip_check` | 标记 / 取消缓存条目的「跳过问题检查」（`skip` 默认 true）；单条 `index`，批量 `indexes`（同文件 ≤500 条） | 只改 `skip_check` 标志位并按保存同口径**整份文件重检**问题标注与 `post_dst_preview`，**不改译文**；批量只读一次文件、只重检一次、只生成一份快照，单条失败（index 不存在）记入 `failed` 不阻断其余条目；**不受 H 门禁约束**（H 区间条目的标志位同样可改）；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝（后端正在合并增量缓存）；后端不可达时放行，返回体 `job_check` 会注明 |
+| `galtransl_swap_alt_translation` | 交换缓存条目的备选译文（`alt_dst`）与当前译文（`pre_dst`）；单条 `index`，批量 `indexes`（同文件 ≤500 条） | 语义与校对页「交换备选」一致，**只对调既有文本**（故对调 H 区间条目的既有译文属允许操作，**不受 H 门禁约束**）；仅当条目有 `alt_dst` 时可用（无备选的条目在批量下记入 `failed`）；翻译任务运行中拒绝写入；任务**被取消或失败**后约 30 秒内也拒绝；后端不可达时放行，返回体 `job_check` 会注明 |
+| `galtransl_update_translation_entry` | 改写缓存条目的可写译文字段（`fields` 支持 `pre_dst` / `proofread_dst` / `alt_dst`）；单条 `index`+`fields`，批量 `entries`=[{index, fields}]（同文件 ≤500 条） | 与校对页编辑保存同口径：新值按 `\n` 归一，改后整份文件重检 `problem`/`post_dst_preview`（批量只重检一次）；`proofread_dst`/`alt_dst` 传空串清除该字段，`pre_dst` 传空串表示未翻译；未列出的字段不动；单条失败记入 `failed`，但**H 门禁命中任一条目即整批拒绝**；翻译任务运行中/刚结束时拒绝；后端不可达时放行并注明 `job_check` |
 | `galtransl_submit_job` | 提交翻译任务 | **需后端运行**；会真实消耗 API 额度，仅在用户明确要求时调用；无内容写入，无门禁 |
 | `galtransl_stop_job` | 停止项目当前任务 | **需后端运行**；无任务时 409；无内容写入，无门禁 |
 

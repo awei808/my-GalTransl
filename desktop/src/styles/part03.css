@@ -234,7 +234,7 @@
 
 .error-entry__head {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   margin-bottom: var(--space-1);
 }
@@ -254,6 +254,14 @@
   color: var(--color-text-secondary);
   margin-left: var(--space-2);
   word-break: break-all;
+}
+
+.error-entry__ts {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .error-entry__msg {

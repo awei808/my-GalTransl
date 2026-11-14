@@ -360,7 +360,8 @@ class WallTimeoutFlowTests(unittest.IsolatedAsyncioTestCase):
             )
         cause = ctx.exception.__cause__
         self.assertIsInstance(cause, APIWallTimeoutError)
-        self.assertIn("流式消费阶段", str(cause))
+        # 流式阶段文案：已开始接收但未接收完整（区别于等待阶段的「未收到完整回复」）
+        self.assertIn("未接收完整", str(cause))
 
     async def test_zero_wall_timeout_does_not_abort(self) -> None:
         # 0 表示不限制：正常请求不得被误判超时

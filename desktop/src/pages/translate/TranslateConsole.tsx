@@ -20,6 +20,7 @@ import { fetchTranslators, submitJob, checkModelAvailability, checkBatchSize, fe
 import { decodeProjectDir } from "../../lib/api/client";
 import { resolveSelectedBackendProfile, getSelectedBackendProfileJobPayload, getGitSuggestAcknowledged, setGitSuggestAcknowledged } from "../../lib/api/preferences";
 import { projectName } from "../home/homeUtils";
+import { formatElapsed, formatTimeOfDay, formatTimestamp } from "../../lib/format";
 import { pickTranslationPreview } from "../../lib/previewSelection";
 import { BackendPicker } from "../../components/BackendPicker";
 import { GuideLink } from "../../components/GuideLink";
@@ -632,6 +633,14 @@ export function TranslateConsole() {
   const errorCount = () => errors().length;
   const fileCount = () => fileProgress().length;
 
+  // 已用时显示的每秒时钟：仅运行中走秒；结束后按 finished_at 冻结，无需持续计时
+  const [elapsedTick, setElapsedTick] = createSignal(Date.now());
+  createEffect(() => {
+    if (!isRunning()) return;
+    const timer = setInterval(() => setElapsedTick(Date.now()), 1000);
+    onCleanup(() => clearInterval(timer));
+  });
+
   // 检测状态文案
   const modelCheckText = () => {
     const s = modelCheckState();
@@ -712,6 +721,17 @@ export function TranslateConsole() {
                 <span>速度: {summary()!.translation_speed_lpm.toFixed(1)} 条/分钟</span>
                 <Show when={summary()!.eta_seconds != null}>
                   <span>ETA: {formatETA(summary()!.eta_seconds!)}</span>
+                </Show>
+                {/* 已用时：运行中每秒走秒，结束后按 finished_at 冻结为总耗时 */}
+                <Show when={runtime()?.job?.started_at}>
+                  <span title="本任务已运行时长">
+                    已用时:{" "}
+                    {formatElapsed(
+                      runtime()!.job!.started_at,
+                      runtime()!.job!.finished_at,
+                      elapsedTick(),
+                    )}
+                  </span>
                 </Show>
                 {/* 多 worker 并发指示（活跃 / 已配置） */}
                 <span class="worker-info" title="并发 worker：活跃 / 已配置">
@@ -960,6 +980,10 @@ export function TranslateConsole() {
                           <div class="error-entry__head">
                             <span class="error-entry__kind">{err.kind}</span>
                             <span class="error-entry__file">{err.filename}</span>
+                            {/* 发生时间：短格式时:分:秒，hover 显示完整日期 */}
+                            <span class="error-entry__ts" title={formatTimestamp(err.ts)}>
+                              {formatTimeOfDay(err.ts)}
+                            </span>
                           </div>
                           <p class="error-entry__msg">{err.message}</p>
                         </div>

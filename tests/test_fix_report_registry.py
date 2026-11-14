@@ -262,5 +262,133 @@ class RunJobFinishHookTests(unittest.IsolatedAsyncioTestCase):
         m_finish.assert_called_once_with(self.project_dir, label="ForFixRound")
 
 
+class FixReportCachePathTests(unittest.TestCase):
+    """报告条目的 cache_path：把流水线文件名解析为校对页可打开的缓存相对路径。"""
+
+    def setUp(self) -> None:
+        self.project_dir = tempfile.mkdtemp(prefix="fix_report_path_")
+        self.pass3 = os.path.join(self.project_dir, "transl_cache", "pass3_cache")
+        os.makedirs(self.pass3, exist_ok=True)
+        RUNTIME_REGISTRY.reset_project(self.project_dir)
+
+    def tearDown(self) -> None:
+        RUNTIME_REGISTRY._states.pop(_normalize_project_dir(self.project_dir), None)
+
+    def _touch(self, name: str) -> None:
+        with open(os.path.join(self.pass3, name), "w", encoding="utf-8") as f:
+            f.write("[]")
+
+    def _write_shard(self, name: str, indexes: list[int]) -> None:
+        """写一个带条目序号的缓存分片（分片按 index 区间选择）。"""
+        rows = [{"index": i, "pre_src": "s", "pre_dst": "d"} for i in indexes]
+        with open(os.path.join(self.pass3, name), "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False)
+
+    def _entry_of(self, filename: str, index: int = 1) -> dict:
+        record_fix_change(
+            _fake_config(self.project_dir), _entry(filename, index=index)
+        )
+        files = RUNTIME_REGISTRY.get_fix_report_snapshot(self.project_dir)["files"]
+        group = next(item for item in files if item["filename"] == filename)
+        return next(item for item in group["entries"] if item["index"] == index)
+
+    def test_exact_cache_file_resolved(self) -> None:
+        self._touch("a.json")
+        self.assertEqual(self._entry_of("a.json")["cache_path"], "pass3_cache/a.json")
+
+    def test_input_name_without_json_suffix_resolved(self) -> None:
+        # 流水线名 a.txt → 缓存实际是 a.txt.json
+        self._touch("a.txt.json")
+        self.assertEqual(
+            self._entry_of("a.txt")["cache_path"], "pass3_cache/a.txt.json"
+        )
+
+    def test_input_name_with_json_suffix_stripped(self) -> None:
+        # 流水线名 a.txt.json（输入本身是 json）→ 缓存同名，不重复补后缀
+        self._touch("a.txt.json")
+        self.assertEqual(
+            self._entry_of("a.txt.json")["cache_path"], "pass3_cache/a.txt.json"
+        )
+
+    def test_subdir_name_converted_to_cache_separator(self) -> None:
+        # 子目录在缓存名里以 -} 连接；流水线名可能写成 / 或 -}
+        self._touch("a-}b.txt.json")
+        self.assertEqual(
+            self._entry_of("a-}b.txt")["cache_path"], "pass3_cache/a-}b.txt.json"
+        )
+        RUNTIME_REGISTRY.reset_project(self.project_dir)
+        self.assertEqual(
+            self._entry_of("a/b.txt")["cache_path"], "pass3_cache/a-}b.txt.json"
+        )
+
+    def test_split_chunk_selected_by_index(self) -> None:
+        # 生产分片名 = <输入名>_<N>.json（输入本身已带 .json 时形如 x.txt.json_0.json）
+        self._write_shard("b.txt.json_2.json", list(range(1, 11)))
+        self._write_shard("b.txt.json_10.json", list(range(11, 21)))
+        self.assertEqual(
+            self._entry_of("b.txt.json", index=5)["cache_path"],
+            "pass3_cache/b.txt.json_2.json",
+        )
+        self.assertEqual(
+            self._entry_of("b.txt.json", index=15)["cache_path"],
+            "pass3_cache/b.txt.json_10.json",
+        )
+
+    def test_split_chunk_falls_back_to_first_shard(self) -> None:
+        # 区间读不出（空数组）时退回首片；首片按数字后缀判定，字符串序会把 _10 排前面
+        self._touch("a.txt_2.json")
+        self._touch("a.txt_10.json")
+        self.assertEqual(
+            self._entry_of("a.txt", index=999)["cache_path"],
+            "pass3_cache/a.txt_2.json",
+        )
+
+    def test_alt_stem_does_not_hit_unrelated_shard(self) -> None:
+        # x.txt.json 无自身分片；同目录 x.txt_0.json 属另一个输入文件，
+        # index 不在其区间内时不得误命中（宁可留空让前端回退原名）
+        self._write_shard("x.txt_0.json", [1, 2, 3])
+        self.assertNotIn("cache_path", self._entry_of("x.txt.json", index=50))
+
+    def test_missing_file_leaves_field_empty(self) -> None:
+        self.assertNotIn("cache_path", self._entry_of("missing.json"))
+
+    def test_legacy_root_layout_resolved_without_prefix(self) -> None:
+        # 旧项目缓存直接放在 transl_cache 根下：返回不带前缀的相对名
+        with open(
+            os.path.join(self.project_dir, "transl_cache", "old.json"), "w", encoding="utf-8"
+        ) as f:
+            f.write("[]")
+        self.assertEqual(self._entry_of("old.json")["cache_path"], "old.json")
+
+    def test_traversal_filename_not_resolved(self) -> None:
+        # 报告文件可被手工编辑：绝对路径/目录穿越大一律不解析
+        self.assertNotIn("cache_path", self._entry_of("../../outside.json"))
+        self.assertNotIn("cache_path", self._entry_of("C:/Windows/win.ini"))
+        self.assertNotIn("cache_path", self._entry_of("a/.."))
+        self.assertNotIn("cache_path", self._entry_of("\\\\server\\share\\x.json"))
+
+    def test_legacy_report_backfilled(self) -> None:
+        from GalTransl.server_runtime import backfill_fix_report_cache_paths
+
+        self._touch("b.txt.json")
+        report = {
+            "files": [
+                {
+                    "filename": "b.txt",
+                    "count": 2,
+                    "truncated": False,
+                    "entries": [
+                        {"filename": "b.txt", "index": 1},
+                        {"filename": "b.txt", "index": 2, "cache_path": "keep/me.json"},
+                    ],
+                }
+            ]
+        }
+        backfill_fix_report_cache_paths(self.project_dir, report)
+        entries = report["files"][0]["entries"]
+        self.assertEqual(entries[0]["cache_path"], "pass3_cache/b.txt.json")
+        self.assertEqual(entries[1]["cache_path"], "keep/me.json")
+
+
 if __name__ == "__main__":
     unittest.main()

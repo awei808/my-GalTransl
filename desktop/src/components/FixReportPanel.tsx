@@ -10,8 +10,7 @@
  */
 import { createSignal, For, Show } from "solid-js";
 
-import { appState, setAppState } from "../stores/appStore";
-import type { AppState } from "../stores/appStore";
+import { setAppState, navigateTo } from "../stores/appStore";
 import { engineShortName } from "../lib/engineDisplay";
 import type {
   FixReportEntry,
@@ -50,16 +49,19 @@ export function FixReportPanel(props: { report: FixReportResponse | null }) {
 
   const groups = (): FixReportFileGroup[] => props.report?.files ?? [];
 
-  function jumpToEntry(filename: string, index: number) {
-    const patch: Partial<AppState> = {
-      activeView: "review",
-      reviewJumpToIndex: index,
-    };
-    // 仅当切换文件时才设 activeFilePath，同文件跳转不用重载
-    if (filename !== appState.activeFilePath) {
-      patch.activeFilePath = filename;
-    }
-    setAppState(patch);
+  function jumpToEntry(entry: FixReportEntry) {
+    // 报告的 filename 是流水线内部名（子目录以 -} 连接），cache_path 才是校对页
+    // 能打开的缓存相对路径；旧报告缺该字段时回退原值（端点会尽量补齐）
+    const target = entry.cache_path || entry.filename;
+    // 先落状态再切页：ReviewPage 挂载时已能看到目标文件与跳转序号，避免多载一次；
+    // 跨视图跳转时侧栏不会自动展开，必须显式置 explorer，否则文件侧栏为空
+    setAppState({
+      sidebarOpen: true,
+      sidebarTab: "explorer",
+      activeFilePath: target,
+      reviewJumpToIndex: entry.index,
+    });
+    navigateTo("review");
   }
 
   return (
@@ -129,7 +131,7 @@ export function FixReportPanel(props: { report: FixReportResponse | null }) {
                   {(entry) => (
                     <FixReportEntryRow
                       entry={entry}
-                      onJump={() => jumpToEntry(entry.filename, entry.index)}
+                      onJump={() => jumpToEntry(entry)}
                     />
                   )}
                 </For>
