@@ -227,16 +227,17 @@ class CircuitBreakerTests(unittest.TestCase):
         self.assertEqual(state.trip_count, 0)
 
     def test_cooldown_grows_with_repeated_trips(self) -> None:
-        eng = _make_engine(breaker_threshold=1, breaker_cooldown=0.05)
+        eng = _make_engine(breaker_threshold=1, breaker_cooldown=0.5)
         domain, _ = _unique_key("breaker-ladder")
         state = _get_breaker(domain)
         eng._record_breaker_result(domain, False)
-        first = state.open_until_ts - time.monotonic()
-        time.sleep(0.06)  # 冷却结束后才算新一轮触发
+        t1 = state.open_until_ts
+        time.sleep(0.55)  # 冷却结束后才算新一轮触发
         eng._record_breaker_result(domain, False)
-        second = state.open_until_ts - time.monotonic()
-        # 用比率断言，避免调度停顿把 0.05s 量级的绝对差打穿
-        self.assertAlmostEqual(second / first, 2.0, delta=0.2)  # 第 2 次翻倍
+        t2 = state.open_until_ts
+        # 第 2 次翻倍：t2-t1 = (now2-now1) + (c2-c1) ≈ 0.55+0.5，测量延迟（引擎内
+        # trip 之后的日志/调度耗时）不入差值；「不翻倍」≈0.55 决定性落在带外
+        self.assertAlmostEqual(t2 - t1, 1.05, delta=0.25)
 
     def test_failures_during_cooldown_do_not_escalate(self) -> None:
         # 冷却期内仍在途的旧请求会陆续报错，不能把它们算成新一轮触发把阶梯顶到 8 倍

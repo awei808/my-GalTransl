@@ -59,7 +59,7 @@ GalTransl：Galgame（视觉小说）自动翻译工具，利用 LLM（OpenAI �
 
 ## 全局命令
 
-- 后端测试（务必用 runner 规避 PowerShell 编码问题）：`python run_pytest_utf8.py [pytest 参数]`
+- 后端测试（务必用 runner 规避 PowerShell 编码问题）：`python run_pytest_utf8.py [pytest 参数]`。已装 pytest-xdist 时默认 `-n auto --dist loadfile` 并行（按文件亲和），`-n 0` 强制串行
 - 前端测试/检查：`cd desktop && npm run test`（也可用仓库根 `python run_vitest.py`）；`npm run typecheck` / `lint` / `format`
 - 构建：`python build_release_py312.py`（`--skip-fe` 仅后端 / `--skip-be` 仅前端 / `--clean` / `--no-zip` / `--no-smoke` / `--allow-incomplete`；`.venv-build` 每次强制重建干净虚拟环境。旧版 `build_release.py` 未同步且不产 MCP exe/guides/skills，勿用）
 

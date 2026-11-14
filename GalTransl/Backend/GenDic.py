@@ -40,6 +40,44 @@ GENDIC_SHARD_SCHEMA = 1
 # 正则补充层：连续片假名字串（含・）
 _KATAKANA_SEQ_RE = re.compile(r"[ァ-ヶー・]{2,}")
 
+# vaporetto 分词模型的进程级缓存（构建约 5-8s，此前每个 GenDic 任务都重新加载）
+_TOKENIZER_LOCK = Lock()
+_SHARED_TOKENIZER = None
+
+
+def _get_shared_tokenizer() -> Optional[Any]:
+    """加载（或取进程级缓存的）vaporetto 分词模型；失败返回 None 并清理损坏的临时文件。
+
+    模型文件不可变、Vaporetto 预测为只读操作，加载一次全进程复用；失败不缓存，
+    下次任务会重试；并发加载由锁串行化。
+    """
+    global _SHARED_TOKENIZER
+    with _TOKENIZER_LOCK:
+        if _SHARED_TOKENIZER is not None:
+            return _SHARED_TOKENIZER
+        import tempfile
+
+        model_path = os.path.join(tempfile.gettempdir(), "bccwj-suw+unidic_pos+pron.model")
+        try:
+            import vaporetto
+
+            if not os.path.exists(model_path):
+                zst_path = "./res/bccwj-suw+unidic_pos+pron.model.xz"
+                decompress_file_lzma(zst_path, model_path)
+            with open(model_path, "rb") as fp:
+                model = fp.read()
+            tokenizer = vaporetto.Vaporetto(model, predict_tags=True)
+        except Exception as e:
+            LOGGER.error(e)
+            LOGGER.error("载入分词模型失败，请尝试重启程序")
+            try:
+                os.remove(model_path)
+            except Exception:
+                pass
+            return None
+        _SHARED_TOKENIZER = tokenizer
+        return tokenizer
+
 
 def _is_katakana_only(text: str) -> bool:
     """判断是否为纯片假名字串（含ー・），且长度>=2"""
@@ -1106,29 +1144,9 @@ class GenDic(BaseEngine):
                 elif self.dic_counter[src] == 2 and should_print_translation_logs(self.pj_config):
                     print(f"{src}\t{dst}\t{note}")
 
-    def _load_tokenizer(self):
-        """加载 vaporetto 分词模型（解压到临时目录），失败返回 None。"""
-        import tempfile
-
-        try:
-            import vaporetto
-
-            tmp_dir = tempfile.gettempdir()
-            model_path = os.path.join(tmp_dir, "bccwj-suw+unidic_pos+pron.model")
-            if not os.path.exists(model_path):
-                zst_path = "./res/bccwj-suw+unidic_pos+pron.model.xz"
-                decompress_file_lzma(zst_path, model_path)
-            with open(model_path, "rb") as fp:
-                model = fp.read()
-            return vaporetto.Vaporetto(model, predict_tags=True)
-        except Exception as e:
-            LOGGER.error(e)
-            LOGGER.error("载入分词模型失败，请尝试重启程序")
-            try:
-                os.remove(model_path)
-            except Exception:
-                pass
-            return None
+    def _load_tokenizer(self) -> Optional[Any]:
+        """加载 vaporetto 分词模型（进程级缓存，见 _get_shared_tokenizer），失败返回 None。"""
+        return _get_shared_tokenizer()
 
     def _extract_terms_from_project(self, json_list: list) -> Optional[Tuple[List[Tuple[str, int, str]], Dict[str, Any], Set[str]]]:
         """terms 模式本地提取：全文分词 + extract_terms_from_tokens（人名不收录，name_set 传空）。
@@ -1764,25 +1782,9 @@ class GenDic(BaseEngine):
             self._check_stop_requested()
             self._update_runtime(stage="GenDic 分词处理中", current_file="准备分词")
             with terminal_progress(should_print_translation_logs(self.pj_config), title="载入分词……") as bar:
-                # get tmp dir
-                import tempfile
-
-                tmp_dir = tempfile.gettempdir()
-                model_path = os.path.join(tmp_dir, "bccwj-suw+unidic_pos+pron.model")
-                if not os.path.exists(model_path):
-                    zst_path = "./res/bccwj-suw+unidic_pos+pron.model.xz"
-                    decompress_file_lzma(zst_path, model_path)
-                bar()
-                import vaporetto
-
-                try:
-                    with open(model_path, "rb") as fp:
-                        model = fp.read()
-                    tokenizer = vaporetto.Vaporetto(model, predict_tags=True)
-                except Exception as e:
-                    LOGGER.error(e)
-                    LOGGER.error("载入分词模型失败，请尝试重启程序")
-                    os.remove(model_path)
+                # 分词模型进程级缓存加载（解压/构建耗时只在首次发生），失败按硬失败处理
+                tokenizer = self._load_tokenizer()
+                if tokenizer is None:
                     return False
                 bar()
 

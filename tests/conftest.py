@@ -1,7 +1,24 @@
 """pytest 全局夹具：测试环境隔离。"""
+import os
+
 import pytest
 
 from GalTransl import AppSettings, known_projects
+
+
+@pytest.fixture(autouse=True)
+def _fast_fail_backend_url(monkeypatch):
+    """把 MCP 后端探测地址 setdefault 为秒拒端口（127.0.0.1:0）。
+
+    mcp 写工具每次调用都经 _active_job_of → mcp_backend_client.get_json 探测默认
+    地址 http://127.0.0.1:12333；开发机后端未运行时，本机防火墙/安全软件对「无人
+    监听端口」的 connect 要等约 2s 才回拒绝，MCP 写工具测试每例都要白付一次
+    （全量套件 ~25 例 × 2s）。端口 0 在连接层立即报错（实测 ~10ms），语义仍是
+    「后端不可达」。setdefault 口径：环境里已有 GALTRANSL_BACKEND_URL（含用例在
+    setUpClass/测试体内自设的桩地址）时不覆盖，显式指定后端地址的用例不受影响。
+    """
+    if "GALTRANSL_BACKEND_URL" not in os.environ:
+        monkeypatch.setenv("GALTRANSL_BACKEND_URL", "http://127.0.0.1:0")
 
 
 @pytest.fixture(autouse=True)

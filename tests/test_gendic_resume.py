@@ -455,5 +455,14 @@ class GenDicShardUnitTests(GenDicResumeTestBase):
         self.assertEqual(backend._load_shard("terms", 0, "any"), [])  # force_regen 下分片一律不复用
 
 
+class TokenizerCacheTests(GenDicResumeTestBase):
+    def test_shared_tokenizer_returns_same_instance_across_gendic_instances(self) -> None:
+        # 分词模型进程级缓存：不同 GenDic 实例（terms/segments 两处加载点）拿到同一
+        # 分词器对象，避免每次构建 5-8s；机器上无 res/ 模型时两次都返回 None，同样成立
+        backend_a = GenDic(self.cfg, "GenDic", None, None)
+        backend_b = GenDic(self.cfg, "GenDic", None, None)
+        self.assertIs(backend_a._load_tokenizer(), backend_b._load_tokenizer())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@
 - MCP 侧：项目名解析优先查登记表（项目不在工作区根下也能解析）、失效登记过滤、
   同名多候选报错、galtransl_list_projects 合并两个来源（source 字段 + 按目录去重）。
 """
+import importlib
 import json
 import os
 import shutil
@@ -202,6 +203,9 @@ class KnownProjectsEndpointTests(unittest.TestCase):
         os.environ["GALTRANSL_KNOWN_PROJECTS_PATH"] = cls.registry_path
         os.environ.pop("GALTRANSL_API_TOKEN", None)
         known_projects._LAST_RECORDED.clear()
+        # reload 刷新 server 模块的导入期快照（_API_TOKEN 等）：xdist loadfile 下同
+        # worker 先前文件可能 reload 过带 token 的 env，不刷新会误用旧快照回 401
+        importlib.reload(_server_mod)
         cls.registry = _server_mod.JobRegistry()
         cls.server = _server_mod.ThreadingHTTPServer(
             ("127.0.0.1", 0), _server_mod.build_handler(cls.registry)
